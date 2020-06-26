@@ -1,0 +1,137 @@
+class InsertHTMLTextAction
+!!!10954498.java!!!	InsertHTMLTextAction(inout name : String, inout html : String, inout parentTag : HTML::Tag, inout addTag : HTML::Tag)
+            this(name, html, parentTag, addTag, null, null);
+!!!10954626.java!!!	InsertHTMLTextAction(inout name : String, inout html : String, inout parentTag : HTML::Tag, inout addTag : HTML::Tag, inout alternateParentTag : HTML::Tag, inout alternateAddTag : HTML::Tag)
+            this(name, html, parentTag, addTag, alternateParentTag,
+                 alternateAddTag, true);
+!!!10954754.java!!!	InsertHTMLTextAction(inout name : String, inout html : String, inout parentTag : HTML::Tag, inout addTag : HTML::Tag, inout alternateParentTag : HTML::Tag, inout alternateAddTag : HTML::Tag, inout adjustSelection : boolean)
+            super(name);
+            this.html = html;
+            this.parentTag = parentTag;
+            this.addTag = addTag;
+            this.alternateParentTag = alternateParentTag;
+            this.alternateAddTag = alternateAddTag;
+            this.adjustSelection = adjustSelection;
+!!!10954882.java!!!	insertHTML(inout editor : JEditorPane, inout doc : HTMLDocument, in offset : int, inout html : String, in popDepth : int, in pushDepth : int, inout addTag : HTML::Tag) : void
+            try {
+                getHTMLEditorKit(editor).insertHTML(doc, offset, html,
+                                                    popDepth, pushDepth,
+                                                    addTag);
+            } catch (IOException ioe) {
+                throw new RuntimeException("Unable to insert: " + ioe);
+            } catch (BadLocationException ble) {
+                throw new RuntimeException("Unable to insert: " + ble);
+            }
+!!!10955010.java!!!	insertAtBoundary(inout editor : JEditorPane, inout doc : HTMLDocument, in offset : int, inout insertElement : Element, inout html : String, inout parentTag : HTML::Tag, inout addTag : HTML::Tag) : void
+            insertAtBoundry(editor, doc, offset, insertElement, html,
+                            parentTag, addTag);
+!!!10955138.java!!!	insertAtBoundry(inout editor : JEditorPane, inout doc : HTMLDocument, in offset : int, inout insertElement : Element, inout html : String, inout parentTag : HTML::Tag, inout addTag : HTML::Tag) : void
+            // Find the common parent.
+            Element e;
+            Element commonParent;
+            boolean isFirst = (offset == 0);
+
+            if (offset > 0 || insertElement == null) {
+                e = doc.getDefaultRootElement();
+                while (e != null && e.getStartOffset() != offset &&
+                       !e.isLeaf()) {
+                    e = e.getElement(e.getElementIndex(offset));
+                }
+                commonParent = (e != null) ? e.getParentElement() : null;
+            }
+            else {
+                // If inserting at the origin, the common parent is the
+                // insertElement.
+                commonParent = insertElement;
+            }
+            if (commonParent != null) {
+                // Determine how many pops to do.
+                int pops = 0;
+                int pushes = 0;
+                if (isFirst && insertElement != null) {
+                    e = commonParent;
+                    while (e != null && !e.isLeaf()) {
+                        e = e.getElement(e.getElementIndex(offset));
+                        pops++;
+                    }
+                }
+                else {
+                    e = commonParent;
+                    offset--;
+                    while (e != null && !e.isLeaf()) {
+                        e = e.getElement(e.getElementIndex(offset));
+                        pops++;
+                    }
+
+                    // And how many pushes
+                    e = commonParent;
+                    offset++;
+                    while (e != null && e != insertElement) {
+                        e = e.getElement(e.getElementIndex(offset));
+                        pushes++;
+                    }
+                }
+                pops = Math.max(0, pops - 1);
+
+                // And insert!
+                insertHTML(editor, doc, offset, html, pops, pushes, addTag);
+            }
+!!!10955266.java!!!	insertIntoTag(inout editor : JEditorPane, inout doc : HTMLDocument, in offset : int, inout tag : HTML::Tag, inout addTag : HTML::Tag) : boolean
+            Element e = findElementMatchingTag(doc, offset, tag);
+            if (e != null && e.getStartOffset() == offset) {
+                insertAtBoundary(editor, doc, offset, e, html,
+                                 tag, addTag);
+                return true;
+            }
+            else if (offset > 0) {
+                int depth = elementCountToTag(doc, offset - 1, tag);
+                if (depth != -1) {
+                    insertHTML(editor, doc, offset, html, depth, 0, addTag);
+                    return true;
+                }
+            }
+            return false;
+!!!10955394.java!!!	adjustSelection(inout pane : JEditorPane, inout doc : HTMLDocument, in startOffset : int, in oldLength : int) : void
+            int newLength = doc.getLength();
+            if (newLength != oldLength && startOffset < newLength) {
+                if (startOffset > 0) {
+                    String text;
+                    try {
+                        text = doc.getText(startOffset - 1, 1);
+                    } catch (BadLocationException ble) {
+                        text = null;
+                    }
+                    if (text != null && text.length() > 0 &&
+                        text.charAt(0) == '\n') {
+                        pane.select(startOffset, startOffset);
+                    }
+                    else {
+                        pane.select(startOffset + 1, startOffset + 1);
+                    }
+                }
+                else {
+                    pane.select(1, 1);
+                }
+            }
+!!!10955522.java!!!	actionPerformed(inout ae : ActionEvent) : void
+            JEditorPane editor = getEditor(ae);
+            if (editor != null) {
+                HTMLDocument doc = getHTMLDocument(editor);
+                int offset = editor.getSelectionStart();
+                int length = doc.getLength();
+                boolean inserted;
+                // Try first choice
+                if (!insertIntoTag(editor, doc, offset, parentTag, addTag) &&
+                    alternateParentTag != null) {
+                    // Then alternate.
+                    inserted = insertIntoTag(editor, doc, offset,
+                                             alternateParentTag,
+                                             alternateAddTag);
+                }
+                else {
+                    inserted = true;
+                }
+                if (adjustSelection && inserted) {
+                    adjustSelection(editor, doc, offset, length);
+                }
+            }

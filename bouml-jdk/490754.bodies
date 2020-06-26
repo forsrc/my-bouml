@@ -1,0 +1,263 @@
+class DefaultMXBeanMappingFactory
+!!!2945026.java!!!	isIdentity(inout mapping : MXBeanMapping) : boolean
+        return (mapping instanceof NonNullMXBeanMapping &&
+                ((NonNullMXBeanMapping) mapping).isIdentity());
+!!!2945154.java!!!	getMapping(inout type : Type) : MXBeanMapping
+        WeakReference<MXBeanMapping> wr = mappings.get(type);
+        return (wr == null) ? null : wr.get();
+!!!2945282.java!!!	putMapping(inout type : Type, inout mapping : MXBeanMapping) : void
+        WeakReference<MXBeanMapping> wr =
+            new WeakReference<MXBeanMapping>(mapping);
+        mappings.put(type, wr);
+!!!2945410.java!!!	putPermanentMapping(inout type : Type, inout mapping : MXBeanMapping) : void
+        putMapping(type, mapping);
+        permanentMappings.add(mapping);
+!!!2945538.java!!!	mappingForType(inout objType : Type, inout factory : MXBeanMappingFactory) : MXBeanMapping
+        if (inProgress.containsKey(objType)) {
+            throw new OpenDataException(
+                    "Recursive data structure, including " + typeName(objType));
+        }
+
+        MXBeanMapping mapping;
+
+        mapping = getMapping(objType);
+        if (mapping != null)
+            return mapping;
+
+        inProgress.put(objType, objType);
+        try {
+            mapping = makeMapping(objType, factory);
+        } catch (OpenDataException e) {
+            throw openDataException("Cannot convert type: " + typeName(objType), e);
+        } finally {
+            inProgress.remove(objType);
+        }
+
+        putMapping(objType, mapping);
+        return mapping;
+!!!2945666.java!!!	makeMapping(inout objType : Type, inout factory : MXBeanMappingFactory) : MXBeanMapping
+
+        /* It's not yet worth formalizing these tests by having for example
+           an array of factory classes, each of which says whether it
+           recognizes the Type (Chain of Responsibility pattern).  */
+        if (objType instanceof GenericArrayType) {
+            Type componentType =
+                ((GenericArrayType) objType).getGenericComponentType();
+            return makeArrayOrCollectionMapping(objType, componentType, factory);
+        } else if (objType instanceof Class<?>) {
+            Class<?> objClass = (Class<?>) objType;
+            if (objClass.isEnum()) {
+                // Huge hack to avoid compiler warnings here.  The ElementType
+                // parameter is ignored but allows us to obtain a type variable
+                // T that matches <T extends Enum<T>>.
+                return makeEnumMapping((Class<?>) objClass, ElementType.class);
+            } else if (objClass.isArray()) {
+                Type componentType = objClass.getComponentType();
+                return makeArrayOrCollectionMapping(objClass, componentType,
+                        factory);
+            } else if (JMX.isMXBeanInterface(objClass)) {
+                return makeMXBeanRefMapping(objClass);
+            } else {
+                return makeCompositeMapping(objClass, factory);
+            }
+        } else if (objType instanceof ParameterizedType) {
+            return makeParameterizedTypeMapping((ParameterizedType) objType,
+                                                factory);
+        } else
+            throw new OpenDataException("Cannot map type: " + objType);
+!!!2945794.java!!!	makeEnumMapping(inout enumClass : Class, inout fake : Class) : MXBeanMapping
+        ReflectUtil.checkPackageAccess(enumClass);
+        return new EnumMapping<T>(Util.<Class<T>>cast(enumClass));
+!!!2945922.java!!!	makeArrayOrCollectionMapping(inout collectionType : Type, inout elementType : Type, inout factory : MXBeanMappingFactory) : MXBeanMapping
+
+        final MXBeanMapping elementMapping = factory.mappingForType(elementType, factory);
+        final OpenType<?> elementOpenType = elementMapping.getOpenType();
+        final ArrayType<?> openType = ArrayType.getArrayType(elementOpenType);
+        final Class<?> elementOpenClass = elementMapping.getOpenClass();
+
+        final Class<?> openArrayClass;
+        final String openArrayClassName;
+        if (elementOpenClass.isArray())
+            openArrayClassName = "[" + elementOpenClass.getName();
+        else
+            openArrayClassName = "[L" + elementOpenClass.getName() + ";";
+        try {
+            openArrayClass = Class.forName(openArrayClassName);
+        } catch (ClassNotFoundException e) {
+            throw openDataException("Cannot obtain array class", e);
+        }
+
+        if (collectionType instanceof ParameterizedType) {
+            return new CollectionMapping(collectionType,
+                                         openType, openArrayClass,
+                                         elementMapping);
+        } else {
+            if (isIdentity(elementMapping)) {
+                return new IdentityMapping(collectionType,
+                                           openType);
+            } else {
+                return new ArrayMapping(collectionType,
+                                          openType,
+                                          openArrayClass,
+                                          elementMapping);
+            }
+        }
+!!!2946050.java!!!	makeTabularMapping(inout objType : Type, inout sortedMap : boolean, inout keyType : Type, inout valueType : Type, inout factory : MXBeanMappingFactory) : MXBeanMapping
+
+        final String objTypeName = typeName(objType);
+        final MXBeanMapping keyMapping = factory.mappingForType(keyType, factory);
+        final MXBeanMapping valueMapping = factory.mappingForType(valueType, factory);
+        final OpenType<?> keyOpenType = keyMapping.getOpenType();
+        final OpenType<?> valueOpenType = valueMapping.getOpenType();
+        final CompositeType rowType =
+            new CompositeType(objTypeName,
+                              objTypeName,
+                              keyValueArray,
+                              keyValueArray,
+                              new OpenType<?>[] {keyOpenType, valueOpenType});
+        final TabularType tabularType =
+            new TabularType(objTypeName, objTypeName, rowType, keyArray);
+        return new TabularMapping(objType, sortedMap, tabularType,
+                                    keyMapping, valueMapping);
+!!!2946178.java!!!	makeParameterizedTypeMapping(inout objType : ParameterizedType, inout factory : MXBeanMappingFactory) : MXBeanMapping
+
+        final Type rawType = objType.getRawType();
+
+        if (rawType instanceof Class<?>) {
+            Class<?> c = (Class<?>) rawType;
+            if (c == List.class || c == Set.class || c == SortedSet.class) {
+                Type[] actuals = objType.getActualTypeArguments();
+                assert(actuals.length == 1);
+                if (c == SortedSet.class)
+                    mustBeComparable(c, actuals[0]);
+                return makeArrayOrCollectionMapping(objType, actuals[0], factory);
+            } else {
+                boolean sortedMap = (c == SortedMap.class);
+                if (c == Map.class || sortedMap) {
+                    Type[] actuals = objType.getActualTypeArguments();
+                    assert(actuals.length == 2);
+                    if (sortedMap)
+                        mustBeComparable(c, actuals[0]);
+                    return makeTabularMapping(objType, sortedMap,
+                            actuals[0], actuals[1], factory);
+                }
+            }
+        }
+        throw new OpenDataException("Cannot convert type: " + objType);
+!!!2946306.java!!!	makeMXBeanRefMapping(inout t : Type) : MXBeanMapping
+        return new MXBeanRefMapping(t);
+!!!2946434.java!!!	makeCompositeMapping(inout c : Class, inout factory : MXBeanMappingFactory) : MXBeanMapping
+
+        // For historical reasons GcInfo implements CompositeData but we
+        // shouldn't count its CompositeData.getCompositeType() field as
+        // an item in the computed CompositeType.
+        final boolean gcInfoHack =
+            (c.getName().equals("com.sun.management.GcInfo") &&
+                c.getClassLoader() == null);
+
+        ReflectUtil.checkPackageAccess(c);
+        final List<Method> methods =
+                MBeanAnalyzer.eliminateCovariantMethods(Arrays.asList(c.getMethods()));
+        final SortedMap<String,Method> getterMap = newSortedMap();
+
+        /* Select public methods that look like "T getX()" or "boolean
+           isX()", where T is not void and X is not the empty
+           string.  Exclude "Class getClass()" inherited from Object.  */
+        for (Method method : methods) {
+            final String propertyName = propertyName(method);
+
+            if (propertyName == null)
+                continue;
+            if (gcInfoHack && propertyName.equals("CompositeType"))
+                continue;
+
+            Method old =
+                getterMap.put(decapitalize(propertyName),
+                            method);
+            if (old != null) {
+                final String msg =
+                    "Class " + c.getName() + " has method name clash: " +
+                    old.getName() + ", " + method.getName();
+                throw new OpenDataException(msg);
+            }
+        }
+
+        final int nitems = getterMap.size();
+
+        if (nitems == 0) {
+            throw new OpenDataException("Can't map " + c.getName() +
+                                        " to an open data type");
+        }
+
+        final Method[] getters = new Method[nitems];
+        final String[] itemNames = new String[nitems];
+        final OpenType<?>[] openTypes = new OpenType<?>[nitems];
+        int i = 0;
+        for (Map.Entry<String,Method> entry : getterMap.entrySet()) {
+            itemNames[i] = entry.getKey();
+            final Method getter = entry.getValue();
+            getters[i] = getter;
+            final Type retType = getter.getGenericReturnType();
+            openTypes[i] = factory.mappingForType(retType, factory).getOpenType();
+            i++;
+        }
+
+        CompositeType compositeType =
+            new CompositeType(c.getName(),
+                              c.getName(),
+                              itemNames, // field names
+                              itemNames, // field descriptions
+                              openTypes);
+
+        return new CompositeMapping(c,
+                                    compositeType,
+                                    itemNames,
+                                    getters,
+                                    factory);
+!!!2953602.java!!!	invalidObjectException(inout msg : String, inout cause : Throwable) : InvalidObjectException
+        return EnvHelp.initCause(new InvalidObjectException(msg), cause);
+!!!2953730.java!!!	invalidObjectException(inout cause : Throwable) : InvalidObjectException
+        return invalidObjectException(cause.getMessage(), cause);
+!!!2953858.java!!!	openDataException(inout msg : String, inout cause : Throwable) : OpenDataException
+        return EnvHelp.initCause(new OpenDataException(msg), cause);
+!!!2953986.java!!!	openDataException(inout cause : Throwable) : OpenDataException
+        return openDataException(cause.getMessage(), cause);
+!!!2954114.java!!!	mustBeComparable(inout collection : Class, inout element : Type) : void
+        if (!(element instanceof Class<?>)
+            || !Comparable.class.isAssignableFrom((Class<?>) element)) {
+            final String msg =
+                "Parameter class " + element + " of " +
+                collection.getName() + " does not implement " +
+                Comparable.class.getName();
+            throw new OpenDataException(msg);
+        }
+!!!2954242.java!!!	decapitalize(inout name : String) : String
+        if (name == null || name.length() == 0) {
+            return name;
+        }
+        int offset1 = Character.offsetByCodePoints(name, 0, 1);
+        // Should be name.offsetByCodePoints but 6242664 makes this fail
+        if (offset1 < name.length() &&
+                Character.isUpperCase(name.codePointAt(offset1)))
+            return name;
+        return name.substring(0, offset1).toLowerCase() +
+               name.substring(offset1);
+!!!2954370.java!!!	capitalize(inout name : String) : String
+        if (name == null || name.length() == 0)
+            return name;
+        int offset1 = name.offsetByCodePoints(0, 1);
+        return name.substring(0, offset1).toUpperCase() +
+               name.substring(offset1);
+!!!2954498.java!!!	propertyName(inout m : Method) : String
+        String rest = null;
+        String name = m.getName();
+        if (name.startsWith("get"))
+            rest = name.substring(3);
+        else if (name.startsWith("is") && m.getReturnType() == boolean.class)
+            rest = name.substring(2);
+        if (rest == null || rest.length() == 0
+            || m.getParameterTypes().length > 0
+            || m.getReturnType() == void.class
+            || name.equals("getClass"))
+            return null;
+        return rest;

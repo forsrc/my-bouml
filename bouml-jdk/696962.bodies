@@ -1,0 +1,112 @@
+class UnionToken
+!!!4605954.java!!!	UnionToken(in type : int)
+            super(type);
+!!!4606082.java!!!	addChild(inout tok : Token) : void
+            if (tok == null)  return;
+            if (this.children == null)  this.children = new ArrayList<>();
+            if (this.type == UNION) {
+                this.children.add(tok);
+                return;
+            }
+                                                // This is CONCAT, and new child is CONCAT.
+            if (tok.type == CONCAT) {
+                for (int i = 0;  i < tok.size();  i ++)
+                    this.addChild(tok.getChild(i)); // Recursion
+                return;
+            }
+            int size = this.children.size();
+            if (size == 0) {
+                this.children.add(tok);
+                return;
+            }
+            Token previous = this.children.get(size - 1);
+            if (!((previous.type == CHAR || previous.type == STRING)
+                  && (tok.type == CHAR || tok.type == STRING))) {
+                this.children.add(tok);
+                return;
+            }
+
+            //System.err.println("Merge '"+previous+"' and '"+tok+"'.");
+
+            StringBuilder buffer;
+            int nextMaxLength = (tok.type == CHAR ? 2 : tok.getString().length());
+            if (previous.type == CHAR) {        // Replace previous token by STRING
+                buffer = new StringBuilder(2 + nextMaxLength);
+                int ch = previous.getChar();
+                if (ch >= 0x10000)
+                    buffer.append(REUtil.decomposeToSurrogates(ch));
+                else
+                    buffer.append((char)ch);
+                previous = Token.createString(null);
+                this.children.set(size - 1, previous);
+            } else {                            // STRING
+                buffer = new StringBuilder(previous.getString().length() + nextMaxLength);
+                buffer.append(previous.getString());
+            }
+
+            if (tok.type == CHAR) {
+                int ch = tok.getChar();
+                if (ch >= 0x10000)
+                    buffer.append(REUtil.decomposeToSurrogates(ch));
+                else
+                    buffer.append((char)ch);
+            } else {
+                buffer.append(tok.getString());
+            }
+
+            ((StringToken)previous).string = new String(buffer);
+!!!4606210.java!!!	size() : int
+            return this.children == null ? 0 : this.children.size();
+!!!4606338.java!!!	getChild(in index : int) : Token
+            return this.children.get(index);
+!!!4606466.java!!!	toString(in options : int) : String
+            String ret;
+            if (this.type == CONCAT) {
+                if (this.children.size() == 2) {
+                    Token ch = this.getChild(0);
+                    Token ch2 = this.getChild(1);
+                    if (ch2.type == CLOSURE && ch2.getChild(0) == ch) {
+                        ret = ch.toString(options)+"+";
+                    } else if (ch2.type == NONGREEDYCLOSURE && ch2.getChild(0) == ch) {
+                        ret = ch.toString(options)+"+?";
+                    } else
+                        ret = ch.toString(options)+ch2.toString(options);
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0;  i < this.children.size();  i ++) {
+                        sb.append(((Token)this.children.get(i)).toString(options));
+                    }
+                    ret = new String(sb);
+                }
+                return ret;
+            }
+            if (this.children.size() == 2 && this.getChild(1).type == EMPTY) {
+                ret = this.getChild(0).toString(options)+"?";
+            } else if (this.children.size() == 2
+                       && this.getChild(0).type == EMPTY) {
+                ret = this.getChild(1).toString(options)+"??";
+            } else {
+                StringBuilder sb = new StringBuilder();
+                sb.append((this.children.get(0)).toString(options));
+                for (int i = 1;  i < this.children.size();  i ++) {
+                    sb.append((char)'|');
+                    sb.append((this.children.get(i)).toString(options));
+                }
+                ret = new String(sb);
+            }
+            return ret;
+!!!4606594.java!!!	writeObject(inout out : ObjectOutputStream) : void
+            // Convert List to Vector
+            Vector<Token> vChildren = (children == null)? null : new Vector<>(children);
+
+            // Write serialized fields
+            ObjectOutputStream.PutField pf = out.putFields();
+            pf.put("children", vChildren);
+            out.writeFields();
+!!!4606722.java!!!	readObject(inout in : ObjectInputStream) : void
+            // We have to read serialized fields first.
+            ObjectInputStream.GetField gf = in.readFields();
+            Vector<Token> vChildren = (Vector<Token>)gf.get("children", null);
+
+            //convert Vector back to List
+            if (vChildren != null) children = new ArrayList<>(vChildren);

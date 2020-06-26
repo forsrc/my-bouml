@@ -1,0 +1,433 @@
+class DTDConfiguration
+!!!5007746.java!!!	DTDConfiguration()
+        this(null, null, null);
+!!!5007874.java!!!	DTDConfiguration(inout symbolTable : SymbolTable)
+        this(symbolTable, null, null);
+!!!5008002.java!!!	DTDConfiguration(inout symbolTable : SymbolTable, inout grammarPool : XMLGrammarPool)
+        this(symbolTable, grammarPool, null);
+!!!5008130.java!!!	DTDConfiguration(inout symbolTable : SymbolTable, inout grammarPool : XMLGrammarPool, inout parentSettings : XMLComponentManager)
+        super(symbolTable, parentSettings);
+
+        // add default recognized features
+        final String[] recognizedFeatures = {
+            //WARN_ON_DUPLICATE_ATTDEF,     // from XMLDTDScannerImpl
+            //WARN_ON_UNDECLARED_ELEMDEF,   // from XMLDTDScannerImpl
+            //ALLOW_JAVA_ENCODINGS,         // from XMLEntityManager
+            CONTINUE_AFTER_FATAL_ERROR,
+            LOAD_EXTERNAL_DTD,    // from XMLDTDScannerImpl
+            //NOTIFY_BUILTIN_REFS,  // from XMLDocumentFragmentScannerImpl
+            //NOTIFY_CHAR_REFS,         // from XMLDocumentFragmentScannerImpl
+            //WARN_ON_DUPLICATE_ENTITYDEF,  // from XMLEntityManager
+        };
+        addRecognizedFeatures(recognizedFeatures);
+
+        // set state for default features
+        //setFeature(WARN_ON_DUPLICATE_ATTDEF, false);  // from XMLDTDScannerImpl
+        //setFeature(WARN_ON_UNDECLARED_ELEMDEF, false);  // from XMLDTDScannerImpl
+        //setFeature(ALLOW_JAVA_ENCODINGS, false);      // from XMLEntityManager
+        setFeature(CONTINUE_AFTER_FATAL_ERROR, false);
+        setFeature(LOAD_EXTERNAL_DTD, true);      // from XMLDTDScannerImpl
+        //setFeature(NOTIFY_BUILTIN_REFS, false);   // from XMLDocumentFragmentScannerImpl
+        //setFeature(NOTIFY_CHAR_REFS, false);      // from XMLDocumentFragmentScannerImpl
+        //setFeature(WARN_ON_DUPLICATE_ENTITYDEF, false);   // from XMLEntityManager
+
+        // add default recognized properties
+        final String[] recognizedProperties = {
+            ERROR_REPORTER,
+            ENTITY_MANAGER,
+            DOCUMENT_SCANNER,
+            DTD_SCANNER,
+            DTD_PROCESSOR,
+            DTD_VALIDATOR,
+            NAMESPACE_BINDER,
+            XMLGRAMMAR_POOL,
+            DATATYPE_VALIDATOR_FACTORY,
+            VALIDATION_MANAGER,
+            JAXP_SCHEMA_SOURCE,
+            JAXP_SCHEMA_LANGUAGE,
+            LOCALE,
+            SECURITY_MANAGER,
+            XML_SECURITY_PROPERTY_MANAGER
+        };
+        addRecognizedProperties(recognizedProperties);
+
+        fGrammarPool = grammarPool;
+        if(fGrammarPool != null){
+            setProperty(XMLGRAMMAR_POOL, fGrammarPool);
+        }
+
+        fEntityManager = createEntityManager();
+        setProperty(ENTITY_MANAGER, fEntityManager);
+        addComponent(fEntityManager);
+
+        fErrorReporter = createErrorReporter();
+        fErrorReporter.setDocumentLocator(fEntityManager.getEntityScanner());
+        setProperty(ERROR_REPORTER, fErrorReporter);
+        addComponent(fErrorReporter);
+
+        fScanner = createDocumentScanner();
+        setProperty(DOCUMENT_SCANNER, fScanner);
+        if (fScanner instanceof XMLComponent) {
+            addComponent((XMLComponent)fScanner);
+        }
+
+        fDTDScanner = createDTDScanner();
+        if (fDTDScanner != null) {
+            setProperty(DTD_SCANNER, fDTDScanner);
+            if (fDTDScanner instanceof XMLComponent) {
+                addComponent((XMLComponent)fDTDScanner);
+            }
+        }
+
+        fDTDProcessor = createDTDProcessor();
+        if (fDTDProcessor != null) {
+            setProperty(DTD_PROCESSOR, fDTDProcessor);
+            if (fDTDProcessor instanceof XMLComponent) {
+                addComponent((XMLComponent)fDTDProcessor);
+            }
+        }
+
+        fDTDValidator = createDTDValidator();
+        if (fDTDValidator != null) {
+            setProperty(DTD_VALIDATOR, fDTDValidator);
+            addComponent(fDTDValidator);
+        }
+
+        fNamespaceBinder = createNamespaceBinder();
+        if (fNamespaceBinder != null) {
+            setProperty(NAMESPACE_BINDER, fNamespaceBinder);
+            addComponent(fNamespaceBinder);
+        }
+
+        fDatatypeValidatorFactory = createDatatypeValidatorFactory();
+        if (fDatatypeValidatorFactory != null) {
+            setProperty(DATATYPE_VALIDATOR_FACTORY,
+                        fDatatypeValidatorFactory);
+        }
+        fValidationManager = createValidationManager();
+
+        if (fValidationManager != null) {
+            setProperty (VALIDATION_MANAGER, fValidationManager);
+        }
+        // add message formatters
+        if (fErrorReporter.getMessageFormatter(XMLMessageFormatter.XML_DOMAIN) == null) {
+            XMLMessageFormatter xmft = new XMLMessageFormatter();
+            fErrorReporter.putMessageFormatter(XMLMessageFormatter.XML_DOMAIN, xmft);
+            fErrorReporter.putMessageFormatter(XMLMessageFormatter.XMLNS_DOMAIN, xmft);
+        }
+
+        // set locale
+        try {
+            setLocale(Locale.getDefault());
+        }
+        catch (XNIException e) {
+            // do nothing
+            // REVISIT: What is the right thing to do? -Ac
+        }
+
+        setProperty(XML_SECURITY_PROPERTY_MANAGER, new XMLSecurityPropertyManager());
+!!!5008258.java!!!	getPropertyState(inout propertyId : String) : PropertyState
+        if (LOCALE.equals(propertyId)) {
+            return PropertyState.is(getLocale());
+        }
+        return super.getPropertyState(propertyId);
+!!!5008386.java!!!	setProperty(inout propertyId : String, inout value : Object) : void
+        if (LOCALE.equals(propertyId)) {
+            setLocale((Locale) value);
+        }
+        super.setProperty(propertyId, value);
+!!!5008514.java!!!	setLocale(inout locale : Locale) : void
+        super.setLocale(locale);
+        fErrorReporter.setLocale(locale);
+!!!5008642.java!!!	setInputSource(inout inputSource : XMLInputSource) : void
+
+        // REVISIT: this method used to reset all the components and
+        //          construct the pipeline. Now reset() is called
+        //          in parse (boolean) just before we parse the document
+        //          Should this method still throw exceptions..?
+
+        fInputSource = inputSource;
+
+!!!5008770.java!!!	parse(inout complete : boolean) : boolean
+        //
+        // reset and configure pipeline and set InputSource.
+        if (fInputSource !=null) {
+            try {
+                // resets and sets the pipeline.
+                reset();
+                fScanner.setInputSource(fInputSource);
+                fInputSource = null;
+            }
+            catch (XNIException ex) {
+                if (PRINT_EXCEPTION_STACK_TRACE)
+                    ex.printStackTrace();
+                throw ex;
+            }
+            catch (IOException ex) {
+                if (PRINT_EXCEPTION_STACK_TRACE)
+                    ex.printStackTrace();
+                throw ex;
+            }
+            catch (RuntimeException ex) {
+                if (PRINT_EXCEPTION_STACK_TRACE)
+                    ex.printStackTrace();
+                throw ex;
+            }
+            catch (Exception ex) {
+                if (PRINT_EXCEPTION_STACK_TRACE)
+                    ex.printStackTrace();
+                throw new XNIException(ex);
+            }
+        }
+
+        try {
+            return fScanner.scanDocument(complete);
+        }
+        catch (XNIException ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw ex;
+        }
+        catch (IOException ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw ex;
+        }
+        catch (RuntimeException ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw ex;
+        }
+        catch (Exception ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw new XNIException(ex);
+        }
+
+!!!5008898.java!!!	cleanup() : void
+        fEntityManager.closeReaders();
+!!!5009026.java!!!	parse(inout source : XMLInputSource) : void
+
+        if (fParseInProgress) {
+            // REVISIT - need to add new error message
+            throw new XNIException("FWK005 parse may not be called while parsing.");
+        }
+        fParseInProgress = true;
+
+        try {
+            setInputSource(source);
+            parse(true);
+        }
+        catch (XNIException ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw ex;
+        }
+        catch (IOException ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw ex;
+        }
+        catch (RuntimeException ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw ex;
+        }
+        catch (Exception ex) {
+            if (PRINT_EXCEPTION_STACK_TRACE)
+                ex.printStackTrace();
+            throw new XNIException(ex);
+        }
+        finally {
+            fParseInProgress = false;
+            // close all streams opened by xerces
+            this.cleanup();
+        }
+
+!!!5009154.java!!!	reset() : void
+
+        if (fValidationManager != null)
+            fValidationManager.reset();
+        // configure the pipeline and initialize the components
+        configurePipeline();
+        super.reset();
+!!!5009282.java!!!	configurePipeline() : void
+
+                // REVISIT: This should be better designed. In other words, we
+                //          need to figure out what is the best way for people to
+                //          re-use *most* of the standard configuration but do
+                //          things common things such as remove a component (e.g.
+                //          the validator), insert a new component (e.g. XInclude),
+                //          etc... -Ac
+
+                // setup document pipeline
+                if (fDTDValidator != null) {
+                        fScanner.setDocumentHandler(fDTDValidator);
+                        if (fFeatures.get(NAMESPACES) == Boolean.TRUE) {
+
+                                // filters
+                                fDTDValidator.setDocumentHandler(fNamespaceBinder);
+                                fDTDValidator.setDocumentSource(fScanner);
+                                fNamespaceBinder.setDocumentHandler(fDocumentHandler);
+                                fNamespaceBinder.setDocumentSource(fDTDValidator);
+                                fLastComponent = fNamespaceBinder;
+                        }
+                        else {
+                                fDTDValidator.setDocumentHandler(fDocumentHandler);
+                                fDTDValidator.setDocumentSource(fScanner);
+                                fLastComponent = fDTDValidator;
+                        }
+                }
+                else {
+                        if (fFeatures.get(NAMESPACES) == Boolean.TRUE) {
+                                fScanner.setDocumentHandler(fNamespaceBinder);
+                                fNamespaceBinder.setDocumentHandler(fDocumentHandler);
+                                fNamespaceBinder.setDocumentSource(fScanner);
+                                fLastComponent = fNamespaceBinder;
+                        }
+                        else {
+                                fScanner.setDocumentHandler(fDocumentHandler);
+                                fLastComponent = fScanner;
+                        }
+                }
+
+        configureDTDPipeline();
+!!!5009410.java!!!	configureDTDPipeline() : void
+
+        // setup dtd pipeline
+        if (fDTDScanner != null) {
+            fProperties.put(DTD_SCANNER, fDTDScanner);
+            if (fDTDProcessor != null) {
+                fProperties.put(DTD_PROCESSOR, fDTDProcessor);
+                fDTDScanner.setDTDHandler(fDTDProcessor);
+                fDTDProcessor.setDTDSource(fDTDScanner);
+                fDTDProcessor.setDTDHandler(fDTDHandler);
+                if (fDTDHandler != null) {
+                    fDTDHandler.setDTDSource(fDTDProcessor);
+                }
+
+                fDTDScanner.setDTDContentModelHandler(fDTDProcessor);
+                fDTDProcessor.setDTDContentModelSource(fDTDScanner);
+                fDTDProcessor.setDTDContentModelHandler(fDTDContentModelHandler);
+                if (fDTDContentModelHandler != null) {
+                    fDTDContentModelHandler.setDTDContentModelSource(fDTDProcessor);
+                }
+            }
+            else {
+                fDTDScanner.setDTDHandler(fDTDHandler);
+                if (fDTDHandler != null) {
+                    fDTDHandler.setDTDSource(fDTDScanner);
+                }
+                fDTDScanner.setDTDContentModelHandler(fDTDContentModelHandler);
+                if (fDTDContentModelHandler != null) {
+                    fDTDContentModelHandler.setDTDContentModelSource(fDTDScanner);
+                }
+            }
+        }
+
+
+!!!5009538.java!!!	checkFeature(inout featureId : String) : FeatureState
+
+        //
+        // Xerces Features
+        //
+
+        if (featureId.startsWith(Constants.XERCES_FEATURE_PREFIX)) {
+            final int suffixLength = featureId.length() - Constants.XERCES_FEATURE_PREFIX.length();
+
+            //
+            // http://apache.org/xml/features/validation/dynamic
+            //   Allows the parser to validate a document only when it
+            //   contains a grammar. Validation is turned on/off based
+            //   on each document instance, automatically.
+            //
+            if (suffixLength == Constants.DYNAMIC_VALIDATION_FEATURE.length() &&
+                featureId.endsWith(Constants.DYNAMIC_VALIDATION_FEATURE)) {
+                return FeatureState.RECOGNIZED;
+            }
+
+            //
+            // http://apache.org/xml/features/validation/default-attribute-values
+            //
+            if (suffixLength == Constants.DEFAULT_ATTRIBUTE_VALUES_FEATURE.length() &&
+                featureId.endsWith(Constants.DEFAULT_ATTRIBUTE_VALUES_FEATURE)) {
+                // REVISIT
+                return FeatureState.NOT_SUPPORTED;
+            }
+            //
+            // http://apache.org/xml/features/validation/default-attribute-values
+            //
+            if (suffixLength == Constants.VALIDATE_CONTENT_MODELS_FEATURE.length() &&
+                featureId.endsWith(Constants.VALIDATE_CONTENT_MODELS_FEATURE)) {
+                // REVISIT
+                return FeatureState.NOT_SUPPORTED;
+            }
+            //
+            // http://apache.org/xml/features/validation/nonvalidating/load-dtd-grammar
+            //
+            if (suffixLength == Constants.LOAD_DTD_GRAMMAR_FEATURE.length() &&
+                featureId.endsWith(Constants.LOAD_DTD_GRAMMAR_FEATURE)) {
+                return FeatureState.RECOGNIZED;
+            }
+            //
+            // http://apache.org/xml/features/validation/nonvalidating/load-external-dtd
+            //
+            if (suffixLength == Constants.LOAD_EXTERNAL_DTD_FEATURE.length() &&
+                featureId.endsWith(Constants.LOAD_EXTERNAL_DTD_FEATURE)) {
+                return FeatureState.RECOGNIZED;
+            }
+
+            //
+            // http://apache.org/xml/features/validation/default-attribute-values
+            //
+            if (suffixLength == Constants.VALIDATE_DATATYPES_FEATURE.length() &&
+                featureId.endsWith(Constants.VALIDATE_DATATYPES_FEATURE)) {
+                return FeatureState.NOT_SUPPORTED;
+            }
+        }
+
+        //
+        // Not recognized
+        //
+
+        return super.checkFeature(featureId);
+
+!!!5009666.java!!!	checkProperty(inout propertyId : String) : PropertyState
+
+        //
+        // Xerces Properties
+        //
+
+        if (propertyId.startsWith(Constants.XERCES_PROPERTY_PREFIX)) {
+            final int suffixLength = propertyId.length() - Constants.XERCES_PROPERTY_PREFIX.length();
+
+            if (suffixLength == Constants.DTD_SCANNER_PROPERTY.length() &&
+                propertyId.endsWith(Constants.DTD_SCANNER_PROPERTY)) {
+                return PropertyState.RECOGNIZED;
+            }
+        }
+
+        //
+        // Not recognized
+        //
+
+        return super.checkProperty(propertyId);
+
+!!!5009794.java!!!	createEntityManager() : XMLEntityManager
+        return new XMLEntityManager();
+!!!5009922.java!!!	createErrorReporter() : XMLErrorReporter
+        return new XMLErrorReporter();
+!!!5010050.java!!!	createDocumentScanner() : XMLDocumentScanner
+        return new XMLDocumentScannerImpl();
+!!!5010178.java!!!	createDTDScanner() : XMLDTDScanner
+        return new XMLDTDScannerImpl();
+!!!5010306.java!!!	createDTDProcessor() : XMLDTDProcessor
+        return new XMLDTDProcessor();
+!!!5010434.java!!!	createDTDValidator() : XMLDTDValidator
+        return new XMLDTDValidator();
+!!!5010562.java!!!	createNamespaceBinder() : XMLNamespaceBinder
+        return new XMLNamespaceBinder();
+!!!5010690.java!!!	createDatatypeValidatorFactory() : DTDDVFactory
+        return DTDDVFactory.getInstance();
+!!!5010818.java!!!	createValidationManager() : ValidationManager
+        return new ValidationManager();

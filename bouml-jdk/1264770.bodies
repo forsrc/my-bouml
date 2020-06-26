@@ -1,0 +1,94 @@
+class PaintManager
+!!!10433282.java!!!	paint(inout paintingComponent : JComponent, inout bufferComponent : JComponent, inout g : Graphics, in x : int, in y : int, in w : int, in h : int) : boolean
+            // First attempt to use VolatileImage buffer for performance.
+            // If this fails (which should rarely occur), fallback to a
+            // standard Image buffer.
+            boolean paintCompleted = false;
+            Image offscreen;
+            if (repaintManager.useVolatileDoubleBuffer() &&
+                (offscreen = getValidImage(repaintManager.
+                getVolatileOffscreenBuffer(bufferComponent, w, h))) != null) {
+                VolatileImage vImage = (java.awt.image.VolatileImage)offscreen;
+                GraphicsConfiguration gc = bufferComponent.
+                                            getGraphicsConfiguration();
+                for (int i = 0; !paintCompleted &&
+                         i < RepaintManager.VOLATILE_LOOP_MAX; i++) {
+                    if (vImage.validate(gc) ==
+                                   VolatileImage.IMAGE_INCOMPATIBLE) {
+                        repaintManager.resetVolatileDoubleBuffer(gc);
+                        offscreen = repaintManager.getVolatileOffscreenBuffer(
+                            bufferComponent,w, h);
+                        vImage = (java.awt.image.VolatileImage)offscreen;
+                    }
+                    paintDoubleBuffered(paintingComponent, vImage, g, x, y,
+                                        w, h);
+                    paintCompleted = !vImage.contentsLost();
+                }
+            }
+            // VolatileImage painting loop failed, fallback to regular
+            // offscreen buffer
+            if (!paintCompleted && (offscreen = getValidImage(
+                      repaintManager.getOffscreenBuffer(
+                      bufferComponent, w, h))) != null) {
+                paintDoubleBuffered(paintingComponent, offscreen, g, x, y, w,
+                                    h);
+                paintCompleted = true;
+            }
+            return paintCompleted;
+!!!10433410.java!!!	copyArea(inout c : JComponent, inout g : Graphics, in x : int, in y : int, in w : int, in h : int, in deltaX : int, in deltaY : int, inout clip : boolean) : void
+            g.copyArea(x, y, w, h, deltaX, deltaY);
+!!!10433794.java!!!	show(inout c : Container, in x : int, in y : int, in w : int, in h : int) : boolean
+            return false;
+!!!10434050.java!!!	paintDoubleBuffered(inout c : JComponent, inout image : Image, inout g : Graphics, in clipX : int, in clipY : int, in clipW : int, in clipH : int) : void
+            Graphics osg = image.getGraphics();
+            int bw = Math.min(clipW, image.getWidth(null));
+            int bh = Math.min(clipH, image.getHeight(null));
+            int x,y,maxx,maxy;
+
+            try {
+                for(x = clipX, maxx = clipX+clipW; x < maxx ;  x += bw ) {
+                    for(y=clipY, maxy = clipY + clipH; y < maxy ; y += bh) {
+                        osg.translate(-x, -y);
+                        osg.setClip(x,y,bw,bh);
+                        if (volatileBufferType != Transparency.OPAQUE
+                                && osg instanceof Graphics2D) {
+                            final Graphics2D g2d = (Graphics2D) osg;
+                            final Color oldBg = g2d.getBackground();
+                            g2d.setBackground(c.getBackground());
+                            g2d.clearRect(x, y, bw, bh);
+                            g2d.setBackground(oldBg);
+                        }
+                        c.paintToOffscreen(osg, x, y, bw, bh, maxx, maxy);
+                        g.setClip(x, y, bw, bh);
+                        if (volatileBufferType != Transparency.OPAQUE
+                                && g instanceof Graphics2D) {
+                            final Graphics2D g2d = (Graphics2D) g;
+                            final Composite oldComposite = g2d.getComposite();
+                            g2d.setComposite(AlphaComposite.Src);
+                            g2d.drawImage(image, x, y, c);
+                            g2d.setComposite(oldComposite);
+                        } else {
+                            g.drawImage(image, x, y, c);
+                        }
+                        osg.translate(x, y);
+                    }
+                }
+            } finally {
+                osg.dispose();
+            }
+!!!10434178.java!!!	getValidImage(inout image : Image) : Image
+            if (image != null && image.getWidth(null) > 0 &&
+                                 image.getHeight(null) > 0) {
+                return image;
+            }
+            return null;
+!!!10434306.java!!!	repaintRoot(inout root : JComponent) : void
+            assert (repaintManager.repaintRoot == null);
+            if (repaintManager.painting) {
+                repaintManager.repaintRoot = root;
+            }
+            else {
+                root.repaint();
+            }
+!!!10434434.java!!!	isRepaintingRoot() : boolean
+            return isRepaintingRoot;

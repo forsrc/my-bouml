@@ -1,0 +1,98 @@
+class ProxyLazyValue
+!!!2129794.java!!!	ProxyLazyValue(inout c : String)
+            this(c, (String)null);
+!!!2129922.java!!!	ProxyLazyValue(inout c : String, inout m : String)
+            this(c, m, null);
+!!!2130050.java!!!	ProxyLazyValue(inout c : String, inout o : Object [[]])
+            this(c, null, o);
+!!!2130178.java!!!	ProxyLazyValue(inout c : String, inout m : String, inout o : Object [[]])
+            acc = AccessController.getContext();
+            className = c;
+            methodName = m;
+            if (o != null) {
+                args = o.clone();
+            }
+!!!2130306.java!!!	createValue(in table : UIDefaults) : Object
+            // In order to pick up the security policy in effect at the
+            // time of creation we use a doPrivileged with the
+            // AccessControlContext that was in place when this was created.
+            if (acc == null && System.getSecurityManager() != null) {
+                throw new SecurityException("null AccessControlContext");
+            }
+            return AccessController.doPrivileged(new PrivilegedAction<Object>() {
+                public Object run() {
+                    try {
+                        Class<?> c;
+                        Object cl;
+                        // See if we should use a separate ClassLoader
+                        if (table == null || !((cl = table.get("ClassLoader"))
+                                               instanceof ClassLoader)) {
+                            cl = Thread.currentThread().
+                                        getContextClassLoader();
+                            if (cl == null) {
+                                // Fallback to the system class loader.
+                                cl = ClassLoader.getSystemClassLoader();
+                            }
+                        }
+                        ReflectUtil.checkPackageAccess(className);
+                        c = Class.forName(className, true, (ClassLoader)cl);
+                        SwingUtilities2.checkAccess(c.getModifiers());
+                        if (methodName != null) {
+                            Class[] types = getClassArray(args);
+                            Method m = c.getMethod(methodName, types);
+                            return MethodUtil.invoke(m, c, args);
+                        } else {
+                            Class[] types = getClassArray(args);
+                            Constructor constructor = c.getConstructor(types);
+                            SwingUtilities2.checkAccess(constructor.getModifiers());
+                            return constructor.newInstance(args);
+                        }
+                    } catch(Exception e) {
+                        // Ideally we would throw an exception, unfortunately
+                        // often times there are errors as an initial look and
+                        // feel is loaded before one can be switched. Perhaps a
+                        // flag should be added for debugging, so that if true
+                        // the exception would be thrown.
+                    }
+                    return null;
+                }
+            }, acc);
+!!!2130434.java!!!	getClassArray(inout args : Object [[]]) : Class
+            Class[] types = null;
+            if (args!=null) {
+                types = new Class[args.length];
+                for (int i = 0; i< args.length; i++) {
+                    /* PENDING(ges): At present only the primitive types
+                       used are handled correctly; this should eventually
+                       handle all primitive types */
+                    if (args[i] instanceof java.lang.Integer) {
+                        types[i]=Integer.TYPE;
+                    } else if (args[i] instanceof java.lang.Boolean) {
+                        types[i]=Boolean.TYPE;
+                    } else if (args[i] instanceof javax.swing.plaf.ColorUIResource) {
+                        /* PENDING(ges) Currently the Reflection APIs do not
+                           search superclasses of parameters supplied for
+                           constructor/method lookup.  Since we only have
+                           one case where this is needed, we substitute
+                           directly instead of adding a massive amount
+                           of mechanism for this.  Eventually this will
+                           probably need to handle the general case as well.
+                           */
+                        types[i]=java.awt.Color.class;
+                    } else {
+                        types[i]=args[i].getClass();
+                    }
+                }
+            }
+            return types;
+!!!2130562.java!!!	printArgs(inout array : Object [[]]) : String
+            String s = "{";
+            if (array !=null) {
+                for (int i = 0 ; i < array.length-1; i++) {
+                    s = s.concat(array[i] + ",");
+                }
+                s = s.concat(array[array.length-1] + "}");
+            } else {
+                s = s.concat("}");
+            }
+            return s;

@@ -1,0 +1,138 @@
+class PropertyPermissionCollection
+!!!8879618.java!!!	PropertyPermissionCollection()
+        perms = new HashMap<>(32);     // Capacity for default policy
+        all_allowed = false;
+!!!8879746.java!!!	add(inout permission : Permission) : void
+        if (! (permission instanceof PropertyPermission))
+            throw new IllegalArgumentException("invalid permission: "+
+                                               permission);
+        if (isReadOnly())
+            throw new SecurityException(
+                "attempt to add a Permission to a readonly PermissionCollection");
+
+        PropertyPermission pp = (PropertyPermission) permission;
+        String propName = pp.getName();
+
+        synchronized (this) {
+            PropertyPermission existing = perms.get(propName);
+
+            if (existing != null) {
+                int oldMask = existing.getMask();
+                int newMask = pp.getMask();
+                if (oldMask != newMask) {
+                    int effective = oldMask | newMask;
+                    String actions = PropertyPermission.getActions(effective);
+                    perms.put(propName, new PropertyPermission(propName, actions));
+                }
+            } else {
+                perms.put(propName, pp);
+            }
+        }
+
+        if (!all_allowed) {
+            if (propName.equals("*"))
+                all_allowed = true;
+        }
+!!!8879874.java!!!	implies(inout permission : Permission) : boolean
+        if (! (permission instanceof PropertyPermission))
+                return false;
+
+        PropertyPermission pp = (PropertyPermission) permission;
+        PropertyPermission x;
+
+        int desired = pp.getMask();
+        int effective = 0;
+
+        // short circuit if the "*" Permission was added
+        if (all_allowed) {
+            synchronized (this) {
+                x = perms.get("*");
+            }
+            if (x != null) {
+                effective |= x.getMask();
+                if ((effective & desired) == desired)
+                    return true;
+            }
+        }
+
+        // strategy:
+        // Check for full match first. Then work our way up the
+        // name looking for matches on a.b.*
+
+        String name = pp.getName();
+        //System.out.println("check "+name);
+
+        synchronized (this) {
+            x = perms.get(name);
+        }
+
+        if (x != null) {
+            // we have a direct hit!
+            effective |= x.getMask();
+            if ((effective & desired) == desired)
+                return true;
+        }
+
+        // work our way up the tree...
+        int last, offset;
+
+        offset = name.length()-1;
+
+        while ((last = name.lastIndexOf(".", offset)) != -1) {
+
+            name = name.substring(0, last+1) + "*";
+            //System.out.println("check "+name);
+            synchronized (this) {
+                x = perms.get(name);
+            }
+
+            if (x != null) {
+                effective |= x.getMask();
+                if ((effective & desired) == desired)
+                    return true;
+            }
+            offset = last -1;
+        }
+
+        // we don't have to check for "*" as it was already checked
+        // at the top (all_allowed), so we just return false
+        return false;
+!!!8880002.java!!!	elements() : Enumeration
+        // Convert Iterator of Map values into an Enumeration
+        synchronized (this) {
+            /**
+             * Casting to rawtype since Enumeration<PropertyPermission>
+             * cannot be directly cast to Enumeration<Permission>
+             */
+            return (Enumeration)Collections.enumeration(perms.values());
+        }
+!!!8880130.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        // Don't call out.defaultWriteObject()
+
+        // Copy perms into a Hashtable
+        Hashtable<String, Permission> permissions =
+            new Hashtable<>(perms.size()*2);
+        synchronized (this) {
+            permissions.putAll(perms);
+        }
+
+        // Write out serializable fields
+        ObjectOutputStream.PutField pfields = out.putFields();
+        pfields.put("all_allowed", all_allowed);
+        pfields.put("permissions", permissions);
+        out.writeFields();
+!!!8880258.java!!!	readObject(inout in : ObjectInputStream) : void
+        // Don't call defaultReadObject()
+
+        // Read in serialized fields
+        ObjectInputStream.GetField gfields = in.readFields();
+
+        // Get all_allowed
+        all_allowed = gfields.get("all_allowed", false);
+
+        // Get permissions
+        @SuppressWarnings("unchecked")
+        Hashtable<String, PropertyPermission> permissions =
+            (Hashtable<String, PropertyPermission>)gfields.get("permissions", null);
+        perms = new HashMap<>(permissions.size()*2);
+        perms.putAll(permissions);

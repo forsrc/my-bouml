@@ -1,0 +1,178 @@
+class PipedInputStream
+!!!6903554.java!!!	PipedInputStream(inout src : PipedOutputStream)
+        this(src, DEFAULT_PIPE_SIZE);
+!!!6903682.java!!!	PipedInputStream(inout src : PipedOutputStream, in pipeSize : int)
+         initPipe(pipeSize);
+         connect(src);
+!!!6903810.java!!!	PipedInputStream()
+        initPipe(DEFAULT_PIPE_SIZE);
+!!!6903938.java!!!	PipedInputStream(in pipeSize : int)
+        initPipe(pipeSize);
+!!!6904066.java!!!	initPipe(in pipeSize : int) : void
+         if (pipeSize <= 0) {
+            throw new IllegalArgumentException("Pipe Size <= 0");
+         }
+         buffer = new byte[pipeSize];
+!!!6904194.java!!!	connect(inout src : PipedOutputStream) : void
+        src.connect(this);
+!!!6904322.java!!!	receive(in b : int) : void
+        checkStateForReceive();
+        writeSide = Thread.currentThread();
+        if (in == out)
+            awaitSpace();
+        if (in < 0) {
+            in = 0;
+            out = 0;
+        }
+        buffer[in++] = (byte)(b & 0xFF);
+        if (in >= buffer.length) {
+            in = 0;
+        }
+!!!6904450.java!!!	receive(inout b : byte [[]], in off : int, in len : int) : void
+        checkStateForReceive();
+        writeSide = Thread.currentThread();
+        int bytesToTransfer = len;
+        while (bytesToTransfer > 0) {
+            if (in == out)
+                awaitSpace();
+            int nextTransferAmount = 0;
+            if (out < in) {
+                nextTransferAmount = buffer.length - in;
+            } else if (in < out) {
+                if (in == -1) {
+                    in = out = 0;
+                    nextTransferAmount = buffer.length - in;
+                } else {
+                    nextTransferAmount = out - in;
+                }
+            }
+            if (nextTransferAmount > bytesToTransfer)
+                nextTransferAmount = bytesToTransfer;
+            assert(nextTransferAmount > 0);
+            System.arraycopy(b, off, buffer, in, nextTransferAmount);
+            bytesToTransfer -= nextTransferAmount;
+            off += nextTransferAmount;
+            in += nextTransferAmount;
+            if (in >= buffer.length) {
+                in = 0;
+            }
+        }
+!!!6904578.java!!!	checkStateForReceive() : void
+        if (!connected) {
+            throw new IOException("Pipe not connected");
+        } else if (closedByWriter || closedByReader) {
+            throw new IOException("Pipe closed");
+        } else if (readSide != null && !readSide.isAlive()) {
+            throw new IOException("Read end dead");
+        }
+!!!6904706.java!!!	awaitSpace() : void
+        while (in == out) {
+            checkStateForReceive();
+
+            /* full: kick any waiting readers */
+            notifyAll();
+            try {
+                wait(1000);
+            } catch (InterruptedException ex) {
+                throw new java.io.InterruptedIOException();
+            }
+        }
+!!!6904834.java!!!	receivedLast() : void
+        closedByWriter = true;
+        notifyAll();
+!!!6904962.java!!!	read() : int
+        if (!connected) {
+            throw new IOException("Pipe not connected");
+        } else if (closedByReader) {
+            throw new IOException("Pipe closed");
+        } else if (writeSide != null && !writeSide.isAlive()
+                   && !closedByWriter && (in < 0)) {
+            throw new IOException("Write end dead");
+        }
+
+        readSide = Thread.currentThread();
+        int trials = 2;
+        while (in < 0) {
+            if (closedByWriter) {
+                /* closed by writer, return EOF */
+                return -1;
+            }
+            if ((writeSide != null) && (!writeSide.isAlive()) && (--trials < 0)) {
+                throw new IOException("Pipe broken");
+            }
+            /* might be a writer waiting */
+            notifyAll();
+            try {
+                wait(1000);
+            } catch (InterruptedException ex) {
+                throw new java.io.InterruptedIOException();
+            }
+        }
+        int ret = buffer[out++] & 0xFF;
+        if (out >= buffer.length) {
+            out = 0;
+        }
+        if (in == out) {
+            /* now empty */
+            in = -1;
+        }
+
+        return ret;
+!!!6905090.java!!!	read(inout b : byte [[]], in off : int, in len : int) : int
+        if (b == null) {
+            throw new NullPointerException();
+        } else if (off < 0 || len < 0 || len > b.length - off) {
+            throw new IndexOutOfBoundsException();
+        } else if (len == 0) {
+            return 0;
+        }
+
+        /* possibly wait on the first character */
+        int c = read();
+        if (c < 0) {
+            return -1;
+        }
+        b[off] = (byte) c;
+        int rlen = 1;
+        while ((in >= 0) && (len > 1)) {
+
+            int available;
+
+            if (in > out) {
+                available = Math.min((buffer.length - out), (in - out));
+            } else {
+                available = buffer.length - out;
+            }
+
+            // A byte is read beforehand outside the loop
+            if (available > (len - 1)) {
+                available = len - 1;
+            }
+            System.arraycopy(buffer, out, b, off + rlen, available);
+            out += available;
+            rlen += available;
+            len -= available;
+
+            if (out >= buffer.length) {
+                out = 0;
+            }
+            if (in == out) {
+                /* now empty */
+                in = -1;
+            }
+        }
+        return rlen;
+!!!6905218.java!!!	available() : int
+        if(in < 0)
+            return 0;
+        else if(in == out)
+            return buffer.length;
+        else if (in > out)
+            return in - out;
+        else
+            return in + buffer.length - out;
+!!!6905346.java!!!	close() : void
+        closedByReader = true;
+        synchronized (this) {
+            in = -1;
+        }

@@ -1,0 +1,1015 @@
+class ObjectInputStream
+!!!405378.java!!!	ObjectInputStream(inout in : InputStream)
+        verifySubclass();
+        bin = new BlockDataInputStream(in);
+        handles = new HandleTable(10);
+        vlist = new ValidationList();
+        serialFilter = ObjectInputFilter.Config.getSerialFilter();
+        enableOverride = false;
+        readStreamHeader();
+        bin.setBlockDataMode(true);
+!!!405506.java!!!	ObjectInputStream()
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            sm.checkPermission(SUBCLASS_IMPLEMENTATION_PERMISSION);
+        }
+        bin = null;
+        handles = null;
+        vlist = null;
+        serialFilter = ObjectInputFilter.Config.getSerialFilter();
+        enableOverride = true;
+!!!405634.java!!!	readObject() : Object
+        if (enableOverride) {
+            return readObjectOverride();
+        }
+
+        // if nested read, passHandle contains handle of enclosing object
+        int outerHandle = passHandle;
+        try {
+            Object obj = readObject0(false);
+            handles.markDependency(outerHandle, passHandle);
+            ClassNotFoundException ex = handles.lookupException(passHandle);
+            if (ex != null) {
+                throw ex;
+            }
+            if (depth == 0) {
+                vlist.doCallbacks();
+            }
+            return obj;
+        } finally {
+            passHandle = outerHandle;
+            if (closed && depth == 0) {
+                clear();
+            }
+        }
+!!!405762.java!!!	readObjectOverride() : Object
+        return null;
+!!!405890.java!!!	readUnshared() : Object
+        // if nested read, passHandle contains handle of enclosing object
+        int outerHandle = passHandle;
+        try {
+            Object obj = readObject0(true);
+            handles.markDependency(outerHandle, passHandle);
+            ClassNotFoundException ex = handles.lookupException(passHandle);
+            if (ex != null) {
+                throw ex;
+            }
+            if (depth == 0) {
+                vlist.doCallbacks();
+            }
+            return obj;
+        } finally {
+            passHandle = outerHandle;
+            if (closed && depth == 0) {
+                clear();
+            }
+        }
+!!!406018.java!!!	defaultReadObject() : void
+        SerialCallbackContext ctx = curContext;
+        if (ctx == null) {
+            throw new NotActiveException("not in call to readObject");
+        }
+        Object curObj = ctx.getObj();
+        ObjectStreamClass curDesc = ctx.getDesc();
+        bin.setBlockDataMode(false);
+        defaultReadFields(curObj, curDesc);
+        bin.setBlockDataMode(true);
+        if (!curDesc.hasWriteObjectData()) {
+            /*
+             * Fix for 4360508: since stream does not contain terminating
+             * TC_ENDBLOCKDATA tag, set flag so that reading code elsewhere
+             * knows to simulate end-of-custom-data behavior.
+             */
+            defaultDataEnd = true;
+        }
+        ClassNotFoundException ex = handles.lookupException(passHandle);
+        if (ex != null) {
+            throw ex;
+        }
+!!!406146.java!!!	readFields() : ObjectInputStream::GetField
+        SerialCallbackContext ctx = curContext;
+        if (ctx == null) {
+            throw new NotActiveException("not in call to readObject");
+        }
+        Object curObj = ctx.getObj();
+        ObjectStreamClass curDesc = ctx.getDesc();
+        bin.setBlockDataMode(false);
+        GetFieldImpl getField = new GetFieldImpl(curDesc);
+        getField.readFields();
+        bin.setBlockDataMode(true);
+        if (!curDesc.hasWriteObjectData()) {
+            /*
+             * Fix for 4360508: since stream does not contain terminating
+             * TC_ENDBLOCKDATA tag, set flag so that reading code elsewhere
+             * knows to simulate end-of-custom-data behavior.
+             */
+            defaultDataEnd = true;
+        }
+
+        return getField;
+!!!406274.java!!!	registerValidation(inout obj : ObjectInputValidation, in prio : int) : void
+        if (depth == 0) {
+            throw new NotActiveException("stream inactive");
+        }
+        vlist.register(obj, prio);
+!!!406402.java!!!	resolveClass(inout desc : ObjectStreamClass) : Class
+        String name = desc.getName();
+        try {
+            return Class.forName(name, false, latestUserDefinedLoader());
+        } catch (ClassNotFoundException ex) {
+            Class<?> cl = primClasses.get(name);
+            if (cl != null) {
+                return cl;
+            } else {
+                throw ex;
+            }
+        }
+!!!406530.java!!!	resolveProxyClass(inout interfaces : String [[]]) : Class
+        ClassLoader latestLoader = latestUserDefinedLoader();
+        ClassLoader nonPublicLoader = null;
+        boolean hasNonPublicInterface = false;
+
+        // define proxy in class loader of non-public interface(s), if any
+        Class<?>[] classObjs = new Class<?>[interfaces.length];
+        for (int i = 0; i < interfaces.length; i++) {
+            Class<?> cl = Class.forName(interfaces[i], false, latestLoader);
+            if ((cl.getModifiers() & Modifier.PUBLIC) == 0) {
+                if (hasNonPublicInterface) {
+                    if (nonPublicLoader != cl.getClassLoader()) {
+                        throw new IllegalAccessError(
+                            "conflicting non-public interface class loaders");
+                    }
+                } else {
+                    nonPublicLoader = cl.getClassLoader();
+                    hasNonPublicInterface = true;
+                }
+            }
+            classObjs[i] = cl;
+        }
+        try {
+            return Proxy.getProxyClass(
+                hasNonPublicInterface ? nonPublicLoader : latestLoader,
+                classObjs);
+        } catch (IllegalArgumentException e) {
+            throw new ClassNotFoundException(null, e);
+        }
+!!!406658.java!!!	resolveObject(inout obj : Object) : Object
+        return obj;
+!!!406786.java!!!	enableResolveObject(inout enable : boolean) : boolean
+        if (enable == enableResolve) {
+            return enable;
+        }
+        if (enable) {
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                sm.checkPermission(SUBSTITUTION_PERMISSION);
+            }
+        }
+        enableResolve = enable;
+        return !enableResolve;
+!!!406914.java!!!	readStreamHeader() : void
+        short s0 = bin.readShort();
+        short s1 = bin.readShort();
+        if (s0 != STREAM_MAGIC || s1 != STREAM_VERSION) {
+            throw new StreamCorruptedException(
+                String.format("invalid stream header: %04X%04X", s0, s1));
+        }
+!!!407042.java!!!	readClassDescriptor() : ObjectStreamClass
+        ObjectStreamClass desc = new ObjectStreamClass();
+        desc.readNonProxy(this);
+        return desc;
+!!!407170.java!!!	read() : int
+        return bin.read();
+!!!407298.java!!!	read(inout buf : byte [[]], in off : int, in len : int) : int
+        if (buf == null) {
+            throw new NullPointerException();
+        }
+        int endoff = off + len;
+        if (off < 0 || len < 0 || endoff > buf.length || endoff < 0) {
+            throw new IndexOutOfBoundsException();
+        }
+        return bin.read(buf, off, len, false);
+!!!407426.java!!!	available() : int
+        return bin.available();
+!!!407554.java!!!	close() : void
+        /*
+         * Even if stream already closed, propagate redundant close to
+         * underlying stream to stay consistent with previous implementations.
+         */
+        closed = true;
+        if (depth == 0) {
+            clear();
+        }
+        bin.close();
+!!!407682.java!!!	readBoolean() : boolean
+        return bin.readBoolean();
+!!!407810.java!!!	readByte() : byte
+        return bin.readByte();
+!!!407938.java!!!	readUnsignedByte() : int
+        return bin.readUnsignedByte();
+!!!408066.java!!!	readChar() : char
+        return bin.readChar();
+!!!408194.java!!!	readShort() : short
+        return bin.readShort();
+!!!408322.java!!!	readUnsignedShort() : int
+        return bin.readUnsignedShort();
+!!!408450.java!!!	readInt() : int
+        return bin.readInt();
+!!!408578.java!!!	readLong() : long
+        return bin.readLong();
+!!!408706.java!!!	readFloat() : float
+        return bin.readFloat();
+!!!408834.java!!!	readDouble() : double
+        return bin.readDouble();
+!!!408962.java!!!	readFully(inout buf : byte [[]]) : void
+        bin.readFully(buf, 0, buf.length, false);
+!!!409090.java!!!	readFully(inout buf : byte [[]], in off : int, in len : int) : void
+        int endoff = off + len;
+        if (off < 0 || len < 0 || endoff > buf.length || endoff < 0) {
+            throw new IndexOutOfBoundsException();
+        }
+        bin.readFully(buf, off, len, false);
+!!!409218.java!!!	skipBytes(in len : int) : int
+        return bin.skipBytes(len);
+!!!409346.java!!!	readLine() : String
+        return bin.readLine();
+!!!409474.java!!!	readUTF() : String
+        return bin.readUTF();
+!!!409602.java!!!	getInternalObjectInputFilter() : ObjectInputFilter
+        return serialFilter;
+!!!409730.java!!!	setInternalObjectInputFilter(inout filter : ObjectInputFilter) : void
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            sm.checkPermission(new SerializablePermission("serialFilter"));
+        }
+        // Allow replacement of the process-wide filter if not already set
+        if (serialFilter != null &&
+                serialFilter != ObjectInputFilter.Config.getSerialFilter()) {
+            throw new IllegalStateException("filter can not be set more than once");
+        }
+        this.serialFilter = filter;
+!!!409858.java!!!	filterCheck(inout clazz : Class, in arrayLength : int) : void
+        if (serialFilter != null) {
+            RuntimeException ex = null;
+            ObjectInputFilter.Status status;
+            try {
+                status = serialFilter.checkInput(new FilterValues(clazz, arrayLength,
+                        totalObjectRefs, depth, bin.getBytesRead()));
+            } catch (RuntimeException e) {
+                // Preventive interception of an exception to log
+                status = ObjectInputFilter.Status.REJECTED;
+                ex = e;
+            }
+            if (status == null  ||
+                    status == ObjectInputFilter.Status.REJECTED) {
+                // Debug logging of filter checks that fail
+                if (Logging.infoLogger != null) {
+                    Logging.infoLogger.info(
+                            "ObjectInputFilter {0}: {1}, array length: {2}, nRefs: {3}, depth: {4}, bytes: {5}, ex: {6}",
+                            status, clazz, arrayLength, totalObjectRefs, depth, bin.getBytesRead(),
+                            Objects.toString(ex, "n/a"));
+                }
+                InvalidClassException ice = new InvalidClassException("filter status: " + status);
+                ice.initCause(ex);
+                throw ice;
+            } else {
+                // Trace logging for those that succeed
+                if (Logging.traceLogger != null) {
+                    Logging.traceLogger.finer(
+                            "ObjectInputFilter {0}: {1}, array length: {2}, nRefs: {3}, depth: {4}, bytes: {5}, ex: {6}",
+                            status, clazz, arrayLength, totalObjectRefs, depth, bin.getBytesRead(),
+                            Objects.toString(ex, "n/a"));
+                }
+            }
+        }
+!!!411394.java!!!	verifySubclass() : void
+        Class<?> cl = getClass();
+        if (cl == ObjectInputStream.class) {
+            return;
+        }
+        SecurityManager sm = System.getSecurityManager();
+        if (sm == null) {
+            return;
+        }
+        processQueue(Caches.subclassAuditsQueue, Caches.subclassAudits);
+        WeakClassKey key = new WeakClassKey(cl, Caches.subclassAuditsQueue);
+        Boolean result = Caches.subclassAudits.get(key);
+        if (result == null) {
+            result = Boolean.valueOf(auditSubclass(cl));
+            Caches.subclassAudits.putIfAbsent(key, result);
+        }
+        if (result.booleanValue()) {
+            return;
+        }
+        sm.checkPermission(SUBCLASS_IMPLEMENTATION_PERMISSION);
+!!!411522.java!!!	auditSubclass(in subcl : Class) : boolean
+        Boolean result = AccessController.doPrivileged(
+            new PrivilegedAction<Boolean>() {
+                public Boolean run() {
+                    for (Class<?> cl = subcl;
+                         cl != ObjectInputStream.class;
+                         cl = cl.getSuperclass())
+                    {
+                        try {
+                            cl.getDeclaredMethod(
+                                "readUnshared", (Class[]) null);
+                            return Boolean.FALSE;
+                        } catch (NoSuchMethodException ex) {
+                        }
+                        try {
+                            cl.getDeclaredMethod("readFields", (Class[]) null);
+                            return Boolean.FALSE;
+                        } catch (NoSuchMethodException ex) {
+                        }
+                    }
+                    return Boolean.TRUE;
+                }
+            }
+        );
+        return result.booleanValue();
+!!!411650.java!!!	clear() : void
+        handles.clear();
+        vlist.clear();
+!!!411778.java!!!	readObject0(inout unshared : boolean) : Object
+        boolean oldMode = bin.getBlockDataMode();
+        if (oldMode) {
+            int remain = bin.currentBlockRemaining();
+            if (remain > 0) {
+                throw new OptionalDataException(remain);
+            } else if (defaultDataEnd) {
+                /*
+                 * Fix for 4360508: stream is currently at the end of a field
+                 * value block written via default serialization; since there
+                 * is no terminating TC_ENDBLOCKDATA tag, simulate
+                 * end-of-custom-data behavior explicitly.
+                 */
+                throw new OptionalDataException(true);
+            }
+            bin.setBlockDataMode(false);
+        }
+
+        byte tc;
+        while ((tc = bin.peekByte()) == TC_RESET) {
+            bin.readByte();
+            handleReset();
+        }
+
+        depth++;
+        totalObjectRefs++;
+        try {
+            switch (tc) {
+                case TC_NULL:
+                    return readNull();
+
+                case TC_REFERENCE:
+                    return readHandle(unshared);
+
+                case TC_CLASS:
+                    return readClass(unshared);
+
+                case TC_CLASSDESC:
+                case TC_PROXYCLASSDESC:
+                    return readClassDesc(unshared);
+
+                case TC_STRING:
+                case TC_LONGSTRING:
+                    return checkResolve(readString(unshared));
+
+                case TC_ARRAY:
+                    return checkResolve(readArray(unshared));
+
+                case TC_ENUM:
+                    return checkResolve(readEnum(unshared));
+
+                case TC_OBJECT:
+                    return checkResolve(readOrdinaryObject(unshared));
+
+                case TC_EXCEPTION:
+                    IOException ex = readFatalException();
+                    throw new WriteAbortedException("writing aborted", ex);
+
+                case TC_BLOCKDATA:
+                case TC_BLOCKDATALONG:
+                    if (oldMode) {
+                        bin.setBlockDataMode(true);
+                        bin.peek();             // force header read
+                        throw new OptionalDataException(
+                            bin.currentBlockRemaining());
+                    } else {
+                        throw new StreamCorruptedException(
+                            "unexpected block data");
+                    }
+
+                case TC_ENDBLOCKDATA:
+                    if (oldMode) {
+                        throw new OptionalDataException(true);
+                    } else {
+                        throw new StreamCorruptedException(
+                            "unexpected end of block data");
+                    }
+
+                default:
+                    throw new StreamCorruptedException(
+                        String.format("invalid type code: %02X", tc));
+            }
+        } finally {
+            depth--;
+            bin.setBlockDataMode(oldMode);
+        }
+!!!411906.java!!!	checkResolve(inout obj : Object) : Object
+        if (!enableResolve || handles.lookupException(passHandle) != null) {
+            return obj;
+        }
+        Object rep = resolveObject(obj);
+        if (rep != obj) {
+            // The type of the original object has been filtered but resolveObject
+            // may have replaced it;  filter the replacement's type
+            if (rep != null) {
+                if (rep.getClass().isArray()) {
+                    filterCheck(rep.getClass(), Array.getLength(rep));
+                } else {
+                    filterCheck(rep.getClass(), -1);
+                }
+            }
+            handles.setObject(passHandle, rep);
+        }
+        return rep;
+!!!412034.java!!!	readTypeString() : String
+        int oldHandle = passHandle;
+        try {
+            byte tc = bin.peekByte();
+            switch (tc) {
+                case TC_NULL:
+                    return (String) readNull();
+
+                case TC_REFERENCE:
+                    return (String) readHandle(false);
+
+                case TC_STRING:
+                case TC_LONGSTRING:
+                    return readString(false);
+
+                default:
+                    throw new StreamCorruptedException(
+                        String.format("invalid type code: %02X", tc));
+            }
+        } finally {
+            passHandle = oldHandle;
+        }
+!!!412162.java!!!	readNull() : Object
+        if (bin.readByte() != TC_NULL) {
+            throw new InternalError();
+        }
+        passHandle = NULL_HANDLE;
+        return null;
+!!!412290.java!!!	readHandle(inout unshared : boolean) : Object
+        if (bin.readByte() != TC_REFERENCE) {
+            throw new InternalError();
+        }
+        passHandle = bin.readInt() - baseWireHandle;
+        if (passHandle < 0 || passHandle >= handles.size()) {
+            throw new StreamCorruptedException(
+                String.format("invalid handle value: %08X", passHandle +
+                baseWireHandle));
+        }
+        if (unshared) {
+            // REMIND: what type of exception to throw here?
+            throw new InvalidObjectException(
+                "cannot read back reference as unshared");
+        }
+
+        Object obj = handles.lookupObject(passHandle);
+        if (obj == unsharedMarker) {
+            // REMIND: what type of exception to throw here?
+            throw new InvalidObjectException(
+                "cannot read back reference to unshared object");
+        }
+        filterCheck(null, -1);       // just a check for number of references, depth, no class
+        return obj;
+!!!412418.java!!!	readClass(inout unshared : boolean) : Class
+        if (bin.readByte() != TC_CLASS) {
+            throw new InternalError();
+        }
+        ObjectStreamClass desc = readClassDesc(false);
+        Class<?> cl = desc.forClass();
+        passHandle = handles.assign(unshared ? unsharedMarker : cl);
+
+        ClassNotFoundException resolveEx = desc.getResolveException();
+        if (resolveEx != null) {
+            handles.markException(passHandle, resolveEx);
+        }
+
+        handles.finish(passHandle);
+        return cl;
+!!!412546.java!!!	readClassDesc(inout unshared : boolean) : ObjectStreamClass
+        byte tc = bin.peekByte();
+        ObjectStreamClass descriptor;
+        switch (tc) {
+            case TC_NULL:
+                descriptor = (ObjectStreamClass) readNull();
+                break;
+            case TC_REFERENCE:
+                descriptor = (ObjectStreamClass) readHandle(unshared);
+                break;
+            case TC_PROXYCLASSDESC:
+                descriptor = readProxyDesc(unshared);
+                break;
+            case TC_CLASSDESC:
+                descriptor = readNonProxyDesc(unshared);
+                break;
+            default:
+                throw new StreamCorruptedException(
+                    String.format("invalid type code: %02X", tc));
+        }
+        if (descriptor != null) {
+            validateDescriptor(descriptor);
+        }
+        return descriptor;
+!!!412674.java!!!	isCustomSubclass() : boolean
+        // Return true if this class is a custom subclass of ObjectInputStream
+        return getClass().getClassLoader()
+                    != ObjectInputStream.class.getClassLoader();
+!!!412802.java!!!	readProxyDesc(inout unshared : boolean) : ObjectStreamClass
+        if (bin.readByte() != TC_PROXYCLASSDESC) {
+            throw new InternalError();
+        }
+
+        ObjectStreamClass desc = new ObjectStreamClass();
+        int descHandle = handles.assign(unshared ? unsharedMarker : desc);
+        passHandle = NULL_HANDLE;
+
+        int numIfaces = bin.readInt();
+        String[] ifaces = new String[numIfaces];
+        for (int i = 0; i < numIfaces; i++) {
+            ifaces[i] = bin.readUTF();
+        }
+
+        Class<?> cl = null;
+        ClassNotFoundException resolveEx = null;
+        bin.setBlockDataMode(true);
+        try {
+            if ((cl = resolveProxyClass(ifaces)) == null) {
+                resolveEx = new ClassNotFoundException("null class");
+            } else if (!Proxy.isProxyClass(cl)) {
+                throw new InvalidClassException("Not a proxy");
+            } else {
+                // ReflectUtil.checkProxyPackageAccess makes a test
+                // equivalent to isCustomSubclass so there's no need
+                // to condition this call to isCustomSubclass == true here.
+                ReflectUtil.checkProxyPackageAccess(
+                        getClass().getClassLoader(),
+                        cl.getInterfaces());
+                // Filter the interfaces
+                for (Class<?> clazz : cl.getInterfaces()) {
+                    filterCheck(clazz, -1);
+                }
+            }
+        } catch (ClassNotFoundException ex) {
+            resolveEx = ex;
+        }
+
+        // Call filterCheck on the class before reading anything else
+        filterCheck(cl, -1);
+
+        skipCustomData();
+
+        try {
+            totalObjectRefs++;
+            depth++;
+            desc.initProxy(cl, resolveEx, readClassDesc(false));
+        } finally {
+            depth--;
+        }
+
+        handles.finish(descHandle);
+        passHandle = descHandle;
+        return desc;
+!!!412930.java!!!	readNonProxyDesc(inout unshared : boolean) : ObjectStreamClass
+        if (bin.readByte() != TC_CLASSDESC) {
+            throw new InternalError();
+        }
+
+        ObjectStreamClass desc = new ObjectStreamClass();
+        int descHandle = handles.assign(unshared ? unsharedMarker : desc);
+        passHandle = NULL_HANDLE;
+
+        ObjectStreamClass readDesc = null;
+        try {
+            readDesc = readClassDescriptor();
+        } catch (ClassNotFoundException ex) {
+            throw (IOException) new InvalidClassException(
+                "failed to read class descriptor").initCause(ex);
+        }
+
+        Class<?> cl = null;
+        ClassNotFoundException resolveEx = null;
+        bin.setBlockDataMode(true);
+        final boolean checksRequired = isCustomSubclass();
+        try {
+            if ((cl = resolveClass(readDesc)) == null) {
+                resolveEx = new ClassNotFoundException("null class");
+            } else if (checksRequired) {
+                ReflectUtil.checkPackageAccess(cl);
+            }
+        } catch (ClassNotFoundException ex) {
+            resolveEx = ex;
+        }
+
+        // Call filterCheck on the class before reading anything else
+        filterCheck(cl, -1);
+
+        skipCustomData();
+
+        try {
+            totalObjectRefs++;
+            depth++;
+            desc.initNonProxy(readDesc, cl, resolveEx, readClassDesc(false));
+        } finally {
+            depth--;
+        }
+
+        handles.finish(descHandle);
+        passHandle = descHandle;
+
+        return desc;
+!!!413058.java!!!	readString(inout unshared : boolean) : String
+        String str;
+        byte tc = bin.readByte();
+        switch (tc) {
+            case TC_STRING:
+                str = bin.readUTF();
+                break;
+
+            case TC_LONGSTRING:
+                str = bin.readLongUTF();
+                break;
+
+            default:
+                throw new StreamCorruptedException(
+                    String.format("invalid type code: %02X", tc));
+        }
+        passHandle = handles.assign(unshared ? unsharedMarker : str);
+        handles.finish(passHandle);
+        return str;
+!!!413186.java!!!	readArray(inout unshared : boolean) : Object
+        if (bin.readByte() != TC_ARRAY) {
+            throw new InternalError();
+        }
+
+        ObjectStreamClass desc = readClassDesc(false);
+        int len = bin.readInt();
+
+        filterCheck(desc.forClass(), len);
+
+        Object array = null;
+        Class<?> cl, ccl = null;
+        if ((cl = desc.forClass()) != null) {
+            ccl = cl.getComponentType();
+            array = Array.newInstance(ccl, len);
+        }
+
+        int arrayHandle = handles.assign(unshared ? unsharedMarker : array);
+        ClassNotFoundException resolveEx = desc.getResolveException();
+        if (resolveEx != null) {
+            handles.markException(arrayHandle, resolveEx);
+        }
+
+        if (ccl == null) {
+            for (int i = 0; i < len; i++) {
+                readObject0(false);
+            }
+        } else if (ccl.isPrimitive()) {
+            if (ccl == Integer.TYPE) {
+                bin.readInts((int[]) array, 0, len);
+            } else if (ccl == Byte.TYPE) {
+                bin.readFully((byte[]) array, 0, len, true);
+            } else if (ccl == Long.TYPE) {
+                bin.readLongs((long[]) array, 0, len);
+            } else if (ccl == Float.TYPE) {
+                bin.readFloats((float[]) array, 0, len);
+            } else if (ccl == Double.TYPE) {
+                bin.readDoubles((double[]) array, 0, len);
+            } else if (ccl == Short.TYPE) {
+                bin.readShorts((short[]) array, 0, len);
+            } else if (ccl == Character.TYPE) {
+                bin.readChars((char[]) array, 0, len);
+            } else if (ccl == Boolean.TYPE) {
+                bin.readBooleans((boolean[]) array, 0, len);
+            } else {
+                throw new InternalError();
+            }
+        } else {
+            Object[] oa = (Object[]) array;
+            for (int i = 0; i < len; i++) {
+                oa[i] = readObject0(false);
+                handles.markDependency(arrayHandle, passHandle);
+            }
+        }
+
+        handles.finish(arrayHandle);
+        passHandle = arrayHandle;
+        return array;
+!!!413314.java!!!	readEnum(inout unshared : boolean) : Enum
+        if (bin.readByte() != TC_ENUM) {
+            throw new InternalError();
+        }
+
+        ObjectStreamClass desc = readClassDesc(false);
+        if (!desc.isEnum()) {
+            throw new InvalidClassException("non-enum class: " + desc);
+        }
+
+        int enumHandle = handles.assign(unshared ? unsharedMarker : null);
+        ClassNotFoundException resolveEx = desc.getResolveException();
+        if (resolveEx != null) {
+            handles.markException(enumHandle, resolveEx);
+        }
+
+        String name = readString(false);
+        Enum<?> result = null;
+        Class<?> cl = desc.forClass();
+        if (cl != null) {
+            try {
+                @SuppressWarnings("unchecked")
+                Enum<?> en = Enum.valueOf((Class)cl, name);
+                result = en;
+            } catch (IllegalArgumentException ex) {
+                throw (IOException) new InvalidObjectException(
+                    "enum constant " + name + " does not exist in " +
+                    cl).initCause(ex);
+            }
+            if (!unshared) {
+                handles.setObject(enumHandle, result);
+            }
+        }
+
+        handles.finish(enumHandle);
+        passHandle = enumHandle;
+        return result;
+!!!413442.java!!!	readOrdinaryObject(inout unshared : boolean) : Object
+        if (bin.readByte() != TC_OBJECT) {
+            throw new InternalError();
+        }
+
+        ObjectStreamClass desc = readClassDesc(false);
+        desc.checkDeserialize();
+
+        Class<?> cl = desc.forClass();
+        if (cl == String.class || cl == Class.class
+                || cl == ObjectStreamClass.class) {
+            throw new InvalidClassException("invalid class descriptor");
+        }
+
+        Object obj;
+        try {
+            obj = desc.isInstantiable() ? desc.newInstance() : null;
+        } catch (Exception ex) {
+            throw (IOException) new InvalidClassException(
+                desc.forClass().getName(),
+                "unable to create instance").initCause(ex);
+        }
+
+        passHandle = handles.assign(unshared ? unsharedMarker : obj);
+        ClassNotFoundException resolveEx = desc.getResolveException();
+        if (resolveEx != null) {
+            handles.markException(passHandle, resolveEx);
+        }
+
+        if (desc.isExternalizable()) {
+            readExternalData((Externalizable) obj, desc);
+        } else {
+            readSerialData(obj, desc);
+        }
+
+        handles.finish(passHandle);
+
+        if (obj != null &&
+            handles.lookupException(passHandle) == null &&
+            desc.hasReadResolveMethod())
+        {
+            Object rep = desc.invokeReadResolve(obj);
+            if (unshared && rep.getClass().isArray()) {
+                rep = cloneArray(rep);
+            }
+            if (rep != obj) {
+                // Filter the replacement object
+                if (rep != null) {
+                    if (rep.getClass().isArray()) {
+                        filterCheck(rep.getClass(), Array.getLength(rep));
+                    } else {
+                        filterCheck(rep.getClass(), -1);
+                    }
+                }
+                handles.setObject(passHandle, obj = rep);
+            }
+        }
+
+        return obj;
+!!!413570.java!!!	readExternalData(inout obj : Externalizable, inout desc : ObjectStreamClass) : void
+        SerialCallbackContext oldContext = curContext;
+        if (oldContext != null)
+            oldContext.check();
+        curContext = null;
+        try {
+            boolean blocked = desc.hasBlockExternalData();
+            if (blocked) {
+                bin.setBlockDataMode(true);
+            }
+            if (obj != null) {
+                try {
+                    obj.readExternal(this);
+                } catch (ClassNotFoundException ex) {
+                    /*
+                     * In most cases, the handle table has already propagated
+                     * a CNFException to passHandle at this point; this mark
+                     * call is included to address cases where the readExternal
+                     * method has cons'ed and thrown a new CNFException of its
+                     * own.
+                     */
+                     handles.markException(passHandle, ex);
+                }
+            }
+            if (blocked) {
+                skipCustomData();
+            }
+        } finally {
+            if (oldContext != null)
+                oldContext.check();
+            curContext = oldContext;
+        }
+        /*
+         * At this point, if the externalizable data was not written in
+         * block-data form and either the externalizable class doesn't exist
+         * locally (i.e., obj == null) or readExternal() just threw a
+         * CNFException, then the stream is probably in an inconsistent state,
+         * since some (or all) of the externalizable data may not have been
+         * consumed.  Since there's no "correct" action to take in this case,
+         * we mimic the behavior of past serialization implementations and
+         * blindly hope that the stream is in sync; if it isn't and additional
+         * externalizable data remains in the stream, a subsequent read will
+         * most likely throw a StreamCorruptedException.
+         */
+!!!413698.java!!!	readSerialData(inout obj : Object, inout desc : ObjectStreamClass) : void
+        ObjectStreamClass.ClassDataSlot[] slots = desc.getClassDataLayout();
+        for (int i = 0; i < slots.length; i++) {
+            ObjectStreamClass slotDesc = slots[i].desc;
+
+            if (slots[i].hasData) {
+                if (obj == null || handles.lookupException(passHandle) != null) {
+                    defaultReadFields(null, slotDesc); // skip field values
+                } else if (slotDesc.hasReadObjectMethod()) {
+                    ThreadDeath t = null;
+                    boolean reset = false;
+                    SerialCallbackContext oldContext = curContext;
+                    if (oldContext != null)
+                        oldContext.check();
+                    try {
+                        curContext = new SerialCallbackContext(obj, slotDesc);
+
+                        bin.setBlockDataMode(true);
+                        slotDesc.invokeReadObject(obj, this);
+                    } catch (ClassNotFoundException ex) {
+                        /*
+                         * In most cases, the handle table has already
+                         * propagated a CNFException to passHandle at this
+                         * point; this mark call is included to address cases
+                         * where the custom readObject method has cons'ed and
+                         * thrown a new CNFException of its own.
+                         */
+                        handles.markException(passHandle, ex);
+                    } finally {
+                        do {
+                            try {
+                                curContext.setUsed();
+                                if (oldContext!= null)
+                                    oldContext.check();
+                                curContext = oldContext;
+                                reset = true;
+                            } catch (ThreadDeath x) {
+                                t = x;  // defer until reset is true
+                            }
+                        } while (!reset);
+                        if (t != null)
+                            throw t;
+                    }
+
+                    /*
+                     * defaultDataEnd may have been set indirectly by custom
+                     * readObject() method when calling defaultReadObject() or
+                     * readFields(); clear it to restore normal read behavior.
+                     */
+                    defaultDataEnd = false;
+                } else {
+                    defaultReadFields(obj, slotDesc);
+                    }
+
+                if (slotDesc.hasWriteObjectData()) {
+                    skipCustomData();
+                } else {
+                    bin.setBlockDataMode(false);
+                }
+            } else {
+                if (obj != null &&
+                    slotDesc.hasReadObjectNoDataMethod() &&
+                    handles.lookupException(passHandle) == null)
+                {
+                    slotDesc.invokeReadObjectNoData(obj);
+                }
+            }
+        }
+!!!413826.java!!!	skipCustomData() : void
+        int oldHandle = passHandle;
+        for (;;) {
+            if (bin.getBlockDataMode()) {
+                bin.skipBlockData();
+                bin.setBlockDataMode(false);
+            }
+            switch (bin.peekByte()) {
+                case TC_BLOCKDATA:
+                case TC_BLOCKDATALONG:
+                    bin.setBlockDataMode(true);
+                    break;
+
+                case TC_ENDBLOCKDATA:
+                    bin.readByte();
+                    passHandle = oldHandle;
+                    return;
+
+                default:
+                    readObject0(false);
+                    break;
+            }
+        }
+!!!413954.java!!!	defaultReadFields(inout obj : Object, inout desc : ObjectStreamClass) : void
+        Class<?> cl = desc.forClass();
+        if (cl != null && obj != null && !cl.isInstance(obj)) {
+            throw new ClassCastException();
+        }
+
+        int primDataSize = desc.getPrimDataSize();
+        if (primVals == null || primVals.length < primDataSize) {
+            primVals = new byte[primDataSize];
+        }
+            bin.readFully(primVals, 0, primDataSize, false);
+        if (obj != null) {
+            desc.setPrimFieldValues(obj, primVals);
+        }
+
+        int objHandle = passHandle;
+        ObjectStreamField[] fields = desc.getFields(false);
+        Object[] objVals = new Object[desc.getNumObjFields()];
+        int numPrimFields = fields.length - objVals.length;
+        for (int i = 0; i < objVals.length; i++) {
+            ObjectStreamField f = fields[numPrimFields + i];
+            objVals[i] = readObject0(f.isUnshared());
+            if (f.getField() != null) {
+                handles.markDependency(objHandle, passHandle);
+            }
+        }
+        if (obj != null) {
+            desc.setObjFieldValues(obj, objVals);
+        }
+        passHandle = objHandle;
+!!!414082.java!!!	readFatalException() : IOException
+        if (bin.readByte() != TC_EXCEPTION) {
+            throw new InternalError();
+        }
+        clear();
+        return (IOException) readObject0(false);
+!!!414210.java!!!	handleReset() : void
+        if (depth > 0) {
+            throw new StreamCorruptedException(
+                "unexpected reset; recursion depth: " + depth);
+        }
+        clear();
+!!!414594.java!!!	latestUserDefinedLoader() : ClassLoader
+        return sun.misc.VM.latestUserDefinedLoader();
+!!!426498.java!!!	cloneArray(inout array : Object) : Object
+        if (array instanceof Object[]) {
+            return ((Object[]) array).clone();
+        } else if (array instanceof boolean[]) {
+            return ((boolean[]) array).clone();
+        } else if (array instanceof byte[]) {
+            return ((byte[]) array).clone();
+        } else if (array instanceof char[]) {
+            return ((char[]) array).clone();
+        } else if (array instanceof double[]) {
+            return ((double[]) array).clone();
+        } else if (array instanceof float[]) {
+            return ((float[]) array).clone();
+        } else if (array instanceof int[]) {
+            return ((int[]) array).clone();
+        } else if (array instanceof long[]) {
+            return ((long[]) array).clone();
+        } else if (array instanceof short[]) {
+            return ((short[]) array).clone();
+        } else {
+            throw new AssertionError();
+        }
+!!!426626.java!!!	validateDescriptor(inout descriptor : ObjectStreamClass) : void
+        ObjectStreamClassValidator validating = validator;
+        if (validating != null) {
+            validating.validateDescriptor(descriptor);
+        }
+!!!426754.java!!!	setValidator(inout ois : ObjectInputStream, inout validator : ObjectStreamClassValidator) : void
+        ois.validator = validator;

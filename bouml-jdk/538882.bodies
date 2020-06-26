@@ -1,0 +1,206 @@
+class SnmpAcl
+!!!3303042.java!!!	SnmpAcl(inout Owner : String)
+        this(Owner,null);
+!!!3303170.java!!!	SnmpAcl(inout Owner : String, inout aclFileName : String)
+        trapDestList= new Hashtable<InetAddress, Vector<String>>();
+        informDestList= new Hashtable<InetAddress, Vector<String>>();
+
+        // PrincipalImpl() take the current host as entry
+        owner = new PrincipalImpl();
+        try {
+            acl = new AclImpl(owner,Owner);
+            AclEntry ownEntry = new AclEntryImpl(owner);
+            ownEntry.addPermission(READ);
+            ownEntry.addPermission(WRITE);
+            acl.addEntry(owner,ownEntry);
+        } catch (NotOwnerException ex) {
+            if (SNMP_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_LOGGER.logp(Level.FINEST, SnmpAcl.class.getName(),
+                    "SnmpAcl(String,String)",
+                    "Should never get NotOwnerException as the owner " +
+                    "is built in this constructor");
+            }
+        }
+        if (aclFileName == null) setDefaultFileName();
+        else setAuthorizedListFile(aclFileName);
+        readAuthorizedListFile();
+!!!3303298.java!!!	entries() : Enumeration
+        return acl.entries();
+!!!3303426.java!!!	communities() : Enumeration
+        HashSet<String> set = new HashSet<String>();
+        Vector<String> res = new Vector<String>();
+        for (Enumeration<AclEntry> e = acl.entries() ; e.hasMoreElements() ;) {
+            AclEntryImpl entry = (AclEntryImpl) e.nextElement();
+            for (Enumeration<String> cs = entry.communities();
+                 cs.hasMoreElements() ;) {
+                set.add(cs.nextElement());
+            }
+        }
+        String[] objs = set.toArray(new String[0]);
+        for(int i = 0; i < objs.length; i++)
+            res.addElement(objs[i]);
+
+        return res.elements();
+!!!3303554.java!!!	getName() : String
+        return acl.getName();
+!!!3303682.java!!!	getREAD() : PermissionImpl
+        return READ;
+!!!3303810.java!!!	getWRITE() : PermissionImpl
+        return WRITE;
+!!!3303938.java!!!	getDefaultAclFileName() : String
+        final String fileSeparator =
+            System.getProperty("file.separator");
+        final StringBuffer defaultAclName =
+            new StringBuffer(System.getProperty("java.home")).
+            append(fileSeparator).append("lib").append(fileSeparator).
+            append("snmp.acl");
+        return defaultAclName.toString();
+!!!3304066.java!!!	setAuthorizedListFile(inout filename : String) : void
+        File file = new File(filename);
+        if (!file.isFile() ) {
+            if (SNMP_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_LOGGER.logp(Level.FINEST, SnmpAcl.class.getName(),
+                    "setAuthorizedListFile", "ACL file not found: " + filename);
+            }
+            throw new
+                IllegalArgumentException("The specified file ["+file+"] "+
+                                         "doesn't exist or is not a file, "+
+                                         "no configuration loaded");
+        }
+        if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                "setAuthorizedListFile", "Default file set to " + filename);
+        }
+        authorizedListFile = filename;
+!!!3304194.java!!!	rereadTheFile() : void
+        alwaysAuthorized = false;
+        acl.removeAll(owner);
+        trapDestList.clear();
+        informDestList.clear();
+        AclEntry ownEntry = new AclEntryImpl(owner);
+        ownEntry.addPermission(READ);
+        ownEntry.addPermission(WRITE);
+        acl.addEntry(owner,ownEntry);
+        readAuthorizedListFile();
+!!!3304322.java!!!	getAuthorizedListFile() : String
+        return authorizedListFile;
+!!!3304450.java!!!	checkReadPermission(inout address : InetAddress) : boolean
+        if (alwaysAuthorized) return ( true );
+        PrincipalImpl p = new PrincipalImpl(address);
+        return acl.checkPermission(p, READ);
+!!!3304578.java!!!	checkReadPermission(inout address : InetAddress, inout community : String) : boolean
+        if (alwaysAuthorized) return ( true );
+        PrincipalImpl p = new PrincipalImpl(address);
+        return acl.checkPermission(p, community, READ);
+!!!3304706.java!!!	checkCommunity(inout community : String) : boolean
+        return acl.checkCommunity(community);
+!!!3304834.java!!!	checkWritePermission(inout address : InetAddress) : boolean
+        if (alwaysAuthorized) return ( true );
+        PrincipalImpl p = new PrincipalImpl(address);
+        return acl.checkPermission(p, WRITE);
+!!!3304962.java!!!	checkWritePermission(inout address : InetAddress, inout community : String) : boolean
+        if (alwaysAuthorized) return ( true );
+        PrincipalImpl p = new PrincipalImpl(address);
+        return acl.checkPermission(p, community, WRITE);
+!!!3305090.java!!!	getTrapDestinations() : Enumeration
+        return trapDestList.keys();
+!!!3305218.java!!!	getTrapCommunities(inout i : InetAddress) : Enumeration
+        Vector<String> list = null;
+        if ((list = trapDestList.get(i)) != null ) {
+            if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                    "getTrapCommunities", "["+i.toString()+"] is in list");
+            }
+            return list.elements();
+        } else {
+            list = new Vector<>();
+            if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                    "getTrapCommunities", "["+i.toString()+"] is not in list");
+            }
+            return list.elements();
+        }
+!!!3305346.java!!!	getInformDestinations() : Enumeration
+        return informDestList.keys();
+!!!3305474.java!!!	getInformCommunities(inout i : InetAddress) : Enumeration
+        Vector<String> list = null;
+        if ((list = informDestList.get(i)) != null ) {
+            if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                    "getInformCommunities", "["+i.toString()+"] is in list");
+            }
+            return list.elements();
+        } else {
+            list = new Vector<>();
+            if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                    "getInformCommunities", "["+i.toString()+"] is not in list");
+            }
+            return list.elements();
+        }
+!!!3305602.java!!!	readAuthorizedListFile() : void
+
+        alwaysAuthorized = false;
+
+        if (authorizedListFile == null) {
+            if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                    "readAuthorizedListFile", "alwaysAuthorized set to true");
+            }
+            alwaysAuthorized = true ;
+        } else {
+            // Read the file content
+            Parser parser = null;
+            try {
+                parser= new Parser(new FileInputStream(getAuthorizedListFile()));
+            } catch (FileNotFoundException e) {
+                if (SNMP_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_LOGGER.logp(Level.FINEST, SnmpAcl.class.getName(),
+                            "readAuthorizedListFile",
+                            "The specified file was not found, authorize everybody");
+                }
+                alwaysAuthorized = true ;
+                return;
+            }
+
+            try {
+                JDMSecurityDefs n = parser.SecurityDefs();
+                n.buildAclEntries(owner, acl);
+                n.buildTrapEntries(trapDestList);
+                n.buildInformEntries(informDestList);
+            } catch (ParseException e) {
+                if (SNMP_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_LOGGER.logp(Level.FINEST, SnmpAcl.class.getName(),
+                        "readAuthorizedListFile", "Got parsing exception", e);
+                }
+                throw new IllegalArgumentException(e.getMessage());
+            } catch (Error err) {
+                if (SNMP_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_LOGGER.logp(Level.FINEST, SnmpAcl.class.getName(),
+                        "readAuthorizedListFile", "Got unexpected error", err);
+                }
+                throw new IllegalArgumentException(err.getMessage());
+            }
+
+            for(Enumeration<AclEntry> e = acl.entries(); e.hasMoreElements();) {
+                AclEntryImpl aa = (AclEntryImpl) e.nextElement();
+                if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                    SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                            "readAuthorizedListFile",
+                            "===> " + aa.getPrincipal().toString());
+                }
+                for (Enumeration<java.security.acl.Permission> eee = aa.permissions();eee.hasMoreElements();) {
+                    java.security.acl.Permission perm = eee.nextElement();
+                    if (SNMP_LOGGER.isLoggable(Level.FINER)) {
+                        SNMP_LOGGER.logp(Level.FINER, SnmpAcl.class.getName(),
+                                "readAuthorizedListFile", "perm = " + perm);
+                    }
+                }
+            }
+        }
+!!!3305730.java!!!	setDefaultFileName() : void
+        try {
+            setAuthorizedListFile(getDefaultAclFileName());
+        } catch (IllegalArgumentException x) {
+            // OK...
+        }

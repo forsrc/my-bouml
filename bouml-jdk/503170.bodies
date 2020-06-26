@@ -1,0 +1,312 @@
+class ClientNotifForwarder
+!!!3009666.java!!!	ClientNotifForwarder(inout env : Map)
+        this(null, env);
+!!!3010050.java!!!	ClientNotifForwarder(inout defaultClassLoader : ClassLoader, inout env : Map)
+        maxNotifications = EnvHelp.getMaxFetchNotifNumber(env);
+        timeout = EnvHelp.getFetchTimeout(env);
+
+        /* You can supply an Executor in which the remote call to
+           fetchNotifications will be made.  The Executor's execute
+           method reschedules another task, so you must not use
+           an Executor that executes tasks in the caller's thread.  */
+        Executor ex = (Executor)
+            env.get("jmx.remote.x.fetch.notifications.executor");
+        if (ex == null)
+            ex = new LinearExecutor();
+        else if (logger.traceOn())
+            logger.trace("ClientNotifForwarder", "executor is " + ex);
+
+        this.defaultClassLoader = defaultClassLoader;
+        this.executor = ex;
+        this.acc = AccessController.getContext();
+!!!3010690.java!!!	addNotificationListener(inout listenerID : Integer, inout name : ObjectName, inout listener : NotificationListener, inout filter : NotificationFilter, inout handback : Object, inout delegationSubject : Subject) : void
+
+        if (logger.traceOn()) {
+            logger.trace("addNotificationListener",
+                         "Add the listener "+listener+" at "+name);
+        }
+
+        infoList.put(listenerID,
+                     new ClientListenerInfo(listenerID,
+                                            name,
+                                            listener,
+                                            filter,
+                                            handback,
+                                            delegationSubject));
+
+
+        init(false);
+!!!3010818.java!!!	removeNotificationListener(inout name : ObjectName, inout listener : NotificationListener) : Integer
+
+        beforeRemove();
+
+        if (logger.traceOn()) {
+            logger.trace("removeNotificationListener",
+                         "Remove the listener "+listener+" from "+name);
+        }
+
+        List<Integer> ids = new ArrayList<Integer>();
+        List<ClientListenerInfo> values =
+                new ArrayList<ClientListenerInfo>(infoList.values());
+        for (int i=values.size()-1; i>=0; i--) {
+            ClientListenerInfo li = values.get(i);
+
+            if (li.sameAs(name, listener)) {
+                ids.add(li.getListenerID());
+
+                infoList.remove(li.getListenerID());
+            }
+        }
+
+        if (ids.isEmpty())
+            throw new ListenerNotFoundException("Listener not found");
+
+        return ids.toArray(new Integer[0]);
+!!!3010946.java!!!	removeNotificationListener(inout name : ObjectName, inout listener : NotificationListener, inout filter : NotificationFilter, inout handback : Object) : Integer
+
+        if (logger.traceOn()) {
+            logger.trace("removeNotificationListener",
+                         "Remove the listener "+listener+" from "+name);
+        }
+
+        beforeRemove();
+
+        Integer id = null;
+
+        List<ClientListenerInfo> values =
+                new ArrayList<ClientListenerInfo>(infoList.values());
+        for (int i=values.size()-1; i>=0; i--) {
+            ClientListenerInfo li = values.get(i);
+            if (li.sameAs(name, listener, filter, handback)) {
+                id=li.getListenerID();
+
+                infoList.remove(id);
+
+                break;
+            }
+        }
+
+        if (id == null)
+            throw new ListenerNotFoundException("Listener not found");
+
+        return id;
+!!!3011074.java!!!	removeNotificationListener(inout name : ObjectName) : Integer
+        if (logger.traceOn()) {
+            logger.trace("removeNotificationListener",
+                         "Remove all listeners registered at "+name);
+        }
+
+        List<Integer> ids = new ArrayList<Integer>();
+
+        List<ClientListenerInfo> values =
+                new ArrayList<ClientListenerInfo>(infoList.values());
+        for (int i=values.size()-1; i>=0; i--) {
+            ClientListenerInfo li = values.get(i);
+            if (li.sameAs(name)) {
+                ids.add(li.getListenerID());
+
+                infoList.remove(li.getListenerID());
+            }
+        }
+
+        return ids.toArray(new Integer[0]);
+!!!3011202.java!!!	preReconnection() : ClientListenerInfo
+        if (state == TERMINATED || beingReconnected) { // should never
+            throw new IOException("Illegal state.");
+        }
+
+        final ClientListenerInfo[] tmp =
+            infoList.values().toArray(new ClientListenerInfo[0]);
+
+
+        beingReconnected = true;
+
+        infoList.clear();
+
+        return tmp;
+!!!3011330.java!!!	postReconnection(inout listenerInfos : ClientListenerInfo [[]]) : void
+
+        if (state == TERMINATED) {
+            return;
+        }
+
+        while (state == STOPPING) {
+            try {
+                wait();
+            } catch (InterruptedException ire) {
+                IOException ioe = new IOException(ire.toString());
+                EnvHelp.initCause(ioe, ire);
+                throw ioe;
+            }
+        }
+
+        final boolean trace = logger.traceOn();
+        final int len   = listenerInfos.length;
+
+        for (int i=0; i<len; i++) {
+            if (trace) {
+                logger.trace("addNotificationListeners",
+                             "Add a listener at "+
+                             listenerInfos[i].getListenerID());
+            }
+
+            infoList.put(listenerInfos[i].getListenerID(), listenerInfos[i]);
+        }
+
+        beingReconnected = false;
+        notifyAll();
+
+        if (currentFetchThread == Thread.currentThread() ||
+              state == STARTING || state == STARTED) { // doing or waiting reconnection
+              // only update mbeanRemovedNotifID
+            try {
+                mbeanRemovedNotifID = addListenerForMBeanRemovedNotif();
+            } catch (Exception e) {
+                final String msg =
+                    "Failed to register a listener to the mbean " +
+                    "server: the client will not do clean when an MBean " +
+                    "is unregistered";
+                if (logger.traceOn()) {
+                    logger.trace("init", msg, e);
+                }
+            }
+        } else {
+              while (state == STOPPING) {
+                  try {
+                      wait();
+                  } catch (InterruptedException ire) {
+                      IOException ioe = new IOException(ire.toString());
+                      EnvHelp.initCause(ioe, ire);
+                      throw ioe;
+                  }
+              }
+
+              if (listenerInfos.length > 0) { // old listeners are re-added
+                  init(true); // not update clientSequenceNumber
+              } else if (infoList.size() > 0) { // only new listeners added during reconnection
+                  init(false); // need update clientSequenceNumber
+              }
+          }
+!!!3011458.java!!!	terminate() : void
+        if (state == TERMINATED) {
+            return;
+        }
+
+        if (logger.traceOn()) {
+            logger.trace("terminate", "Terminating...");
+        }
+
+        if (state == STARTED) {
+           infoList.clear();
+        }
+
+        setState(TERMINATED);
+!!!3012610.java!!!	setState(in newState : int) : void
+        if (state == TERMINATED) {
+            return;
+        }
+
+        state = newState;
+        this.notifyAll();
+!!!3012738.java!!!	init(inout reconnected : boolean) : void
+        switch (state) {
+        case STARTED:
+            return;
+        case STARTING:
+            return;
+        case TERMINATED:
+            throw new IOException("The ClientNotifForwarder has been terminated.");
+        case STOPPING:
+            if (beingReconnected == true) {
+                // wait for another thread to do, which is doing reconnection
+                return;
+            }
+
+            while (state == STOPPING) { // make sure only one fetching thread.
+                try {
+                    wait();
+                } catch (InterruptedException ire) {
+                    IOException ioe = new IOException(ire.toString());
+                    EnvHelp.initCause(ioe, ire);
+
+                    throw ioe;
+                }
+            }
+
+            // re-call this method to check the state again,
+            // the state can be other value like TERMINATED.
+            init(reconnected);
+
+            return;
+        case STOPPED:
+            if (beingReconnected == true) {
+                // wait for another thread to do, which is doing reconnection
+                return;
+            }
+
+            if (logger.traceOn()) {
+                logger.trace("init", "Initializing...");
+            }
+
+            // init the clientSequenceNumber if not reconnected.
+            if (!reconnected) {
+                try {
+                    NotificationResult nr = fetchNotifs(-1, 0, 0);
+
+                    if (state != STOPPED) { // JDK-8038940
+                                            // reconnection must happen during
+                                            // fetchNotifs(-1, 0, 0), and a new
+                                            // thread takes over the fetching job
+                        return;
+                    }
+
+                    clientSequenceNumber = nr.getNextSequenceNumber();
+                } catch (ClassNotFoundException e) {
+                    // can't happen
+                    logger.warning("init", "Impossible exception: "+ e);
+                    logger.debug("init",e);
+                }
+            }
+
+            // for cleaning
+            try {
+                mbeanRemovedNotifID = addListenerForMBeanRemovedNotif();
+            } catch (Exception e) {
+                final String msg =
+                    "Failed to register a listener to the mbean " +
+                    "server: the client will not do clean when an MBean " +
+                    "is unregistered";
+                if (logger.traceOn()) {
+                    logger.trace("init", msg, e);
+                }
+            }
+
+            setState(STARTING);
+
+            // start fetching
+            executor.execute(new NotifFetcher());
+
+            return;
+        default:
+            // should not
+            throw new IOException("Unknown state.");
+        }
+!!!3012866.java!!!	beforeRemove() : void
+        while (beingReconnected) {
+            if (state == TERMINATED) {
+                throw new IOException("Terminated.");
+            }
+
+            try {
+                wait();
+            } catch (InterruptedException ire) {
+                IOException ioe = new IOException(ire.toString());
+                EnvHelp.initCause(ioe, ire);
+
+                throw ioe;
+            }
+        }
+
+        if (state == TERMINATED) {
+            throw new IOException("Terminated.");
+        }

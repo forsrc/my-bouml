@@ -1,0 +1,135 @@
+class BasicDirectoryModel
+!!!2048258.java!!!	BasicDirectoryModel(inout filechooser : JFileChooser)
+        this.filechooser = filechooser;
+        validateFileCache();
+!!!2048386.java!!!	propertyChange(inout e : PropertyChangeEvent) : void
+        String prop = e.getPropertyName();
+        if(prop == JFileChooser.DIRECTORY_CHANGED_PROPERTY ||
+           prop == JFileChooser.FILE_VIEW_CHANGED_PROPERTY ||
+           prop == JFileChooser.FILE_FILTER_CHANGED_PROPERTY ||
+           prop == JFileChooser.FILE_HIDING_CHANGED_PROPERTY ||
+           prop == JFileChooser.FILE_SELECTION_MODE_CHANGED_PROPERTY) {
+            validateFileCache();
+        } else if ("UI".equals(prop)) {
+            Object old = e.getOldValue();
+            if (old instanceof BasicFileChooserUI) {
+                BasicFileChooserUI ui = (BasicFileChooserUI) old;
+                BasicDirectoryModel model = ui.getModel();
+                if (model != null) {
+                    model.invalidateFileCache();
+                }
+            }
+        } else if ("JFileChooserDialogIsClosingProperty".equals(prop)) {
+            invalidateFileCache();
+        }
+!!!2048514.java!!!	invalidateFileCache() : void
+        if (loadThread != null) {
+            loadThread.interrupt();
+            loadThread.cancelRunnables();
+            loadThread = null;
+        }
+!!!2048642.java!!!	getDirectories() : Vector
+        synchronized(fileCache) {
+            if (directories != null) {
+                return directories;
+            }
+            Vector fls = getFiles();
+            return directories;
+        }
+!!!2048770.java!!!	getFiles() : Vector
+        synchronized(fileCache) {
+            if (files != null) {
+                return files;
+            }
+            files = new Vector<File>();
+            directories = new Vector<File>();
+            directories.addElement(filechooser.getFileSystemView().createFileObject(
+                filechooser.getCurrentDirectory(), "..")
+            );
+
+            for (int i = 0; i < getSize(); i++) {
+                File f = fileCache.get(i);
+                if (filechooser.isTraversable(f)) {
+                    directories.add(f);
+                } else {
+                    files.add(f);
+                }
+            }
+            return files;
+        }
+!!!2048898.java!!!	validateFileCache() : void
+        File currentDirectory = filechooser.getCurrentDirectory();
+        if (currentDirectory == null) {
+            return;
+        }
+        if (loadThread != null) {
+            loadThread.interrupt();
+            loadThread.cancelRunnables();
+        }
+
+        setBusy(true, ++fetchID);
+
+        loadThread = new LoadFilesThread(currentDirectory, fetchID);
+        loadThread.start();
+!!!2049026.java!!!	renameFile(inout oldFile : File, inout newFile : File) : boolean
+        synchronized(fileCache) {
+            if (oldFile.renameTo(newFile)) {
+                validateFileCache();
+                return true;
+            }
+            return false;
+        }
+!!!2049154.java!!!	fireContentsChanged() : void
+        // System.out.println("BasicDirectoryModel: firecontentschanged");
+        fireContentsChanged(this, 0, getSize()-1);
+!!!2049282.java!!!	getSize() : int
+        return fileCache.size();
+!!!2049410.java!!!	contains(inout o : Object) : boolean
+        return fileCache.contains(o);
+!!!2049538.java!!!	indexOf(inout o : Object) : int
+        return fileCache.indexOf(o);
+!!!2049666.java!!!	getElementAt(in index : int) : Object
+        return fileCache.get(index);
+!!!2050050.java!!!	sort(inout v : Vector) : void
+        ShellFolder.sort(v);
+!!!2050178.java!!!	lt(inout a : File, inout b : File) : boolean
+        // First ignore case when comparing
+        int diff = a.getName().toLowerCase().compareTo(b.getName().toLowerCase());
+        if (diff != 0) {
+            return diff < 0;
+        } else {
+            // May differ in case (e.g. "mail" vs. "Mail")
+            return a.getName().compareTo(b.getName()) < 0;
+        }
+!!!2050946.java!!!	addPropertyChangeListener(inout listener : PropertyChangeListener) : void
+        if (changeSupport == null) {
+            changeSupport = new PropertyChangeSupport(this);
+        }
+        changeSupport.addPropertyChangeListener(listener);
+!!!2051074.java!!!	removePropertyChangeListener(inout listener : PropertyChangeListener) : void
+        if (changeSupport != null) {
+            changeSupport.removePropertyChangeListener(listener);
+        }
+!!!2051202.java!!!	getPropertyChangeListeners() : PropertyChangeListener
+        if (changeSupport == null) {
+            return new PropertyChangeListener[0];
+        }
+        return changeSupport.getPropertyChangeListeners();
+!!!2051330.java!!!	firePropertyChange(inout propertyName : String, inout oldValue : Object, inout newValue : Object) : void
+        if (changeSupport != null) {
+            changeSupport.firePropertyChange(propertyName,
+                                             oldValue, newValue);
+        }
+!!!2051458.java!!!	setBusy(in busy : boolean, in fid : int) : void
+        if (fid == fetchID) {
+            boolean oldValue = this.busy;
+            this.busy = busy;
+
+            if (changeSupport != null && busy != oldValue) {
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        firePropertyChange("busy", !busy, busy);
+                    }
+                });
+            }
+        }

@@ -1,0 +1,223 @@
+class LoggerContext
+!!!9396226.java!!!	LoggerContext()
+            this.root = new LogNode(null, this);
+!!!9396354.java!!!	requiresDefaultLoggers() : boolean
+            final boolean requiresDefaultLoggers = (getOwner() == manager);
+            if (requiresDefaultLoggers) {
+                getOwner().ensureLogManagerInitialized();
+            }
+            return requiresDefaultLoggers;
+!!!9396482.java!!!	getOwner() : LogManager
+            return LogManager.this;
+!!!9396610.java!!!	getRootLogger() : Logger
+            return getOwner().rootLogger;
+!!!9396738.java!!!	getGlobalLogger() : Logger
+            @SuppressWarnings("deprecated") // avoids initialization cycles.
+            final Logger global = Logger.global;
+            return global;
+!!!9396866.java!!!	demandLogger(inout name : String, inout resourceBundleName : String) : Logger
+            // a LogManager subclass may have its own implementation to add and
+            // get a Logger.  So delegate to the LogManager to do the work.
+            final LogManager owner = getOwner();
+            return owner.demandLogger(name, resourceBundleName, null);
+!!!9396994.java!!!	ensureInitialized() : void
+            if (requiresDefaultLoggers()) {
+                // Ensure that the root and global loggers are set.
+                ensureDefaultLogger(getRootLogger());
+                ensureDefaultLogger(getGlobalLogger());
+            }
+!!!9397122.java!!!	findLogger(inout name : String) : Logger
+            // ensure that this context is properly initialized before
+            // looking for loggers.
+            ensureInitialized();
+            LoggerWeakRef ref = namedLoggers.get(name);
+            if (ref == null) {
+                return null;
+            }
+            Logger logger = ref.get();
+            if (logger == null) {
+                // Hashtable holds stale weak reference
+                // to a logger which has been GC-ed.
+                ref.dispose();
+            }
+            return logger;
+!!!9397250.java!!!	ensureAllDefaultLoggers(inout logger : Logger) : void
+            if (requiresDefaultLoggers()) {
+                final String name = logger.getName();
+                if (!name.isEmpty()) {
+                    ensureDefaultLogger(getRootLogger());
+                    if (!Logger.GLOBAL_LOGGER_NAME.equals(name)) {
+                        ensureDefaultLogger(getGlobalLogger());
+                    }
+                }
+            }
+!!!9397378.java!!!	ensureDefaultLogger(inout logger : Logger) : void
+            // Used for lazy addition of root logger and global logger
+            // to a LoggerContext.
+
+            // This check is simple sanity: we do not want that this
+            // method be called for anything else than Logger.global
+            // or owner.rootLogger.
+            if (!requiresDefaultLoggers() || logger == null
+                    || logger != Logger.global && logger != LogManager.this.rootLogger) {
+
+                // the case where we have a non null logger which is neither
+                // Logger.global nor manager.rootLogger indicates a serious
+                // issue - as ensureDefaultLogger should never be called
+                // with any other loggers than one of these two (or null - if
+                // e.g manager.rootLogger is not yet initialized)...
+                assert logger == null;
+
+                return;
+            }
+
+            // Adds the logger if it's not already there.
+            if (!namedLoggers.containsKey(logger.getName())) {
+                // It is important to prevent addLocalLogger to
+                // call ensureAllDefaultLoggers when we're in the process
+                // off adding one of those default loggers - as this would
+                // immediately cause a stack overflow.
+                // Therefore we must pass addDefaultLoggersIfNeeded=false,
+                // even if requiresDefaultLoggers is true.
+                addLocalLogger(logger, false);
+            }
+!!!9397506.java!!!	addLocalLogger(inout logger : Logger) : boolean
+            // no need to add default loggers if it's not required
+            return addLocalLogger(logger, requiresDefaultLoggers());
+!!!9397634.java!!!	addLocalLogger(inout logger : Logger, inout addDefaultLoggersIfNeeded : boolean) : boolean
+            // addDefaultLoggersIfNeeded serves to break recursion when adding
+            // default loggers. If we're adding one of the default loggers
+            // (we're being called from ensureDefaultLogger()) then
+            // addDefaultLoggersIfNeeded will be false: we don't want to
+            // call ensureAllDefaultLoggers again.
+            //
+            // Note: addDefaultLoggersIfNeeded can also be false when
+            //       requiresDefaultLoggers is false - since calling
+            //       ensureAllDefaultLoggers would have no effect in this case.
+            if (addDefaultLoggersIfNeeded) {
+                ensureAllDefaultLoggers(logger);
+            }
+
+            final String name = logger.getName();
+            if (name == null) {
+                throw new NullPointerException();
+            }
+            LoggerWeakRef ref = namedLoggers.get(name);
+            if (ref != null) {
+                if (ref.get() == null) {
+                    // It's possible that the Logger was GC'ed after a
+                    // drainLoggerRefQueueBounded() call above so allow
+                    // a new one to be registered.
+                    ref.dispose();
+                } else {
+                    // We already have a registered logger with the given name.
+                    return false;
+                }
+            }
+
+            // We're adding a new logger.
+            // Note that we are creating a weak reference here.
+            final LogManager owner = getOwner();
+            logger.setLogManager(owner);
+            ref = owner.new LoggerWeakRef(logger);
+            namedLoggers.put(name, ref);
+
+            // Apply any initial level defined for the new logger, unless
+            // the logger's level is already initialized
+            Level level = owner.getLevelProperty(name + ".level", null);
+            if (level != null && !logger.isLevelInitialized()) {
+                doSetLevel(logger, level);
+            }
+
+            // instantiation of the handler is done in the LogManager.addLogger
+            // implementation as a handler class may be only visible to LogManager
+            // subclass for the custom log manager case
+            processParentHandlers(logger, name);
+
+            // Find the new node and its parent.
+            LogNode node = getNode(name);
+            node.loggerRef = ref;
+            Logger parent = null;
+            LogNode nodep = node.parent;
+            while (nodep != null) {
+                LoggerWeakRef nodeRef = nodep.loggerRef;
+                if (nodeRef != null) {
+                    parent = nodeRef.get();
+                    if (parent != null) {
+                        break;
+                    }
+                }
+                nodep = nodep.parent;
+            }
+
+            if (parent != null) {
+                doSetParent(logger, parent);
+            }
+            // Walk over the children and tell them we are their new parent.
+            node.walkAndSetParent(logger);
+            // new LogNode is ready so tell the LoggerWeakRef about it
+            ref.setNode(node);
+            return true;
+!!!9397762.java!!!	removeLoggerRef(inout name : String, inout ref : LogManager::LoggerWeakRef) : void
+            namedLoggers.remove(name, ref);
+!!!9397890.java!!!	getLoggerNames() : Enumeration
+            // ensure that this context is properly initialized before
+            // returning logger names.
+            ensureInitialized();
+            return namedLoggers.keys();
+!!!9398018.java!!!	processParentHandlers(in logger : Logger, in name : String) : void
+            final LogManager owner = getOwner();
+            AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                @Override
+                public Void run() {
+                    if (logger != owner.rootLogger) {
+                        boolean useParent = owner.getBooleanProperty(name + ".useParentHandlers", true);
+                        if (!useParent) {
+                            logger.setUseParentHandlers(false);
+                        }
+                    }
+                    return null;
+                }
+            });
+
+            int ix = 1;
+            for (;;) {
+                int ix2 = name.indexOf(".", ix);
+                if (ix2 < 0) {
+                    break;
+                }
+                String pname = name.substring(0, ix2);
+                if (owner.getProperty(pname + ".level") != null ||
+                    owner.getProperty(pname + ".handlers") != null) {
+                    // This pname has a level/handlers definition.
+                    // Make sure it exists.
+                    demandLogger(pname, null);
+                }
+                ix = ix2+1;
+            }
+!!!9398146.java!!!	getNode(inout name : String) : LogManager::LogNode
+            if (name == null || name.equals("")) {
+                return root;
+            }
+            LogNode node = root;
+            while (name.length() > 0) {
+                int ix = name.indexOf(".");
+                String head;
+                if (ix > 0) {
+                    head = name.substring(0, ix);
+                    name = name.substring(ix + 1);
+                } else {
+                    head = name;
+                    name = "";
+                }
+                if (node.children == null) {
+                    node.children = new HashMap<>();
+                }
+                LogNode child = node.children.get(head);
+                if (child == null) {
+                    child = new LogNode(node, this);
+                    node.children.put(head, child);
+                }
+                node = child;
+            }
+            return node;

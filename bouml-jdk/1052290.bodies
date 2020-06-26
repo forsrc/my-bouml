@@ -1,0 +1,368 @@
+class ZonedDateTime
+!!!8426114.java!!!	now() : ZonedDateTime
+        return now(Clock.systemDefaultZone());
+!!!8426242.java!!!	now(inout zone : ZoneId) : ZonedDateTime
+        return now(Clock.system(zone));
+!!!8426370.java!!!	now(inout clock : Clock) : ZonedDateTime
+        Objects.requireNonNull(clock, "clock");
+        final Instant now = clock.instant();  // called once
+        return ofInstant(now, clock.getZone());
+!!!8426498.java!!!	of(inout date : LocalDate, inout time : LocalTime, inout zone : ZoneId) : ZonedDateTime
+        return of(LocalDateTime.of(date, time), zone);
+!!!8426626.java!!!	of(inout localDateTime : LocalDateTime, inout zone : ZoneId) : ZonedDateTime
+        return ofLocal(localDateTime, zone, null);
+!!!8426754.java!!!	of(in year : int, in month : int, in dayOfMonth : int, in hour : int, in minute : int, in second : int, in nanoOfSecond : int, inout zone : ZoneId) : ZonedDateTime
+        LocalDateTime dt = LocalDateTime.of(year, month, dayOfMonth, hour, minute, second, nanoOfSecond);
+        return ofLocal(dt, zone, null);
+!!!8426882.java!!!	ofLocal(inout localDateTime : LocalDateTime, inout zone : ZoneId, inout preferredOffset : ZoneOffset) : ZonedDateTime
+        Objects.requireNonNull(localDateTime, "localDateTime");
+        Objects.requireNonNull(zone, "zone");
+        if (zone instanceof ZoneOffset) {
+            return new ZonedDateTime(localDateTime, (ZoneOffset) zone, zone);
+        }
+        ZoneRules rules = zone.getRules();
+        List<ZoneOffset> validOffsets = rules.getValidOffsets(localDateTime);
+        ZoneOffset offset;
+        if (validOffsets.size() == 1) {
+            offset = validOffsets.get(0);
+        } else if (validOffsets.size() == 0) {
+            ZoneOffsetTransition trans = rules.getTransition(localDateTime);
+            localDateTime = localDateTime.plusSeconds(trans.getDuration().getSeconds());
+            offset = trans.getOffsetAfter();
+        } else {
+            if (preferredOffset != null && validOffsets.contains(preferredOffset)) {
+                offset = preferredOffset;
+            } else {
+                offset = Objects.requireNonNull(validOffsets.get(0), "offset");  // protect against bad ZoneRules
+            }
+        }
+        return new ZonedDateTime(localDateTime, offset, zone);
+!!!8427010.java!!!	ofInstant(inout instant : Instant, inout zone : ZoneId) : ZonedDateTime
+        Objects.requireNonNull(instant, "instant");
+        Objects.requireNonNull(zone, "zone");
+        return create(instant.getEpochSecond(), instant.getNano(), zone);
+!!!8427138.java!!!	ofInstant(inout localDateTime : LocalDateTime, inout offset : ZoneOffset, inout zone : ZoneId) : ZonedDateTime
+        Objects.requireNonNull(localDateTime, "localDateTime");
+        Objects.requireNonNull(offset, "offset");
+        Objects.requireNonNull(zone, "zone");
+        if (zone.getRules().isValidOffset(localDateTime, offset)) {
+            return new ZonedDateTime(localDateTime, offset, zone);
+        }
+        return create(localDateTime.toEpochSecond(offset), localDateTime.getNano(), zone);
+!!!8427266.java!!!	create(in epochSecond : long, in nanoOfSecond : int, inout zone : ZoneId) : ZonedDateTime
+        ZoneRules rules = zone.getRules();
+        Instant instant = Instant.ofEpochSecond(epochSecond, nanoOfSecond);  // TODO: rules should be queryable by epochSeconds
+        ZoneOffset offset = rules.getOffset(instant);
+        LocalDateTime ldt = LocalDateTime.ofEpochSecond(epochSecond, nanoOfSecond, offset);
+        return new ZonedDateTime(ldt, offset, zone);
+!!!8427394.java!!!	ofStrict(inout localDateTime : LocalDateTime, inout offset : ZoneOffset, inout zone : ZoneId) : ZonedDateTime
+        Objects.requireNonNull(localDateTime, "localDateTime");
+        Objects.requireNonNull(offset, "offset");
+        Objects.requireNonNull(zone, "zone");
+        ZoneRules rules = zone.getRules();
+        if (rules.isValidOffset(localDateTime, offset) == false) {
+            ZoneOffsetTransition trans = rules.getTransition(localDateTime);
+            if (trans != null && trans.isGap()) {
+                // error message says daylight savings for simplicity
+                // even though there are other kinds of gaps
+                throw new DateTimeException("LocalDateTime '" + localDateTime +
+                        "' does not exist in zone '" + zone +
+                        "' due to a gap in the local time-line, typically caused by daylight savings");
+            }
+            throw new DateTimeException("ZoneOffset '" + offset + "' is not valid for LocalDateTime '" +
+                    localDateTime + "' in zone '" + zone + "'");
+        }
+        return new ZonedDateTime(localDateTime, offset, zone);
+!!!8427522.java!!!	ofLenient(inout localDateTime : LocalDateTime, inout offset : ZoneOffset, inout zone : ZoneId) : ZonedDateTime
+        Objects.requireNonNull(localDateTime, "localDateTime");
+        Objects.requireNonNull(offset, "offset");
+        Objects.requireNonNull(zone, "zone");
+        if (zone instanceof ZoneOffset && offset.equals(zone) == false) {
+            throw new IllegalArgumentException("ZoneId must match ZoneOffset");
+        }
+        return new ZonedDateTime(localDateTime, offset, zone);
+!!!8427650.java!!!	from(inout temporal : TemporalAccessor) : ZonedDateTime
+        if (temporal instanceof ZonedDateTime) {
+            return (ZonedDateTime) temporal;
+        }
+        try {
+            ZoneId zone = ZoneId.from(temporal);
+            if (temporal.isSupported(INSTANT_SECONDS)) {
+                long epochSecond = temporal.getLong(INSTANT_SECONDS);
+                int nanoOfSecond = temporal.get(NANO_OF_SECOND);
+                return create(epochSecond, nanoOfSecond, zone);
+            } else {
+                LocalDate date = LocalDate.from(temporal);
+                LocalTime time = LocalTime.from(temporal);
+                return of(date, time, zone);
+            }
+        } catch (DateTimeException ex) {
+            throw new DateTimeException("Unable to obtain ZonedDateTime from TemporalAccessor: " +
+                    temporal + " of type " + temporal.getClass().getName(), ex);
+        }
+!!!8427778.java!!!	parse(inout text : CharSequence) : ZonedDateTime
+        return parse(text, DateTimeFormatter.ISO_ZONED_DATE_TIME);
+!!!8427906.java!!!	parse(inout text : CharSequence, inout formatter : DateTimeFormatter) : ZonedDateTime
+        Objects.requireNonNull(formatter, "formatter");
+        return formatter.parse(text, ZonedDateTime::from);
+!!!8428034.java!!!	ZonedDateTime(inout dateTime : LocalDateTime, inout offset : ZoneOffset, inout zone : ZoneId)
+        this.dateTime = dateTime;
+        this.offset = offset;
+        this.zone = zone;
+!!!8428162.java!!!	resolveLocal(inout newDateTime : LocalDateTime) : ZonedDateTime
+        return ofLocal(newDateTime, zone, offset);
+!!!8428290.java!!!	resolveInstant(inout newDateTime : LocalDateTime) : ZonedDateTime
+        return ofInstant(newDateTime, offset, zone);
+!!!8428418.java!!!	resolveOffset(inout offset : ZoneOffset) : ZonedDateTime
+        if (offset.equals(this.offset) == false && zone.getRules().isValidOffset(dateTime, offset)) {
+            return new ZonedDateTime(dateTime, offset, zone);
+        }
+        return this;
+!!!8428546.java!!!	isSupported(inout field : TemporalField) : boolean
+        return field instanceof ChronoField || (field != null && field.isSupportedBy(this));
+!!!8428674.java!!!	isSupported(inout unit : TemporalUnit) : boolean
+        return ChronoZonedDateTime.super.isSupported(unit);
+!!!8428802.java!!!	range(inout field : TemporalField) : ValueRange
+        if (field instanceof ChronoField) {
+            if (field == INSTANT_SECONDS || field == OFFSET_SECONDS) {
+                return field.range();
+            }
+            return dateTime.range(field);
+        }
+        return field.rangeRefinedBy(this);
+!!!8428930.java!!!	get(inout field : TemporalField) : int
+        if (field instanceof ChronoField) {
+            switch ((ChronoField) field) {
+                case INSTANT_SECONDS:
+                    throw new UnsupportedTemporalTypeException("Invalid field 'InstantSeconds' for get() method, use getLong() instead");
+                case OFFSET_SECONDS:
+                    return getOffset().getTotalSeconds();
+            }
+            return dateTime.get(field);
+        }
+        return ChronoZonedDateTime.super.get(field);
+!!!8429058.java!!!	getLong(inout field : TemporalField) : long
+        if (field instanceof ChronoField) {
+            switch ((ChronoField) field) {
+                case INSTANT_SECONDS: return toEpochSecond();
+                case OFFSET_SECONDS: return getOffset().getTotalSeconds();
+            }
+            return dateTime.getLong(field);
+        }
+        return field.getFrom(this);
+!!!8429186.java!!!	getOffset() : ZoneOffset
+        return offset;
+!!!8429314.java!!!	withEarlierOffsetAtOverlap() : ZonedDateTime
+        ZoneOffsetTransition trans = getZone().getRules().getTransition(dateTime);
+        if (trans != null && trans.isOverlap()) {
+            ZoneOffset earlierOffset = trans.getOffsetBefore();
+            if (earlierOffset.equals(offset) == false) {
+                return new ZonedDateTime(dateTime, earlierOffset, zone);
+            }
+        }
+        return this;
+!!!8429442.java!!!	withLaterOffsetAtOverlap() : ZonedDateTime
+        ZoneOffsetTransition trans = getZone().getRules().getTransition(toLocalDateTime());
+        if (trans != null) {
+            ZoneOffset laterOffset = trans.getOffsetAfter();
+            if (laterOffset.equals(offset) == false) {
+                return new ZonedDateTime(dateTime, laterOffset, zone);
+            }
+        }
+        return this;
+!!!8429570.java!!!	getZone() : ZoneId
+        return zone;
+!!!8429698.java!!!	withZoneSameLocal(inout zone : ZoneId) : ZonedDateTime
+        Objects.requireNonNull(zone, "zone");
+        return this.zone.equals(zone) ? this : ofLocal(dateTime, zone, offset);
+!!!8429826.java!!!	withZoneSameInstant(inout zone : ZoneId) : ZonedDateTime
+        Objects.requireNonNull(zone, "zone");
+        return this.zone.equals(zone) ? this :
+            create(dateTime.toEpochSecond(offset), dateTime.getNano(), zone);
+!!!8429954.java!!!	withFixedOffsetZone() : ZonedDateTime
+        return this.zone.equals(offset) ? this : new ZonedDateTime(dateTime, offset, offset);
+!!!8430082.java!!!	toLocalDateTime() : LocalDateTime
+        return dateTime;
+!!!8430210.java!!!	toLocalDate() : LocalDate
+        return dateTime.toLocalDate();
+!!!8430338.java!!!	getYear() : int
+        return dateTime.getYear();
+!!!8430466.java!!!	getMonthValue() : int
+        return dateTime.getMonthValue();
+!!!8430594.java!!!	getMonth() : Month
+        return dateTime.getMonth();
+!!!8430722.java!!!	getDayOfMonth() : int
+        return dateTime.getDayOfMonth();
+!!!8430850.java!!!	getDayOfYear() : int
+        return dateTime.getDayOfYear();
+!!!8430978.java!!!	getDayOfWeek() : DayOfWeek
+        return dateTime.getDayOfWeek();
+!!!8431106.java!!!	toLocalTime() : LocalTime
+        return dateTime.toLocalTime();
+!!!8431234.java!!!	getHour() : int
+        return dateTime.getHour();
+!!!8431362.java!!!	getMinute() : int
+        return dateTime.getMinute();
+!!!8431490.java!!!	getSecond() : int
+        return dateTime.getSecond();
+!!!8431618.java!!!	getNano() : int
+        return dateTime.getNano();
+!!!8431746.java!!!	with(inout adjuster : TemporalAdjuster) : ZonedDateTime
+        // optimizations
+        if (adjuster instanceof LocalDate) {
+            return resolveLocal(LocalDateTime.of((LocalDate) adjuster, dateTime.toLocalTime()));
+        } else if (adjuster instanceof LocalTime) {
+            return resolveLocal(LocalDateTime.of(dateTime.toLocalDate(), (LocalTime) adjuster));
+        } else if (adjuster instanceof LocalDateTime) {
+            return resolveLocal((LocalDateTime) adjuster);
+        } else if (adjuster instanceof OffsetDateTime) {
+            OffsetDateTime odt = (OffsetDateTime) adjuster;
+            return ofLocal(odt.toLocalDateTime(), zone, odt.getOffset());
+        } else if (adjuster instanceof Instant) {
+            Instant instant = (Instant) adjuster;
+            return create(instant.getEpochSecond(), instant.getNano(), zone);
+        } else if (adjuster instanceof ZoneOffset) {
+            return resolveOffset((ZoneOffset) adjuster);
+        }
+        return (ZonedDateTime) adjuster.adjustInto(this);
+!!!8431874.java!!!	with(inout field : TemporalField, in newValue : long) : ZonedDateTime
+        if (field instanceof ChronoField) {
+            ChronoField f = (ChronoField) field;
+            switch (f) {
+                case INSTANT_SECONDS:
+                    return create(newValue, getNano(), zone);
+                case OFFSET_SECONDS:
+                    ZoneOffset offset = ZoneOffset.ofTotalSeconds(f.checkValidIntValue(newValue));
+                    return resolveOffset(offset);
+            }
+            return resolveLocal(dateTime.with(field, newValue));
+        }
+        return field.adjustInto(this, newValue);
+!!!8432002.java!!!	withYear(in year : int) : ZonedDateTime
+        return resolveLocal(dateTime.withYear(year));
+!!!8432130.java!!!	withMonth(in month : int) : ZonedDateTime
+        return resolveLocal(dateTime.withMonth(month));
+!!!8432258.java!!!	withDayOfMonth(in dayOfMonth : int) : ZonedDateTime
+        return resolveLocal(dateTime.withDayOfMonth(dayOfMonth));
+!!!8432386.java!!!	withDayOfYear(in dayOfYear : int) : ZonedDateTime
+        return resolveLocal(dateTime.withDayOfYear(dayOfYear));
+!!!8432514.java!!!	withHour(in hour : int) : ZonedDateTime
+        return resolveLocal(dateTime.withHour(hour));
+!!!8432642.java!!!	withMinute(in minute : int) : ZonedDateTime
+        return resolveLocal(dateTime.withMinute(minute));
+!!!8432770.java!!!	withSecond(in second : int) : ZonedDateTime
+        return resolveLocal(dateTime.withSecond(second));
+!!!8432898.java!!!	withNano(in nanoOfSecond : int) : ZonedDateTime
+        return resolveLocal(dateTime.withNano(nanoOfSecond));
+!!!8433026.java!!!	truncatedTo(inout unit : TemporalUnit) : ZonedDateTime
+        return resolveLocal(dateTime.truncatedTo(unit));
+!!!8433154.java!!!	plus(inout amountToAdd : TemporalAmount) : ZonedDateTime
+        if (amountToAdd instanceof Period) {
+            Period periodToAdd = (Period) amountToAdd;
+            return resolveLocal(dateTime.plus(periodToAdd));
+        }
+        Objects.requireNonNull(amountToAdd, "amountToAdd");
+        return (ZonedDateTime) amountToAdd.addTo(this);
+!!!8433282.java!!!	plus(in amountToAdd : long, inout unit : TemporalUnit) : ZonedDateTime
+        if (unit instanceof ChronoUnit) {
+            if (unit.isDateBased()) {
+                return resolveLocal(dateTime.plus(amountToAdd, unit));
+            } else {
+                return resolveInstant(dateTime.plus(amountToAdd, unit));
+            }
+        }
+        return unit.addTo(this, amountToAdd);
+!!!8433410.java!!!	plusYears(in years : long) : ZonedDateTime
+        return resolveLocal(dateTime.plusYears(years));
+!!!8433538.java!!!	plusMonths(in months : long) : ZonedDateTime
+        return resolveLocal(dateTime.plusMonths(months));
+!!!8433666.java!!!	plusWeeks(in weeks : long) : ZonedDateTime
+        return resolveLocal(dateTime.plusWeeks(weeks));
+!!!8433794.java!!!	plusDays(in days : long) : ZonedDateTime
+        return resolveLocal(dateTime.plusDays(days));
+!!!8433922.java!!!	plusHours(in hours : long) : ZonedDateTime
+        return resolveInstant(dateTime.plusHours(hours));
+!!!8434050.java!!!	plusMinutes(in minutes : long) : ZonedDateTime
+        return resolveInstant(dateTime.plusMinutes(minutes));
+!!!8434178.java!!!	plusSeconds(in seconds : long) : ZonedDateTime
+        return resolveInstant(dateTime.plusSeconds(seconds));
+!!!8434306.java!!!	plusNanos(in nanos : long) : ZonedDateTime
+        return resolveInstant(dateTime.plusNanos(nanos));
+!!!8434434.java!!!	minus(inout amountToSubtract : TemporalAmount) : ZonedDateTime
+        if (amountToSubtract instanceof Period) {
+            Period periodToSubtract = (Period) amountToSubtract;
+            return resolveLocal(dateTime.minus(periodToSubtract));
+        }
+        Objects.requireNonNull(amountToSubtract, "amountToSubtract");
+        return (ZonedDateTime) amountToSubtract.subtractFrom(this);
+!!!8434562.java!!!	minus(in amountToSubtract : long, inout unit : TemporalUnit) : ZonedDateTime
+        return (amountToSubtract == Long.MIN_VALUE ? plus(Long.MAX_VALUE, unit).plus(1, unit) : plus(-amountToSubtract, unit));
+!!!8434690.java!!!	minusYears(in years : long) : ZonedDateTime
+        return (years == Long.MIN_VALUE ? plusYears(Long.MAX_VALUE).plusYears(1) : plusYears(-years));
+!!!8434818.java!!!	minusMonths(in months : long) : ZonedDateTime
+        return (months == Long.MIN_VALUE ? plusMonths(Long.MAX_VALUE).plusMonths(1) : plusMonths(-months));
+!!!8434946.java!!!	minusWeeks(in weeks : long) : ZonedDateTime
+        return (weeks == Long.MIN_VALUE ? plusWeeks(Long.MAX_VALUE).plusWeeks(1) : plusWeeks(-weeks));
+!!!8435074.java!!!	minusDays(in days : long) : ZonedDateTime
+        return (days == Long.MIN_VALUE ? plusDays(Long.MAX_VALUE).plusDays(1) : plusDays(-days));
+!!!8435202.java!!!	minusHours(in hours : long) : ZonedDateTime
+        return (hours == Long.MIN_VALUE ? plusHours(Long.MAX_VALUE).plusHours(1) : plusHours(-hours));
+!!!8435330.java!!!	minusMinutes(in minutes : long) : ZonedDateTime
+        return (minutes == Long.MIN_VALUE ? plusMinutes(Long.MAX_VALUE).plusMinutes(1) : plusMinutes(-minutes));
+!!!8435458.java!!!	minusSeconds(in seconds : long) : ZonedDateTime
+        return (seconds == Long.MIN_VALUE ? plusSeconds(Long.MAX_VALUE).plusSeconds(1) : plusSeconds(-seconds));
+!!!8435586.java!!!	minusNanos(in nanos : long) : ZonedDateTime
+        return (nanos == Long.MIN_VALUE ? plusNanos(Long.MAX_VALUE).plusNanos(1) : plusNanos(-nanos));
+!!!8435714.java!!!	query(inout query : TemporalQuery) : R
+        if (query == TemporalQueries.localDate()) {
+            return (R) toLocalDate();
+        }
+        return ChronoZonedDateTime.super.query(query);
+!!!8435842.java!!!	until(inout endExclusive : Temporal, inout unit : TemporalUnit) : long
+        ZonedDateTime end = ZonedDateTime.from(endExclusive);
+        if (unit instanceof ChronoUnit) {
+            end = end.withZoneSameInstant(zone);
+            if (unit.isDateBased()) {
+                return dateTime.until(end.dateTime, unit);
+            } else {
+                return toOffsetDateTime().until(end.toOffsetDateTime(), unit);
+            }
+        }
+        return unit.between(this, end);
+!!!8435970.java!!!	format(inout formatter : DateTimeFormatter) : String
+        Objects.requireNonNull(formatter, "formatter");
+        return formatter.format(this);
+!!!8436098.java!!!	toOffsetDateTime() : OffsetDateTime
+        return OffsetDateTime.of(dateTime, offset);
+!!!8436226.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof ZonedDateTime) {
+            ZonedDateTime other = (ZonedDateTime) obj;
+            return dateTime.equals(other.dateTime) &&
+                offset.equals(other.offset) &&
+                zone.equals(other.zone);
+        }
+        return false;
+!!!8436354.java!!!	hashCode() : int
+        return dateTime.hashCode() ^ offset.hashCode() ^ Integer.rotateLeft(zone.hashCode(), 3);
+!!!8436482.java!!!	toString() : String
+        String str = dateTime.toString() + offset.toString();
+        if (offset != zone) {
+            str += '[' + zone.toString() + ']';
+        }
+        return str;
+!!!8436610.java!!!	writeReplace() : Object
+        return new Ser(Ser.ZONE_DATE_TIME_TYPE, this);
+!!!8436738.java!!!	readObject(inout s : ObjectInputStream) : void
+        throw new InvalidObjectException("Deserialization via serialization delegate");
+!!!8436866.java!!!	writeExternal(inout out : DataOutput) : void
+        dateTime.writeExternal(out);
+        offset.writeExternal(out);
+        zone.write(out);
+!!!8436994.java!!!	readExternal(inout in : ObjectInput) : ZonedDateTime
+        LocalDateTime dateTime = LocalDateTime.readExternal(in);
+        ZoneOffset offset = ZoneOffset.readExternal(in);
+        ZoneId zone = (ZoneId) Ser.read(in);
+        return ZonedDateTime.ofLenient(dateTime, offset, zone);

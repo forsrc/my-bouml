@@ -1,0 +1,92 @@
+class TOAImpl
+!!!1152130.java!!!	TOAImpl(inout orb : ORB, inout tom : TransientObjectManager, inout codebase : String)
+        super( orb ) ;
+        servants = tom ;
+
+        // Make the object key template
+        int serverid = ((ORB)getORB()).getTransientServerId();
+        int scid = ORBConstants.TOA_SCID ;
+
+        ObjectKeyTemplate oktemp = new JIDLObjectKeyTemplate( orb, scid, serverid ) ;
+
+        // REVISIT - POA specific
+        Policies policies = Policies.defaultPolicies;
+
+        // REVISIT - absorb codebase into a policy
+        initializeTemplate( oktemp, true,
+                            policies,
+                            codebase,
+                            null, // manager id
+                            oktemp.getObjectAdapterId()
+                            ) ;
+!!!1152258.java!!!	getObjectCopierFactory() : ObjectCopierFactory
+        CopierManager cm = getORB().getCopierManager() ;
+        return cm.getDefaultObjectCopierFactory() ;
+!!!1152386.java!!!	getLocalServant(inout objectId : byte [[]]) : Object
+        return (org.omg.CORBA.Object)(servants.lookupServant( objectId ) ) ;
+!!!1152514.java!!!	getInvocationServant(inout info : OAInvocationInfo) : void
+        java.lang.Object servant = servants.lookupServant( info.id() ) ;
+        if (servant == null)
+            // This is expected to result in an RMI-IIOP NoSuchObjectException.
+            // See bug 4973160.
+            servant = new NullServantImpl( lifecycleWrapper().nullServant() ) ;
+        info.setServant( servant ) ;
+!!!1152642.java!!!	returnServant() : void
+        // NO-OP
+!!!1152770.java!!!	getInterfaces(inout servant : Object, inout objectId : byte [[]]) : String
+        return StubAdapter.getTypeIds( servant ) ;
+!!!1152898.java!!!	getEffectivePolicy(in type : int) : Policy
+        return null ;
+!!!1153026.java!!!	getManagerId() : int
+        return -1 ;
+!!!1153154.java!!!	getState() : short
+        return ACTIVE.value ;
+!!!1153538.java!!!	connect(inout objref : Object) : void
+        // Store the objref and get a userkey allocated by the transient
+        // object manager.
+        byte[] key = servants.storeServant(objref, null);
+
+        // Find out the repository ID for this objref.
+        String id = StubAdapter.getTypeIds( objref )[0] ;
+
+        // Create the new objref
+        ObjectReferenceFactory orf = getCurrentFactory() ;
+        org.omg.CORBA.Object obj = orf.make_object( id, key ) ;
+
+        // Copy the delegate from the new objref to the argument
+        // XXX handle the case of an attempt to connect a local object.
+
+        org.omg.CORBA.portable.Delegate delegate = StubAdapter.getDelegate(
+            obj ) ;
+        CorbaContactInfoList ccil = (CorbaContactInfoList)
+            ((ClientDelegate)delegate).getContactInfoList() ;
+        LocalClientRequestDispatcher lcs =
+            ccil.getLocalClientRequestDispatcher() ;
+
+        if (lcs instanceof JIDLLocalCRDImpl) {
+            JIDLLocalCRDImpl jlcs = (JIDLLocalCRDImpl)lcs ;
+            jlcs.setServant( objref ) ;
+        } else {
+            throw new RuntimeException(
+                "TOAImpl.connect can not be called on " + lcs ) ;
+        }
+
+        StubAdapter.setDelegate( objref, delegate ) ;
+!!!1153666.java!!!	disconnect(inout objref : Object) : void
+        // Get the delegate, then ior, then transientKey, then delete servant
+        org.omg.CORBA.portable.Delegate del = StubAdapter.getDelegate(
+            objref ) ;
+        CorbaContactInfoList ccil = (CorbaContactInfoList)
+            ((ClientDelegate)del).getContactInfoList() ;
+        LocalClientRequestDispatcher lcs =
+            ccil.getLocalClientRequestDispatcher() ;
+
+        if (lcs instanceof JIDLLocalCRDImpl) {
+            JIDLLocalCRDImpl jlcs = (JIDLLocalCRDImpl)lcs ;
+            byte[] oid = jlcs.getObjectId() ;
+            servants.deleteServant(oid);
+            jlcs.unexport() ;
+        } else {
+            throw new RuntimeException(
+                "TOAImpl.disconnect can not be called on " + lcs ) ;
+        }

@@ -1,0 +1,106 @@
+class Encoder
+!!!8647810.java!!!	Encoder(inout isURL : boolean, inout newline : byte [[]], in linemax : int, inout doPadding : boolean)
+            this.isURL = isURL;
+            this.newline = newline;
+            this.linemax = linemax;
+            this.doPadding = doPadding;
+!!!8647938.java!!!	outLength(in srclen : int) : int
+            int len = 0;
+            if (doPadding) {
+                len = 4 * ((srclen + 2) / 3);
+            } else {
+                int n = srclen % 3;
+                len = 4 * (srclen / 3) + (n == 0 ? 0 : n + 1);
+            }
+            if (linemax > 0)                                  // line separators
+                len += (len - 1) / linemax * newline.length;
+            return len;
+!!!8648066.java!!!	encode(inout src : byte [[]]) : byte
+            int len = outLength(src.length);          // dst array size
+            byte[] dst = new byte[len];
+            int ret = encode0(src, 0, src.length, dst);
+            if (ret != dst.length)
+                 return Arrays.copyOf(dst, ret);
+            return dst;
+!!!8648194.java!!!	encode(inout src : byte [[]], inout dst : byte [[]]) : int
+            int len = outLength(src.length);         // dst array size
+            if (dst.length < len)
+                throw new IllegalArgumentException(
+                    "Output byte array is too small for encoding all input bytes");
+            return encode0(src, 0, src.length, dst);
+!!!8648322.java!!!	encodeToString(inout src : byte [[]]) : String
+            byte[] encoded = encode(src);
+            return new String(encoded, 0, 0, encoded.length);
+!!!8648450.java!!!	encode(inout buffer : ByteBuffer) : ByteBuffer
+            int len = outLength(buffer.remaining());
+            byte[] dst = new byte[len];
+            int ret = 0;
+            if (buffer.hasArray()) {
+                ret = encode0(buffer.array(),
+                              buffer.arrayOffset() + buffer.position(),
+                              buffer.arrayOffset() + buffer.limit(),
+                              dst);
+                buffer.position(buffer.limit());
+            } else {
+                byte[] src = new byte[buffer.remaining()];
+                buffer.get(src);
+                ret = encode0(src, 0, src.length, dst);
+            }
+            if (ret != dst.length)
+                 dst = Arrays.copyOf(dst, ret);
+            return ByteBuffer.wrap(dst);
+!!!8648578.java!!!	wrap(inout os : OutputStream) : OutputStream
+            Objects.requireNonNull(os);
+            return new EncOutputStream(os, isURL ? toBase64URL : toBase64,
+                                       newline, linemax, doPadding);
+!!!8648706.java!!!	withoutPadding() : Base64::Encoder
+            if (!doPadding)
+                return this;
+            return new Encoder(isURL, newline, linemax, false);
+!!!8648834.java!!!	encode0(inout src : byte [[]], in off : int, in end : int, inout dst : byte [[]]) : int
+            char[] base64 = isURL ? toBase64URL : toBase64;
+            int sp = off;
+            int slen = (end - off) / 3 * 3;
+            int sl = off + slen;
+            if (linemax > 0 && slen  > linemax / 4 * 3)
+                slen = linemax / 4 * 3;
+            int dp = 0;
+            while (sp < sl) {
+                int sl0 = Math.min(sp + slen, sl);
+                for (int sp0 = sp, dp0 = dp ; sp0 < sl0; ) {
+                    int bits = (src[sp0++] & 0xff) << 16 |
+                               (src[sp0++] & 0xff) <<  8 |
+                               (src[sp0++] & 0xff);
+                    dst[dp0++] = (byte)base64[(bits >>> 18) & 0x3f];
+                    dst[dp0++] = (byte)base64[(bits >>> 12) & 0x3f];
+                    dst[dp0++] = (byte)base64[(bits >>> 6)  & 0x3f];
+                    dst[dp0++] = (byte)base64[bits & 0x3f];
+                }
+                int dlen = (sl0 - sp) / 3 * 4;
+                dp += dlen;
+                sp = sl0;
+                if (dlen == linemax && sp < end) {
+                    for (byte b : newline){
+                        dst[dp++] = b;
+                    }
+                }
+            }
+            if (sp < end) {               // 1 or 2 leftover bytes
+                int b0 = src[sp++] & 0xff;
+                dst[dp++] = (byte)base64[b0 >> 2];
+                if (sp == end) {
+                    dst[dp++] = (byte)base64[(b0 << 4) & 0x3f];
+                    if (doPadding) {
+                        dst[dp++] = '=';
+                        dst[dp++] = '=';
+                    }
+                } else {
+                    int b1 = src[sp++] & 0xff;
+                    dst[dp++] = (byte)base64[(b0 << 4) & 0x3f | (b1 >> 4)];
+                    dst[dp++] = (byte)base64[(b1 << 2) & 0x3f];
+                    if (doPadding) {
+                        dst[dp++] = '=';
+                    }
+                }
+            }
+            return dp;

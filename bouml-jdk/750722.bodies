@@ -1,0 +1,219 @@
+class ResolvingParser
+!!!5282818.java!!!	ResolvingParser()
+    initParser();
+!!!5282946.java!!!	ResolvingParser(inout manager : CatalogManager)
+    catalogManager = manager;
+    initParser();
+!!!5283074.java!!!	initParser() : void
+    catalogResolver = new CatalogResolver(catalogManager);
+    SAXParserFactory spf = catalogManager.useServicesMechanism() ?
+                    SAXParserFactory.newInstance() : new SAXParserFactoryImpl();
+    spf.setNamespaceAware(namespaceAware);
+    spf.setValidating(validating);
+
+    try {
+      saxParser = spf.newSAXParser();
+      parser = saxParser.getParser();
+      documentHandler = null;
+      dtdHandler = null;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    }
+!!!5283202.java!!!	getCatalog() : Catalog
+    return catalogResolver.getCatalog();
+!!!5283330.java!!!	parse(inout input : InputSource) : void
+    setupParse(input.getSystemId());
+    try {
+      parser.parse(input);
+    } catch (InternalError ie) {
+      explain(input.getSystemId());
+      throw ie;
+    }
+!!!5283458.java!!!	parse(inout systemId : String) : void
+    setupParse(systemId);
+    try {
+      parser.parse(systemId);
+    } catch (InternalError ie) {
+      explain(systemId);
+      throw ie;
+    }
+!!!5283586.java!!!	setDocumentHandler(inout handler : DocumentHandler) : void
+    documentHandler = handler;
+!!!5283714.java!!!	setDTDHandler(inout handler : DTDHandler) : void
+    dtdHandler = handler;
+!!!5283842.java!!!	setEntityResolver(inout resolver : EntityResolver) : void
+    // nop
+!!!5283970.java!!!	setErrorHandler(inout handler : ErrorHandler) : void
+    parser.setErrorHandler(handler);
+!!!5284098.java!!!	setLocale(inout locale : Locale) : void
+    parser.setLocale(locale);
+!!!5284226.java!!!	characters(inout ch : char [[]], in start : int, in length : int) : void
+    if (documentHandler != null) {
+      documentHandler.characters(ch,start,length);
+    }
+!!!5284354.java!!!	endDocument() : void
+    if (documentHandler != null) {
+      documentHandler.endDocument();
+    }
+!!!5284482.java!!!	endElement(inout name : String) : void
+    if (documentHandler != null) {
+      documentHandler.endElement(name);
+    }
+!!!5284610.java!!!	ignorableWhitespace(inout ch : char [[]], in start : int, in length : int) : void
+    if (documentHandler != null) {
+      documentHandler.ignorableWhitespace(ch,start,length);
+    }
+!!!5284738.java!!!	processingInstruction(inout target : String, inout pidata : String) : void
+
+    if (target.equals("oasis-xml-catalog")) {
+      URL catalog = null;
+      String data = pidata;
+
+      int pos = data.indexOf("catalog=");
+      if (pos >= 0) {
+        data = data.substring(pos+8);
+        if (data.length() > 1) {
+          String quote = data.substring(0,1);
+          data = data.substring(1);
+          pos = data.indexOf(quote);
+          if (pos >= 0) {
+            data = data.substring(0, pos);
+            try {
+              if (baseURL != null) {
+                catalog = new URL(baseURL, data);
+              } else {
+                catalog = new URL(data);
+              }
+            } catch (MalformedURLException mue) {
+              // nevermind
+            }
+          }
+        }
+      }
+
+      if (allowXMLCatalogPI) {
+        if (catalogManager.getAllowOasisXMLCatalogPI()) {
+          catalogManager.debug.message(4,"oasis-xml-catalog PI", pidata);
+
+          if (catalog != null) {
+            try {
+              catalogManager.debug.message(4,"oasis-xml-catalog", catalog.toString());
+              oasisXMLCatalogPI = true;
+
+              if (piCatalogResolver == null) {
+                piCatalogResolver = new CatalogResolver(true);
+              }
+
+              piCatalogResolver.getCatalog().parseCatalog(catalog.toString());
+            } catch (Exception e) {
+              catalogManager.debug.message(3, "Exception parsing oasis-xml-catalog: "
+                            + catalog.toString());
+            }
+          } else {
+            catalogManager.debug.message(3, "PI oasis-xml-catalog unparseable: " + pidata);
+          }
+        } else {
+          catalogManager.debug.message(4,"PI oasis-xml-catalog ignored: " + pidata);
+        }
+      } else {
+        catalogManager.debug.message(3, "PI oasis-xml-catalog occurred in an invalid place: "
+                      + pidata);
+      }
+    } else {
+      if (documentHandler != null) {
+        documentHandler.processingInstruction(target, pidata);
+      }
+    }
+!!!5284866.java!!!	setDocumentLocator(inout locator : Locator) : void
+    if (documentHandler != null) {
+      documentHandler.setDocumentLocator(locator);
+    }
+!!!5284994.java!!!	startDocument() : void
+    if (documentHandler != null) {
+      documentHandler.startDocument();
+    }
+!!!5285122.java!!!	startElement(inout name : String, inout atts : AttributeList) : void
+    allowXMLCatalogPI = false;
+    if (documentHandler != null) {
+      documentHandler.startElement(name,atts);
+    }
+!!!5285250.java!!!	notationDecl(inout name : String, inout publicId : String, inout systemId : String) : void
+    allowXMLCatalogPI = false;
+    if (dtdHandler != null) {
+      dtdHandler.notationDecl(name,publicId,systemId);
+    }
+!!!5285378.java!!!	unparsedEntityDecl(inout name : String, inout publicId : String, inout systemId : String, inout notationName : String) : void
+    allowXMLCatalogPI = false;
+    if (dtdHandler != null) {
+      dtdHandler.unparsedEntityDecl (name, publicId, systemId, notationName);
+    }
+!!!5285506.java!!!	resolveEntity(inout publicId : String, inout systemId : String) : InputSource
+    allowXMLCatalogPI = false;
+    String resolved = catalogResolver.getResolvedEntity(publicId, systemId);
+
+    if (resolved == null && piCatalogResolver != null) {
+      resolved = piCatalogResolver.getResolvedEntity(publicId, systemId);
+    }
+
+    if (resolved != null) {
+      try {
+        InputSource iSource = new InputSource(resolved);
+        iSource.setPublicId(publicId);
+
+        // Ideally this method would not attempt to open the
+        // InputStream, but there is a bug (in Xerces, at least)
+        // that causes the parser to mistakenly open the wrong
+        // system identifier if the returned InputSource does
+        // not have a byteStream.
+        //
+        // It could be argued that we still shouldn't do this here,
+        // but since the purpose of calling the entityResolver is
+        // almost certainly to open the input stream, it seems to
+        // do little harm.
+        //
+        URL url = new URL(resolved);
+        InputStream iStream = url.openStream();
+        iSource.setByteStream(iStream);
+
+        return iSource;
+      } catch (Exception e) {
+        catalogManager.debug.message(1, "Failed to create InputSource", resolved);
+        return null;
+      }
+    } else {
+      return null;
+    }
+!!!5285634.java!!!	setupParse(inout systemId : String) : void
+    allowXMLCatalogPI = true;
+    parser.setEntityResolver(this);
+    parser.setDocumentHandler(this);
+    parser.setDTDHandler(this);
+
+    URL cwd = null;
+
+    try {
+      cwd = FileURL.makeURL("basename");
+    } catch (MalformedURLException mue) {
+      cwd = null;
+    }
+
+    try {
+      baseURL = new URL(systemId);
+    } catch (MalformedURLException mue) {
+      if (cwd != null) {
+        try {
+          baseURL = new URL(cwd, systemId);
+        } catch (MalformedURLException mue2) {
+          // give up
+          baseURL = null;
+        }
+      } else {
+        // give up
+        baseURL = null;
+      }
+    }
+!!!5285762.java!!!	explain(inout systemId : String) : void
+    if (!suppressExplanation) {
+      System.out.println("Parser probably encountered bad URI in " + systemId);
+      System.out.println("For example, replace '/some/uri' with 'file:/some/uri'.");
+    }

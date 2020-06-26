@@ -1,0 +1,473 @@
+class MethodType
+!!!7280642.java!!!	MethodType(inout rtype : Class, inout ptypes : Class [[]], inout trusted : boolean)
+        checkRtype(rtype);
+        checkPtypes(ptypes);
+        this.rtype = rtype;
+        // defensively copy the array passed in by the user
+        this.ptypes = trusted ? ptypes : Arrays.copyOf(ptypes, ptypes.length);
+!!!7280770.java!!!	MethodType(inout ptypes : Class [[]], inout rtype : Class)
+        this.rtype = rtype;
+        this.ptypes = ptypes;
+!!!7280898.java!!!	form() : MethodTypeForm
+ return form;
+!!!7281026.java!!!	rtype() : Class
+ return rtype;
+!!!7281154.java!!!	ptypes() : Class
+ return ptypes;
+!!!7281282.java!!!	setForm(inout f : MethodTypeForm) : void
+ form = f;
+!!!7281410.java!!!	checkRtype(inout rtype : Class) : void
+        Objects.requireNonNull(rtype);
+!!!7281538.java!!!	checkPtype(inout ptype : Class) : void
+        Objects.requireNonNull(ptype);
+        if (ptype == void.class)
+            throw newIllegalArgumentException("parameter type cannot be void");
+!!!7281666.java!!!	checkPtypes(inout ptypes : Class [[]]) : int
+        int slots = 0;
+        for (Class<?> ptype : ptypes) {
+            checkPtype(ptype);
+            if (ptype == double.class || ptype == long.class) {
+                slots++;
+            }
+        }
+        checkSlotCount(ptypes.length + slots);
+        return slots;
+!!!7281794.java!!!	checkSlotCount(in count : int) : void
+        assert((MAX_JVM_ARITY & (MAX_JVM_ARITY+1)) == 0);
+        // MAX_JVM_ARITY must be power of 2 minus 1 for following code trick to work:
+        if ((count & MAX_JVM_ARITY) != count)
+            throw newIllegalArgumentException("bad parameter count "+count);
+!!!7281922.java!!!	newIndexOutOfBoundsException(inout num : Object) : IndexOutOfBoundsException
+        if (num instanceof Integer)  num = "bad index: "+num;
+        return new IndexOutOfBoundsException(num.toString());
+!!!7282050.java!!!	methodType(inout rtype : Class, inout ptypes : Class [[]]) : MethodType
+        return makeImpl(rtype, ptypes, false);
+!!!7282178.java!!!	methodType(inout rtype : Class, inout ptypes : List) : MethodType
+        boolean notrust = false;  // random List impl. could return evil ptypes array
+        return makeImpl(rtype, listToArray(ptypes), notrust);
+!!!7282306.java!!!	listToArray(inout ptypes : List) : Class
+        // sanity check the size before the toArray call, since size might be huge
+        checkSlotCount(ptypes.size());
+        return ptypes.toArray(NO_PTYPES);
+!!!7282434.java!!!	methodType(inout rtype : Class, inout ptype0 : Class, inout ptypes : Class<?>...) : MethodType
+        Class<?>[] ptypes1 = new Class<?>[1+ptypes.length];
+        ptypes1[0] = ptype0;
+        System.arraycopy(ptypes, 0, ptypes1, 1, ptypes.length);
+        return makeImpl(rtype, ptypes1, true);
+!!!7282562.java!!!	methodType(inout rtype : Class) : MethodType
+        return makeImpl(rtype, NO_PTYPES, true);
+!!!7282690.java!!!	methodType(inout rtype : Class, inout ptype0 : Class) : MethodType
+        return makeImpl(rtype, new Class<?>[]{ ptype0 }, true);
+!!!7282818.java!!!	methodType(inout rtype : Class, inout ptypes : MethodType) : MethodType
+        return makeImpl(rtype, ptypes.ptypes, true);
+!!!7282946.java!!!	makeImpl(inout rtype : Class, inout ptypes : Class [[]], inout trusted : boolean) : MethodType
+        MethodType mt = internTable.get(new MethodType(ptypes, rtype));
+        if (mt != null)
+            return mt;
+        if (ptypes.length == 0) {
+            ptypes = NO_PTYPES; trusted = true;
+        }
+        mt = new MethodType(rtype, ptypes, trusted);
+        // promote the object to the Real Thing, and reprobe
+        mt.form = MethodTypeForm.findForm(mt);
+        return internTable.add(mt);
+!!!7283074.java!!!	genericMethodType(in objectArgCount : int, inout finalArray : boolean) : MethodType
+        MethodType mt;
+        checkSlotCount(objectArgCount);
+        int ivarargs = (!finalArray ? 0 : 1);
+        int ootIndex = objectArgCount*2 + ivarargs;
+        if (ootIndex < objectOnlyTypes.length) {
+            mt = objectOnlyTypes[ootIndex];
+            if (mt != null)  return mt;
+        }
+        Class<?>[] ptypes = new Class<?>[objectArgCount + ivarargs];
+        Arrays.fill(ptypes, Object.class);
+        if (ivarargs != 0)  ptypes[objectArgCount] = Object[].class;
+        mt = makeImpl(Object.class, ptypes, true);
+        if (ootIndex < objectOnlyTypes.length) {
+            objectOnlyTypes[ootIndex] = mt;     // cache it here also!
+        }
+        return mt;
+!!!7283202.java!!!	genericMethodType(in objectArgCount : int) : MethodType
+        return genericMethodType(objectArgCount, false);
+!!!7283330.java!!!	changeParameterType(in num : int, inout nptype : Class) : MethodType
+        if (parameterType(num) == nptype)  return this;
+        checkPtype(nptype);
+        Class<?>[] nptypes = ptypes.clone();
+        nptypes[num] = nptype;
+        return makeImpl(rtype, nptypes, true);
+!!!7283458.java!!!	insertParameterTypes(in num : int, inout ptypesToInsert : Class<?>...) : MethodType
+        int len = ptypes.length;
+        if (num < 0 || num > len)
+            throw newIndexOutOfBoundsException(num);
+        int ins = checkPtypes(ptypesToInsert);
+        checkSlotCount(parameterSlotCount() + ptypesToInsert.length + ins);
+        int ilen = ptypesToInsert.length;
+        if (ilen == 0)  return this;
+        Class<?>[] nptypes = Arrays.copyOfRange(ptypes, 0, len+ilen);
+        System.arraycopy(nptypes, num, nptypes, num+ilen, len-num);
+        System.arraycopy(ptypesToInsert, 0, nptypes, num, ilen);
+        return makeImpl(rtype, nptypes, true);
+!!!7283586.java!!!	appendParameterTypes(inout ptypesToInsert : Class<?>...) : MethodType
+        return insertParameterTypes(parameterCount(), ptypesToInsert);
+!!!7283714.java!!!	insertParameterTypes(in num : int, inout ptypesToInsert : List) : MethodType
+        return insertParameterTypes(num, listToArray(ptypesToInsert));
+!!!7283842.java!!!	appendParameterTypes(inout ptypesToInsert : List) : MethodType
+        return insertParameterTypes(parameterCount(), ptypesToInsert);
+!!!7283970.java!!!	replaceParameterTypes(in start : int, in end : int, inout ptypesToInsert : Class<?>...) : MethodType
+        if (start == end)
+            return insertParameterTypes(start, ptypesToInsert);
+        int len = ptypes.length;
+        if (!(0 <= start && start <= end && end <= len))
+            throw newIndexOutOfBoundsException("start="+start+" end="+end);
+        int ilen = ptypesToInsert.length;
+        if (ilen == 0)
+            return dropParameterTypes(start, end);
+        return dropParameterTypes(start, end).insertParameterTypes(start, ptypesToInsert);
+!!!7284098.java!!!	asSpreaderType(inout arrayType : Class, in arrayLength : int) : MethodType
+        assert(parameterCount() >= arrayLength);
+        int spreadPos = ptypes.length - arrayLength;
+        if (arrayLength == 0)  return this;  // nothing to change
+        if (arrayType == Object[].class) {
+            if (isGeneric())  return this;  // nothing to change
+            if (spreadPos == 0) {
+                // no leading arguments to preserve; go generic
+                MethodType res = genericMethodType(arrayLength);
+                if (rtype != Object.class) {
+                    res = res.changeReturnType(rtype);
+                }
+                return res;
+            }
+        }
+        Class<?> elemType = arrayType.getComponentType();
+        assert(elemType != null);
+        for (int i = spreadPos; i < ptypes.length; i++) {
+            if (ptypes[i] != elemType) {
+                Class<?>[] fixedPtypes = ptypes.clone();
+                Arrays.fill(fixedPtypes, i, ptypes.length, elemType);
+                return methodType(rtype, fixedPtypes);
+            }
+        }
+        return this;  // arguments check out; no change
+!!!7284226.java!!!	leadingReferenceParameter() : Class
+        Class<?> ptype;
+        if (ptypes.length == 0 ||
+            (ptype = ptypes[0]).isPrimitive())
+            throw newIllegalArgumentException("no leading reference parameter");
+        return ptype;
+!!!7284354.java!!!	asCollectorType(inout arrayType : Class, in arrayLength : int) : MethodType
+        assert(parameterCount() >= 1);
+        assert(lastParameterType().isAssignableFrom(arrayType));
+        MethodType res;
+        if (arrayType == Object[].class) {
+            res = genericMethodType(arrayLength);
+            if (rtype != Object.class) {
+                res = res.changeReturnType(rtype);
+            }
+        } else {
+            Class<?> elemType = arrayType.getComponentType();
+            assert(elemType != null);
+            res = methodType(rtype, Collections.nCopies(arrayLength, elemType));
+        }
+        if (ptypes.length == 1) {
+            return res;
+        } else {
+            return res.insertParameterTypes(0, parameterList().subList(0, ptypes.length-1));
+        }
+!!!7284482.java!!!	dropParameterTypes(in start : int, in end : int) : MethodType
+        int len = ptypes.length;
+        if (!(0 <= start && start <= end && end <= len))
+            throw newIndexOutOfBoundsException("start="+start+" end="+end);
+        if (start == end)  return this;
+        Class<?>[] nptypes;
+        if (start == 0) {
+            if (end == len) {
+                // drop all parameters
+                nptypes = NO_PTYPES;
+            } else {
+                // drop initial parameter(s)
+                nptypes = Arrays.copyOfRange(ptypes, end, len);
+            }
+        } else {
+            if (end == len) {
+                // drop trailing parameter(s)
+                nptypes = Arrays.copyOfRange(ptypes, 0, start);
+            } else {
+                int tail = len - end;
+                nptypes = Arrays.copyOfRange(ptypes, 0, start + tail);
+                System.arraycopy(ptypes, end, nptypes, start, tail);
+            }
+        }
+        return makeImpl(rtype, nptypes, true);
+!!!7284610.java!!!	changeReturnType(inout nrtype : Class) : MethodType
+        if (returnType() == nrtype)  return this;
+        return makeImpl(nrtype, ptypes, true);
+!!!7284738.java!!!	hasPrimitives() : boolean
+        return form.hasPrimitives();
+!!!7284866.java!!!	hasWrappers() : boolean
+        return unwrap() != this;
+!!!7284994.java!!!	erase() : MethodType
+        return form.erasedType();
+!!!7285122.java!!!	basicType() : MethodType
+        return form.basicType();
+!!!7285250.java!!!	invokerType() : MethodType
+        return insertParameterTypes(0, MethodHandle.class);
+!!!7285378.java!!!	generic() : MethodType
+        return genericMethodType(parameterCount());
+!!!7285506.java!!!	isGeneric() : boolean
+        return this == erase() && !hasPrimitives();
+!!!7285634.java!!!	wrap() : MethodType
+        return hasPrimitives() ? wrapWithPrims(this) : this;
+!!!7285762.java!!!	unwrap() : MethodType
+        MethodType noprims = !hasPrimitives() ? this : wrapWithPrims(this);
+        return unwrapWithNoPrims(noprims);
+!!!7285890.java!!!	wrapWithPrims(inout pt : MethodType) : MethodType
+        assert(pt.hasPrimitives());
+        MethodType wt = pt.wrapAlt;
+        if (wt == null) {
+            // fill in lazily
+            wt = MethodTypeForm.canonicalize(pt, MethodTypeForm.WRAP, MethodTypeForm.WRAP);
+            assert(wt != null);
+            pt.wrapAlt = wt;
+        }
+        return wt;
+!!!7286018.java!!!	unwrapWithNoPrims(inout wt : MethodType) : MethodType
+        assert(!wt.hasPrimitives());
+        MethodType uwt = wt.wrapAlt;
+        if (uwt == null) {
+            // fill in lazily
+            uwt = MethodTypeForm.canonicalize(wt, MethodTypeForm.UNWRAP, MethodTypeForm.UNWRAP);
+            if (uwt == null)
+                uwt = wt;    // type has no wrappers or prims at all
+            wt.wrapAlt = uwt;
+        }
+        return uwt;
+!!!7286146.java!!!	parameterType(in num : int) : Class
+        return ptypes[num];
+!!!7286274.java!!!	parameterCount() : int
+        return ptypes.length;
+!!!7286402.java!!!	returnType() : Class
+        return rtype;
+!!!7286530.java!!!	parameterList() : List
+        return Collections.unmodifiableList(Arrays.asList(ptypes.clone()));
+!!!7286658.java!!!	lastParameterType() : Class
+        int len = ptypes.length;
+        return len == 0 ? void.class : ptypes[len-1];
+!!!7286786.java!!!	parameterArray() : Class
+        return ptypes.clone();
+!!!7286914.java!!!	equals(inout x : Object) : boolean
+        return this == x || x instanceof MethodType && equals((MethodType)x);
+!!!7287042.java!!!	equals(inout that : MethodType) : boolean
+        return this.rtype == that.rtype
+            && Arrays.equals(this.ptypes, that.ptypes);
+!!!7287170.java!!!	hashCode() : int
+      int hashCode = 31 + rtype.hashCode();
+      for (Class<?> ptype : ptypes)
+          hashCode = 31*hashCode + ptype.hashCode();
+      return hashCode;
+!!!7287298.java!!!	toString() : String
+        StringBuilder sb = new StringBuilder();
+        sb.append("(");
+        for (int i = 0; i < ptypes.length; i++) {
+            if (i > 0)  sb.append(",");
+            sb.append(ptypes[i].getSimpleName());
+        }
+        sb.append(")");
+        sb.append(rtype.getSimpleName());
+        return sb.toString();
+!!!7287426.java!!!	isViewableAs(inout newType : MethodType, inout keepInterfaces : boolean) : boolean
+        if (!VerifyType.isNullConversion(returnType(), newType.returnType(), keepInterfaces))
+            return false;
+        return parametersAreViewableAs(newType, keepInterfaces);
+!!!7287554.java!!!	parametersAreViewableAs(inout newType : MethodType, inout keepInterfaces : boolean) : boolean
+        if (form == newType.form && form.erasedType == this)
+            return true;  // my reference parameters are all Object
+        if (ptypes == newType.ptypes)
+            return true;
+        int argc = parameterCount();
+        if (argc != newType.parameterCount())
+            return false;
+        for (int i = 0; i < argc; i++) {
+            if (!VerifyType.isNullConversion(newType.parameterType(i), parameterType(i), keepInterfaces))
+                return false;
+        }
+        return true;
+!!!7287682.java!!!	isConvertibleTo(inout newType : MethodType) : boolean
+        MethodTypeForm oldForm = this.form();
+        MethodTypeForm newForm = newType.form();
+        if (oldForm == newForm)
+            // same parameter count, same primitive/object mix
+            return true;
+        if (!canConvert(returnType(), newType.returnType()))
+            return false;
+        Class<?>[] srcTypes = newType.ptypes;
+        Class<?>[] dstTypes = ptypes;
+        if (srcTypes == dstTypes)
+            return true;
+        int argc;
+        if ((argc = srcTypes.length) != dstTypes.length)
+            return false;
+        if (argc <= 1) {
+            if (argc == 1 && !canConvert(srcTypes[0], dstTypes[0]))
+                return false;
+            return true;
+        }
+        if ((oldForm.primitiveParameterCount() == 0 && oldForm.erasedType == this) ||
+            (newForm.primitiveParameterCount() == 0 && newForm.erasedType == newType)) {
+            // Somewhat complicated test to avoid a loop of 2 or more trips.
+            // If either type has only Object parameters, we know we can convert.
+            assert(canConvertParameters(srcTypes, dstTypes));
+            return true;
+        }
+        return canConvertParameters(srcTypes, dstTypes);
+!!!7287810.java!!!	explicitCastEquivalentToAsType(inout newType : MethodType) : boolean
+        if (this == newType)  return true;
+        if (!explicitCastEquivalentToAsType(rtype, newType.rtype)) {
+            return false;
+        }
+        Class<?>[] srcTypes = newType.ptypes;
+        Class<?>[] dstTypes = ptypes;
+        if (dstTypes == srcTypes) {
+            return true;
+        }
+        assert(dstTypes.length == srcTypes.length);
+        for (int i = 0; i < dstTypes.length; i++) {
+            if (!explicitCastEquivalentToAsType(srcTypes[i], dstTypes[i])) {
+                return false;
+            }
+        }
+        return true;
+!!!7287938.java!!!	explicitCastEquivalentToAsType(inout src : Class, inout dst : Class) : boolean
+        if (src == dst || dst == Object.class || dst == void.class)  return true;
+        if (src.isPrimitive()) {
+            // Could be a prim/prim conversion, where casting is a strict superset.
+            // Or a boxing conversion, which is always to an exact wrapper class.
+            return canConvert(src, dst);
+        } else if (dst.isPrimitive()) {
+            // Unboxing behavior is different between MHs.eCA & MH.asType (see 3b).
+            return false;
+        } else {
+            // R->R always works, but we have to avoid a check-cast to an interface.
+            return !dst.isInterface() || dst.isAssignableFrom(src);
+        }
+!!!7288066.java!!!	canConvertParameters(inout srcTypes : Class [[]], inout dstTypes : Class [[]]) : boolean
+        for (int i = 0; i < srcTypes.length; i++) {
+            if (!canConvert(srcTypes[i], dstTypes[i])) {
+                return false;
+            }
+        }
+        return true;
+!!!7288194.java!!!	canConvert(inout src : Class, inout dst : Class) : boolean
+        // short-circuit a few cases:
+        if (src == dst || src == Object.class || dst == Object.class)  return true;
+        // the remainder of this logic is documented in MethodHandle.asType
+        if (src.isPrimitive()) {
+            // can force void to an explicit null, a la reflect.Method.invoke
+            // can also force void to a primitive zero, by analogy
+            if (src == void.class)  return true;  //or !dst.isPrimitive()?
+            Wrapper sw = Wrapper.forPrimitiveType(src);
+            if (dst.isPrimitive()) {
+                // P->P must widen
+                return Wrapper.forPrimitiveType(dst).isConvertibleFrom(sw);
+            } else {
+                // P->R must box and widen
+                return dst.isAssignableFrom(sw.wrapperType());
+            }
+        } else if (dst.isPrimitive()) {
+            // any value can be dropped
+            if (dst == void.class)  return true;
+            Wrapper dw = Wrapper.forPrimitiveType(dst);
+            // R->P must be able to unbox (from a dynamically chosen type) and widen
+            // For example:
+            //   Byte/Number/Comparable/Object -> dw:Byte -> byte.
+            //   Character/Comparable/Object -> dw:Character -> char
+            //   Boolean/Comparable/Object -> dw:Boolean -> boolean
+            // This means that dw must be cast-compatible with src.
+            if (src.isAssignableFrom(dw.wrapperType())) {
+                return true;
+            }
+            // The above does not work if the source reference is strongly typed
+            // to a wrapper whose primitive must be widened.  For example:
+            //   Byte -> unbox:byte -> short/int/long/float/double
+            //   Character -> unbox:char -> int/long/float/double
+            if (Wrapper.isWrapperType(src) &&
+                dw.isConvertibleFrom(Wrapper.forWrapperType(src))) {
+                // can unbox from src and then widen to dst
+                return true;
+            }
+            // We have already covered cases which arise due to runtime unboxing
+            // of a reference type which covers several wrapper types:
+            //   Object -> cast:Integer -> unbox:int -> long/float/double
+            //   Serializable -> cast:Byte -> unbox:byte -> byte/short/int/long/float/double
+            // An marginal case is Number -> dw:Character -> char, which would be OK if there were a
+            // subclass of Number which wraps a value that can convert to char.
+            // Since there is none, we don't need an extra check here to cover char or boolean.
+            return false;
+        } else {
+            // R->R always works, since null is always valid dynamically
+            return true;
+        }
+!!!7288322.java!!!	parameterSlotCount() : int
+        return form.parameterSlotCount();
+!!!7288450.java!!!	invokers() : Invokers
+        Invokers inv = invokers;
+        if (inv != null)  return inv;
+        invokers = inv = new Invokers(this);
+        return inv;
+!!!7288578.java!!!	parameterSlotDepth(in num : int) : int
+        if (num < 0 || num > ptypes.length)
+            parameterType(num);  // force a range check
+        return form.parameterToArgSlot(num-1);
+!!!7288706.java!!!	returnSlotCount() : int
+        return form.returnSlotCount();
+!!!7288834.java!!!	fromMethodDescriptorString(inout descriptor : String, inout loader : ClassLoader) : MethodType
+        if (!descriptor.startsWith("(") ||  // also generates NPE if needed
+            descriptor.indexOf(')') < 0 ||
+            descriptor.indexOf('.') >= 0)
+            throw newIllegalArgumentException("not a method descriptor: "+descriptor);
+        List<Class<?>> types = BytecodeDescriptor.parseMethod(descriptor, loader);
+        Class<?> rtype = types.remove(types.size() - 1);
+        checkSlotCount(types.size());
+        Class<?>[] ptypes = listToArray(types);
+        return makeImpl(rtype, ptypes, true);
+!!!7288962.java!!!	toMethodDescriptorString() : String
+        String desc = methodDescriptor;
+        if (desc == null) {
+            desc = BytecodeDescriptor.unparse(this);
+            methodDescriptor = desc;
+        }
+        return desc;
+!!!7289090.java!!!	toFieldDescriptorString(inout cls : Class) : String
+        return BytecodeDescriptor.unparse(cls);
+!!!7289218.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        s.defaultWriteObject();  // requires serialPersistentFields to be an empty array
+        s.writeObject(returnType());
+        s.writeObject(parameterArray());
+!!!7289346.java!!!	readObject(inout s : ObjectInputStream) : void
+        s.defaultReadObject();  // requires serialPersistentFields to be an empty array
+
+        Class<?>   returnType     = (Class<?>)   s.readObject();
+        Class<?>[] parameterArray = (Class<?>[]) s.readObject();
+
+        // Probably this object will never escape, but let's check
+        // the field values now, just to be sure.
+        checkRtype(returnType);
+        checkPtypes(parameterArray);
+
+        parameterArray = parameterArray.clone();  // make sure it is unshared
+        MethodType_init(returnType, parameterArray);
+!!!7289474.java!!!	MethodType()
+        this.rtype = null;
+        this.ptypes = null;
+!!!7289602.java!!!	MethodType_init(inout rtype : Class, inout ptypes : Class [[]]) : void
+        // In order to communicate these values to readResolve, we must
+        // store them into the implementation-specific final fields.
+        checkRtype(rtype);
+        checkPtypes(ptypes);
+        UNSAFE.putObject(this, rtypeOffset, rtype);
+        UNSAFE.putObject(this, ptypesOffset, ptypes);
+!!!7289730.java!!!	readResolve() : Object
+        // Do not use a trusted path for deserialization:
+        //return makeImpl(rtype, ptypes, true);
+        // Verify all operands, and make sure ptypes is unshared:
+        return methodType(rtype, ptypes);

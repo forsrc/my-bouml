@@ -1,0 +1,235 @@
+class Factory
+!!!7164930.java!!!	getConcreteBMHClass(inout types : String) : Class
+            // CHM.computeIfAbsent ensures generateConcreteBMHClass is called
+            // only once per key.
+            return CLASS_CACHE.computeIfAbsent(
+                types, new Function<String, Class<? extends BoundMethodHandle>>() {
+                    @Override
+                    public Class<? extends BoundMethodHandle> apply(String types) {
+                        return generateConcreteBMHClass(types);
+                    }
+                });
+!!!7165058.java!!!	generateConcreteBMHClass(inout types : String) : Class
+            final ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS + ClassWriter.COMPUTE_FRAMES);
+
+            String shortTypes = LambdaForm.shortenSignature(types);
+            final String className  = SPECIES_PREFIX_PATH + shortTypes;
+            final String sourceFile = SPECIES_PREFIX_NAME + shortTypes;
+            final int NOT_ACC_PUBLIC = 0;  // not ACC_PUBLIC
+            cw.visit(V1_6, NOT_ACC_PUBLIC + ACC_FINAL + ACC_SUPER, className, null, BMH, null);
+            cw.visitSource(sourceFile, null);
+
+            // emit static types and SPECIES_DATA fields
+            FieldVisitor fw = cw.visitField(NOT_ACC_PUBLIC + ACC_STATIC, "SPECIES_DATA", SPECIES_DATA_SIG, null, null);
+            fw.visitAnnotation(STABLE_SIG, true);
+            fw.visitEnd();
+
+            // emit bound argument fields
+            for (int i = 0; i < types.length(); ++i) {
+                final char t = types.charAt(i);
+                final String fieldName = makeFieldName(types, i);
+                final String fieldDesc = t == 'L' ? JLO_SIG : String.valueOf(t);
+                cw.visitField(ACC_FINAL, fieldName, fieldDesc, null, null).visitEnd();
+            }
+
+            MethodVisitor mv;
+
+            // emit constructor
+            mv = cw.visitMethod(ACC_PRIVATE, "<init>", makeSignature(types, true), null, null);
+            mv.visitCode();
+            mv.visitVarInsn(ALOAD, 0); // this
+            mv.visitVarInsn(ALOAD, 1); // type
+            mv.visitVarInsn(ALOAD, 2); // form
+
+            mv.visitMethodInsn(INVOKESPECIAL, BMH, "<init>", makeSignature("", true), false);
+
+            for (int i = 0, j = 0; i < types.length(); ++i, ++j) {
+                // i counts the arguments, j counts corresponding argument slots
+                char t = types.charAt(i);
+                mv.visitVarInsn(ALOAD, 0);
+                mv.visitVarInsn(typeLoadOp(t), j + 3); // parameters start at 3
+                mv.visitFieldInsn(PUTFIELD, className, makeFieldName(types, i), typeSig(t));
+                if (t == 'J' || t == 'D') {
+                    ++j; // adjust argument register access
+                }
+            }
+
+            mv.visitInsn(RETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+
+            // emit implementation of speciesData()
+            mv = cw.visitMethod(NOT_ACC_PUBLIC + ACC_FINAL, "speciesData", MYSPECIES_DATA_SIG, null, null);
+            mv.visitCode();
+            mv.visitFieldInsn(GETSTATIC, className, "SPECIES_DATA", SPECIES_DATA_SIG);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+
+            // emit implementation of fieldCount()
+            mv = cw.visitMethod(NOT_ACC_PUBLIC + ACC_FINAL, "fieldCount", INT_SIG, null, null);
+            mv.visitCode();
+            int fc = types.length();
+            if (fc <= (ICONST_5 - ICONST_0)) {
+                mv.visitInsn(ICONST_0 + fc);
+            } else {
+                mv.visitIntInsn(SIPUSH, fc);
+            }
+            mv.visitInsn(IRETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            // emit make()  ...factory method wrapping constructor
+            mv = cw.visitMethod(NOT_ACC_PUBLIC + ACC_STATIC, "make", makeSignature(types, false), null, null);
+            mv.visitCode();
+            // make instance
+            mv.visitTypeInsn(NEW, className);
+            mv.visitInsn(DUP);
+            // load mt, lf
+            mv.visitVarInsn(ALOAD, 0);  // type
+            mv.visitVarInsn(ALOAD, 1);  // form
+            // load factory method arguments
+            for (int i = 0, j = 0; i < types.length(); ++i, ++j) {
+                // i counts the arguments, j counts corresponding argument slots
+                char t = types.charAt(i);
+                mv.visitVarInsn(typeLoadOp(t), j + 2); // parameters start at 3
+                if (t == 'J' || t == 'D') {
+                    ++j; // adjust argument register access
+                }
+            }
+
+            // finally, invoke the constructor and return
+            mv.visitMethodInsn(INVOKESPECIAL, className, "<init>", makeSignature(types, true), false);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+
+            // emit copyWith()
+            mv = cw.visitMethod(NOT_ACC_PUBLIC + ACC_FINAL, "copyWith", makeSignature("", false), null, null);
+            mv.visitCode();
+            // make instance
+            mv.visitTypeInsn(NEW, className);
+            mv.visitInsn(DUP);
+            // load mt, lf
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitVarInsn(ALOAD, 2);
+            // put fields on the stack
+            emitPushFields(types, className, mv);
+            // finally, invoke the constructor and return
+            mv.visitMethodInsn(INVOKESPECIAL, className, "<init>", makeSignature(types, true), false);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+
+            // for each type, emit copyWithExtendT()
+            for (BasicType type : BasicType.ARG_TYPES) {
+                int ord = type.ordinal();
+                char btChar = type.basicTypeChar();
+                mv = cw.visitMethod(NOT_ACC_PUBLIC + ACC_FINAL, "copyWithExtend" + btChar, makeSignature(String.valueOf(btChar), false), null, E_THROWABLE);
+                mv.visitCode();
+                // return SPECIES_DATA.extendWith(t).constructor().invokeBasic(mt, lf, argL0, ..., narg)
+                // obtain constructor
+                mv.visitFieldInsn(GETSTATIC, className, "SPECIES_DATA", SPECIES_DATA_SIG);
+                int iconstInsn = ICONST_0 + ord;
+                assert(iconstInsn <= ICONST_5);
+                mv.visitInsn(iconstInsn);
+                mv.visitMethodInsn(INVOKEVIRTUAL, SPECIES_DATA, "extendWith", BMHSPECIES_DATA_EWI_SIG, false);
+                mv.visitMethodInsn(INVOKEVIRTUAL, SPECIES_DATA, "constructor", "()" + MH_SIG, false);
+                // load mt, lf
+                mv.visitVarInsn(ALOAD, 1);
+                mv.visitVarInsn(ALOAD, 2);
+                // put fields on the stack
+                emitPushFields(types, className, mv);
+                // put narg on stack
+                mv.visitVarInsn(typeLoadOp(btChar), 3);
+                // finally, invoke the constructor and return
+                mv.visitMethodInsn(INVOKEVIRTUAL, MH, "invokeBasic", makeSignature(types + btChar, false), false);
+                mv.visitInsn(ARETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+            }
+
+            cw.visitEnd();
+
+            // load class
+            final byte[] classFile = cw.toByteArray();
+            InvokerBytecodeGenerator.maybeDump(className, classFile);
+            Class<? extends BoundMethodHandle> bmhClass =
+                //UNSAFE.defineAnonymousClass(BoundMethodHandle.class, classFile, null).asSubclass(BoundMethodHandle.class);
+                UNSAFE.defineClass(className, classFile, 0, classFile.length,
+                                   BoundMethodHandle.class.getClassLoader(), null)
+                    .asSubclass(BoundMethodHandle.class);
+
+            return bmhClass;
+!!!7165186.java!!!	typeLoadOp(in t : char) : int
+            switch (t) {
+            case 'L': return ALOAD;
+            case 'I': return ILOAD;
+            case 'J': return LLOAD;
+            case 'F': return FLOAD;
+            case 'D': return DLOAD;
+            default : throw newInternalError("unrecognized type " + t);
+            }
+!!!7165314.java!!!	emitPushFields(inout types : String, inout className : String, inout mv : MethodVisitor) : void
+            for (int i = 0; i < types.length(); ++i) {
+                char tc = types.charAt(i);
+                mv.visitVarInsn(ALOAD, 0);
+                mv.visitFieldInsn(GETFIELD, className, makeFieldName(types, i), typeSig(tc));
+            }
+!!!7165442.java!!!	typeSig(in t : char) : String
+            return t == 'L' ? JLO_SIG : String.valueOf(t);
+!!!7165570.java!!!	makeGetter(inout cbmhClass : Class, inout types : String, in index : int) : MethodHandle
+            String fieldName = makeFieldName(types, index);
+            Class<?> fieldType = Wrapper.forBasicType(types.charAt(index)).primitiveType();
+            try {
+                return LOOKUP.findGetter(cbmhClass, fieldName, fieldType);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                throw newInternalError(e);
+            }
+!!!7165698.java!!!	makeGetters(inout cbmhClass : Class, inout types : String, inout mhs : MethodHandle [[]]) : MethodHandle
+            if (mhs == null)  mhs = new MethodHandle[types.length()];
+            for (int i = 0; i < mhs.length; ++i) {
+                mhs[i] = makeGetter(cbmhClass, types, i);
+                assert(mhs[i].internalMemberName().getDeclaringClass() == cbmhClass);
+            }
+            return mhs;
+!!!7165826.java!!!	makeCtors(inout cbmh : Class, inout types : String, inout mhs : MethodHandle [[]]) : MethodHandle
+            if (mhs == null)  mhs = new MethodHandle[1];
+            if (types.equals(""))  return mhs;  // hack for empty BMH species
+            mhs[0] = makeCbmhCtor(cbmh, types);
+            return mhs;
+!!!7165954.java!!!	makeNominalGetters(inout types : String, inout nfs : LambdaForm::NamedFunction [[]], inout getters : MethodHandle [[]]) : LambdaForm::NamedFunction
+            if (nfs == null)  nfs = new NamedFunction[types.length()];
+            for (int i = 0; i < nfs.length; ++i) {
+                nfs[i] = new NamedFunction(getters[i]);
+            }
+            return nfs;
+!!!7166082.java!!!	getSpeciesDataFromConcreteBMHClass(inout cbmh : Class) : BoundMethodHandle::SpeciesData
+            try {
+                Field F_SPECIES_DATA = cbmh.getDeclaredField("SPECIES_DATA");
+                return (SpeciesData) F_SPECIES_DATA.get(null);
+            } catch (ReflectiveOperationException ex) {
+                throw newInternalError(ex);
+            }
+!!!7166210.java!!!	setSpeciesDataToConcreteBMHClass(inout cbmh : Class, inout speciesData : BoundMethodHandle::SpeciesData) : void
+            try {
+                Field F_SPECIES_DATA = cbmh.getDeclaredField("SPECIES_DATA");
+                assert F_SPECIES_DATA.getDeclaredAnnotation(Stable.class) != null;
+                F_SPECIES_DATA.set(null, speciesData);
+            } catch (ReflectiveOperationException ex) {
+                throw newInternalError(ex);
+            }
+!!!7166338.java!!!	makeFieldName(inout types : String, in index : int) : String
+            assert index >= 0 && index < types.length();
+            return "arg" + types.charAt(index) + index;
+!!!7166466.java!!!	makeSignature(inout types : String, inout ctor : boolean) : String
+            StringBuilder buf = new StringBuilder(SIG_INCIPIT);
+            for (char c : types.toCharArray()) {
+                buf.append(typeSig(c));
+            }
+            return buf.append(')').append(ctor ? "V" : BMH_SIG).toString();
+!!!7166594.java!!!	makeCbmhCtor(inout cbmh : Class, inout types : String) : MethodHandle
+            try {
+                return LOOKUP.findStatic(cbmh, "make", MethodType.fromMethodDescriptorString(makeSignature(types, false), null));
+            } catch (NoSuchMethodException | IllegalAccessException | IllegalArgumentException | TypeNotPresentException e) {
+                throw newInternalError(e);
+            }

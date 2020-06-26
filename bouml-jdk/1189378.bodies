@@ -1,0 +1,152 @@
+class MBeanServerFactory
+!!!9773570.java!!!	MBeanServerFactory()
+
+!!!9773698.java!!!	releaseMBeanServer(inout mbeanServer : MBeanServer) : void
+        checkPermission("releaseMBeanServer");
+
+        removeMBeanServer(mbeanServer);
+!!!9773826.java!!!	createMBeanServer() : MBeanServer
+        return createMBeanServer(null);
+!!!9773954.java!!!	createMBeanServer(inout domain : String) : MBeanServer
+        checkPermission("createMBeanServer");
+
+        final MBeanServer mBeanServer = newMBeanServer(domain);
+        addMBeanServer(mBeanServer);
+        return mBeanServer;
+!!!9774082.java!!!	newMBeanServer() : MBeanServer
+        return newMBeanServer(null);
+!!!9774210.java!!!	newMBeanServer(inout domain : String) : MBeanServer
+        checkPermission("newMBeanServer");
+
+        // Get the builder. Creates a new one if necessary.
+        //
+        final MBeanServerBuilder mbsBuilder = getNewMBeanServerBuilder();
+        // Returned value cannot be null.  NullPointerException if violated.
+
+        synchronized(mbsBuilder) {
+            final MBeanServerDelegate delegate  =
+                    mbsBuilder.newMBeanServerDelegate();
+            if (delegate == null) {
+                final String msg =
+                        "MBeanServerBuilder.newMBeanServerDelegate() " +
+                        "returned null";
+                throw new JMRuntimeException(msg);
+            }
+            final MBeanServer mbeanServer =
+                    mbsBuilder.newMBeanServer(domain,null,delegate);
+            if (mbeanServer == null) {
+                final String msg =
+                        "MBeanServerBuilder.newMBeanServer() returned null";
+                throw new JMRuntimeException(msg);
+            }
+            return mbeanServer;
+        }
+!!!9774338.java!!!	findMBeanServer(inout agentId : String) : ArrayList
+
+        checkPermission("findMBeanServer");
+
+        if (agentId == null)
+            return new ArrayList<MBeanServer>(mBeanServerList);
+
+        ArrayList<MBeanServer> result = new ArrayList<MBeanServer>();
+        for (MBeanServer mbs : mBeanServerList) {
+            String name = mBeanServerId(mbs);
+            if (agentId.equals(name))
+                result.add(mbs);
+        }
+        return result;
+!!!9774466.java!!!	getClassLoaderRepository(inout server : MBeanServer) : ClassLoaderRepository
+        return server.getClassLoaderRepository();
+!!!9774594.java!!!	mBeanServerId(inout mbs : MBeanServer) : String
+        try {
+            return (String) mbs.getAttribute(MBeanServerDelegate.DELEGATE_NAME,
+                    "MBeanServerId");
+        } catch (JMException e) {
+            JmxProperties.MISC_LOGGER.finest(
+                    "Ignoring exception while getting MBeanServerId: "+e);
+            return null;
+        }
+!!!9774722.java!!!	checkPermission(inout action : String) : void
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            Permission perm = new MBeanServerPermission(action);
+            sm.checkPermission(perm);
+        }
+!!!9774850.java!!!	addMBeanServer(inout mbs : MBeanServer) : void
+        mBeanServerList.add(mbs);
+!!!9774978.java!!!	removeMBeanServer(inout mbs : MBeanServer) : void
+        boolean removed = mBeanServerList.remove(mbs);
+        if (!removed) {
+            MBEANSERVER_LOGGER.logp(Level.FINER,
+                    MBeanServerFactory.class.getName(),
+                    "removeMBeanServer(MBeanServer)",
+                    "MBeanServer was not in list!");
+            throw new IllegalArgumentException("MBeanServer was not in list!");
+        }
+!!!9775106.java!!!	loadBuilderClass(inout builderClassName : String) : Class
+        final ClassLoader loader =
+                Thread.currentThread().getContextClassLoader();
+
+        if (loader != null) {
+            // Try with context class loader
+            return loader.loadClass(builderClassName);
+        }
+
+        // No context class loader? Try with Class.forName()
+        return ReflectUtil.forName(builderClassName);
+!!!9775234.java!!!	newBuilder(inout builderClass : Class) : MBeanServerBuilder
+        try {
+            final Object abuilder = builderClass.newInstance();
+            return (MBeanServerBuilder)abuilder;
+        } catch (RuntimeException x) {
+            throw x;
+        } catch (Exception x) {
+            final String msg =
+                    "Failed to instantiate a MBeanServerBuilder from " +
+                    builderClass + ": " + x;
+            throw new JMRuntimeException(msg, x);
+        }
+!!!9775362.java!!!	checkMBeanServerBuilder() : void
+        try {
+            GetPropertyAction act =
+                    new GetPropertyAction(JMX_INITIAL_BUILDER);
+            String builderClassName = AccessController.doPrivileged(act);
+
+            try {
+                final Class<?> newBuilderClass;
+                if (builderClassName == null || builderClassName.length() == 0)
+                    newBuilderClass = MBeanServerBuilder.class;
+                else
+                    newBuilderClass = loadBuilderClass(builderClassName);
+
+                // Check whether a new builder needs to be created
+                if (builder != null) {
+                    final Class<?> builderClass = builder.getClass();
+                    if (newBuilderClass == builderClass)
+                        return; // no need to create a new builder...
+                }
+
+                // Create a new builder
+                builder = newBuilder(newBuilderClass);
+            } catch (ClassNotFoundException x) {
+                final String msg =
+                        "Failed to load MBeanServerBuilder class " +
+                        builderClassName + ": " + x;
+                throw new JMRuntimeException(msg, x);
+            }
+        } catch (RuntimeException x) {
+            if (MBEANSERVER_LOGGER.isLoggable(Level.FINEST)) {
+                StringBuilder strb = new StringBuilder()
+                .append("Failed to instantiate MBeanServerBuilder: ").append(x)
+                .append("\n\t\tCheck the value of the ")
+                .append(JMX_INITIAL_BUILDER).append(" property.");
+                MBEANSERVER_LOGGER.logp(Level.FINEST,
+                        MBeanServerFactory.class.getName(),
+                        "checkMBeanServerBuilder",
+                        strb.toString());
+            }
+            throw x;
+        }
+!!!9775490.java!!!	getNewMBeanServerBuilder() : MBeanServerBuilder
+        checkMBeanServerBuilder();
+        return builder;

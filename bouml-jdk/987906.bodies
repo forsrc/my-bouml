@@ -1,0 +1,113 @@
+class AbstractSelectableChannel
+!!!7782274.java!!!	AbstractSelectableChannel(inout provider : SelectorProvider)
+        this.provider = provider;
+!!!7782402.java!!!	provider() : SelectorProvider
+        return provider;
+!!!7782530.java!!!	addKey(inout k : SelectionKey) : void
+        assert Thread.holdsLock(keyLock);
+        int i = 0;
+        if ((keys != null) && (keyCount < keys.length)) {
+            // Find empty element of key array
+            for (i = 0; i < keys.length; i++)
+                if (keys[i] == null)
+                    break;
+        } else if (keys == null) {
+            keys =  new SelectionKey[3];
+        } else {
+            // Grow key array
+            int n = keys.length * 2;
+            SelectionKey[] ks =  new SelectionKey[n];
+            for (i = 0; i < keys.length; i++)
+                ks[i] = keys[i];
+            keys = ks;
+            i = keyCount;
+        }
+        keys[i] = k;
+        keyCount++;
+!!!7782658.java!!!	findKey(inout sel : Selector) : SelectionKey
+        synchronized (keyLock) {
+            if (keys == null)
+                return null;
+            for (int i = 0; i < keys.length; i++)
+                if ((keys[i] != null) && (keys[i].selector() == sel))
+                    return keys[i];
+            return null;
+        }
+!!!7782786.java!!!	removeKey(inout k : SelectionKey) : void
+                    // package-private
+        synchronized (keyLock) {
+            for (int i = 0; i < keys.length; i++)
+                if (keys[i] == k) {
+                    keys[i] = null;
+                    keyCount--;
+                }
+            ((AbstractSelectionKey)k).invalidate();
+        }
+!!!7782914.java!!!	haveValidKeys() : boolean
+        synchronized (keyLock) {
+            if (keyCount == 0)
+                return false;
+            for (int i = 0; i < keys.length; i++) {
+                if ((keys[i] != null) && keys[i].isValid())
+                    return true;
+            }
+            return false;
+        }
+!!!7783042.java!!!	isRegistered() : boolean
+        synchronized (keyLock) {
+            return keyCount != 0;
+        }
+!!!7783170.java!!!	keyFor(inout sel : Selector) : SelectionKey
+        return findKey(sel);
+!!!7783298.java!!!	register(inout sel : Selector, in ops : int, inout att : Object) : SelectionKey
+        synchronized (regLock) {
+            if (!isOpen())
+                throw new ClosedChannelException();
+            if ((ops & ~validOps()) != 0)
+                throw new IllegalArgumentException();
+            if (blocking)
+                throw new IllegalBlockingModeException();
+            SelectionKey k = findKey(sel);
+            if (k != null) {
+                k.interestOps(ops);
+                k.attach(att);
+            }
+            if (k == null) {
+                // New registration
+                synchronized (keyLock) {
+                    if (!isOpen())
+                        throw new ClosedChannelException();
+                    k = ((AbstractSelector)sel).register(this, ops, att);
+                    addKey(k);
+                }
+            }
+            return k;
+        }
+!!!7783426.java!!!	implCloseChannel() : void
+        implCloseSelectableChannel();
+        synchronized (keyLock) {
+            int count = (keys == null) ? 0 : keys.length;
+            for (int i = 0; i < count; i++) {
+                SelectionKey k = keys[i];
+                if (k != null)
+                    k.cancel();
+            }
+        }
+!!!7783682.java!!!	isBlocking() : boolean
+        synchronized (regLock) {
+            return blocking;
+        }
+!!!7783810.java!!!	blockingLock() : Object
+        return regLock;
+!!!7783938.java!!!	configureBlocking(inout block : boolean) : SelectableChannel
+        synchronized (regLock) {
+            if (!isOpen())
+                throw new ClosedChannelException();
+            if (blocking == block)
+                return this;
+            if (block && haveValidKeys())
+                throw new IllegalBlockingModeException();
+            implConfigureBlocking(block);
+            blocking = block;
+        }
+        return this;

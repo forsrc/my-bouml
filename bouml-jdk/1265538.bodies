@@ -1,0 +1,179 @@
+class BufferInfo
+!!!10438274.java!!!	BufferInfo(inout root : Container)
+            this.root = new WeakReference<Container>(root);
+            root.addComponentListener(this);
+            if (root instanceof Window) {
+                ((Window)root).addWindowListener(this);
+            }
+!!!10438402.java!!!	setPaintAllOnExpose(inout paintAllOnExpose : boolean) : void
+            this.paintAllOnExpose = paintAllOnExpose;
+!!!10438530.java!!!	getPaintAllOnExpose() : boolean
+            return paintAllOnExpose;
+!!!10438658.java!!!	setContentsLostDuringExpose(inout value : boolean) : void
+            contentsLostDuringExpose = value;
+!!!10438786.java!!!	getContentsLostDuringExpose() : boolean
+            return contentsLostDuringExpose;
+!!!10438914.java!!!	setInSync(inout inSync : boolean) : void
+            this.inSync = inSync;
+!!!10439042.java!!!	isInSync() : boolean
+            return inSync;
+!!!10439170.java!!!	getRoot() : Container
+            return (root == null) ? null : root.get();
+!!!10439298.java!!!	getBufferStrategy(inout create : boolean) : BufferStrategy
+            BufferStrategy bs = (weakBS == null) ? null : weakBS.get();
+            if (bs == null && create) {
+                bs = createBufferStrategy();
+                if (bs != null) {
+                    weakBS = new WeakReference<BufferStrategy>(bs);
+                }
+                if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                    LOGGER.finer("getBufferStrategy: created bs: " + bs);
+                }
+            }
+            return bs;
+!!!10439426.java!!!	hasBufferStrategyChanged() : boolean
+            Container root = getRoot();
+            if (root != null) {
+                BufferStrategy ourBS = null;
+                BufferStrategy componentBS = null;
+
+                ourBS = getBufferStrategy(false);
+                if (root instanceof Window) {
+                    componentBS = ((Window)root).getBufferStrategy();
+                }
+                else {
+                    try {
+                        componentBS = (BufferStrategy)
+                                 getGetBufferStrategyMethod().invoke(root);
+                    } catch (InvocationTargetException ite) {
+                        assert false;
+                    } catch (IllegalArgumentException iae) {
+                        assert false;
+                    } catch (IllegalAccessException iae2) {
+                        assert false;
+                    }
+                }
+                if (componentBS != ourBS) {
+                    // Component has a different BS, dispose ours.
+                    if (ourBS != null) {
+                        ourBS.dispose();
+                    }
+                    weakBS = null;
+                    return true;
+                }
+            }
+            return false;
+!!!10439554.java!!!	createBufferStrategy() : BufferStrategy
+            Container root = getRoot();
+            if (root == null) {
+                return null;
+            }
+            BufferStrategy bs = null;
+            if (SwingUtilities3.isVsyncRequested(root)) {
+                bs = createBufferStrategy(root, true);
+                if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                    LOGGER.finer("createBufferStrategy: using vsynced strategy");
+                }
+            }
+            if (bs == null) {
+                bs = createBufferStrategy(root, false);
+            }
+            if (!(bs instanceof SubRegionShowable)) {
+                // We do this for two reasons:
+                // 1. So that we know we can cast to SubRegionShowable and
+                //    invoke show with the minimal region to update
+                // 2. To avoid the possibility of invoking client code
+                //    on the toolkit thread.
+                bs = null;
+            }
+            return bs;
+!!!10439682.java!!!	createBufferStrategy(inout root : Container, inout isVsynced : boolean) : BufferStrategy
+            BufferCapabilities caps;
+            if (isVsynced) {
+                caps = new ExtendedBufferCapabilities(
+                    new ImageCapabilities(true), new ImageCapabilities(true),
+                    BufferCapabilities.FlipContents.COPIED,
+                    ExtendedBufferCapabilities.VSyncType.VSYNC_ON);
+            } else {
+                caps = new BufferCapabilities(
+                    new ImageCapabilities(true), new ImageCapabilities(true),
+                    null);
+            }
+            BufferStrategy bs = null;
+            if (SunToolkit.isInstanceOf(root, "java.applet.Applet")) {
+                try {
+                    getCreateBufferStrategyMethod().invoke(root, 2, caps);
+                    bs = (BufferStrategy)getGetBufferStrategyMethod().
+                                            invoke(root);
+                } catch (InvocationTargetException ite) {
+                    // Type is not supported
+                    if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                        LOGGER.finer("createBufferStratety failed",
+                                     ite);
+                    }
+                } catch (IllegalArgumentException iae) {
+                    assert false;
+                } catch (IllegalAccessException iae2) {
+                    assert false;
+                }
+            }
+            else {
+                try {
+                    ((Window)root).createBufferStrategy(2, caps);
+                    bs = ((Window)root).getBufferStrategy();
+                } catch (AWTException e) {
+                    // Type not supported
+                    if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                        LOGGER.finer("createBufferStratety failed",
+                                     e);
+                    }
+                }
+            }
+            return bs;
+!!!10439810.java!!!	dispose() : void
+            Container root = getRoot();
+            if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                LOGGER.finer("disposed BufferInfo for: " + root);
+            }
+            if (root != null) {
+                root.removeComponentListener(this);
+                if (root instanceof Window) {
+                    ((Window)root).removeWindowListener(this);
+                }
+                BufferStrategy bs = getBufferStrategy(false);
+                if (bs != null) {
+                    bs.dispose();
+                }
+            }
+            this.root = null;
+            weakBS = null;
+!!!10439938.java!!!	componentHidden(inout e : ComponentEvent) : void
+            Container root = getRoot();
+            if (root != null && root.isVisible()) {
+                // This case will only happen if a developer calls
+                // hide immediately followed by show.  In this case
+                // the event is delivered after show and the window
+                // will still be visible.  If a developer altered the
+                // contents of the window between the hide/show
+                // invocations we won't recognize we need to paint and
+                // the contents would be bogus.  Calling repaint here
+                // fixs everything up.
+                root.repaint();
+            }
+            else {
+                setPaintAllOnExpose(true);
+            }
+!!!10440066.java!!!	windowIconified(inout e : WindowEvent) : void
+            setPaintAllOnExpose(true);
+!!!10440194.java!!!	windowClosed(inout e : WindowEvent) : void
+            // Make sure we're not showing.
+            synchronized(BufferStrategyPaintManager.this) {
+                while (showing) {
+                    try {
+                        BufferStrategyPaintManager.this.wait();
+                    } catch (InterruptedException ie) {
+                    }
+                }
+                bufferInfos.remove(this);
+            }
+            dispose();

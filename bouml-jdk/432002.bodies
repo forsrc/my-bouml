@@ -1,0 +1,234 @@
+class FlowStrategy
+!!!2567682.java!!!	addDamage(inout fv : FlowView, in offset : int) : void
+            if (offset >= fv.getStartOffset() && offset < fv.getEndOffset()) {
+                if (damageStart == null || offset < damageStart.getOffset()) {
+                    try {
+                        damageStart = fv.getDocument().createPosition(offset);
+                    } catch (BadLocationException e) {
+                        // shouldn't happen since offset is inside view bounds
+                        assert(false);
+                    }
+                }
+            }
+!!!2567810.java!!!	unsetDamage() : void
+            damageStart = null;
+!!!2567938.java!!!	insertUpdate(inout fv : FlowView, inout e : DocumentEvent, inout alloc : Rectangle) : void
+            // FlowView.loadChildren() makes a synthetic call into this,
+            // passing null as e
+            if (e != null) {
+                addDamage(fv, e.getOffset());
+            }
+
+            if (alloc != null) {
+                Component host = fv.getContainer();
+                if (host != null) {
+                    host.repaint(alloc.x, alloc.y, alloc.width, alloc.height);
+                }
+            } else {
+                fv.preferenceChanged(null, true, true);
+            }
+!!!2568066.java!!!	removeUpdate(inout fv : FlowView, inout e : DocumentEvent, inout alloc : Rectangle) : void
+            addDamage(fv, e.getOffset());
+            if (alloc != null) {
+                Component host = fv.getContainer();
+                if (host != null) {
+                    host.repaint(alloc.x, alloc.y, alloc.width, alloc.height);
+                }
+            } else {
+                fv.preferenceChanged(null, true, true);
+            }
+!!!2568194.java!!!	changedUpdate(inout fv : FlowView, inout e : DocumentEvent, inout alloc : Rectangle) : void
+            addDamage(fv, e.getOffset());
+            if (alloc != null) {
+                Component host = fv.getContainer();
+                if (host != null) {
+                    host.repaint(alloc.x, alloc.y, alloc.width, alloc.height);
+                }
+            } else {
+                fv.preferenceChanged(null, true, true);
+            }
+!!!2568322.java!!!	getLogicalView(inout fv : FlowView) : View
+            return fv.layoutPool;
+!!!2568450.java!!!	layout(inout fv : FlowView) : void
+            View pool = getLogicalView(fv);
+            int rowIndex, p0;
+            int p1 = fv.getEndOffset();
+
+            if (fv.majorAllocValid) {
+                if (damageStart == null) {
+                    return;
+                }
+                // In some cases there's no view at position damageStart, so
+                // step back and search again. See 6452106 for details.
+                int offset = damageStart.getOffset();
+                while ((rowIndex = fv.getViewIndexAtPosition(offset)) < 0) {
+                    offset--;
+                }
+                if (rowIndex > 0) {
+                    rowIndex--;
+                }
+                p0 = fv.getView(rowIndex).getStartOffset();
+            } else {
+                rowIndex = 0;
+                p0 = fv.getStartOffset();
+            }
+            reparentViews(pool, p0);
+
+            viewBuffer = new Vector<View>(10, 10);
+            int rowCount = fv.getViewCount();
+            while (p0 < p1) {
+                View row;
+                if (rowIndex >= rowCount) {
+                    row = fv.createRow();
+                    fv.append(row);
+                } else {
+                    row = fv.getView(rowIndex);
+                }
+                p0 = layoutRow(fv, rowIndex, p0);
+                rowIndex++;
+            }
+            viewBuffer = null;
+
+            if (rowIndex < rowCount) {
+                fv.replace(rowIndex, rowCount - rowIndex, null);
+            }
+            unsetDamage();
+!!!2568578.java!!!	layoutRow(inout fv : FlowView, in rowIndex : int, in pos : int) : int
+            View row = fv.getView(rowIndex);
+            float x = fv.getFlowStart(rowIndex);
+            float spanLeft = fv.getFlowSpan(rowIndex);
+            int end = fv.getEndOffset();
+            TabExpander te = (fv instanceof TabExpander) ? (TabExpander)fv : null;
+            final int flowAxis = fv.getFlowAxis();
+
+            int breakWeight = BadBreakWeight;
+            float breakX = 0f;
+            float breakSpan = 0f;
+            int breakIndex = -1;
+            int n = 0;
+
+            viewBuffer.clear();
+            while (pos < end && spanLeft >= 0) {
+                View v = createView(fv, pos, (int)spanLeft, rowIndex);
+                if (v == null) {
+                    break;
+                }
+
+                int bw = v.getBreakWeight(flowAxis, x, spanLeft);
+                if (bw >= ForcedBreakWeight) {
+                    View w = v.breakView(flowAxis, pos, x, spanLeft);
+                    if (w != null) {
+                        viewBuffer.add(w);
+                    } else if (n == 0) {
+                        // if the view does not break, and it is the only view
+                        // in a row, use the whole view
+                        viewBuffer.add(v);
+                    }
+                    break;
+                } else if (bw >= breakWeight && bw > BadBreakWeight) {
+                    breakWeight = bw;
+                    breakX = x;
+                    breakSpan = spanLeft;
+                    breakIndex = n;
+                }
+
+                float chunkSpan;
+                if (flowAxis == X_AXIS && v instanceof TabableView) {
+                    chunkSpan = ((TabableView)v).getTabbedSpan(x, te);
+                } else {
+                    chunkSpan = v.getPreferredSpan(flowAxis);
+                }
+
+                if (chunkSpan > spanLeft && breakIndex >= 0) {
+                    // row is too long, and we may break
+                    if (breakIndex < n) {
+                        v = viewBuffer.get(breakIndex);
+                    }
+                    for (int i = n - 1; i >= breakIndex; i--) {
+                        viewBuffer.remove(i);
+                    }
+                    v = v.breakView(flowAxis, v.getStartOffset(), breakX, breakSpan);
+                }
+
+                spanLeft -= chunkSpan;
+                x += chunkSpan;
+                viewBuffer.add(v);
+                pos = v.getEndOffset();
+                n++;
+            }
+
+            View[] views = new View[viewBuffer.size()];
+            viewBuffer.toArray(views);
+            row.replace(0, row.getViewCount(), views);
+            return (views.length > 0 ? row.getEndOffset() : pos);
+!!!2568706.java!!!	adjustRow(inout fv : FlowView, in rowIndex : int, in desiredSpan : int, in x : int) : void
+            final int flowAxis = fv.getFlowAxis();
+            View r = fv.getView(rowIndex);
+            int n = r.getViewCount();
+            int span = 0;
+            int bestWeight = BadBreakWeight;
+            int bestSpan = 0;
+            int bestIndex = -1;
+            View v;
+            for (int i = 0; i < n; i++) {
+                v = r.getView(i);
+                int spanLeft = desiredSpan - span;
+
+                int w = v.getBreakWeight(flowAxis, x + span, spanLeft);
+                if ((w >= bestWeight) && (w > BadBreakWeight)) {
+                    bestWeight = w;
+                    bestIndex = i;
+                    bestSpan = span;
+                    if (w >= ForcedBreakWeight) {
+                        // it's a forced break, so there is
+                        // no point in searching further.
+                        break;
+                    }
+                }
+                span += v.getPreferredSpan(flowAxis);
+            }
+            if (bestIndex < 0) {
+                // there is nothing that can be broken, leave
+                // it in it's current state.
+                return;
+            }
+
+            // Break the best candidate view, and patch up the row.
+            int spanLeft = desiredSpan - bestSpan;
+            v = r.getView(bestIndex);
+            v = v.breakView(flowAxis, v.getStartOffset(), x + bestSpan, spanLeft);
+            View[] va = new View[1];
+            va[0] = v;
+            View lv = getLogicalView(fv);
+            int p0 = r.getView(bestIndex).getStartOffset();
+            int p1 = r.getEndOffset();
+            for (int i = 0; i < lv.getViewCount(); i++) {
+                View tmpView = lv.getView(i);
+                if (tmpView.getEndOffset() > p1) {
+                    break;
+                }
+                if (tmpView.getStartOffset() >= p0) {
+                    tmpView.setParent(lv);
+                }
+            }
+            r.replace(bestIndex, n - bestIndex, va);
+!!!2568834.java!!!	reparentViews(inout pool : View, in startPos : int) : void
+            int n = pool.getViewIndex(startPos, Position.Bias.Forward);
+            if (n >= 0) {
+                for (int i = n; i < pool.getViewCount(); i++) {
+                    pool.getView(i).setParent(pool);
+                }
+            }
+!!!2568962.java!!!	createView(inout fv : FlowView, in startOffset : int, in spanLeft : int, in rowIndex : int) : View
+            // Get the child view that contains the given starting position
+            View lv = getLogicalView(fv);
+            int childIndex = lv.getViewIndex(startOffset, Position.Bias.Forward);
+            View v = lv.getView(childIndex);
+            if (startOffset==v.getStartOffset()) {
+                // return the entire view
+                return v;
+            }
+
+            // return a fragment.
+            v = v.createFragment(startOffset, v.getEndOffset());
+            return v;

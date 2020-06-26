@@ -1,0 +1,632 @@
+class ElementImpl
+!!!4253442.java!!!	ElementImpl(inout ownerDoc : CoreDocumentImpl, inout name : String)
+        super(ownerDoc);
+        this.name = name;
+        needsSyncData(true);    // synchronizeData will initialize attributes
+!!!4253698.java!!!	rename(inout name : String) : void
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+            this.name = name;
+        reconcileDefaultAttributes();
+!!!4253826.java!!!	getNodeType() : short
+        return Node.ELEMENT_NODE;
+!!!4253954.java!!!	getNodeName() : String
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        return name;
+!!!4254082.java!!!	getAttributes() : NamedNodeMap
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (attributes == null) {
+            attributes = new AttributeMap(this, null);
+        }
+        return attributes;
+
+!!!4254210.java!!!	cloneNode(inout deep : boolean) : Node
+
+        ElementImpl newnode = (ElementImpl) super.cloneNode(deep);
+        // Replicate NamedNodeMap rather than sharing it.
+        if (attributes != null) {
+            newnode.attributes = (AttributeMap) attributes.cloneMap(newnode);
+        }
+        return newnode;
+
+!!!4254338.java!!!	getBaseURI() : String
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        // Absolute base URI is computed according to
+        // XML Base (http://www.w3.org/TR/xmlbase/#granularity)
+        // 1. The base URI specified by an xml:base attribute on the element,
+        // if one exists
+        if (attributes != null) {
+            Attr attrNode = (Attr)attributes.getNamedItem("xml:base");
+            if (attrNode != null) {
+                String uri =  attrNode.getNodeValue();
+                if (uri.length() != 0 ) {// attribute value is always empty string
+                    try {
+                       uri = new URI(uri).toString();
+                    }
+                    catch (com.sun.org.apache.xerces.internal.util.URI.MalformedURIException e) {
+                        // This may be a relative URI.
+
+                        // Make any parentURI into a URI object to use with the URI(URI, String) constructor
+                        String parentBaseURI = (this.ownerNode != null) ? this.ownerNode.getBaseURI() : null;
+                        if (parentBaseURI != null){
+                            try{
+                                uri = new URI(new URI(parentBaseURI), uri).toString();
+                            }
+                            catch (com.sun.org.apache.xerces.internal.util.URI.MalformedURIException ex){
+                                // This should never happen: parent should have checked the URI and returned null if invalid.
+                                return null;
+                            }
+                            return uri;
+                        }
+                        return null;
+                    }
+                    return uri;
+                }
+            }
+        }
+
+        // 2.the base URI of the element's parent element within the
+        // document or external entity, if one exists
+                // 3. the base URI of the document entity or external entity
+                // containing the element
+
+                // ownerNode serves as a parent or as document
+                String baseURI = (this.ownerNode != null) ? this.ownerNode.getBaseURI() : null ;
+        //base URI of parent element is not null
+        if(baseURI != null){
+            try {
+                //return valid absolute base URI
+               return new URI(baseURI).toString();
+            }
+            catch (com.sun.org.apache.xerces.internal.util.URI.MalformedURIException e){
+                return null;
+            }
+        }
+        return null;
+!!!4254466.java!!!	setOwnerDocument(inout doc : CoreDocumentImpl) : void
+        super.setOwnerDocument(doc);
+        if (attributes != null) {
+            attributes.setOwnerDocument(doc);
+        }
+!!!4254594.java!!!	getAttribute(inout name : String) : String
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (attributes == null) {
+            return "";
+        }
+        Attr attr = (Attr)(attributes.getNamedItem(name));
+        return (attr == null) ? "" : attr.getValue();
+
+!!!4254722.java!!!	getAttributeNode(inout name : String) : Attr
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (attributes == null) {
+            return null;
+        }
+        return (Attr)attributes.getNamedItem(name);
+
+!!!4254850.java!!!	getElementsByTagName(inout tagname : String) : NodeList
+        return new DeepNodeListImpl(this,tagname);
+!!!4254978.java!!!	getTagName() : String
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        return name;
+!!!4255106.java!!!	normalize() : void
+        // No need to normalize if already normalized.
+        if (isNormalized()) {
+            return;
+        }
+        if (needsSyncChildren()) {
+            synchronizeChildren();
+        }
+        ChildNode kid, next;
+        for (kid = firstChild; kid != null; kid = next) {
+            next = kid.nextSibling;
+
+            // If kid is a text node, we need to check for one of two
+            // conditions:
+            //   1) There is an adjacent text node
+            //   2) There is no adjacent text node, but kid is
+            //      an empty text node.
+            if ( kid.getNodeType() == Node.TEXT_NODE )
+            {
+                // If an adjacent text node, merge it with kid
+                if ( next!=null && next.getNodeType() == Node.TEXT_NODE )
+                {
+                    ((Text)kid).appendData(next.getNodeValue());
+                    removeChild( next );
+                    next = kid; // Don't advance; there might be another.
+                }
+                else
+                {
+                    // If kid is empty, remove it
+                    if ( kid.getNodeValue() == null || kid.getNodeValue().length() == 0 ) {
+                        removeChild( kid );
+                    }
+                }
+            }
+
+            // Otherwise it might be an Element, which is handled recursively
+            else if (kid.getNodeType() == Node.ELEMENT_NODE) {
+                kid.normalize();
+            }
+        }
+
+        // We must also normalize all of the attributes
+        if ( attributes!=null )
+        {
+            for( int i=0; i<attributes.getLength(); ++i )
+            {
+                Node attr = attributes.item(i);
+                attr.normalize();
+            }
+        }
+
+        // changed() will have occurred when the removeChild() was done,
+        // so does not have to be reissued.
+
+        isNormalized(true);
+!!!4255234.java!!!	removeAttribute(inout name : String) : void
+
+        if (ownerDocument.errorChecking && isReadOnly()) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+            throw new DOMException(DOMException.NO_MODIFICATION_ALLOWED_ERR, msg);
+        }
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (attributes == null) {
+            return;
+        }
+
+        attributes.safeRemoveNamedItem(name);
+
+!!!4255362.java!!!	removeAttributeNode(inout oldAttr : Attr) : Attr
+
+        if (ownerDocument.errorChecking && isReadOnly()) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+            throw new DOMException(DOMException.NO_MODIFICATION_ALLOWED_ERR, msg);
+        }
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (attributes == null) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_FOUND_ERR", null);
+            throw new DOMException(DOMException.NOT_FOUND_ERR, msg);
+        }
+        return (Attr) attributes.removeItem(oldAttr, true);
+
+!!!4255490.java!!!	setAttribute(inout name : String, inout value : String) : void
+
+                if (ownerDocument.errorChecking && isReadOnly()) {
+                        String msg =
+                                DOMMessageFormatter.formatMessage(
+                                        DOMMessageFormatter.DOM_DOMAIN,
+                                        "NO_MODIFICATION_ALLOWED_ERR",
+                                        null);
+                        throw new DOMException(DOMException.NO_MODIFICATION_ALLOWED_ERR, msg);
+                }
+
+                if (needsSyncData()) {
+                        synchronizeData();
+                }
+
+                Attr newAttr = getAttributeNode(name);
+                if (newAttr == null) {
+                        newAttr = getOwnerDocument().createAttribute(name);
+
+                        if (attributes == null) {
+                                attributes = new AttributeMap(this, null);
+                        }
+
+                        newAttr.setNodeValue(value);
+                        attributes.setNamedItem(newAttr);
+                }
+                else {
+                        newAttr.setNodeValue(value);
+                }
+
+!!!4255618.java!!!	setAttributeNode(inout newAttr : Attr) : Attr
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (ownerDocument.errorChecking) {
+            if (isReadOnly()) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+                throw new DOMException(
+                                     DOMException.NO_MODIFICATION_ALLOWED_ERR,
+                                     msg);
+            }
+
+            if (newAttr.getOwnerDocument() != ownerDocument) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "WRONG_DOCUMENT_ERR", null);
+                    throw new DOMException(DOMException.WRONG_DOCUMENT_ERR, msg);
+            }
+        }
+
+        if (attributes == null) {
+            attributes = new AttributeMap(this, null);
+        }
+        // This will throw INUSE if necessary
+        return (Attr) attributes.setNamedItem(newAttr);
+
+!!!4255746.java!!!	getAttributeNS(inout namespaceURI : String, inout localName : String) : String
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (attributes == null) {
+            return "";
+        }
+
+        Attr attr = (Attr)(attributes.getNamedItemNS(namespaceURI, localName));
+        return (attr == null) ? "" : attr.getValue();
+
+!!!4255874.java!!!	setAttributeNS(inout namespaceURI : String, inout qualifiedName : String, inout value : String) : void
+                if (ownerDocument.errorChecking && isReadOnly()) {
+                        String msg =
+                                DOMMessageFormatter.formatMessage(
+                                        DOMMessageFormatter.DOM_DOMAIN,
+                                        "NO_MODIFICATION_ALLOWED_ERR",
+                                        null);
+                        throw new DOMException(
+                                DOMException.NO_MODIFICATION_ALLOWED_ERR,
+                                msg);
+                }
+                if (needsSyncData()) {
+                        synchronizeData();
+                }
+                int index = qualifiedName.indexOf(':');
+                String prefix, localName;
+                if (index < 0) {
+                        prefix = null;
+                        localName = qualifiedName;
+                }
+                else {
+                        prefix = qualifiedName.substring(0, index);
+                        localName = qualifiedName.substring(index + 1);
+                }
+                Attr newAttr = getAttributeNodeNS(namespaceURI, localName);
+                if (newAttr == null) {
+            // REVISIT: this is not efficient, we are creating twice the same
+            //          strings for prefix and localName.
+                        newAttr = getOwnerDocument().createAttributeNS(
+                                        namespaceURI,
+                                        qualifiedName);
+                        if (attributes == null) {
+                                attributes = new AttributeMap(this, null);
+                        }
+                        newAttr.setNodeValue(value);
+                        attributes.setNamedItemNS(newAttr);
+                }
+                else {
+            if (newAttr instanceof AttrNSImpl){
+                String origNodeName = ((AttrNSImpl) newAttr).name;
+                String newName = (prefix!=null) ? (prefix+":"+localName) : localName;
+
+                ((AttrNSImpl) newAttr).name = newName;
+
+                if (!newName.equals(origNodeName)) {
+                    // Note: we can't just change the name of the attribute. Names have to be in sorted
+                    // order in the attributes vector because a binary search is used to locate them.
+                    // If the new name has a different prefix, the list may become unsorted.
+                    // Maybe it would be better to resort the list, but the simplest
+                    // fix seems to be to remove the old attribute and re-insert it.
+                    // -- Norman.Walsh@Sun.COM, 2 Feb 2007
+                    newAttr = (Attr) attributes.removeItem(newAttr, false);
+                    attributes.addItem(newAttr);
+                }
+            }
+            else {
+                // This case may happen if user calls:
+                //      elem.setAttribute("name", "value");
+                //      elem.setAttributeNS(null, "name", "value");
+                // This case is not defined by the DOM spec, we choose
+                // to create a new attribute in this case and remove an old one from the tree
+                // note this might cause events to be propagated or user data to be lost
+                newAttr = new AttrNSImpl((CoreDocumentImpl)getOwnerDocument(), namespaceURI, qualifiedName, localName);
+                attributes.setNamedItemNS(newAttr);
+            }
+
+                        newAttr.setNodeValue(value);
+                }
+
+!!!4256002.java!!!	removeAttributeNS(inout namespaceURI : String, inout localName : String) : void
+
+        if (ownerDocument.errorChecking && isReadOnly()) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+            throw new DOMException(DOMException.NO_MODIFICATION_ALLOWED_ERR, msg);
+        }
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (attributes == null) {
+            return;
+        }
+
+        attributes.safeRemoveNamedItemNS(namespaceURI, localName);
+
+!!!4256130.java!!!	getAttributeNodeNS(inout namespaceURI : String, inout localName : String) : Attr
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (attributes == null) {
+            return null;
+        }
+        return (Attr)attributes.getNamedItemNS(namespaceURI, localName);
+
+!!!4256258.java!!!	setAttributeNodeNS(inout newAttr : Attr) : Attr
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (ownerDocument.errorChecking) {
+            if (isReadOnly()) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+                    throw new DOMException(
+                                     DOMException.NO_MODIFICATION_ALLOWED_ERR,
+                                     msg);
+            }
+            if (newAttr.getOwnerDocument() != ownerDocument) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "WRONG_DOCUMENT_ERR", null);
+                throw new DOMException(DOMException.WRONG_DOCUMENT_ERR, msg);
+            }
+        }
+
+        if (attributes == null) {
+            attributes = new AttributeMap(this, null);
+        }
+        // This will throw INUSE if necessary
+        return (Attr) attributes.setNamedItemNS(newAttr);
+
+!!!4256386.java!!!	setXercesAttributeNode(inout attr : Attr) : int
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (attributes == null) {
+            attributes = new AttributeMap(this, null);
+        }
+        return attributes.addItem(attr);
+
+!!!4256514.java!!!	getXercesAttribute(inout namespaceURI : String, inout localName : String) : int
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (attributes == null) {
+            return -1;
+        }
+        return attributes.getNamedItemIndex(namespaceURI, localName);
+
+!!!4256642.java!!!	hasAttributes() : boolean
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        return (attributes != null && attributes.getLength() != 0);
+!!!4256770.java!!!	hasAttribute(inout name : String) : boolean
+        return getAttributeNode(name) != null;
+!!!4256898.java!!!	hasAttributeNS(inout namespaceURI : String, inout localName : String) : boolean
+        return getAttributeNodeNS(namespaceURI, localName) != null;
+!!!4257026.java!!!	getElementsByTagNameNS(inout namespaceURI : String, inout localName : String) : NodeList
+        return new DeepNodeListImpl(this, namespaceURI, localName);
+!!!4257154.java!!!	isEqualNode(inout arg : Node) : boolean
+        if (!super.isEqualNode(arg)) {
+            return false;
+        }
+        boolean hasAttrs = hasAttributes();
+        if (hasAttrs != ((Element) arg).hasAttributes()) {
+            return false;
+        }
+        if (hasAttrs) {
+            NamedNodeMap map1 = getAttributes();
+            NamedNodeMap map2 = ((Element) arg).getAttributes();
+            int len = map1.getLength();
+            if (len != map2.getLength()) {
+                return false;
+            }
+            for (int i = 0; i < len; i++) {
+                Node n1 = map1.item(i);
+                if (n1.getLocalName() == null) { // DOM Level 1 Node
+                    Node n2 = map2.getNamedItem(n1.getNodeName());
+                    if (n2 == null || !((NodeImpl) n1).isEqualNode(n2)) {
+                        return false;
+                    }
+                }
+                else {
+                    Node n2 = map2.getNamedItemNS(n1.getNamespaceURI(),
+                                                  n1.getLocalName());
+                    if (n2 == null || !((NodeImpl) n1).isEqualNode(n2)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+!!!4257282.java!!!	setIdAttributeNode(inout at : Attr, inout makeId : boolean) : void
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (ownerDocument.errorChecking) {
+            if (isReadOnly()) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+                throw new DOMException(
+                                     DOMException.NO_MODIFICATION_ALLOWED_ERR,
+                                     msg);
+            }
+
+            if (at.getOwnerElement() != this) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_FOUND_ERR", null);
+                throw new DOMException(DOMException.NOT_FOUND_ERR, msg);
+            }
+        }
+        ((AttrImpl) at).isIdAttribute(makeId);
+        if (!makeId) {
+            ownerDocument.removeIdentifier(at.getValue());
+        }
+        else {
+            ownerDocument.putIdentifier(at.getValue(), this);
+        }
+!!!4257410.java!!!	setIdAttribute(inout name : String, inout makeId : boolean) : void
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        Attr at = getAttributeNode(name);
+
+                if( at == null){
+                String msg = DOMMessageFormatter.formatMessage(
+                                                                        DOMMessageFormatter.DOM_DOMAIN,
+                                                                        "NOT_FOUND_ERR", null);
+            throw new DOMException(DOMException.NOT_FOUND_ERR, msg);
+                }
+
+                if (ownerDocument.errorChecking) {
+            if (isReadOnly()) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+                throw new DOMException(
+                                     DOMException.NO_MODIFICATION_ALLOWED_ERR,
+                                     msg);
+            }
+
+            if (at.getOwnerElement() != this) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_FOUND_ERR", null);
+                throw new DOMException(DOMException.NOT_FOUND_ERR, msg);
+            }
+        }
+
+        ((AttrImpl) at).isIdAttribute(makeId);
+        if (!makeId) {
+            ownerDocument.removeIdentifier(at.getValue());
+        }
+        else {
+            ownerDocument.putIdentifier(at.getValue(), this);
+        }
+!!!4257538.java!!!	setIdAttributeNS(inout namespaceURI : String, inout localName : String, inout makeId : boolean) : void
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        //if namespace uri is empty string, set it to 'null'
+        if (namespaceURI != null) {
+            namespaceURI = (namespaceURI.length() == 0)? null : namespaceURI;
+        }
+        Attr at = getAttributeNodeNS(namespaceURI, localName);
+
+                if( at == null){
+                String msg = DOMMessageFormatter.formatMessage(
+                                                                        DOMMessageFormatter.DOM_DOMAIN,
+                                                                        "NOT_FOUND_ERR", null);
+            throw new DOMException(DOMException.NOT_FOUND_ERR, msg);
+                }
+
+                if (ownerDocument.errorChecking) {
+            if (isReadOnly()) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+                throw new DOMException(
+                                     DOMException.NO_MODIFICATION_ALLOWED_ERR,
+                                     msg);
+            }
+
+            if (at.getOwnerElement() != this) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_FOUND_ERR", null);
+                throw new DOMException(DOMException.NOT_FOUND_ERR, msg);
+            }
+        }
+        ((AttrImpl) at).isIdAttribute(makeId);
+        if (!makeId) {
+            ownerDocument.removeIdentifier(at.getValue());
+        }
+        else {
+            ownerDocument.putIdentifier(at.getValue(), this);
+        }
+!!!4257666.java!!!	getTypeName() : String
+        return null;
+!!!4257794.java!!!	getTypeNamespace() : String
+        return null;
+!!!4257922.java!!!	isDerivedFrom(inout typeNamespaceArg : String, inout typeNameArg : String, in derivationMethod : int) : boolean
+
+        return false;
+!!!4258050.java!!!	getSchemaTypeInfo() : TypeInfo
+        if(needsSyncData()) {
+            synchronizeData();
+        }
+        return this;
+!!!4258178.java!!!	setReadOnly(inout readOnly : boolean, inout deep : boolean) : void
+        super.setReadOnly(readOnly,deep);
+        if (attributes != null) {
+            attributes.setReadOnly(readOnly,true);
+        }
+!!!4258306.java!!!	synchronizeData() : void
+
+        // no need to sync in the future
+        needsSyncData(false);
+
+        // we don't want to generate any event for this so turn them off
+        boolean orig = ownerDocument.getMutationEvents();
+        ownerDocument.setMutationEvents(false);
+
+        // attributes
+        setupDefaultAttributes();
+
+        // set mutation events flag back to its original value
+        ownerDocument.setMutationEvents(orig);
+
+!!!4258434.java!!!	moveSpecifiedAttributes(inout el : ElementImpl) : void
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+        if (el.hasAttributes()) {
+            if (attributes == null) {
+                attributes = new AttributeMap(this, null);
+            }
+            attributes.moveSpecifiedAttributes(el.attributes);
+        }
+!!!4258562.java!!!	setupDefaultAttributes() : void
+        NamedNodeMapImpl defaults = getDefaultAttributes();
+        if (defaults != null) {
+            attributes = new AttributeMap(this, defaults);
+        }
+!!!4258690.java!!!	reconcileDefaultAttributes() : void
+        if (attributes != null) {
+            NamedNodeMapImpl defaults = getDefaultAttributes();
+            attributes.reconcileDefaults(defaults);
+        }
+!!!4258818.java!!!	getDefaultAttributes() : NamedNodeMapImpl
+
+        DocumentTypeImpl doctype =
+            (DocumentTypeImpl) ownerDocument.getDoctype();
+        if (doctype == null) {
+            return null;
+        }
+        ElementDefinitionImpl eldef =
+            (ElementDefinitionImpl)doctype.getElements()
+                                               .getNamedItem(getNodeName());
+        if (eldef == null) {
+            return null;
+        }
+        return (NamedNodeMapImpl) eldef.getAttributes();
+

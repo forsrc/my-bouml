@@ -1,0 +1,400 @@
+class ZoneRules
+!!!8579970.java!!!	of(inout baseStandardOffset : ZoneOffset, inout baseWallOffset : ZoneOffset, inout standardOffsetTransitionList : List, inout transitionList : List, inout lastRules : List) : ZoneRules
+        Objects.requireNonNull(baseStandardOffset, "baseStandardOffset");
+        Objects.requireNonNull(baseWallOffset, "baseWallOffset");
+        Objects.requireNonNull(standardOffsetTransitionList, "standardOffsetTransitionList");
+        Objects.requireNonNull(transitionList, "transitionList");
+        Objects.requireNonNull(lastRules, "lastRules");
+        return new ZoneRules(baseStandardOffset, baseWallOffset,
+                             standardOffsetTransitionList, transitionList, lastRules);
+!!!8580098.java!!!	of(inout offset : ZoneOffset) : ZoneRules
+        Objects.requireNonNull(offset, "offset");
+        return new ZoneRules(offset);
+!!!8580226.java!!!	ZoneRules(inout baseStandardOffset : ZoneOffset, inout baseWallOffset : ZoneOffset, inout standardOffsetTransitionList : List, inout transitionList : List, inout lastRules : List)
+        super();
+
+        // convert standard transitions
+
+        this.standardTransitions = new long[standardOffsetTransitionList.size()];
+
+        this.standardOffsets = new ZoneOffset[standardOffsetTransitionList.size() + 1];
+        this.standardOffsets[0] = baseStandardOffset;
+        for (int i = 0; i < standardOffsetTransitionList.size(); i++) {
+            this.standardTransitions[i] = standardOffsetTransitionList.get(i).toEpochSecond();
+            this.standardOffsets[i + 1] = standardOffsetTransitionList.get(i).getOffsetAfter();
+        }
+
+        // convert savings transitions to locals
+        List<LocalDateTime> localTransitionList = new ArrayList<>();
+        List<ZoneOffset> localTransitionOffsetList = new ArrayList<>();
+        localTransitionOffsetList.add(baseWallOffset);
+        for (ZoneOffsetTransition trans : transitionList) {
+            if (trans.isGap()) {
+                localTransitionList.add(trans.getDateTimeBefore());
+                localTransitionList.add(trans.getDateTimeAfter());
+            } else {
+                localTransitionList.add(trans.getDateTimeAfter());
+                localTransitionList.add(trans.getDateTimeBefore());
+            }
+            localTransitionOffsetList.add(trans.getOffsetAfter());
+        }
+        this.savingsLocalTransitions = localTransitionList.toArray(new LocalDateTime[localTransitionList.size()]);
+        this.wallOffsets = localTransitionOffsetList.toArray(new ZoneOffset[localTransitionOffsetList.size()]);
+
+        // convert savings transitions to instants
+        this.savingsInstantTransitions = new long[transitionList.size()];
+        for (int i = 0; i < transitionList.size(); i++) {
+            this.savingsInstantTransitions[i] = transitionList.get(i).toEpochSecond();
+        }
+
+        // last rules
+        if (lastRules.size() > 16) {
+            throw new IllegalArgumentException("Too many transition rules");
+        }
+        this.lastRules = lastRules.toArray(new ZoneOffsetTransitionRule[lastRules.size()]);
+!!!8580354.java!!!	ZoneRules(inout standardTransitions : long [[]], inout standardOffsets : ZoneOffset [[]], inout savingsInstantTransitions : long [[]], inout wallOffsets : ZoneOffset [[]], inout lastRules : ZoneOffsetTransitionRule [[]])
+        super();
+
+        this.standardTransitions = standardTransitions;
+        this.standardOffsets = standardOffsets;
+        this.savingsInstantTransitions = savingsInstantTransitions;
+        this.wallOffsets = wallOffsets;
+        this.lastRules = lastRules;
+
+        if (savingsInstantTransitions.length == 0) {
+            this.savingsLocalTransitions = EMPTY_LDT_ARRAY;
+        } else {
+            // convert savings transitions to locals
+            List<LocalDateTime> localTransitionList = new ArrayList<>();
+            for (int i = 0; i < savingsInstantTransitions.length; i++) {
+                ZoneOffset before = wallOffsets[i];
+                ZoneOffset after = wallOffsets[i + 1];
+                ZoneOffsetTransition trans = new ZoneOffsetTransition(savingsInstantTransitions[i], before, after);
+                if (trans.isGap()) {
+                    localTransitionList.add(trans.getDateTimeBefore());
+                    localTransitionList.add(trans.getDateTimeAfter());
+                } else {
+                    localTransitionList.add(trans.getDateTimeAfter());
+                    localTransitionList.add(trans.getDateTimeBefore());
+               }
+            }
+            this.savingsLocalTransitions = localTransitionList.toArray(new LocalDateTime[localTransitionList.size()]);
+        }
+!!!8580482.java!!!	ZoneRules(inout offset : ZoneOffset)
+        this.standardOffsets = new ZoneOffset[1];
+        this.standardOffsets[0] = offset;
+        this.standardTransitions = EMPTY_LONG_ARRAY;
+        this.savingsInstantTransitions = EMPTY_LONG_ARRAY;
+        this.savingsLocalTransitions = EMPTY_LDT_ARRAY;
+        this.wallOffsets = standardOffsets;
+        this.lastRules = EMPTY_LASTRULES;
+!!!8580610.java!!!	readObject(inout s : ObjectInputStream) : void
+        throw new InvalidObjectException("Deserialization via serialization delegate");
+!!!8580738.java!!!	writeReplace() : Object
+        return new Ser(Ser.ZRULES, this);
+!!!8580866.java!!!	writeExternal(inout out : DataOutput) : void
+        out.writeInt(standardTransitions.length);
+        for (long trans : standardTransitions) {
+            Ser.writeEpochSec(trans, out);
+        }
+        for (ZoneOffset offset : standardOffsets) {
+            Ser.writeOffset(offset, out);
+        }
+        out.writeInt(savingsInstantTransitions.length);
+        for (long trans : savingsInstantTransitions) {
+            Ser.writeEpochSec(trans, out);
+        }
+        for (ZoneOffset offset : wallOffsets) {
+            Ser.writeOffset(offset, out);
+        }
+        out.writeByte(lastRules.length);
+        for (ZoneOffsetTransitionRule rule : lastRules) {
+            rule.writeExternal(out);
+        }
+!!!8580994.java!!!	readExternal(inout in : DataInput) : ZoneRules
+        int stdSize = in.readInt();
+        long[] stdTrans = (stdSize == 0) ? EMPTY_LONG_ARRAY
+                                         : new long[stdSize];
+        for (int i = 0; i < stdSize; i++) {
+            stdTrans[i] = Ser.readEpochSec(in);
+        }
+        ZoneOffset[] stdOffsets = new ZoneOffset[stdSize + 1];
+        for (int i = 0; i < stdOffsets.length; i++) {
+            stdOffsets[i] = Ser.readOffset(in);
+        }
+        int savSize = in.readInt();
+        long[] savTrans = (savSize == 0) ? EMPTY_LONG_ARRAY
+                                         : new long[savSize];
+        for (int i = 0; i < savSize; i++) {
+            savTrans[i] = Ser.readEpochSec(in);
+        }
+        ZoneOffset[] savOffsets = new ZoneOffset[savSize + 1];
+        for (int i = 0; i < savOffsets.length; i++) {
+            savOffsets[i] = Ser.readOffset(in);
+        }
+        int ruleSize = in.readByte();
+        ZoneOffsetTransitionRule[] rules = (ruleSize == 0) ?
+            EMPTY_LASTRULES : new ZoneOffsetTransitionRule[ruleSize];
+        for (int i = 0; i < ruleSize; i++) {
+            rules[i] = ZoneOffsetTransitionRule.readExternal(in);
+        }
+        return new ZoneRules(stdTrans, stdOffsets, savTrans, savOffsets, rules);
+!!!8581122.java!!!	isFixedOffset() : boolean
+        return savingsInstantTransitions.length == 0;
+!!!8581250.java!!!	getOffset(inout instant : Instant) : ZoneOffset
+        if (savingsInstantTransitions.length == 0) {
+            return standardOffsets[0];
+        }
+        long epochSec = instant.getEpochSecond();
+        // check if using last rules
+        if (lastRules.length > 0 &&
+                epochSec > savingsInstantTransitions[savingsInstantTransitions.length - 1]) {
+            int year = findYear(epochSec, wallOffsets[wallOffsets.length - 1]);
+            ZoneOffsetTransition[] transArray = findTransitionArray(year);
+            ZoneOffsetTransition trans = null;
+            for (int i = 0; i < transArray.length; i++) {
+                trans = transArray[i];
+                if (epochSec < trans.toEpochSecond()) {
+                    return trans.getOffsetBefore();
+                }
+            }
+            return trans.getOffsetAfter();
+        }
+
+        // using historic rules
+        int index  = Arrays.binarySearch(savingsInstantTransitions, epochSec);
+        if (index < 0) {
+            // switch negative insert position to start of matched range
+            index = -index - 2;
+        }
+        return wallOffsets[index + 1];
+!!!8581378.java!!!	getOffset(inout localDateTime : LocalDateTime) : ZoneOffset
+        Object info = getOffsetInfo(localDateTime);
+        if (info instanceof ZoneOffsetTransition) {
+            return ((ZoneOffsetTransition) info).getOffsetBefore();
+        }
+        return (ZoneOffset) info;
+!!!8581506.java!!!	getValidOffsets(inout localDateTime : LocalDateTime) : List
+        // should probably be optimized
+        Object info = getOffsetInfo(localDateTime);
+        if (info instanceof ZoneOffsetTransition) {
+            return ((ZoneOffsetTransition) info).getValidOffsets();
+        }
+        return Collections.singletonList((ZoneOffset) info);
+!!!8581634.java!!!	getTransition(inout localDateTime : LocalDateTime) : ZoneOffsetTransition
+        Object info = getOffsetInfo(localDateTime);
+        return (info instanceof ZoneOffsetTransition ? (ZoneOffsetTransition) info : null);
+!!!8581762.java!!!	getOffsetInfo(inout dt : LocalDateTime) : Object
+        if (savingsInstantTransitions.length == 0) {
+            return standardOffsets[0];
+        }
+        // check if using last rules
+        if (lastRules.length > 0 &&
+                dt.isAfter(savingsLocalTransitions[savingsLocalTransitions.length - 1])) {
+            ZoneOffsetTransition[] transArray = findTransitionArray(dt.getYear());
+            Object info = null;
+            for (ZoneOffsetTransition trans : transArray) {
+                info = findOffsetInfo(dt, trans);
+                if (info instanceof ZoneOffsetTransition || info.equals(trans.getOffsetBefore())) {
+                    return info;
+                }
+            }
+            return info;
+        }
+
+        // using historic rules
+        int index  = Arrays.binarySearch(savingsLocalTransitions, dt);
+        if (index == -1) {
+            // before first transition
+            return wallOffsets[0];
+        }
+        if (index < 0) {
+            // switch negative insert position to start of matched range
+            index = -index - 2;
+        } else if (index < savingsLocalTransitions.length - 1 &&
+                savingsLocalTransitions[index].equals(savingsLocalTransitions[index + 1])) {
+            // handle overlap immediately following gap
+            index++;
+        }
+        if ((index & 1) == 0) {
+            // gap or overlap
+            LocalDateTime dtBefore = savingsLocalTransitions[index];
+            LocalDateTime dtAfter = savingsLocalTransitions[index + 1];
+            ZoneOffset offsetBefore = wallOffsets[index / 2];
+            ZoneOffset offsetAfter = wallOffsets[index / 2 + 1];
+            if (offsetAfter.getTotalSeconds() > offsetBefore.getTotalSeconds()) {
+                // gap
+                return new ZoneOffsetTransition(dtBefore, offsetBefore, offsetAfter);
+            } else {
+                // overlap
+                return new ZoneOffsetTransition(dtAfter, offsetBefore, offsetAfter);
+            }
+        } else {
+            // normal (neither gap or overlap)
+            return wallOffsets[index / 2 + 1];
+        }
+!!!8581890.java!!!	findOffsetInfo(inout dt : LocalDateTime, inout trans : ZoneOffsetTransition) : Object
+        LocalDateTime localTransition = trans.getDateTimeBefore();
+        if (trans.isGap()) {
+            if (dt.isBefore(localTransition)) {
+                return trans.getOffsetBefore();
+            }
+            if (dt.isBefore(trans.getDateTimeAfter())) {
+                return trans;
+            } else {
+                return trans.getOffsetAfter();
+            }
+        } else {
+            if (dt.isBefore(localTransition) == false) {
+                return trans.getOffsetAfter();
+            }
+            if (dt.isBefore(trans.getDateTimeAfter())) {
+                return trans.getOffsetBefore();
+            } else {
+                return trans;
+            }
+        }
+!!!8582018.java!!!	findTransitionArray(in year : int) : ZoneOffsetTransition
+        Integer yearObj = year;  // should use Year class, but this saves a class load
+        ZoneOffsetTransition[] transArray = lastRulesCache.get(yearObj);
+        if (transArray != null) {
+            return transArray;
+        }
+        ZoneOffsetTransitionRule[] ruleArray = lastRules;
+        transArray  = new ZoneOffsetTransition[ruleArray.length];
+        for (int i = 0; i < ruleArray.length; i++) {
+            transArray[i] = ruleArray[i].createTransition(year);
+        }
+        if (year < LAST_CACHED_YEAR) {
+            lastRulesCache.putIfAbsent(yearObj, transArray);
+        }
+        return transArray;
+!!!8582146.java!!!	getStandardOffset(inout instant : Instant) : ZoneOffset
+        if (savingsInstantTransitions.length == 0) {
+            return standardOffsets[0];
+        }
+        long epochSec = instant.getEpochSecond();
+        int index  = Arrays.binarySearch(standardTransitions, epochSec);
+        if (index < 0) {
+            // switch negative insert position to start of matched range
+            index = -index - 2;
+        }
+        return standardOffsets[index + 1];
+!!!8582274.java!!!	getDaylightSavings(inout instant : Instant) : Duration
+        if (savingsInstantTransitions.length == 0) {
+            return Duration.ZERO;
+        }
+        ZoneOffset standardOffset = getStandardOffset(instant);
+        ZoneOffset actualOffset = getOffset(instant);
+        return Duration.ofSeconds(actualOffset.getTotalSeconds() - standardOffset.getTotalSeconds());
+!!!8582402.java!!!	isDaylightSavings(inout instant : Instant) : boolean
+        return (getStandardOffset(instant).equals(getOffset(instant)) == false);
+!!!8582530.java!!!	isValidOffset(inout localDateTime : LocalDateTime, inout offset : ZoneOffset) : boolean
+        return getValidOffsets(localDateTime).contains(offset);
+!!!8582658.java!!!	nextTransition(inout instant : Instant) : ZoneOffsetTransition
+        if (savingsInstantTransitions.length == 0) {
+            return null;
+        }
+        long epochSec = instant.getEpochSecond();
+        // check if using last rules
+        if (epochSec >= savingsInstantTransitions[savingsInstantTransitions.length - 1]) {
+            if (lastRules.length == 0) {
+                return null;
+            }
+            // search year the instant is in
+            int year = findYear(epochSec, wallOffsets[wallOffsets.length - 1]);
+            ZoneOffsetTransition[] transArray = findTransitionArray(year);
+            for (ZoneOffsetTransition trans : transArray) {
+                if (epochSec < trans.toEpochSecond()) {
+                    return trans;
+                }
+            }
+            // use first from following year
+            if (year < Year.MAX_VALUE) {
+                transArray = findTransitionArray(year + 1);
+                return transArray[0];
+            }
+            return null;
+        }
+
+        // using historic rules
+        int index  = Arrays.binarySearch(savingsInstantTransitions, epochSec);
+        if (index < 0) {
+            index = -index - 1;  // switched value is the next transition
+        } else {
+            index += 1;  // exact match, so need to add one to get the next
+        }
+        return new ZoneOffsetTransition(savingsInstantTransitions[index], wallOffsets[index], wallOffsets[index + 1]);
+!!!8582786.java!!!	previousTransition(inout instant : Instant) : ZoneOffsetTransition
+        if (savingsInstantTransitions.length == 0) {
+            return null;
+        }
+        long epochSec = instant.getEpochSecond();
+        if (instant.getNano() > 0 && epochSec < Long.MAX_VALUE) {
+            epochSec += 1;  // allow rest of method to only use seconds
+        }
+
+        // check if using last rules
+        long lastHistoric = savingsInstantTransitions[savingsInstantTransitions.length - 1];
+        if (lastRules.length > 0 && epochSec > lastHistoric) {
+            // search year the instant is in
+            ZoneOffset lastHistoricOffset = wallOffsets[wallOffsets.length - 1];
+            int year = findYear(epochSec, lastHistoricOffset);
+            ZoneOffsetTransition[] transArray = findTransitionArray(year);
+            for (int i = transArray.length - 1; i >= 0; i--) {
+                if (epochSec > transArray[i].toEpochSecond()) {
+                    return transArray[i];
+                }
+            }
+            // use last from preceding year
+            int lastHistoricYear = findYear(lastHistoric, lastHistoricOffset);
+            if (--year > lastHistoricYear) {
+                transArray = findTransitionArray(year);
+                return transArray[transArray.length - 1];
+            }
+            // drop through
+        }
+
+        // using historic rules
+        int index  = Arrays.binarySearch(savingsInstantTransitions, epochSec);
+        if (index < 0) {
+            index = -index - 1;
+        }
+        if (index <= 0) {
+            return null;
+        }
+        return new ZoneOffsetTransition(savingsInstantTransitions[index - 1], wallOffsets[index - 1], wallOffsets[index]);
+!!!8582914.java!!!	findYear(in epochSecond : long, inout offset : ZoneOffset) : int
+        // inline for performance
+        long localSecond = epochSecond + offset.getTotalSeconds();
+        long localEpochDay = Math.floorDiv(localSecond, 86400);
+        return LocalDate.ofEpochDay(localEpochDay).getYear();
+!!!8583042.java!!!	getTransitions() : List
+        List<ZoneOffsetTransition> list = new ArrayList<>();
+        for (int i = 0; i < savingsInstantTransitions.length; i++) {
+            list.add(new ZoneOffsetTransition(savingsInstantTransitions[i], wallOffsets[i], wallOffsets[i + 1]));
+        }
+        return Collections.unmodifiableList(list);
+!!!8583170.java!!!	getTransitionRules() : List
+        return Collections.unmodifiableList(Arrays.asList(lastRules));
+!!!8583298.java!!!	equals(inout otherRules : Object) : boolean
+        if (this == otherRules) {
+           return true;
+        }
+        if (otherRules instanceof ZoneRules) {
+            ZoneRules other = (ZoneRules) otherRules;
+            return Arrays.equals(standardTransitions, other.standardTransitions) &&
+                    Arrays.equals(standardOffsets, other.standardOffsets) &&
+                    Arrays.equals(savingsInstantTransitions, other.savingsInstantTransitions) &&
+                    Arrays.equals(wallOffsets, other.wallOffsets) &&
+                    Arrays.equals(lastRules, other.lastRules);
+        }
+        return false;
+!!!8583426.java!!!	hashCode() : int
+        return Arrays.hashCode(standardTransitions) ^
+                Arrays.hashCode(standardOffsets) ^
+                Arrays.hashCode(savingsInstantTransitions) ^
+                Arrays.hashCode(wallOffsets) ^
+                Arrays.hashCode(lastRules);
+!!!8583554.java!!!	toString() : String
+        return "ZoneRules[currentStandardOffset=" + standardOffsets[standardOffsets.length - 1] + "]";

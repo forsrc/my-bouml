@@ -1,0 +1,158 @@
+class EventHandler
+!!!6760066.java!!!	EventHandler(inout target : Object, inout action : String, inout eventPropertyName : String, inout listenerMethodName : String)
+        this.target = target;
+        this.action = action;
+        if (target == null) {
+            throw new NullPointerException("target must be non-null");
+        }
+        if (action == null) {
+            throw new NullPointerException("action must be non-null");
+        }
+        this.eventPropertyName = eventPropertyName;
+        this.listenerMethodName = listenerMethodName;
+!!!6760194.java!!!	getTarget() : Object
+        return target;
+!!!6760322.java!!!	getAction() : String
+        return action;
+!!!6760450.java!!!	getEventPropertyName() : String
+        return eventPropertyName;
+!!!6760578.java!!!	getListenerMethodName() : String
+        return listenerMethodName;
+!!!6760706.java!!!	applyGetters(inout target : Object, inout getters : String) : Object
+        if (getters == null || getters.equals("")) {
+            return target;
+        }
+        int firstDot = getters.indexOf('.');
+        if (firstDot == -1) {
+            firstDot = getters.length();
+        }
+        String first = getters.substring(0, firstDot);
+        String rest = getters.substring(Math.min(firstDot + 1, getters.length()));
+
+        try {
+            Method getter = null;
+            if (target != null) {
+                getter = Statement.getMethod(target.getClass(),
+                                      "get" + NameGenerator.capitalize(first),
+                                      new Class<?>[]{});
+                if (getter == null) {
+                    getter = Statement.getMethod(target.getClass(),
+                                   "is" + NameGenerator.capitalize(first),
+                                   new Class<?>[]{});
+                }
+                if (getter == null) {
+                    getter = Statement.getMethod(target.getClass(), first, new Class<?>[]{});
+                }
+            }
+            if (getter == null) {
+                throw new RuntimeException("No method called: " + first +
+                                           " defined on " + target);
+            }
+            Object newTarget = MethodUtil.invoke(getter, target, new Object[]{});
+            return applyGetters(newTarget, rest);
+        }
+        catch (Exception e) {
+            throw new RuntimeException("Failed to call method: " + first +
+                                       " on " + target, e);
+        }
+!!!6760834.java!!!	invoke(in proxy : Object, in method : Method, in arguments : Object [[]]) : Object
+        AccessControlContext acc = this.acc;
+        if ((acc == null) && (System.getSecurityManager() != null)) {
+            throw new SecurityException("AccessControlContext is not set");
+        }
+        return AccessController.doPrivileged(new PrivilegedAction<Object>() {
+            public Object run() {
+                return invokeInternal(proxy, method, arguments);
+            }
+        }, acc);
+!!!6760962.java!!!	invokeInternal(inout proxy : Object, inout method : Method, inout arguments : Object [[]]) : Object
+        String methodName = method.getName();
+        if (method.getDeclaringClass() == Object.class)  {
+            // Handle the Object public methods.
+            if (methodName.equals("hashCode"))  {
+                return new Integer(System.identityHashCode(proxy));
+            } else if (methodName.equals("equals")) {
+                return (proxy == arguments[0] ? Boolean.TRUE : Boolean.FALSE);
+            } else if (methodName.equals("toString")) {
+                return proxy.getClass().getName() + '@' + Integer.toHexString(proxy.hashCode());
+            }
+        }
+
+        if (listenerMethodName == null || listenerMethodName.equals(methodName)) {
+            Class[] argTypes = null;
+            Object[] newArgs = null;
+
+            if (eventPropertyName == null) {     // Nullary method.
+                newArgs = new Object[]{};
+                argTypes = new Class<?>[]{};
+            }
+            else {
+                Object input = applyGetters(arguments[0], getEventPropertyName());
+                newArgs = new Object[]{input};
+                argTypes = new Class<?>[]{input == null ? null :
+                                       input.getClass()};
+            }
+            try {
+                int lastDot = action.lastIndexOf('.');
+                if (lastDot != -1) {
+                    target = applyGetters(target, action.substring(0, lastDot));
+                    action = action.substring(lastDot + 1);
+                }
+                Method targetMethod = Statement.getMethod(
+                             target.getClass(), action, argTypes);
+                if (targetMethod == null) {
+                    targetMethod = Statement.getMethod(target.getClass(),
+                             "set" + NameGenerator.capitalize(action), argTypes);
+                }
+                if (targetMethod == null) {
+                    String argTypeString = (argTypes.length == 0)
+                        ? " with no arguments"
+                        : " with argument " + argTypes[0];
+                    throw new RuntimeException(
+                        "No method called " + action + " on " +
+                        target.getClass() + argTypeString);
+                }
+                return MethodUtil.invoke(targetMethod, target, newArgs);
+            }
+            catch (IllegalAccessException ex) {
+                throw new RuntimeException(ex);
+            }
+            catch (InvocationTargetException ex) {
+                Throwable th = ex.getTargetException();
+                throw (th instanceof RuntimeException)
+                        ? (RuntimeException) th
+                        : new RuntimeException(th);
+            }
+        }
+        return null;
+!!!6761090.java!!!	create(inout listenerInterface : Class, inout target : Object, inout action : String) : T
+        return create(listenerInterface, target, action, null, null);
+!!!6761218.java!!!	create(inout listenerInterface : Class, inout target : Object, inout action : String, inout eventPropertyName : String) : T
+        return create(listenerInterface, target, action, eventPropertyName, null);
+!!!6761346.java!!!	create(inout listenerInterface : Class, inout target : Object, inout action : String, inout eventPropertyName : String, inout listenerMethodName : String) : T
+        // Create this first to verify target/action are non-null
+        final EventHandler handler = new EventHandler(target, action,
+                                                     eventPropertyName,
+                                                     listenerMethodName);
+        if (listenerInterface == null) {
+            throw new NullPointerException(
+                          "listenerInterface must be non-null");
+        }
+        final ClassLoader loader = getClassLoader(listenerInterface);
+        final Class<?>[] interfaces = {listenerInterface};
+        return AccessController.doPrivileged(new PrivilegedAction<T>() {
+            @SuppressWarnings("unchecked")
+            public T run() {
+                return (T) Proxy.newProxyInstance(loader, interfaces, handler);
+            }
+        });
+!!!6761474.java!!!	getClassLoader(inout type : Class) : ClassLoader
+        ReflectUtil.checkPackageAccess(type);
+        ClassLoader loader = type.getClassLoader();
+        if (loader == null) {
+            loader = Thread.currentThread().getContextClassLoader(); // avoid use of BCP
+            if (loader == null) {
+                loader = ClassLoader.getSystemClassLoader();
+            }
+        }
+        return loader;

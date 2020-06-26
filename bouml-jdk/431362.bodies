@@ -1,0 +1,393 @@
+class ParagraphView
+!!!2570882.java!!!	ParagraphView(inout elem : Element)
+        super(elem, View.Y_AXIS);
+        setPropertiesFromAttributes();
+        Document doc = elem.getDocument();
+        Object i18nFlag = doc.getProperty(AbstractDocument.I18NProperty);
+        if ((i18nFlag != null) && i18nFlag.equals(Boolean.TRUE)) {
+            try {
+                if (i18nStrategy == null) {
+                    // the classname should probably come from a property file.
+                    String classname = "javax.swing.text.TextLayoutStrategy";
+                    ClassLoader loader = getClass().getClassLoader();
+                    if (loader != null) {
+                        i18nStrategy = loader.loadClass(classname);
+                    } else {
+                        i18nStrategy = Class.forName(classname);
+                    }
+                }
+                Object o = i18nStrategy.newInstance();
+                if (o instanceof FlowStrategy) {
+                    strategy = (FlowStrategy) o;
+                }
+            } catch (Throwable e) {
+                throw new StateInvariantError("ParagraphView: Can't create i18n strategy: "
+                                              + e.getMessage());
+            }
+        }
+!!!2571010.java!!!	setJustification(in j : int) : void
+        justification = j;
+!!!2571138.java!!!	setLineSpacing(in ls : float) : void
+        lineSpacing = ls;
+!!!2571266.java!!!	setFirstLineIndent(in fi : float) : void
+        firstLineIndent = (int) fi;
+!!!2571394.java!!!	setPropertiesFromAttributes() : void
+        AttributeSet attr = getAttributes();
+        if (attr != null) {
+            setParagraphInsets(attr);
+            Integer a = (Integer)attr.getAttribute(StyleConstants.Alignment);
+            int alignment;
+            if (a == null) {
+                Document doc = getElement().getDocument();
+                Object o = doc.getProperty(TextAttribute.RUN_DIRECTION);
+                if ((o != null) && o.equals(TextAttribute.RUN_DIRECTION_RTL)) {
+                    alignment = StyleConstants.ALIGN_RIGHT;
+                } else {
+                    alignment = StyleConstants.ALIGN_LEFT;
+                }
+            } else {
+                alignment = a.intValue();
+            }
+            setJustification(alignment);
+            setLineSpacing(StyleConstants.getLineSpacing(attr));
+            setFirstLineIndent(StyleConstants.getFirstLineIndent(attr));
+        }
+!!!2571522.java!!!	getLayoutViewCount() : int
+        return layoutPool.getViewCount();
+!!!2571650.java!!!	getLayoutView(in index : int) : View
+        return layoutPool.getView(index);
+!!!2571778.java!!!	getNextNorthSouthVisualPositionFrom(in pos : int, inout b : Position::Bias, inout a : Shape, in direction : int, inout biasRet : Position::Bias [[]]) : int
+        int vIndex;
+        if(pos == -1) {
+            vIndex = (direction == NORTH) ?
+                     getViewCount() - 1 : 0;
+        }
+        else {
+            if(b == Position.Bias.Backward && pos > 0) {
+                vIndex = getViewIndexAtPosition(pos - 1);
+            }
+            else {
+                vIndex = getViewIndexAtPosition(pos);
+            }
+            if(direction == NORTH) {
+                if(vIndex == 0) {
+                    return -1;
+                }
+                vIndex--;
+            }
+            else if(++vIndex >= getViewCount()) {
+                return -1;
+            }
+        }
+        // vIndex gives index of row to look in.
+        JTextComponent text = (JTextComponent)getContainer();
+        Caret c = text.getCaret();
+        Point magicPoint;
+        magicPoint = (c != null) ? c.getMagicCaretPosition() : null;
+        int x;
+        if(magicPoint == null) {
+            Shape posBounds;
+            try {
+                posBounds = text.getUI().modelToView(text, pos, b);
+            } catch (BadLocationException exc) {
+                posBounds = null;
+            }
+            if(posBounds == null) {
+                x = 0;
+            }
+            else {
+                x = posBounds.getBounds().x;
+            }
+        }
+        else {
+            x = magicPoint.x;
+        }
+        return getClosestPositionTo(pos, b, a, direction, biasRet, vIndex, x);
+!!!2571906.java!!!	getClosestPositionTo(in pos : int, inout b : Position::Bias, inout a : Shape, in direction : int, inout biasRet : Position::Bias [[]], in rowIndex : int, in x : int) : int
+        JTextComponent text = (JTextComponent)getContainer();
+        Document doc = getDocument();
+        View row = getView(rowIndex);
+        int lastPos = -1;
+        // This could be made better to check backward positions too.
+        biasRet[0] = Position.Bias.Forward;
+        for(int vc = 0, numViews = row.getViewCount(); vc < numViews; vc++) {
+            View v = row.getView(vc);
+            int start = v.getStartOffset();
+            boolean ltr = AbstractDocument.isLeftToRight(doc, start, start + 1);
+            if(ltr) {
+                lastPos = start;
+                for(int end = v.getEndOffset(); lastPos < end; lastPos++) {
+                    float xx = text.modelToView(lastPos).getBounds().x;
+                    if(xx >= x) {
+                        while (++lastPos < end &&
+                               text.modelToView(lastPos).getBounds().x == xx) {
+                        }
+                        return --lastPos;
+                    }
+                }
+                lastPos--;
+            }
+            else {
+                for(lastPos = v.getEndOffset() - 1; lastPos >= start;
+                    lastPos--) {
+                    float xx = text.modelToView(lastPos).getBounds().x;
+                    if(xx >= x) {
+                        while (--lastPos >= start &&
+                               text.modelToView(lastPos).getBounds().x == xx) {
+                        }
+                        return ++lastPos;
+                    }
+                }
+                lastPos++;
+            }
+        }
+        if(lastPos == -1) {
+            return getStartOffset();
+        }
+        return lastPos;
+!!!2572034.java!!!	flipEastAndWestAtEnds(in position : int, inout bias : Position::Bias) : boolean
+        Document doc = getDocument();
+        position = getStartOffset();
+        return !AbstractDocument.isLeftToRight(doc, position, position + 1);
+!!!2572162.java!!!	getFlowSpan(in index : int) : int
+        View child = getView(index);
+        int adjust = 0;
+        if (child instanceof Row) {
+            Row row = (Row) child;
+            adjust = row.getLeftInset() + row.getRightInset();
+        }
+        return (layoutSpan == Integer.MAX_VALUE) ? layoutSpan
+                                                 : (layoutSpan - adjust);
+!!!2572290.java!!!	getFlowStart(in index : int) : int
+        View child = getView(index);
+        int adjust = 0;
+        if (child instanceof Row) {
+            Row row = (Row) child;
+            adjust = row.getLeftInset();
+        }
+        return tabBase + adjust;
+!!!2572418.java!!!	createRow() : View
+        return new Row(getElement());
+!!!2572546.java!!!	nextTabStop(in x : float, in tabOffset : int) : float
+        // If the text isn't left justified, offset by 10 pixels!
+        if(justification != StyleConstants.ALIGN_LEFT)
+            return x + 10.0f;
+        x -= tabBase;
+        TabSet tabs = getTabSet();
+        if(tabs == null) {
+            // a tab every 72 pixels.
+            return (float)(tabBase + (((int)x / 72 + 1) * 72));
+        }
+        TabStop tab = tabs.getTabAfter(x + .01f);
+        if(tab == null) {
+            // no tab, do a default of 5 pixels.
+            // Should this cause a wrapping of the line?
+            return tabBase + x + 5.0f;
+        }
+        int alignment = tab.getAlignment();
+        int offset;
+        switch(alignment) {
+        default:
+        case TabStop.ALIGN_LEFT:
+            // Simple case, left tab.
+            return tabBase + tab.getPosition();
+        case TabStop.ALIGN_BAR:
+            // PENDING: what does this mean?
+            return tabBase + tab.getPosition();
+        case TabStop.ALIGN_RIGHT:
+        case TabStop.ALIGN_CENTER:
+            offset = findOffsetToCharactersInString(tabChars,
+                                                    tabOffset + 1);
+            break;
+        case TabStop.ALIGN_DECIMAL:
+            offset = findOffsetToCharactersInString(tabDecimalChars,
+                                                    tabOffset + 1);
+            break;
+        }
+        if (offset == -1) {
+            offset = getEndOffset();
+        }
+        float charsSize = getPartialSize(tabOffset + 1, offset);
+        switch(alignment) {
+        case TabStop.ALIGN_RIGHT:
+        case TabStop.ALIGN_DECIMAL:
+            // right and decimal are treated the same way, the new
+            // position will be the location of the tab less the
+            // partialSize.
+            return tabBase + Math.max(x, tab.getPosition() - charsSize);
+        case TabStop.ALIGN_CENTER:
+            // Similar to right, but half the partialSize.
+            return tabBase + Math.max(x, tab.getPosition() - charsSize / 2.0f);
+        }
+        // will never get here!
+        return x;
+!!!2572674.java!!!	getTabSet() : TabSet
+        return StyleConstants.getTabSet(getElement().getAttributes());
+!!!2572802.java!!!	getPartialSize(in startOffset : int, in endOffset : int) : float
+        float size = 0.0f;
+        int viewIndex;
+        int numViews = getViewCount();
+        View view;
+        int viewEnd;
+        int tempEnd;
+
+        // Have to search layoutPool!
+        // PENDING: when ParagraphView supports breaking location
+        // into layoutPool will have to change!
+        viewIndex = getElement().getElementIndex(startOffset);
+        numViews = layoutPool.getViewCount();
+        while(startOffset < endOffset && viewIndex < numViews) {
+            view = layoutPool.getView(viewIndex++);
+            viewEnd = view.getEndOffset();
+            tempEnd = Math.min(endOffset, viewEnd);
+            if(view instanceof TabableView)
+                size += ((TabableView)view).getPartialSpan(startOffset, tempEnd);
+            else if(startOffset == view.getStartOffset() &&
+                    tempEnd == view.getEndOffset())
+                size += view.getPreferredSpan(View.X_AXIS);
+            else
+                // PENDING: should we handle this better?
+                return 0.0f;
+            startOffset = viewEnd;
+        }
+        return size;
+!!!2572930.java!!!	findOffsetToCharactersInString(inout string : char [[]], in start : int) : int
+        int stringLength = string.length;
+        int end = getEndOffset();
+        Segment seg = new Segment();
+        try {
+            getDocument().getText(start, end - start, seg);
+        } catch (BadLocationException ble) {
+            return -1;
+        }
+        for(int counter = seg.offset, maxCounter = seg.offset + seg.count;
+            counter < maxCounter; counter++) {
+            char currentChar = seg.array[counter];
+            for(int subCounter = 0; subCounter < stringLength;
+                subCounter++) {
+                if(currentChar == string[subCounter])
+                    return counter - seg.offset + start;
+            }
+        }
+        // No match.
+        return -1;
+!!!2573058.java!!!	getTabBase() : float
+        return (float)tabBase;
+!!!2573186.java!!!	paint(inout g : Graphics, inout a : Shape) : void
+        Rectangle alloc = (a instanceof Rectangle) ? (Rectangle)a : a.getBounds();
+        tabBase = alloc.x + getLeftInset();
+        super.paint(g, a);
+
+        // line with the negative firstLineIndent value needs
+        // special handling
+        if (firstLineIndent < 0) {
+            Shape sh = getChildAllocation(0, a);
+            if ((sh != null) &&  sh.intersects(alloc)) {
+                int x = alloc.x + getLeftInset() + firstLineIndent;
+                int y = alloc.y + getTopInset();
+
+                Rectangle clip = g.getClipBounds();
+                tempRect.x = x + getOffset(X_AXIS, 0);
+                tempRect.y = y + getOffset(Y_AXIS, 0);
+                tempRect.width = getSpan(X_AXIS, 0) - firstLineIndent;
+                tempRect.height = getSpan(Y_AXIS, 0);
+                if (tempRect.intersects(clip)) {
+                    tempRect.x = tempRect.x - firstLineIndent;
+                    paintChild(g, tempRect, 0);
+                }
+            }
+        }
+!!!2573314.java!!!	getAlignment(in axis : int) : float
+        switch (axis) {
+        case Y_AXIS:
+            float a = 0.5f;
+            if (getViewCount() != 0) {
+                int paragraphSpan = (int) getPreferredSpan(View.Y_AXIS);
+                View v = getView(0);
+                int rowSpan = (int) v.getPreferredSpan(View.Y_AXIS);
+                a = (paragraphSpan != 0) ? ((float)(rowSpan / 2)) / paragraphSpan : 0;
+            }
+            return a;
+        case X_AXIS:
+            return 0.5f;
+        default:
+            throw new IllegalArgumentException("Invalid axis: " + axis);
+        }
+!!!2573442.java!!!	breakView(in axis : int, in len : float, inout a : Shape) : View
+        if(axis == View.Y_AXIS) {
+            if(a != null) {
+                Rectangle alloc = a.getBounds();
+                setSize(alloc.width, alloc.height);
+            }
+            // Determine what row to break on.
+
+            // PENDING(prinz) add break support
+            return this;
+        }
+        return this;
+!!!2573570.java!!!	getBreakWeight(in axis : int, in len : float) : int
+        if(axis == View.Y_AXIS) {
+            // PENDING(prinz) make this return a reasonable value
+            // when paragraph breaking support is re-implemented.
+            // If less than one row, bad weight value should be
+            // returned.
+            //return GoodBreakWeight;
+            return BadBreakWeight;
+        }
+        return BadBreakWeight;
+!!!2573698.java!!!	calculateMinorAxisRequirements(in axis : int, inout r : SizeRequirements) : SizeRequirements
+        r = super.calculateMinorAxisRequirements(axis, r);
+
+        float min = 0;
+        float glue = 0;
+        int n = getLayoutViewCount();
+        for (int i = 0; i < n; i++) {
+            View v = getLayoutView(i);
+            float span = v.getMinimumSpan(axis);
+            if (v.getBreakWeight(axis, 0, v.getMaximumSpan(axis)) > View.BadBreakWeight) {
+                // find the longest non-breakable fragments at the view edges
+                int p0 = v.getStartOffset();
+                int p1 = v.getEndOffset();
+                float start = findEdgeSpan(v, axis, p0, p0, p1);
+                float end = findEdgeSpan(v, axis, p1, p0, p1);
+                glue += start;
+                min = Math.max(min, Math.max(span, glue));
+                glue = end;
+            } else {
+                // non-breakable view
+                glue += span;
+                min = Math.max(min, glue);
+            }
+        }
+        r.minimum = Math.max(r.minimum, (int) min);
+        r.preferred = Math.max(r.minimum, r.preferred);
+        r.maximum = Math.max(r.preferred, r.maximum);
+
+        return r;
+!!!2573826.java!!!	findEdgeSpan(inout v : View, in axis : int, in fp : int, in p0 : int, in p1 : int) : float
+        int len = p1 - p0;
+        if (len <= 1) {
+            // further fragmentation is not possible
+            return v.getMinimumSpan(axis);
+        } else {
+            int mid = p0 + len / 2;
+            boolean startEdge = mid > fp;
+            // initial view is breakable hence must support fragmentation
+            View f = startEdge ?
+                v.createFragment(fp, mid) : v.createFragment(mid, fp);
+            boolean breakable = f.getBreakWeight(
+                    axis, 0, f.getMaximumSpan(axis)) > View.BadBreakWeight;
+            if (breakable == startEdge) {
+                p1 = mid;
+            } else {
+                p0 = mid;
+            }
+            return findEdgeSpan(f, axis, fp, p0, p1);
+        }
+!!!2573954.java!!!	changedUpdate(inout changes : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        // update any property settings stored, and layout should be
+        // recomputed
+        setPropertiesFromAttributes();
+        layoutChanged(X_AXIS);
+        layoutChanged(Y_AXIS);
+        super.changedUpdate(changes, a, f);

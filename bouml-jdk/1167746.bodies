@@ -1,0 +1,93 @@
+class AbstractWrappingSpliterator
+!!!9595010.java!!!	AbstractWrappingSpliterator(inout ph : PipelineHelper, inout spliteratorSupplier : Supplier, inout parallel : boolean)
+            this.ph = ph;
+            this.spliteratorSupplier = spliteratorSupplier;
+            this.spliterator = null;
+            this.isParallel = parallel;
+!!!9595138.java!!!	AbstractWrappingSpliterator(inout ph : PipelineHelper, inout spliterator : Spliterator, inout parallel : boolean)
+            this.ph = ph;
+            this.spliteratorSupplier = null;
+            this.spliterator = spliterator;
+            this.isParallel = parallel;
+!!!9595266.java!!!	init() : void
+            if (spliterator == null) {
+                spliterator = spliteratorSupplier.get();
+                spliteratorSupplier = null;
+            }
+!!!9595394.java!!!	doAdvance() : boolean
+            if (buffer == null) {
+                if (finished)
+                    return false;
+
+                init();
+                initPartialTraversalState();
+                nextToConsume = 0;
+                bufferSink.begin(spliterator.getExactSizeIfKnown());
+                return fillBuffer();
+            }
+            else {
+                ++nextToConsume;
+                boolean hasNext = nextToConsume < buffer.count();
+                if (!hasNext) {
+                    nextToConsume = 0;
+                    buffer.clear();
+                    hasNext = fillBuffer();
+                }
+                return hasNext;
+            }
+!!!9595778.java!!!	trySplit() : Spliterator
+            if (isParallel && !finished) {
+                init();
+
+                Spliterator<P_IN> split = spliterator.trySplit();
+                return (split == null) ? null : wrap(split);
+            }
+            else
+                return null;
+!!!9595906.java!!!	fillBuffer() : boolean
+            while (buffer.count() == 0) {
+                if (bufferSink.cancellationRequested() || !pusher.getAsBoolean()) {
+                    if (finished)
+                        return false;
+                    else {
+                        bufferSink.end(); // might trigger more elements
+                        finished = true;
+                    }
+                }
+            }
+            return true;
+!!!9596034.java!!!	estimateSize() : long
+            init();
+            // Use the estimate of the wrapped spliterator
+            // Note this may not be accurate if there are filter/flatMap
+            // operations filtering or adding elements to the stream
+            return spliterator.estimateSize();
+!!!9596162.java!!!	getExactSizeIfKnown() : long
+            init();
+            return StreamOpFlag.SIZED.isKnown(ph.getStreamAndOpFlags())
+                   ? spliterator.getExactSizeIfKnown()
+                   : -1;
+!!!9596290.java!!!	characteristics() : int
+            init();
+
+            // Get the characteristics from the pipeline
+            int c = StreamOpFlag.toCharacteristics(StreamOpFlag.toStreamFlags(ph.getStreamAndOpFlags()));
+
+            // Mask off the size and uniform characteristics and replace with
+            // those of the spliterator
+            // Note that a non-uniform spliterator can change from something
+            // with an exact size to an estimate for a sub-split, for example
+            // with HashSet where the size is known at the top level spliterator
+            // but for sub-splits only an estimate is known
+            if ((c & Spliterator.SIZED) != 0) {
+                c &= ~(Spliterator.SIZED | Spliterator.SUBSIZED);
+                c |= (spliterator.characteristics() & (Spliterator.SIZED | Spliterator.SUBSIZED));
+            }
+
+            return c;
+!!!9596418.java!!!	getComparator() : Comparator
+            if (!hasCharacteristics(SORTED))
+                throw new IllegalStateException();
+            return null;
+!!!9596546.java!!!	toString() : String
+            return String.format("%s[%s]", getClass().getName(), spliterator);

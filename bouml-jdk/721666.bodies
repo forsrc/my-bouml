@@ -1,0 +1,279 @@
+class JAXPSAXParser
+!!!4902402.java!!!	JAXPSAXParser()
+            this(null, null, null);
+!!!4902530.java!!!	JAXPSAXParser(inout saxParser : SAXParserImpl, inout securityPropertyMgr : XMLSecurityPropertyManager, inout securityManager : XMLSecurityManager)
+            super();
+            fSAXParser = saxParser;
+            fSecurityManager = securityManager;
+            fSecurityPropertyMgr = securityPropertyMgr;
+            /**
+             * This class may be used directly. So initialize the security manager if
+             * it is null.
+             */
+            if (fSecurityManager == null) {
+                fSecurityManager = new XMLSecurityManager(true);
+                try {
+                    super.setProperty(SECURITY_MANAGER, fSecurityManager);
+                } catch (SAXException e) {
+                    throw new UnsupportedOperationException(
+                    SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                    "property-not-recognized", new Object [] {SECURITY_MANAGER}), e);
+                }
+            }
+            if (fSecurityPropertyMgr == null) {
+                fSecurityPropertyMgr = new XMLSecurityPropertyManager();
+                try {
+                    super.setProperty(XML_SECURITY_PROPERTY_MANAGER, fSecurityPropertyMgr);
+                } catch (SAXException e) {
+                    throw new UnsupportedOperationException(
+                    SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                    "property-not-recognized", new Object [] {SECURITY_MANAGER}), e);
+                }
+            }
+!!!4902658.java!!!	setFeature(inout name : String, inout value : boolean) : void
+            if (name == null) {
+                // TODO: Add localized error message.
+                throw new NullPointerException();
+            }
+            if (name.equals(XMLConstants.FEATURE_SECURE_PROCESSING)) {
+                try {
+                    fSecurityManager.setSecureProcessing(value);
+                    setProperty(SECURITY_MANAGER, fSecurityManager);
+                }
+                catch (SAXNotRecognizedException exc) {
+                    // If the property is not supported
+                    // re-throw the exception if the value is true.
+                    if (value) {
+                        throw exc;
+                    }
+                }
+                catch (SAXNotSupportedException exc) {
+                    // If the property is not supported
+                    // re-throw the exception if the value is true.
+                    if (value) {
+                        throw exc;
+                    }
+                }
+                return;
+            }
+            if (!fInitFeatures.containsKey(name)) {
+                boolean current = super.getFeature(name);
+                fInitFeatures.put(name, current ? Boolean.TRUE : Boolean.FALSE);
+            }
+            /** Forward feature to the schema validator if there is one. **/
+            if (fSAXParser != null && fSAXParser.fSchemaValidator != null) {
+                setSchemaValidatorFeature(name, value);
+            }
+            super.setFeature(name, value);
+!!!4902786.java!!!	getFeature(inout name : String) : boolean
+            if (name == null) {
+                // TODO: Add localized error message.
+                throw new NullPointerException();
+            }
+            if (name.equals(XMLConstants.FEATURE_SECURE_PROCESSING)) {
+                return fSecurityManager.isSecureProcessing();
+            }
+            return super.getFeature(name);
+!!!4902914.java!!!	setProperty(inout name : String, inout value : Object) : void
+            if (name == null) {
+                // TODO: Add localized error message.
+                throw new NullPointerException();
+            }
+            if (fSAXParser != null) {
+                // JAXP 1.2 support
+                if (JAXP_SCHEMA_LANGUAGE.equals(name)) {
+                    // The spec says if a schema is given via SAXParserFactory
+                    // the JAXP 1.2 properties shouldn't be allowed.
+                    if (fSAXParser.grammar != null) {
+                        throw new SAXNotSupportedException(
+                                SAXMessageFormatter.formatMessage(fConfiguration.getLocale(), "schema-already-specified", new Object[] {name}));
+                    }
+                    if ( W3C_XML_SCHEMA.equals(value) ) {
+                        //None of the properties will take effect till the setValidating(true) has been called
+                        if( fSAXParser.isValidating() ) {
+                            fSAXParser.schemaLanguage = W3C_XML_SCHEMA;
+                            setFeature(XMLSCHEMA_VALIDATION_FEATURE, true);
+                            // this will allow the parser not to emit DTD-related
+                            // errors, as the spec demands
+                            if (!fInitProperties.containsKey(JAXP_SCHEMA_LANGUAGE)) {
+                                fInitProperties.put(JAXP_SCHEMA_LANGUAGE, super.getProperty(JAXP_SCHEMA_LANGUAGE));
+                            }
+                            super.setProperty(JAXP_SCHEMA_LANGUAGE, W3C_XML_SCHEMA);
+                        }
+
+                    }
+                    else if (value == null) {
+                        fSAXParser.schemaLanguage = null;
+                        setFeature(XMLSCHEMA_VALIDATION_FEATURE, false);
+                    }
+                    else {
+                        // REVISIT: It would be nice if we could format this message
+                        // using a user specified locale as we do in the underlying
+                        // XMLReader -- mrglavas
+                        throw new SAXNotSupportedException(
+                            SAXMessageFormatter.formatMessage(fConfiguration.getLocale(), "schema-not-supported", null));
+                    }
+                    return;
+                }
+                else if (JAXP_SCHEMA_SOURCE.equals(name)) {
+                    // The spec says if a schema is given via SAXParserFactory
+                    // the JAXP 1.2 properties shouldn't be allowed.
+                    if (fSAXParser.grammar != null) {
+                        throw new SAXNotSupportedException(
+                                SAXMessageFormatter.formatMessage(fConfiguration.getLocale(), "schema-already-specified", new Object[] {name}));
+                    }
+                    String val = (String)getProperty(JAXP_SCHEMA_LANGUAGE);
+                    if ( val != null && W3C_XML_SCHEMA.equals(val) ) {
+                        if (!fInitProperties.containsKey(JAXP_SCHEMA_SOURCE)) {
+                            fInitProperties.put(JAXP_SCHEMA_SOURCE, super.getProperty(JAXP_SCHEMA_SOURCE));
+                        }
+                        super.setProperty(name, value);
+                    }
+                    else {
+                        throw new SAXNotSupportedException(
+                            SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                            "jaxp-order-not-supported",
+                            new Object[] {JAXP_SCHEMA_LANGUAGE, JAXP_SCHEMA_SOURCE}));
+                    }
+                    return;
+                }
+            }
+            /** Forward property to the schema validator if there is one. **/
+            if (fSAXParser != null && fSAXParser.fSchemaValidator != null) {
+                setSchemaValidatorProperty(name, value);
+            }
+
+            //check if the property is managed by security manager
+            if (fSecurityManager == null ||
+                    !fSecurityManager.setLimit(name, XMLSecurityManager.State.APIPROPERTY, value)) {
+                //check if the property is managed by security property manager
+                if (fSecurityPropertyMgr == null ||
+                        !fSecurityPropertyMgr.setValue(name, XMLSecurityPropertyManager.State.APIPROPERTY, value)) {
+                    //fall back to the existing property manager
+                    if (!fInitProperties.containsKey(name)) {
+                        fInitProperties.put(name, super.getProperty(name));
+                    }
+                    super.setProperty(name, value);
+                }
+            }
+
+!!!4903042.java!!!	getProperty(inout name : String) : Object
+            if (name == null) {
+                // TODO: Add localized error message.
+                throw new NullPointerException();
+            }
+            if (fSAXParser != null && JAXP_SCHEMA_LANGUAGE.equals(name)) {
+                // JAXP 1.2 support
+                return fSAXParser.schemaLanguage;
+            }
+
+            /** Check to see if the property is managed by the security manager **/
+            String propertyValue = (fSecurityManager != null) ?
+                    fSecurityManager.getLimitAsString(name) : null;
+            if (propertyValue != null) {
+                return propertyValue;
+            } else {
+                propertyValue = (fSecurityPropertyMgr != null) ?
+                    fSecurityPropertyMgr.getValue(name) : null;
+                if (propertyValue != null) {
+                    return propertyValue;
+                }
+            }
+
+            return super.getProperty(name);
+!!!4903170.java!!!	restoreInitState() : void
+            Iterator iter;
+            if (!fInitFeatures.isEmpty()) {
+                iter = fInitFeatures.entrySet().iterator();
+                while (iter.hasNext()) {
+                    Map.Entry entry = (Map.Entry) iter.next();
+                    String name = (String) entry.getKey();
+                    boolean value = ((Boolean) entry.getValue()).booleanValue();
+                    super.setFeature(name, value);
+                }
+                fInitFeatures.clear();
+            }
+            if (!fInitProperties.isEmpty()) {
+                iter = fInitProperties.entrySet().iterator();
+                while (iter.hasNext()) {
+                    Map.Entry entry = (Map.Entry) iter.next();
+                    String name = (String) entry.getKey();
+                    Object value = entry.getValue();
+                    super.setProperty(name, value);
+                }
+                fInitProperties.clear();
+            }
+!!!4903298.java!!!	parse(inout inputSource : InputSource) : void
+            if (fSAXParser != null && fSAXParser.fSchemaValidator != null) {
+                if (fSAXParser.fSchemaValidationManager != null) {
+                    fSAXParser.fSchemaValidationManager.reset();
+                    fSAXParser.fUnparsedEntityHandler.reset();
+                }
+                resetSchemaValidator();
+            }
+            super.parse(inputSource);
+!!!4903426.java!!!	parse(inout systemId : String) : void
+            if (fSAXParser != null && fSAXParser.fSchemaValidator != null) {
+                if (fSAXParser.fSchemaValidationManager != null) {
+                    fSAXParser.fSchemaValidationManager.reset();
+                    fSAXParser.fUnparsedEntityHandler.reset();
+                }
+                resetSchemaValidator();
+            }
+            super.parse(systemId);
+!!!4903554.java!!!	getXMLParserConfiguration() : XMLParserConfiguration
+            return fConfiguration;
+!!!4903682.java!!!	setFeature0(inout name : String, inout value : boolean) : void
+            super.setFeature(name, value);
+!!!4903810.java!!!	getFeature0(inout name : String) : boolean
+            return super.getFeature(name);
+!!!4903938.java!!!	setProperty0(inout name : String, inout value : Object) : void
+            super.setProperty(name, value);
+!!!4904066.java!!!	getProperty0(inout name : String) : Object
+            return super.getProperty(name);
+!!!4904194.java!!!	getLocale() : Locale
+            return fConfiguration.getLocale();
+!!!4904322.java!!!	setSchemaValidatorFeature(inout name : String, inout value : boolean) : void
+            try {
+                fSAXParser.fSchemaValidator.setFeature(name, value);
+            }
+            // This should never be thrown from the schema validator.
+            catch (XMLConfigurationException e) {
+                String identifier = e.getIdentifier();
+                if (e.getType() == Status.NOT_RECOGNIZED) {
+                    throw new SAXNotRecognizedException(
+                        SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                        "feature-not-recognized", new Object [] {identifier}));
+                }
+                else {
+                    throw new SAXNotSupportedException(
+                        SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                        "feature-not-supported", new Object [] {identifier}));
+                }
+            }
+!!!4904450.java!!!	setSchemaValidatorProperty(inout name : String, inout value : Object) : void
+            try {
+                fSAXParser.fSchemaValidator.setProperty(name, value);
+            }
+            // This should never be thrown from the schema validator.
+            catch (XMLConfigurationException e) {
+                String identifier = e.getIdentifier();
+                if (e.getType() == Status.NOT_RECOGNIZED) {
+                    throw new SAXNotRecognizedException(
+                        SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                        "property-not-recognized", new Object [] {identifier}));
+                }
+                else {
+                    throw new SAXNotSupportedException(
+                        SAXMessageFormatter.formatMessage(fConfiguration.getLocale(),
+                        "property-not-supported", new Object [] {identifier}));
+                }
+            }
+!!!4904578.java!!!	resetSchemaValidator() : void
+            try {
+                fSAXParser.fSchemaValidator.reset(fSAXParser.fSchemaValidatorComponentManager);
+            }
+            // This should never be thrown from the schema validator.
+            catch (XMLConfigurationException e) {
+                throw new SAXException(e);
+            }

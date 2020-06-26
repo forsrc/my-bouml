@@ -1,0 +1,440 @@
+class PropertyDescriptor
+!!!6768898.java!!!	PropertyDescriptor(inout propertyName : String, inout beanClass : Class)
+        this(propertyName, beanClass,
+                Introspector.IS_PREFIX + NameGenerator.capitalize(propertyName),
+                Introspector.SET_PREFIX + NameGenerator.capitalize(propertyName));
+!!!6769026.java!!!	PropertyDescriptor(inout propertyName : String, inout beanClass : Class, inout readMethodName : String, inout writeMethodName : String)
+        if (beanClass == null) {
+            throw new IntrospectionException("Target Bean class is null");
+        }
+        if (propertyName == null || propertyName.length() == 0) {
+            throw new IntrospectionException("bad property name");
+        }
+        if ("".equals(readMethodName) || "".equals(writeMethodName)) {
+            throw new IntrospectionException("read or write method name should not be the empty string");
+        }
+        setName(propertyName);
+        setClass0(beanClass);
+
+        this.readMethodName = readMethodName;
+        if (readMethodName != null && getReadMethod() == null) {
+            throw new IntrospectionException("Method not found: " + readMethodName);
+        }
+        this.writeMethodName = writeMethodName;
+        if (writeMethodName != null && getWriteMethod() == null) {
+            throw new IntrospectionException("Method not found: " + writeMethodName);
+        }
+        // If this class or one of its base classes allow PropertyChangeListener,
+        // then we assume that any properties we discover are "bound".
+        // See Introspector.getTargetPropertyInfo() method.
+        Class[] args = { PropertyChangeListener.class };
+        this.bound = null != Introspector.findMethod(beanClass, "addPropertyChangeListener", args.length, args);
+!!!6769154.java!!!	PropertyDescriptor(inout propertyName : String, inout readMethod : Method, inout writeMethod : Method)
+        if (propertyName == null || propertyName.length() == 0) {
+            throw new IntrospectionException("bad property name");
+        }
+        setName(propertyName);
+        setReadMethod(readMethod);
+        setWriteMethod(writeMethod);
+!!!6769282.java!!!	PropertyDescriptor(inout bean : Class, inout base : String, inout read : Method, inout write : Method)
+        if (bean == null) {
+            throw new IntrospectionException("Target Bean class is null");
+        }
+        setClass0(bean);
+        setName(Introspector.decapitalize(base));
+        setReadMethod(read);
+        setWriteMethod(write);
+        this.baseName = base;
+!!!6769410.java!!!	getPropertyType() : Class
+        Class<?> type = getPropertyType0();
+        if (type  == null) {
+            try {
+                type = findPropertyType(getReadMethod(), getWriteMethod());
+                setPropertyType(type);
+            } catch (IntrospectionException ex) {
+                // Fall
+            }
+        }
+        return type;
+!!!6769538.java!!!	setPropertyType(inout type : Class) : void
+        this.propertyTypeRef = getWeakReference(type);
+!!!6769666.java!!!	getPropertyType0() : Class
+        return (this.propertyTypeRef != null)
+                ? this.propertyTypeRef.get()
+                : null;
+!!!6769794.java!!!	getReadMethod() : Method
+        Method readMethod = this.readMethodRef.get();
+        if (readMethod == null) {
+            Class<?> cls = getClass0();
+            if (cls == null || (readMethodName == null && !this.readMethodRef.isSet())) {
+                // The read method was explicitly set to null.
+                return null;
+            }
+            String nextMethodName = Introspector.GET_PREFIX + getBaseName();
+            if (readMethodName == null) {
+                Class<?> type = getPropertyType0();
+                if (type == boolean.class || type == null) {
+                    readMethodName = Introspector.IS_PREFIX + getBaseName();
+                } else {
+                    readMethodName = nextMethodName;
+                }
+            }
+
+            // Since there can be multiple write methods but only one getter
+            // method, find the getter method first so that you know what the
+            // property type is.  For booleans, there can be "is" and "get"
+            // methods.  If an "is" method exists, this is the official
+            // reader method so look for this one first.
+            readMethod = Introspector.findMethod(cls, readMethodName, 0);
+            if ((readMethod == null) && !readMethodName.equals(nextMethodName)) {
+                readMethodName = nextMethodName;
+                readMethod = Introspector.findMethod(cls, readMethodName, 0);
+            }
+            try {
+                setReadMethod(readMethod);
+            } catch (IntrospectionException ex) {
+                // fall
+            }
+        }
+        return readMethod;
+!!!6769922.java!!!	setReadMethod(inout readMethod : Method) : void
+        this.readMethodRef.set(readMethod);
+        if (readMethod == null) {
+            readMethodName = null;
+            return;
+        }
+        // The property type is determined by the read method.
+        setPropertyType(findPropertyType(readMethod, this.writeMethodRef.get()));
+        setClass0(readMethod.getDeclaringClass());
+
+        readMethodName = readMethod.getName();
+        setTransient(readMethod.getAnnotation(Transient.class));
+!!!6770050.java!!!	getWriteMethod() : Method
+        Method writeMethod = this.writeMethodRef.get();
+        if (writeMethod == null) {
+            Class<?> cls = getClass0();
+            if (cls == null || (writeMethodName == null && !this.writeMethodRef.isSet())) {
+                // The write method was explicitly set to null.
+                return null;
+            }
+
+            // We need the type to fetch the correct method.
+            Class<?> type = getPropertyType0();
+            if (type == null) {
+                try {
+                    // Can't use getPropertyType since it will lead to recursive loop.
+                    type = findPropertyType(getReadMethod(), null);
+                    setPropertyType(type);
+                } catch (IntrospectionException ex) {
+                    // Without the correct property type we can't be guaranteed
+                    // to find the correct method.
+                    return null;
+                }
+            }
+
+            if (writeMethodName == null) {
+                writeMethodName = Introspector.SET_PREFIX + getBaseName();
+            }
+
+            Class<?>[] args = (type == null) ? null : new Class<?>[] { type };
+            writeMethod = Introspector.findMethod(cls, writeMethodName, 1, args);
+            if (writeMethod != null) {
+                if (!writeMethod.getReturnType().equals(void.class)) {
+                    writeMethod = null;
+                }
+            }
+            try {
+                setWriteMethod(writeMethod);
+            } catch (IntrospectionException ex) {
+                // fall through
+            }
+        }
+        return writeMethod;
+!!!6770178.java!!!	setWriteMethod(inout writeMethod : Method) : void
+        this.writeMethodRef.set(writeMethod);
+        if (writeMethod == null) {
+            writeMethodName = null;
+            return;
+        }
+        // Set the property type - which validates the method
+        setPropertyType(findPropertyType(getReadMethod(), writeMethod));
+        setClass0(writeMethod.getDeclaringClass());
+
+        writeMethodName = writeMethod.getName();
+        setTransient(writeMethod.getAnnotation(Transient.class));
+!!!6770306.java!!!	setClass0(inout clz : Class) : void
+        if (getClass0() != null && clz.isAssignableFrom(getClass0())) {
+            // don't replace a subclass with a superclass
+            return;
+        }
+        super.setClass0(clz);
+!!!6770434.java!!!	isBound() : boolean
+        return bound;
+!!!6770562.java!!!	setBound(inout bound : boolean) : void
+        this.bound = bound;
+!!!6770690.java!!!	isConstrained() : boolean
+        return constrained;
+!!!6770818.java!!!	setConstrained(inout constrained : boolean) : void
+        this.constrained = constrained;
+!!!6770946.java!!!	setPropertyEditorClass(inout propertyEditorClass : Class) : void
+        this.propertyEditorClassRef = getWeakReference(propertyEditorClass);
+!!!6771074.java!!!	getPropertyEditorClass() : Class
+        return (this.propertyEditorClassRef != null)
+                ? this.propertyEditorClassRef.get()
+                : null;
+!!!6771202.java!!!	createPropertyEditor(inout bean : Object) : PropertyEditor
+        Object editor = null;
+
+        final Class<?> cls = getPropertyEditorClass();
+        if (cls != null && PropertyEditor.class.isAssignableFrom(cls)
+                && ReflectUtil.isPackageAccessible(cls)) {
+            Constructor<?> ctor = null;
+            if (bean != null) {
+                try {
+                    ctor = cls.getConstructor(new Class<?>[] { Object.class });
+                } catch (Exception ex) {
+                    // Fall through
+                }
+            }
+            try {
+                if (ctor == null) {
+                    editor = cls.newInstance();
+                } else {
+                    editor = ctor.newInstance(new Object[] { bean });
+                }
+            } catch (Exception ex) {
+                // Fall through
+            }
+        }
+        return (PropertyEditor)editor;
+!!!6771330.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        if (obj != null && obj instanceof PropertyDescriptor) {
+            PropertyDescriptor other = (PropertyDescriptor)obj;
+            Method otherReadMethod = other.getReadMethod();
+            Method otherWriteMethod = other.getWriteMethod();
+
+            if (!compareMethods(getReadMethod(), otherReadMethod)) {
+                return false;
+            }
+
+            if (!compareMethods(getWriteMethod(), otherWriteMethod)) {
+                return false;
+            }
+
+            if (getPropertyType() == other.getPropertyType() &&
+                getPropertyEditorClass() == other.getPropertyEditorClass() &&
+                bound == other.isBound() && constrained == other.isConstrained() &&
+                writeMethodName == other.writeMethodName &&
+                readMethodName == other.readMethodName) {
+                return true;
+            }
+        }
+        return false;
+!!!6771458.java!!!	compareMethods(inout a : Method, inout b : Method) : boolean
+        // Note: perhaps this should be a protected method in FeatureDescriptor
+        if ((a == null) != (b == null)) {
+            return false;
+        }
+
+        if (a != null && b != null) {
+            if (!a.equals(b)) {
+                return false;
+            }
+        }
+        return true;
+!!!6771586.java!!!	PropertyDescriptor(inout x : PropertyDescriptor, inout y : PropertyDescriptor)
+        super(x,y);
+
+        if (y.baseName != null) {
+            baseName = y.baseName;
+        } else {
+            baseName = x.baseName;
+        }
+
+        if (y.readMethodName != null) {
+            readMethodName = y.readMethodName;
+        } else {
+            readMethodName = x.readMethodName;
+        }
+
+        if (y.writeMethodName != null) {
+            writeMethodName = y.writeMethodName;
+        } else {
+            writeMethodName = x.writeMethodName;
+        }
+
+        if (y.propertyTypeRef != null) {
+            propertyTypeRef = y.propertyTypeRef;
+        } else {
+            propertyTypeRef = x.propertyTypeRef;
+        }
+
+        // Figure out the merged read method.
+        Method xr = x.getReadMethod();
+        Method yr = y.getReadMethod();
+
+        // Normally give priority to y's readMethod.
+        try {
+            if (isAssignable(xr, yr)) {
+                setReadMethod(yr);
+            } else {
+                setReadMethod(xr);
+            }
+        } catch (IntrospectionException ex) {
+            // fall through
+        }
+
+        // However, if both x and y reference read methods in the same class,
+        // give priority to a boolean "is" method over a boolean "get" method.
+        if (xr != null && yr != null &&
+                   xr.getDeclaringClass() == yr.getDeclaringClass() &&
+                   getReturnType(getClass0(), xr) == boolean.class &&
+                   getReturnType(getClass0(), yr) == boolean.class &&
+                   xr.getName().indexOf(Introspector.IS_PREFIX) == 0 &&
+                   yr.getName().indexOf(Introspector.GET_PREFIX) == 0) {
+            try {
+                setReadMethod(xr);
+            } catch (IntrospectionException ex) {
+                // fall through
+            }
+        }
+
+        Method xw = x.getWriteMethod();
+        Method yw = y.getWriteMethod();
+
+        try {
+            if (yw != null) {
+                setWriteMethod(yw);
+            } else {
+                setWriteMethod(xw);
+            }
+        } catch (IntrospectionException ex) {
+            // Fall through
+        }
+
+        if (y.getPropertyEditorClass() != null) {
+            setPropertyEditorClass(y.getPropertyEditorClass());
+        } else {
+            setPropertyEditorClass(x.getPropertyEditorClass());
+        }
+
+
+        bound = x.bound | y.bound;
+        constrained = x.constrained | y.constrained;
+!!!6771714.java!!!	PropertyDescriptor(inout old : PropertyDescriptor)
+        super(old);
+        propertyTypeRef = old.propertyTypeRef;
+        this.readMethodRef.set(old.readMethodRef.get());
+        this.writeMethodRef.set(old.writeMethodRef.get());
+        propertyEditorClassRef = old.propertyEditorClassRef;
+
+        writeMethodName = old.writeMethodName;
+        readMethodName = old.readMethodName;
+        baseName = old.baseName;
+
+        bound = old.bound;
+        constrained = old.constrained;
+!!!6771842.java!!!	updateGenericsFor(inout type : Class) : void
+        setClass0(type);
+        try {
+            setPropertyType(findPropertyType(this.readMethodRef.get(), this.writeMethodRef.get()));
+        }
+        catch (IntrospectionException exception) {
+            setPropertyType(null);
+        }
+!!!6771970.java!!!	findPropertyType(inout readMethod : Method, inout writeMethod : Method) : Class
+        Class<?> propertyType = null;
+        try {
+            if (readMethod != null) {
+                Class<?>[] params = getParameterTypes(getClass0(), readMethod);
+                if (params.length != 0) {
+                    throw new IntrospectionException("bad read method arg count: "
+                                                     + readMethod);
+                }
+                propertyType = getReturnType(getClass0(), readMethod);
+                if (propertyType == Void.TYPE) {
+                    throw new IntrospectionException("read method " +
+                                        readMethod.getName() + " returns void");
+                }
+            }
+            if (writeMethod != null) {
+                Class<?>[] params = getParameterTypes(getClass0(), writeMethod);
+                if (params.length != 1) {
+                    throw new IntrospectionException("bad write method arg count: "
+                                                     + writeMethod);
+                }
+                if (propertyType != null && !params[0].isAssignableFrom(propertyType)) {
+                    throw new IntrospectionException("type mismatch between read and write methods");
+                }
+                propertyType = params[0];
+            }
+        } catch (IntrospectionException ex) {
+            throw ex;
+        }
+        return propertyType;
+!!!6772098.java!!!	hashCode() : int
+        int result = 7;
+
+        result = 37 * result + ((getPropertyType() == null) ? 0 :
+                                getPropertyType().hashCode());
+        result = 37 * result + ((getReadMethod() == null) ? 0 :
+                                getReadMethod().hashCode());
+        result = 37 * result + ((getWriteMethod() == null) ? 0 :
+                                getWriteMethod().hashCode());
+        result = 37 * result + ((getPropertyEditorClass() == null) ? 0 :
+                                getPropertyEditorClass().hashCode());
+        result = 37 * result + ((writeMethodName == null) ? 0 :
+                                writeMethodName.hashCode());
+        result = 37 * result + ((readMethodName == null) ? 0 :
+                                readMethodName.hashCode());
+        result = 37 * result + getName().hashCode();
+        result = 37 * result + ((bound == false) ? 0 : 1);
+        result = 37 * result + ((constrained == false) ? 0 : 1);
+
+        return result;
+!!!6772226.java!!!	getBaseName() : String
+        if (baseName == null) {
+            baseName = NameGenerator.capitalize(getName());
+        }
+        return baseName;
+!!!6772354.java!!!	appendTo(inout sb : StringBuilder) : void
+        appendTo(sb, "bound", this.bound);
+        appendTo(sb, "constrained", this.constrained);
+        appendTo(sb, "propertyEditorClass", this.propertyEditorClassRef);
+        appendTo(sb, "propertyType", this.propertyTypeRef);
+        appendTo(sb, "readMethod", this.readMethodRef.get());
+        appendTo(sb, "writeMethod", this.writeMethodRef.get());
+!!!6772482.java!!!	isAssignable(inout m1 : Method, inout m2 : Method) : boolean
+        if (m1 == null) {
+            return true; // choose second method
+        }
+        if (m2 == null) {
+            return false; // choose first method
+        }
+        if (!m1.getName().equals(m2.getName())) {
+            return true; // choose second method by default
+        }
+        Class<?> type1 = m1.getDeclaringClass();
+        Class<?> type2 = m2.getDeclaringClass();
+        if (!type1.isAssignableFrom(type2)) {
+            return false; // choose first method: it declared later
+        }
+        type1 = getReturnType(getClass0(), m1);
+        type2 = getReturnType(getClass0(), m2);
+        if (!type1.isAssignableFrom(type2)) {
+            return false; // choose first method: it overrides return type
+        }
+        Class<?>[] args1 = getParameterTypes(getClass0(), m1);
+        Class<?>[] args2 = getParameterTypes(getClass0(), m2);
+        if (args1.length != args2.length) {
+            return true; // choose second method by default
+        }
+        for (int i = 0; i < args1.length; i++) {
+            if (!args1[i].isAssignableFrom(args2[i])) {
+                return false; // choose first method: it overrides parameter
+            }
+        }
+        return true; // choose second method

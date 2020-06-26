@@ -1,0 +1,151 @@
+class ChildLocator
+!!!11633154.java!!!	ChildLocator()
+            lastAlloc = new Rectangle();
+            childAlloc = new Rectangle();
+!!!11633282.java!!!	childChanged(inout cs : AsyncBoxView::ChildState) : void
+            if (lastValidOffset == null) {
+                lastValidOffset = cs;
+            } else if (cs.getChildView().getStartOffset() <
+                       lastValidOffset.getChildView().getStartOffset()) {
+                lastValidOffset = cs;
+            }
+!!!11633410.java!!!	paintChildren(inout g : Graphics) : void
+            Rectangle clip = g.getClipBounds();
+            float targetOffset = (axis == X_AXIS) ?
+                clip.x - lastAlloc.x : clip.y - lastAlloc.y;
+            int index = getViewIndexAtVisualOffset(targetOffset);
+            int n = getViewCount();
+            float offs = getChildState(index).getMajorOffset();
+            for (int i = index; i < n; i++) {
+                ChildState cs = getChildState(i);
+                cs.setMajorOffset(offs);
+                Shape ca = getChildAllocation(i);
+                if (intersectsClip(ca, clip)) {
+                    synchronized (cs) {
+                        View v = cs.getChildView();
+                        v.paint(g, ca);
+                    }
+                } else {
+                    // done painting intersection
+                    break;
+                }
+                offs += cs.getMajorSpan();
+            }
+!!!11633538.java!!!	getChildAllocation(in index : int, inout a : Shape) : Shape
+            if (a == null) {
+                return null;
+            }
+            setAllocation(a);
+            ChildState cs = getChildState(index);
+            if (lastValidOffset == null) {
+                lastValidOffset = getChildState(0);
+            }
+            if (cs.getChildView().getStartOffset() >
+                lastValidOffset.getChildView().getStartOffset()) {
+                // offsets need to be updated
+                updateChildOffsetsToIndex(index);
+            }
+            Shape ca = getChildAllocation(index);
+            return ca;
+!!!11633666.java!!!	getViewIndexAtPoint(in x : float, in y : float, inout a : Shape) : int
+            setAllocation(a);
+            float targetOffset = (axis == X_AXIS) ? x - lastAlloc.x : y - lastAlloc.y;
+            int index = getViewIndexAtVisualOffset(targetOffset);
+            return index;
+!!!11633794.java!!!	getChildAllocation(in index : int) : Shape
+            ChildState cs = getChildState(index);
+            if (! cs.isLayoutValid()) {
+                cs.run();
+            }
+            if (axis == X_AXIS) {
+                childAlloc.x = lastAlloc.x + (int) cs.getMajorOffset();
+                childAlloc.y = lastAlloc.y + (int) cs.getMinorOffset();
+                childAlloc.width = (int) cs.getMajorSpan();
+                childAlloc.height = (int) cs.getMinorSpan();
+            } else {
+                childAlloc.y = lastAlloc.y + (int) cs.getMajorOffset();
+                childAlloc.x = lastAlloc.x + (int) cs.getMinorOffset();
+                childAlloc.height = (int) cs.getMajorSpan();
+                childAlloc.width = (int) cs.getMinorSpan();
+            }
+            childAlloc.x += (int)getLeftInset();
+            childAlloc.y += (int)getRightInset();
+            return childAlloc;
+!!!11633922.java!!!	setAllocation(inout a : Shape) : void
+            if (a instanceof Rectangle) {
+                lastAlloc.setBounds((Rectangle) a);
+            } else {
+                lastAlloc.setBounds(a.getBounds());
+            }
+            setSize(lastAlloc.width, lastAlloc.height);
+!!!11634050.java!!!	getViewIndexAtVisualOffset(in targetOffset : float) : int
+            int n = getViewCount();
+            if (n > 0) {
+                boolean lastValid = (lastValidOffset != null);
+
+                if (lastValidOffset == null) {
+                    lastValidOffset = getChildState(0);
+                }
+                if (targetOffset > majorSpan) {
+                    // should only get here on the first time display.
+                    if (!lastValid) {
+                        return 0;
+                    }
+                    int pos = lastValidOffset.getChildView().getStartOffset();
+                    int index = getViewIndex(pos, Position.Bias.Forward);
+                    return index;
+                } else if (targetOffset > lastValidOffset.getMajorOffset()) {
+                    // roll offset calculations forward
+                    return updateChildOffsets(targetOffset);
+                } else {
+                    // no changes prior to the needed offset
+                    // this should be a binary search
+                    float offs = 0f;
+                    for (int i = 0; i < n; i++) {
+                        ChildState cs = getChildState(i);
+                        float nextOffs = offs + cs.getMajorSpan();
+                        if (targetOffset < nextOffs) {
+                            return i;
+                        }
+                        offs = nextOffs;
+                    }
+                }
+            }
+            return n - 1;
+!!!11634178.java!!!	updateChildOffsets(in targetOffset : float) : int
+            int n = getViewCount();
+            int targetIndex = n - 1;
+            int pos = lastValidOffset.getChildView().getStartOffset();
+            int startIndex = getViewIndex(pos, Position.Bias.Forward);
+            float start = lastValidOffset.getMajorOffset();
+            float lastOffset = start;
+            for (int i = startIndex; i < n; i++) {
+                ChildState cs = getChildState(i);
+                cs.setMajorOffset(lastOffset);
+                lastOffset += cs.getMajorSpan();
+                if (targetOffset < lastOffset) {
+                    targetIndex = i;
+                    lastValidOffset = cs;
+                    break;
+                }
+            }
+
+            return targetIndex;
+!!!11634306.java!!!	updateChildOffsetsToIndex(in index : int) : void
+            int pos = lastValidOffset.getChildView().getStartOffset();
+            int startIndex = getViewIndex(pos, Position.Bias.Forward);
+            float lastOffset = lastValidOffset.getMajorOffset();
+            for (int i = startIndex; i <= index; i++) {
+                ChildState cs = getChildState(i);
+                cs.setMajorOffset(lastOffset);
+                lastOffset += cs.getMajorSpan();
+            }
+!!!11634434.java!!!	intersectsClip(inout childAlloc : Shape, inout clip : Rectangle) : boolean
+            Rectangle cs = (childAlloc instanceof Rectangle) ?
+                (Rectangle) childAlloc : childAlloc.getBounds();
+            if (cs.intersects(clip)) {
+                // Make sure that lastAlloc also contains childAlloc,
+                // this will be false if haven't yet flushed changes.
+                return lastAlloc.intersects(cs);
+            }
+            return false;

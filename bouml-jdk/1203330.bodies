@@ -1,0 +1,242 @@
+class JMXConnectorFactory
+!!!9942018.java!!!	connect(inout serviceURL : JMXServiceURL) : JMXConnector
+        return connect(serviceURL, null);
+!!!9942146.java!!!	connect(inout serviceURL : JMXServiceURL, inout environment : Map) : JMXConnector
+        if (serviceURL == null)
+            throw new NullPointerException("Null JMXServiceURL");
+        JMXConnector conn = newJMXConnector(serviceURL, environment);
+        conn.connect(environment);
+        return conn;
+!!!9942274.java!!!	newHashMap() : Map
+        return new HashMap<K,V>();
+!!!9942402.java!!!	newHashMap(inout map : Map) : Map
+        return new HashMap<K,Object>(map);
+!!!9942530.java!!!	newJMXConnector(inout serviceURL : JMXServiceURL, inout environment : Map) : JMXConnector
+
+        final Map<String,Object> envcopy;
+        if (environment == null)
+            envcopy = newHashMap();
+        else {
+            EnvHelp.checkAttributes(environment);
+            envcopy = newHashMap(environment);
+        }
+
+        final ClassLoader loader = resolveClassLoader(envcopy);
+        final Class<JMXConnectorProvider> targetInterface =
+                JMXConnectorProvider.class;
+        final String protocol = serviceURL.getProtocol();
+        final String providerClassName = "ClientProvider";
+        final JMXServiceURL providerURL = serviceURL;
+
+        JMXConnectorProvider provider = getProvider(providerURL, envcopy,
+                                               providerClassName,
+                                               targetInterface,
+                                               loader);
+
+        IOException exception = null;
+        if (provider == null) {
+            // Loader is null when context class loader is set to null
+            // and no loader has been provided in map.
+            // com.sun.jmx.remote.util.Service class extracted from j2se
+            // provider search algorithm doesn't handle well null classloader.
+            if (loader != null) {
+                try {
+                    JMXConnector connection =
+                        getConnectorAsService(loader, providerURL, envcopy);
+                    if (connection != null)
+                        return connection;
+                } catch (JMXProviderException e) {
+                    throw e;
+                } catch (IOException e) {
+                    exception = e;
+                }
+            }
+            provider = getProvider(protocol, PROTOCOL_PROVIDER_DEFAULT_PACKAGE,
+                            JMXConnectorFactory.class.getClassLoader(),
+                            providerClassName, targetInterface);
+        }
+
+        if (provider == null) {
+            MalformedURLException e =
+                new MalformedURLException("Unsupported protocol: " + protocol);
+            if (exception == null) {
+                throw e;
+            } else {
+                throw EnvHelp.initCause(e, exception);
+            }
+        }
+
+        final Map<String,Object> fixedenv =
+                Collections.unmodifiableMap(envcopy);
+
+        return provider.newJMXConnector(serviceURL, fixedenv);
+!!!9942658.java!!!	resolvePkgs(inout env : Map) : String
+
+        Object pkgsObject = null;
+
+        if (env != null)
+            pkgsObject = env.get(PROTOCOL_PROVIDER_PACKAGES);
+
+        if (pkgsObject == null)
+            pkgsObject =
+                AccessController.doPrivileged(new PrivilegedAction<String>() {
+                    public String run() {
+                        return System.getProperty(PROTOCOL_PROVIDER_PACKAGES);
+                    }
+                });
+
+        if (pkgsObject == null)
+            return null;
+
+        if (!(pkgsObject instanceof String)) {
+            final String msg = "Value of " + PROTOCOL_PROVIDER_PACKAGES +
+                " parameter is not a String: " +
+                pkgsObject.getClass().getName();
+            throw new JMXProviderException(msg);
+        }
+
+        final String pkgs = (String) pkgsObject;
+        if (pkgs.trim().equals(""))
+            return null;
+
+        // pkgs may not contain an empty element
+        if (pkgs.startsWith("|") || pkgs.endsWith("|") ||
+            pkgs.indexOf("||") >= 0) {
+            final String msg = "Value of " + PROTOCOL_PROVIDER_PACKAGES +
+                " contains an empty element: " + pkgs;
+            throw new JMXProviderException(msg);
+        }
+
+        return pkgs;
+!!!9942786.java!!!	getProvider(inout serviceURL : JMXServiceURL, in environment : Map, inout providerClassName : String, inout targetInterface : Class, in loader : ClassLoader) : T
+
+        final String protocol = serviceURL.getProtocol();
+
+        final String pkgs = resolvePkgs(environment);
+
+        T instance = null;
+
+        if (pkgs != null) {
+            instance =
+                getProvider(protocol, pkgs, loader, providerClassName,
+                            targetInterface);
+
+            if (instance != null) {
+                boolean needsWrap = (loader != instance.getClass().getClassLoader());
+                environment.put(PROTOCOL_PROVIDER_CLASS_LOADER, needsWrap ? wrap(loader) : loader);
+            }
+        }
+
+        return instance;
+!!!9942914.java!!!	getProviderIterator(in providerClass : Class, in loader : ClassLoader) : Iterator
+       ServiceLoader<T> serviceLoader =
+                ServiceLoader.load(providerClass, loader);
+       return serviceLoader.iterator();
+!!!9943042.java!!!	wrap(in parent : ClassLoader) : ClassLoader
+        return parent != null ? AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
+            @Override
+            public ClassLoader run() {
+                return new ClassLoader(parent) {
+                    @Override
+                    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                        ReflectUtil.checkPackageAccess(name);
+                        return super.loadClass(name, resolve);
+                    }
+                };
+            }
+        }) : null;
+!!!9943170.java!!!	getConnectorAsService(inout loader : ClassLoader, inout url : JMXServiceURL, inout map : Map) : JMXConnector
+
+        Iterator<JMXConnectorProvider> providers =
+                getProviderIterator(JMXConnectorProvider.class, loader);
+        JMXConnector connection;
+        IOException exception = null;
+        while (providers.hasNext()) {
+            JMXConnectorProvider provider = providers.next();
+            try {
+                connection = provider.newJMXConnector(url, map);
+                return connection;
+            } catch (JMXProviderException e) {
+                throw e;
+            } catch (Exception e) {
+                if (logger.traceOn())
+                    logger.trace("getConnectorAsService",
+                                 "URL[" + url +
+                                 "] Service provider exception: " + e);
+                if (!(e instanceof MalformedURLException)) {
+                    if (exception == null) {
+                        if (e instanceof IOException) {
+                            exception = (IOException) e;
+                        } else {
+                            exception = EnvHelp.initCause(
+                                new IOException(e.getMessage()), e);
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+        if (exception == null)
+            return null;
+        else
+            throw exception;
+!!!9943298.java!!!	getProvider(inout protocol : String, inout pkgs : String, inout loader : ClassLoader, inout providerClassName : String, inout targetInterface : Class) : T
+
+        StringTokenizer tokenizer = new StringTokenizer(pkgs, "|");
+
+        while (tokenizer.hasMoreTokens()) {
+            String pkg = tokenizer.nextToken();
+            String className = (pkg + "." + protocol2package(protocol) +
+                                "." + providerClassName);
+            Class<?> providerClass;
+            try {
+                providerClass = Class.forName(className, true, loader);
+            } catch (ClassNotFoundException e) {
+                //Add trace.
+                continue;
+            }
+
+            if (!targetInterface.isAssignableFrom(providerClass)) {
+                final String msg =
+                    "Provider class does not implement " +
+                    targetInterface.getName() + ": " +
+                    providerClass.getName();
+                throw new JMXProviderException(msg);
+            }
+
+            // We have just proved that this cast is correct
+            Class<? extends T> providerClassT = Util.cast(providerClass);
+            try {
+                return providerClassT.newInstance();
+            } catch (Exception e) {
+                final String msg =
+                    "Exception when instantiating provider [" + className +
+                    "]";
+                throw new JMXProviderException(msg, e);
+            }
+        }
+
+        return null;
+!!!9943426.java!!!	resolveClassLoader(inout environment : Map) : ClassLoader
+        ClassLoader loader = null;
+
+        if (environment != null) {
+            try {
+                loader = (ClassLoader)
+                    environment.get(PROTOCOL_PROVIDER_CLASS_LOADER);
+            } catch (ClassCastException e) {
+                final String msg =
+                    "The ClassLoader supplied in the environment map using " +
+                    "the " + PROTOCOL_PROVIDER_CLASS_LOADER +
+                    " attribute is not an instance of java.lang.ClassLoader";
+                throw new IllegalArgumentException(msg);
+            }
+        }
+
+        if (loader == null) {
+            loader = Thread.currentThread().getContextClassLoader();
+        }
+
+        return loader;
+!!!9943554.java!!!	protocol2package(inout protocol : String) : String
+        return protocol.replace('+', '.').replace('-', '_');

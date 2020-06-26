@@ -1,0 +1,249 @@
+class AWTEvent
+!!!6075138.java!!!	getAccessControlContext() : AccessControlContext
+        if (acc == null) {
+            throw new SecurityException("AWTEvent is missing AccessControlContext");
+        }
+        return acc;
+!!!6075266.java!!!	get_InputEvent_CanAccessSystemClipboard() : Field
+        if (inputEvent_CanAccessSystemClipboard_Field == null) {
+            inputEvent_CanAccessSystemClipboard_Field =
+                java.security.AccessController.doPrivileged(
+                    new java.security.PrivilegedAction<Field>() {
+                            public Field run() {
+                                Field field = null;
+                                try {
+                                    field = InputEvent.class.
+                                        getDeclaredField("canAccessSystemClipboard");
+                                    field.setAccessible(true);
+                                    return field;
+                                } catch (SecurityException e) {
+                                    if (log.isLoggable(PlatformLogger.Level.FINE)) {
+                                        log.fine("AWTEvent.get_InputEvent_CanAccessSystemClipboard() got SecurityException ", e);
+                                    }
+                                } catch (NoSuchFieldException e) {
+                                    if (log.isLoggable(PlatformLogger.Level.FINE)) {
+                                        log.fine("AWTEvent.get_InputEvent_CanAccessSystemClipboard() got NoSuchFieldException ", e);
+                                    }
+                                }
+                                return null;
+                            }
+                        });
+        }
+
+        return inputEvent_CanAccessSystemClipboard_Field;
+!!!6075522.java!!!	AWTEvent(inout event : Event)
+        this(event.target, event.id);
+!!!6075650.java!!!	AWTEvent(inout source : Object, in id : int)
+        super(source);
+        this.id = id;
+        switch(id) {
+          case ActionEvent.ACTION_PERFORMED:
+          case ItemEvent.ITEM_STATE_CHANGED:
+          case AdjustmentEvent.ADJUSTMENT_VALUE_CHANGED:
+          case TextEvent.TEXT_VALUE_CHANGED:
+            consumed = true;
+            break;
+          default:
+        }
+!!!6075778.java!!!	setSource(inout newSource : Object) : void
+        if (source == newSource) {
+            return;
+        }
+
+        Component comp = null;
+        if (newSource instanceof Component) {
+            comp = (Component)newSource;
+            while (comp != null && comp.peer != null &&
+                   (comp.peer instanceof LightweightPeer)) {
+                comp = comp.parent;
+            }
+        }
+
+        synchronized (this) {
+            source = newSource;
+            if (comp != null) {
+                ComponentPeer peer = comp.peer;
+                if (peer != null) {
+                    nativeSetSource(peer);
+                }
+            }
+        }
+!!!6076034.java!!!	getID() : int
+        return id;
+!!!6076162.java!!!	toString() : String
+        String srcName = null;
+        if (source instanceof Component) {
+            srcName = ((Component)source).getName();
+        } else if (source instanceof MenuComponent) {
+            srcName = ((MenuComponent)source).getName();
+        }
+        return getClass().getName() + "[" + paramString() + "] on " +
+            (srcName != null? srcName : source);
+!!!6076290.java!!!	paramString() : String
+        return "";
+!!!6076418.java!!!	consume() : void
+        switch(id) {
+          case KeyEvent.KEY_PRESSED:
+          case KeyEvent.KEY_RELEASED:
+          case MouseEvent.MOUSE_PRESSED:
+          case MouseEvent.MOUSE_RELEASED:
+          case MouseEvent.MOUSE_MOVED:
+          case MouseEvent.MOUSE_DRAGGED:
+          case MouseEvent.MOUSE_ENTERED:
+          case MouseEvent.MOUSE_EXITED:
+          case MouseEvent.MOUSE_WHEEL:
+          case InputMethodEvent.INPUT_METHOD_TEXT_CHANGED:
+          case InputMethodEvent.CARET_POSITION_CHANGED:
+              consumed = true;
+              break;
+          default:
+              // event type cannot be consumed
+        }
+!!!6076546.java!!!	isConsumed() : boolean
+        return consumed;
+!!!6076674.java!!!	convertToOld() : Event
+        Object src = getSource();
+        int newid = id;
+
+        switch(id) {
+          case KeyEvent.KEY_PRESSED:
+          case KeyEvent.KEY_RELEASED:
+              KeyEvent ke = (KeyEvent)this;
+              if (ke.isActionKey()) {
+                  newid = (id == KeyEvent.KEY_PRESSED?
+                           Event.KEY_ACTION : Event.KEY_ACTION_RELEASE);
+              }
+              int keyCode = ke.getKeyCode();
+              if (keyCode == KeyEvent.VK_SHIFT ||
+                  keyCode == KeyEvent.VK_CONTROL ||
+                  keyCode == KeyEvent.VK_ALT) {
+                  return null;  // suppress modifier keys in old event model.
+              }
+              // no mask for button1 existed in old Event - strip it out
+              return new Event(src, ke.getWhen(), newid, 0, 0,
+                               Event.getOldEventKey(ke),
+                               (ke.getModifiers() & ~InputEvent.BUTTON1_MASK));
+
+          case MouseEvent.MOUSE_PRESSED:
+          case MouseEvent.MOUSE_RELEASED:
+          case MouseEvent.MOUSE_MOVED:
+          case MouseEvent.MOUSE_DRAGGED:
+          case MouseEvent.MOUSE_ENTERED:
+          case MouseEvent.MOUSE_EXITED:
+              MouseEvent me = (MouseEvent)this;
+              // no mask for button1 existed in old Event - strip it out
+              Event olde = new Event(src, me.getWhen(), newid,
+                               me.getX(), me.getY(), 0,
+                               (me.getModifiers() & ~InputEvent.BUTTON1_MASK));
+              olde.clickCount = me.getClickCount();
+              return olde;
+
+          case FocusEvent.FOCUS_GAINED:
+              return new Event(src, Event.GOT_FOCUS, null);
+
+          case FocusEvent.FOCUS_LOST:
+              return new Event(src, Event.LOST_FOCUS, null);
+
+          case WindowEvent.WINDOW_CLOSING:
+          case WindowEvent.WINDOW_ICONIFIED:
+          case WindowEvent.WINDOW_DEICONIFIED:
+              return new Event(src, newid, null);
+
+          case ComponentEvent.COMPONENT_MOVED:
+              if (src instanceof Frame || src instanceof Dialog) {
+                  Point p = ((Component)src).getLocation();
+                  return new Event(src, 0, Event.WINDOW_MOVED, p.x, p.y, 0, 0);
+              }
+              break;
+
+          case ActionEvent.ACTION_PERFORMED:
+              ActionEvent ae = (ActionEvent)this;
+              String cmd;
+              if (src instanceof Button) {
+                  cmd = ((Button)src).getLabel();
+              } else if (src instanceof MenuItem) {
+                  cmd = ((MenuItem)src).getLabel();
+              } else {
+                  cmd = ae.getActionCommand();
+              }
+              return new Event(src, 0, newid, 0, 0, 0, ae.getModifiers(), cmd);
+
+          case ItemEvent.ITEM_STATE_CHANGED:
+              ItemEvent ie = (ItemEvent)this;
+              Object arg;
+              if (src instanceof List) {
+                  newid = (ie.getStateChange() == ItemEvent.SELECTED?
+                           Event.LIST_SELECT : Event.LIST_DESELECT);
+                  arg = ie.getItem();
+              } else {
+                  newid = Event.ACTION_EVENT;
+                  if (src instanceof Choice) {
+                      arg = ie.getItem();
+
+                  } else { // Checkbox
+                      arg = Boolean.valueOf(ie.getStateChange() == ItemEvent.SELECTED);
+                  }
+              }
+              return new Event(src, newid, arg);
+
+          case AdjustmentEvent.ADJUSTMENT_VALUE_CHANGED:
+              AdjustmentEvent aje = (AdjustmentEvent)this;
+              switch(aje.getAdjustmentType()) {
+                case AdjustmentEvent.UNIT_INCREMENT:
+                  newid = Event.SCROLL_LINE_DOWN;
+                  break;
+                case AdjustmentEvent.UNIT_DECREMENT:
+                  newid = Event.SCROLL_LINE_UP;
+                  break;
+                case AdjustmentEvent.BLOCK_INCREMENT:
+                  newid = Event.SCROLL_PAGE_DOWN;
+                  break;
+                case AdjustmentEvent.BLOCK_DECREMENT:
+                  newid = Event.SCROLL_PAGE_UP;
+                  break;
+                case AdjustmentEvent.TRACK:
+                  if (aje.getValueIsAdjusting()) {
+                      newid = Event.SCROLL_ABSOLUTE;
+                  }
+                  else {
+                      newid = Event.SCROLL_END;
+                  }
+                  break;
+                default:
+                  return null;
+              }
+              return new Event(src, newid, Integer.valueOf(aje.getValue()));
+
+          default:
+        }
+        return null;
+!!!6076802.java!!!	copyPrivateDataInto(inout that : AWTEvent) : void
+        that.bdata = this.bdata;
+        // Copy canAccessSystemClipboard value from this into that.
+        if (this instanceof InputEvent && that instanceof InputEvent) {
+            Field field = get_InputEvent_CanAccessSystemClipboard();
+            if (field != null) {
+                try {
+                    boolean b = field.getBoolean(this);
+                    field.setBoolean(that, b);
+                } catch(IllegalAccessException e) {
+                    if (log.isLoggable(PlatformLogger.Level.FINE)) {
+                        log.fine("AWTEvent.copyPrivateDataInto() got IllegalAccessException ", e);
+                    }
+                }
+            }
+        }
+        that.isSystemGenerated = this.isSystemGenerated;
+!!!6076930.java!!!	dispatched() : void
+        if (this instanceof InputEvent) {
+            Field field = get_InputEvent_CanAccessSystemClipboard();
+            if (field != null) {
+                try {
+                    field.setBoolean(this, false);
+                } catch(IllegalAccessException e) {
+                    if (log.isLoggable(PlatformLogger.Level.FINE)) {
+                        log.fine("AWTEvent.dispatched() got IllegalAccessException ", e);
+                    }
+                }
+            }
+        }

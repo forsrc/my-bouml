@@ -1,0 +1,904 @@
+class POAImpl
+!!!1121794.java!!!	stateToString() : String
+        switch (state) {
+            case STATE_START :
+                return "START" ;
+            case STATE_INIT :
+                return "INIT" ;
+            case STATE_INIT_DONE :
+                return "INIT_DONE" ;
+            case STATE_RUN :
+                return "RUN" ;
+            case STATE_DESTROYING :
+                return "DESTROYING" ;
+            case STATE_DESTROYED :
+                return "DESTROYED" ;
+            default :
+                return "UNKNOWN(" + state + ")" ;
+        }
+!!!1121922.java!!!	toString() : String
+        return "POA[" + poaId.toString() +
+            ", uniquePOAId=" + uniquePOAId +
+            ", state=" + stateToString() +
+            ", invocationCount=" + invocationCount + "]" ;
+!!!1122050.java!!!	getDebug() : boolean
+        return debug ;
+!!!1122178.java!!!	getPOAFactory(inout orb : ORB) : POAFactory
+        return (POAFactory)orb.getRequestDispatcherRegistry().
+            getObjectAdapterFactory( ORBConstants.TRANSIENT_SCID ) ;
+!!!1122306.java!!!	makeRootPOA(inout orb : ORB) : POAImpl
+        POAManagerImpl poaManager = new POAManagerImpl( getPOAFactory( orb ),
+            orb.getPIHandler() ) ;
+
+        POAImpl result = new POAImpl( ORBConstants.ROOT_POA_NAME,
+            null, orb, STATE_START ) ;
+        result.initialize( poaManager, Policies.rootPOAPolicies ) ;
+
+        return result ;
+!!!1122434.java!!!	getPOAId() : int
+        return uniquePOAId ;
+!!!1122562.java!!!	lock() : void
+        SyncUtil.acquire( poaMutex ) ;
+
+        if (debug) {
+            ORBUtility.dprint( this, "LOCKED poa " + this ) ;
+        }
+!!!1122690.java!!!	unlock() : void
+        if (debug) {
+            ORBUtility.dprint( this, "UNLOCKED poa " + this ) ;
+        }
+
+        poaMutex.release() ;
+!!!1122818.java!!!	getPolicies() : Policies
+        return mediator.getPolicies() ;
+!!!1122946.java!!!	POAImpl(inout name : String, inout parent : POAImpl, inout orb : ORB, in initialState : int)
+        super( orb ) ;
+
+        debug = orb.poaDebugFlag ;
+
+        if (debug) {
+            ORBUtility.dprint( this, "Creating POA with name=" + name +
+                " parent=" + parent ) ;
+        }
+
+        this.state     = initialState ;
+        this.name      = name ;
+        this.parent    = parent;
+        children = new HashMap();
+        activator = null ;
+
+        // This was done in initialize, but I moved it here
+        // to get better searchability when tracing.
+        uniquePOAId = getPOAFactory( orb ).newPOAId() ;
+
+        if (parent == null) {
+            // This is the root POA, which counts as 1 level
+            numLevels = 1 ;
+        } else {
+            // My level is one more than that of my parent
+            numLevels = parent.numLevels + 1 ;
+
+            parent.children.put(name, this);
+        }
+
+        // Get an array of all of the POA names in order to
+        // create the poaid.
+        String[] names = new String[ numLevels ] ;
+        POAImpl poaImpl = this ;
+        int ctr = numLevels - 1 ;
+        while (poaImpl != null) {
+            names[ctr--] = poaImpl.name ;
+            poaImpl = poaImpl.parent ;
+        }
+
+        poaId = new ObjectAdapterIdArray( names ) ;
+
+        invocationCount = 0;
+
+        poaMutex = new ReentrantMutex( orb.poaConcurrencyDebugFlag ) ;
+
+        adapterActivatorCV = new CondVar( poaMutex,
+            orb.poaConcurrencyDebugFlag ) ;
+        invokeCV           = new CondVar( poaMutex,
+            orb.poaConcurrencyDebugFlag ) ;
+        beingDestroyedCV   = new CondVar( poaMutex,
+            orb.poaConcurrencyDebugFlag ) ;
+
+        isDestroying = new ThreadLocal () {
+            protected java.lang.Object initialValue() {
+                return Boolean.FALSE;
+            }
+        };
+!!!1123074.java!!!	initialize(inout manager : POAManagerImpl, inout policies : Policies) : void
+        if (debug) {
+            ORBUtility.dprint( this, "Initializing poa " + this +
+                " with POAManager=" + manager + " policies=" + policies ) ;
+        }
+
+        this.manager = manager;
+        manager.addPOA(this);
+
+        mediator = POAPolicyMediatorFactory.create( policies, this ) ;
+
+        // Construct the object key template
+        int serverid = mediator.getServerId() ;
+        int scid = mediator.getScid() ;
+        String orbId = getORB().getORBData().getORBId();
+
+        ObjectKeyTemplate oktemp = new POAObjectKeyTemplate( getORB(),
+            scid, serverid, orbId, poaId ) ;
+
+        if (debug) {
+            ORBUtility.dprint( this, "Initializing poa: oktemp=" + oktemp ) ;
+        }
+
+        // Note that parent == null iff this is the root POA.
+        // This was used to avoid executing interceptors on the RootPOA.
+        // That is no longer necessary.
+        boolean objectAdapterCreated = true; // parent != null ;
+
+        // XXX extract codebase from policies and pass into initializeTemplate
+        // after the codebase policy change is finalized.
+        initializeTemplate( oktemp, objectAdapterCreated,
+                            policies,
+                            null, // codebase
+                            null, // manager id
+                            oktemp.getObjectAdapterId()
+                            ) ;
+
+        if (state == STATE_START)
+            state = STATE_RUN ;
+        else if (state == STATE_INIT)
+            state = STATE_INIT_DONE ;
+        else
+            throw lifecycleWrapper().illegalPoaStateTrans() ;
+!!!1123202.java!!!	waitUntilRunning() : boolean
+        if (debug) {
+            ORBUtility.dprint( this,
+                "Calling waitUntilRunning on poa " + this ) ;
+        }
+
+        while (state < STATE_RUN) {
+            try {
+                adapterActivatorCV.await() ;
+            } catch (InterruptedException exc) {
+                // NO-OP
+            }
+        }
+
+        if (debug) {
+            ORBUtility.dprint( this,
+                "Exiting waitUntilRunning on poa " + this ) ;
+        }
+
+        // Note that a POA could be destroyed while in STATE_INIT due to a
+        // failure in the AdapterActivator upcall.
+        return (state == STATE_RUN) ;
+!!!1123330.java!!!	destroyIfNotInitDone() : boolean
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling destroyIfNotInitDone on poa " + this ) ;
+            }
+
+            boolean success = (state == STATE_INIT_DONE) ;
+
+            if (success)
+                state = STATE_RUN ;
+            else {
+                // Don't just use destroy, because the check for
+                // deadlock is too general, and can prevent this from
+                // functioning properly.
+                DestroyThread destroyer = new DestroyThread( false, debug );
+                destroyer.doIt( this, true ) ;
+            }
+
+            return success ;
+        } finally {
+            adapterActivatorCV.broadcast() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting destroyIfNotInitDone on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+!!!1123458.java!!!	internalReferenceToId(inout reference : Object) : byte
+        IOR ior = ORBUtility.getIOR( reference ) ;
+        IORTemplateList thisTemplate = ior.getIORTemplates() ;
+
+        ObjectReferenceFactory orf = getCurrentFactory() ;
+        IORTemplateList poaTemplate =
+            IORFactories.getIORTemplateList( orf ) ;
+
+        if (!poaTemplate.isEquivalent( thisTemplate ))
+            throw new WrongAdapter();
+
+        // Extract the ObjectId from the first TaggedProfile in the IOR.
+        // If ior was created in this POA, the same ID was used for
+        // every profile through the profile templates in the currentFactory,
+        // so we will get the same result from any profile.
+        Iterator iter = ior.iterator() ;
+        if (!iter.hasNext())
+            throw iorWrapper().noProfilesInIor() ;
+        TaggedProfile prof = (TaggedProfile)(iter.next()) ;
+        ObjectId oid = prof.getObjectId() ;
+
+        return oid.getId();
+!!!1124354.java!!!	etherealizeAll() : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling etheralizeAll on poa " + this ) ;
+            }
+
+            mediator.etherealizeAll() ;
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting etheralizeAll on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+!!!1124482.java!!!	create_POA(inout name : String, inout theManager : POAManager, inout policies : Policy [[]]) : POA
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling create_POA(name=" + name +
+                    " theManager=" + theManager + " policies=" + policies +
+                    ") on poa " + this ) ;
+            }
+
+            // We cannot create children of a POA that is (being) destroyed.
+            // This has been added to the CORBA 3.0 spec.
+            if (state > STATE_RUN)
+                throw omgLifecycleWrapper().createPoaDestroy() ;
+
+            POAImpl poa = (POAImpl)(children.get(name)) ;
+
+            if (poa == null) {
+                poa = new POAImpl( name, this, getORB(), STATE_START ) ;
+            }
+
+            try {
+                poa.lock() ;
+
+                if (debug) {
+                    ORBUtility.dprint( this,
+                        "Calling create_POA: new poa is " + poa ) ;
+                }
+
+                if ((poa.state != STATE_START) && (poa.state != STATE_INIT))
+                    throw new AdapterAlreadyExists();
+
+                POAManagerImpl newManager = (POAManagerImpl)theManager ;
+                if (newManager == null)
+                    newManager = new POAManagerImpl( manager.getFactory(),
+                        manager.getPIHandler() );
+
+                int defaultCopierId =
+                    getORB().getCopierManager().getDefaultId() ;
+                Policies POAPolicies =
+                    new Policies( policies, defaultCopierId ) ;
+
+                poa.initialize( newManager, POAPolicies ) ;
+
+                return poa;
+            } finally {
+                poa.unlock() ;
+            }
+        } finally {
+            unlock() ;
+        }
+!!!1124610.java!!!	find_POA(inout name : String, inout activate : boolean) : POA
+        POAImpl found = null ;
+        AdapterActivator act = null ;
+
+        lock() ;
+
+        if (debug) {
+            ORBUtility.dprint( this, "Calling find_POA(name=" + name +
+                " activate=" + activate + ") on poa " + this ) ;
+        }
+
+        found = (POAImpl) children.get(name);
+
+        if (found != null) {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling find_POA: found poa " + found ) ;
+            }
+
+            try {
+                found.lock() ;
+
+                // Do not hold the parent POA lock while
+                // waiting for child to complete initialization.
+                unlock() ;
+
+                // Make sure that the child has completed its initialization,
+                // if it was created by an AdapterActivator, otherwise throw
+                // a standard TRANSIENT exception with minor code 4 (see
+                // CORBA 3.0 11.3.9.3, in reference to unknown_adapter)
+                if (!found.waitUntilRunning())
+                    throw omgLifecycleWrapper().poaDestroyed() ;
+
+                // Note that found may be in state DESTROYING or DESTROYED at
+                // this point.  That's OK, since destruction could start at
+                // any time.
+            } finally {
+                found.unlock() ;
+            }
+        } else {
+            try {
+                if (debug) {
+                    ORBUtility.dprint( this,
+                        "Calling find_POA: no poa found" ) ;
+                }
+
+                if (activate && (activator != null)) {
+                    // Create a child, but don't initialize it.  The newly
+                    // created POA will be in state STATE_START, which will
+                    // cause other calls to find_POA that are creating the same
+                    // POA to block on the waitUntilRunning call above.
+                    // Initialization must be completed by a call to create_POA
+                    // inside the unknown_adapter upcall.  Note that
+                    // this.poaMutex must be held here so that this.children
+                    // can be safely updated.  The state is set to STATE_INIT
+                    // so that initialize can make the correct state transition
+                    // when create_POA is called inside the AdapterActivator.
+                    // This avoids activating the new POA too soon
+                    // by transitioning to STATE_RUN after unknown_adapter
+                    // returns.
+                    found = new POAImpl( name, this, getORB(), STATE_INIT ) ;
+
+                    if (debug) {
+                        ORBUtility.dprint( this,
+                            "Calling find_POA: created poa " + found ) ;
+                    }
+
+                    act = activator ;
+                } else {
+                    throw new AdapterNonExistent();
+                }
+            } finally {
+                unlock() ;
+            }
+        }
+
+        // assert (found != null)
+        // assert not holding this.poaMutex OR found.poaMutex
+
+        // We must not hold either this.poaMutex or found.poaMutex here while
+        // waiting for intialization of found to complete to prevent possible
+        // deadlocks.
+
+        if (act != null) {
+            boolean status = false ;
+            boolean adapterResult = false ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling find_POA: calling AdapterActivator"  ) ;
+            }
+
+            try {
+                // Prevent more than one thread at a time from executing in act
+                // in case act is shared between multiple POAs.
+                synchronized (act) {
+                    status = act.unknown_adapter(this, name);
+                }
+            } catch (SystemException exc) {
+                throw omgLifecycleWrapper().adapterActivatorException( exc,
+                    name, poaId.toString() ) ;
+            } catch (Throwable thr) {
+                // ignore most non-system exceptions, but log them for
+                // diagnostic purposes.
+                lifecycleWrapper().unexpectedException( thr, this.toString() ) ;
+
+                if (thr instanceof ThreadDeath)
+                    throw (ThreadDeath)thr ;
+            } finally {
+                // At this point, we have completed adapter activation.
+                // Whether this was successful or not, we must call
+                // destroyIfNotInitDone so that calls to enter() and create_POA()
+                // that are waiting can execute again.  Failing to do this
+                // will cause the system to hang in complex tests.
+                adapterResult = found.destroyIfNotInitDone() ;
+            }
+
+            if (status) {
+                if (!adapterResult)
+                    throw omgLifecycleWrapper().adapterActivatorException( name,
+                        poaId.toString() ) ;
+            } else {
+                if (debug) {
+                    ORBUtility.dprint( this,
+                        "Calling find_POA: AdapterActivator returned false"  ) ;
+                }
+
+                // OMG Issue 3740 is resolved to throw AdapterNonExistent if
+                // unknown_adapter() returns false.
+                throw new AdapterNonExistent();
+            }
+        }
+
+        return found;
+!!!1124738.java!!!	destroy(inout etherealize : boolean, inout wait_for_completion : boolean) : void
+        // This is to avoid deadlock
+        if (wait_for_completion && getORB().isDuringDispatch()) {
+            throw lifecycleWrapper().destroyDeadlock() ;
+        }
+
+        DestroyThread destroyer = new DestroyThread( etherealize, debug );
+        destroyer.doIt( this, wait_for_completion ) ;
+!!!1124866.java!!!	create_thread_policy(inout value : ThreadPolicyValue) : ThreadPolicy
+        return new ThreadPolicyImpl(value);
+!!!1124994.java!!!	create_lifespan_policy(inout value : LifespanPolicyValue) : LifespanPolicy
+        return new LifespanPolicyImpl(value);
+!!!1125122.java!!!	create_id_uniqueness_policy(inout value : IdUniquenessPolicyValue) : IdUniquenessPolicy
+        return new IdUniquenessPolicyImpl(value);
+!!!1125250.java!!!	create_id_assignment_policy(inout value : IdAssignmentPolicyValue) : IdAssignmentPolicy
+        return new IdAssignmentPolicyImpl(value);
+!!!1125378.java!!!	create_implicit_activation_policy(inout value : ImplicitActivationPolicyValue) : ImplicitActivationPolicy
+        return new ImplicitActivationPolicyImpl(value);
+!!!1125506.java!!!	create_servant_retention_policy(inout value : ServantRetentionPolicyValue) : ServantRetentionPolicy
+        return new ServantRetentionPolicyImpl(value);
+!!!1125634.java!!!	create_request_processing_policy(inout value : RequestProcessingPolicyValue) : RequestProcessingPolicy
+        return new RequestProcessingPolicyImpl(value);
+!!!1125762.java!!!	the_name() : String
+        try {
+            lock() ;
+
+            return name;
+        } finally {
+            unlock() ;
+        }
+!!!1125890.java!!!	the_parent() : POA
+        try {
+            lock() ;
+
+            return parent;
+        } finally {
+            unlock() ;
+        }
+!!!1126018.java!!!	the_children() : POA
+        try {
+            lock() ;
+
+            Collection coll = children.values() ;
+            int size = coll.size() ;
+            POA[] result = new POA[ size ] ;
+            int index = 0 ;
+            Iterator iter = coll.iterator() ;
+            while (iter.hasNext()) {
+                POA poa = (POA)(iter.next()) ;
+                result[ index++ ] = poa ;
+            }
+
+            return result ;
+        } finally {
+            unlock() ;
+        }
+!!!1126146.java!!!	the_POAManager() : POAManager
+        try {
+            lock() ;
+
+            return manager;
+        } finally {
+            unlock() ;
+        }
+!!!1126274.java!!!	the_activator() : AdapterActivator
+        try {
+            lock() ;
+
+            return activator;
+        } finally {
+            unlock() ;
+        }
+!!!1126402.java!!!	the_activator(inout activator : AdapterActivator) : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling the_activator on poa " +
+                    this + " activator=" + activator ) ;
+            }
+
+            this.activator = activator;
+        } finally {
+            unlock() ;
+        }
+!!!1126530.java!!!	get_servant_manager() : ServantManager
+        try {
+            lock() ;
+
+            return mediator.getServantManager() ;
+        } finally {
+            unlock() ;
+        }
+!!!1126658.java!!!	set_servant_manager(inout servantManager : ServantManager) : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling set_servant_manager on poa " +
+                    this + " servantManager=" + servantManager ) ;
+            }
+
+            mediator.setServantManager( servantManager ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1126786.java!!!	get_servant() : Servant
+        try {
+            lock() ;
+
+            return mediator.getDefaultServant() ;
+        } finally {
+            unlock() ;
+        }
+!!!1126914.java!!!	set_servant(inout defaultServant : Servant) : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling set_servant on poa " +
+                    this + " defaultServant=" + defaultServant ) ;
+            }
+
+            mediator.setDefaultServant( defaultServant ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1127042.java!!!	activate_object(inout servant : Servant) : byte
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling activate_object on poa " + this +
+                    " (servant=" + servant + ")" ) ;
+            }
+
+            // Allocate a new system-generated object-id.
+            // This will throw WrongPolicy if not SYSTEM_ID
+            // policy.
+            byte[] id = mediator.newSystemId();
+
+            try {
+                mediator.activateObject( id, servant ) ;
+            } catch (ObjectAlreadyActive oaa) {
+                // This exception can not occur in this case,
+                // since id is always brand new.
+                //
+            }
+
+            return id ;
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting activate_object on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+!!!1127170.java!!!	activate_object_with_id(inout id : byte [[]], inout servant : Servant) : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling activate_object_with_id on poa " + this +
+                    " (servant=" + servant + " id=" + id + ")" ) ;
+            }
+
+            // Clone the id to avoid possible errors due to aliasing
+            // (e.g. the client passes the id in and then changes it later).
+            byte[] idClone = (byte[])(id.clone()) ;
+
+            mediator.activateObject( idClone, servant ) ;
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting activate_object_with_id on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+!!!1127298.java!!!	deactivate_object(inout id : byte [[]]) : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling deactivate_object on poa " + this +
+                    " (id=" + id + ")" ) ;
+            }
+
+            mediator.deactivateObject( id ) ;
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting deactivate_object on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+!!!1127426.java!!!	create_reference(inout repId : String) : Object
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling create_reference(repId=" +
+                    repId + ") on poa " + this ) ;
+            }
+
+            return makeObject( repId, mediator.newSystemId()) ;
+        } finally {
+            unlock() ;
+        }
+!!!1127554.java!!!	create_reference_with_id(inout oid : byte [[]], inout repId : String) : Object
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling create_reference_with_id(oid=" +
+                    oid + " repId=" + repId + ") on poa " + this ) ;
+            }
+
+            // Clone the id to avoid possible errors due to aliasing
+            // (e.g. the client passes the id in and then changes it later).
+            byte[] idClone = (byte[])(oid.clone()) ;
+
+            return makeObject( repId, idClone ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1127682.java!!!	servant_to_id(inout servant : Servant) : byte
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling servant_to_id(servant=" +
+                    servant + ") on poa " + this ) ;
+            }
+
+            return mediator.servantToId( servant ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1127810.java!!!	servant_to_reference(inout servant : Servant) : Object
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling servant_to_reference(servant=" +
+                    servant + ") on poa " + this ) ;
+            }
+
+            byte[] oid = mediator.servantToId(servant);
+            String repId = servant._all_interfaces( this, oid )[0] ;
+            return create_reference_with_id(oid, repId);
+        } finally {
+            unlock() ;
+        }
+!!!1127938.java!!!	reference_to_servant(inout reference : Object) : Servant
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling reference_to_servant(reference=" +
+                    reference + ") on poa " + this ) ;
+            }
+
+            if ( state >= STATE_DESTROYING ) {
+                throw lifecycleWrapper().adapterDestroyed() ;
+            }
+
+            // reference_to_id should throw WrongAdapter
+            // if the objref was not created by this POA
+            byte [] id = internalReferenceToId(reference);
+
+            return mediator.idToServant( id ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1128066.java!!!	reference_to_id(inout reference : Object) : byte
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling reference_to_id(reference=" +
+                    reference + ") on poa " + this ) ;
+            }
+
+            if( state >= STATE_DESTROYING ) {
+                throw lifecycleWrapper().adapterDestroyed() ;
+            }
+
+            return internalReferenceToId( reference ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1128194.java!!!	id_to_servant(inout id : byte [[]]) : Servant
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling id_to_servant(id=" +
+                    id + ") on poa " + this ) ;
+            }
+
+            if( state >= STATE_DESTROYING ) {
+                throw lifecycleWrapper().adapterDestroyed() ;
+            }
+            return mediator.idToServant( id ) ;
+        } finally {
+            unlock() ;
+        }
+!!!1128322.java!!!	id_to_reference(inout id : byte [[]]) : Object
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling id_to_reference(id=" +
+                    id + ") on poa " + this ) ;
+            }
+
+            if( state >= STATE_DESTROYING ) {
+                throw lifecycleWrapper().adapterDestroyed() ;
+            }
+
+            Servant s = mediator.idToServant( id ) ;
+            String repId = s._all_interfaces( this, id )[0] ;
+            return makeObject(repId, id );
+        } finally {
+            unlock() ;
+        }
+!!!1128450.java!!!	id() : byte
+        try {
+            lock() ;
+
+            return getAdapterId() ;
+        } finally {
+            unlock() ;
+        }
+!!!1128578.java!!!	getEffectivePolicy(in type : int) : Policy
+        return mediator.getPolicies().get_effective_policy( type ) ;
+!!!1128706.java!!!	getManagerId() : int
+        return manager.getManagerId() ;
+!!!1128834.java!!!	getState() : short
+        return manager.getORTState() ;
+!!!1128962.java!!!	getInterfaces(inout servant : Object, inout objectId : byte [[]]) : String
+        Servant serv = (Servant)servant ;
+        return serv._all_interfaces( this, objectId ) ;
+!!!1129090.java!!!	getObjectCopierFactory() : ObjectCopierFactory
+        int copierId = mediator.getPolicies().getCopierId() ;
+        CopierManager cm = getORB().getCopierManager() ;
+        return cm.getObjectCopierFactory( copierId ) ;
+!!!1129218.java!!!	enter() : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling enter on poa " + this ) ;
+            }
+
+            // Avoid deadlock if this is the thread that is processing the
+            // POA.destroy because this is the only thread that can notify
+            // waiters on beingDestroyedCV.  This can happen if an
+            // etherealize upcall invokes a method on a colocated object
+            // served by this POA.
+            while ((state == STATE_DESTROYING) &&
+                (isDestroying.get() == Boolean.FALSE)) {
+                try {
+                    beingDestroyedCV.await();
+                } catch (InterruptedException ex) {
+                    // NO-OP
+                }
+            }
+
+            if (!waitUntilRunning())
+                throw new OADestroyed() ;
+
+            invocationCount++;
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this, "Exiting enter on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+
+        manager.enter();
+!!!1129346.java!!!	exit() : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "Calling exit on poa " + this ) ;
+            }
+
+            invocationCount--;
+
+            if ((invocationCount == 0) && (state == STATE_DESTROYING)) {
+                invokeCV.broadcast();
+            }
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this, "Exiting exit on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+
+        manager.exit();
+!!!1129474.java!!!	getInvocationServant(inout info : OAInvocationInfo) : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling getInvocationServant on poa " + this ) ;
+            }
+
+            java.lang.Object servant = null ;
+
+            try {
+                servant = mediator.getInvocationServant( info.id(),
+                    info.getOperation() );
+            } catch (ForwardRequest freq) {
+                throw new ForwardException( getORB(), freq.forward_reference ) ;
+            }
+
+            info.setServant( servant ) ;
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting getInvocationServant on poa " + this ) ;
+            }
+
+            unlock() ;
+        }
+!!!1129602.java!!!	getLocalServant(inout objectId : byte [[]]) : Object
+        return null ;
+!!!1129730.java!!!	returnServant() : void
+        try {
+            lock() ;
+
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling returnServant on poa " + this  ) ;
+            }
+
+            mediator.returnServant();
+        } catch (Throwable thr) {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exception " + thr + " in returnServant on poa " + this  ) ;
+            }
+
+            if (thr instanceof Error)
+                throw (Error)thr ;
+            else if (thr instanceof RuntimeException)
+                throw (RuntimeException)thr ;
+
+        } finally {
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Exiting returnServant on poa " + this  ) ;
+            }
+
+            unlock() ;
+        }

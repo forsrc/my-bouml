@@ -1,0 +1,208 @@
+class Channels
+!!!7776898.java!!!	checkNotNull(inout o : Object, inout name : String) : void
+        if (o == null)
+            throw new NullPointerException("\"" + name + "\" is null!");
+!!!7777026.java!!!	writeFullyImpl(inout ch : WritableByteChannel, inout bb : ByteBuffer) : void
+        while (bb.remaining() > 0) {
+            int n = ch.write(bb);
+            if (n <= 0)
+                throw new RuntimeException("no bytes written");
+        }
+!!!7777154.java!!!	writeFully(inout ch : WritableByteChannel, inout bb : ByteBuffer) : void
+        if (ch instanceof SelectableChannel) {
+            SelectableChannel sc = (SelectableChannel)ch;
+            synchronized (sc.blockingLock()) {
+                if (!sc.isBlocking())
+                    throw new IllegalBlockingModeException();
+                writeFullyImpl(ch, bb);
+            }
+        } else {
+            writeFullyImpl(ch, bb);
+        }
+!!!7777282.java!!!	newInputStream(inout ch : ReadableByteChannel) : InputStream
+        checkNotNull(ch, "ch");
+        return new sun.nio.ch.ChannelInputStream(ch);
+!!!7777410.java!!!	newOutputStream(in ch : WritableByteChannel) : OutputStream
+        checkNotNull(ch, "ch");
+
+        return new OutputStream() {
+
+                private ByteBuffer bb = null;
+                private byte[] bs = null;       // Invoker's previous array
+                private byte[] b1 = null;
+
+                public synchronized void write(int b) throws IOException {
+                   if (b1 == null)
+                        b1 = new byte[1];
+                    b1[0] = (byte)b;
+                    this.write(b1);
+                }
+
+                public synchronized void write(byte[] bs, int off, int len)
+                    throws IOException
+                {
+                    if ((off < 0) || (off > bs.length) || (len < 0) ||
+                        ((off + len) > bs.length) || ((off + len) < 0)) {
+                        throw new IndexOutOfBoundsException();
+                    } else if (len == 0) {
+                        return;
+                    }
+                    ByteBuffer bb = ((this.bs == bs)
+                                     ? this.bb
+                                     : ByteBuffer.wrap(bs));
+                    bb.limit(Math.min(off + len, bb.capacity()));
+                    bb.position(off);
+                    this.bb = bb;
+                    this.bs = bs;
+                    Channels.writeFully(ch, bb);
+                }
+
+                public void close() throws IOException {
+                    ch.close();
+                }
+
+            };
+!!!7777538.java!!!	newInputStream(in ch : AsynchronousByteChannel) : InputStream
+        checkNotNull(ch, "ch");
+        return new InputStream() {
+
+            private ByteBuffer bb = null;
+            private byte[] bs = null;           // Invoker's previous array
+            private byte[] b1 = null;
+
+            @Override
+            public synchronized int read() throws IOException {
+                if (b1 == null)
+                    b1 = new byte[1];
+                int n = this.read(b1);
+                if (n == 1)
+                    return b1[0] & 0xff;
+                return -1;
+            }
+
+            @Override
+            public synchronized int read(byte[] bs, int off, int len)
+                throws IOException
+            {
+                if ((off < 0) || (off > bs.length) || (len < 0) ||
+                    ((off + len) > bs.length) || ((off + len) < 0)) {
+                    throw new IndexOutOfBoundsException();
+                } else if (len == 0)
+                    return 0;
+
+                ByteBuffer bb = ((this.bs == bs)
+                                 ? this.bb
+                                 : ByteBuffer.wrap(bs));
+                bb.position(off);
+                bb.limit(Math.min(off + len, bb.capacity()));
+                this.bb = bb;
+                this.bs = bs;
+
+                boolean interrupted = false;
+                try {
+                    for (;;) {
+                        try {
+                            return ch.read(bb).get();
+                        } catch (ExecutionException ee) {
+                            throw new IOException(ee.getCause());
+                        } catch (InterruptedException ie) {
+                            interrupted = true;
+                        }
+                    }
+                } finally {
+                    if (interrupted)
+                        Thread.currentThread().interrupt();
+                }
+            }
+
+            @Override
+            public void close() throws IOException {
+                ch.close();
+            }
+        };
+!!!7777666.java!!!	newOutputStream(in ch : AsynchronousByteChannel) : OutputStream
+        checkNotNull(ch, "ch");
+        return new OutputStream() {
+
+            private ByteBuffer bb = null;
+            private byte[] bs = null;   // Invoker's previous array
+            private byte[] b1 = null;
+
+            @Override
+            public synchronized void write(int b) throws IOException {
+               if (b1 == null)
+                    b1 = new byte[1];
+                b1[0] = (byte)b;
+                this.write(b1);
+            }
+
+            @Override
+            public synchronized void write(byte[] bs, int off, int len)
+                throws IOException
+            {
+                if ((off < 0) || (off > bs.length) || (len < 0) ||
+                    ((off + len) > bs.length) || ((off + len) < 0)) {
+                    throw new IndexOutOfBoundsException();
+                } else if (len == 0) {
+                    return;
+                }
+                ByteBuffer bb = ((this.bs == bs)
+                                 ? this.bb
+                                 : ByteBuffer.wrap(bs));
+                bb.limit(Math.min(off + len, bb.capacity()));
+                bb.position(off);
+                this.bb = bb;
+                this.bs = bs;
+
+                boolean interrupted = false;
+                try {
+                    while (bb.remaining() > 0) {
+                        try {
+                            ch.write(bb).get();
+                        } catch (ExecutionException ee) {
+                            throw new IOException(ee.getCause());
+                        } catch (InterruptedException ie) {
+                            interrupted = true;
+                        }
+                    }
+                } finally {
+                    if (interrupted)
+                        Thread.currentThread().interrupt();
+                }
+            }
+
+            @Override
+            public void close() throws IOException {
+                ch.close();
+            }
+        };
+!!!7777794.java!!!	newChannel(in in : InputStream) : ReadableByteChannel
+        checkNotNull(in, "in");
+
+        if (in instanceof FileInputStream &&
+            FileInputStream.class.equals(in.getClass())) {
+            return ((FileInputStream)in).getChannel();
+        }
+
+        return new ReadableByteChannelImpl(in);
+!!!7779330.java!!!	newChannel(in out : OutputStream) : WritableByteChannel
+        checkNotNull(out, "out");
+
+        if (out instanceof FileOutputStream &&
+            FileOutputStream.class.equals(out.getClass())) {
+                return ((FileOutputStream)out).getChannel();
+        }
+
+        return new WritableByteChannelImpl(out);
+!!!7779842.java!!!	newReader(inout ch : ReadableByteChannel, inout dec : CharsetDecoder, in minBufferCap : int) : Reader
+        checkNotNull(ch, "ch");
+        return StreamDecoder.forDecoder(ch, dec.reset(), minBufferCap);
+!!!7779970.java!!!	newReader(inout ch : ReadableByteChannel, inout csName : String) : Reader
+        checkNotNull(csName, "csName");
+        return newReader(ch, Charset.forName(csName).newDecoder(), -1);
+!!!7780098.java!!!	newWriter(in ch : WritableByteChannel, in enc : CharsetEncoder, in minBufferCap : int) : Writer
+        checkNotNull(ch, "ch");
+        return StreamEncoder.forEncoder(ch, enc.reset(), minBufferCap);
+!!!7780226.java!!!	newWriter(inout ch : WritableByteChannel, inout csName : String) : Writer
+        checkNotNull(csName, "csName");
+        return newWriter(ch, Charset.forName(csName).newEncoder(), -1);

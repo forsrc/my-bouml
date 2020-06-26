@@ -1,0 +1,122 @@
+class MetaData
+!!!6795394.java!!!	getPersistenceDelegate(inout type : Class) : PersistenceDelegate
+        if (type == null) {
+            return nullPersistenceDelegate;
+        }
+        if (Enum.class.isAssignableFrom(type)) {
+            return enumPersistenceDelegate;
+        }
+        if (null != XMLEncoder.primitiveTypeFor(type)) {
+            return primitivePersistenceDelegate;
+        }
+        // The persistence delegate for arrays is non-trivial; instantiate it lazily.
+        if (type.isArray()) {
+            if (arrayPersistenceDelegate == null) {
+                arrayPersistenceDelegate = new ArrayPersistenceDelegate();
+            }
+            return arrayPersistenceDelegate;
+        }
+        // Handle proxies lazily for backward compatibility with 1.2.
+        try {
+            if (java.lang.reflect.Proxy.isProxyClass(type)) {
+                if (proxyPersistenceDelegate == null) {
+                    proxyPersistenceDelegate = new ProxyPersistenceDelegate();
+                }
+                return proxyPersistenceDelegate;
+            }
+        }
+        catch(Exception e) {}
+        // else if (type.getDeclaringClass() != null) {
+        //     return new DefaultPersistenceDelegate(new String[]{"this$0"});
+        // }
+
+        String typeName = type.getName();
+        PersistenceDelegate pd = (PersistenceDelegate)getBeanAttribute(type, "persistenceDelegate");
+        if (pd == null) {
+            pd = internalPersistenceDelegates.get(typeName);
+            if (pd != null) {
+                return pd;
+            }
+            internalPersistenceDelegates.put(typeName, defaultPersistenceDelegate);
+            try {
+                String name =  type.getName();
+                Class c = Class.forName("java.beans.MetaData$" + name.replace('.', '_')
+                                        + "_PersistenceDelegate");
+                pd = (PersistenceDelegate)c.newInstance();
+                internalPersistenceDelegates.put(typeName, pd);
+            }
+            catch (ClassNotFoundException e) {
+                String[] properties = getConstructorProperties(type);
+                if (properties != null) {
+                    pd = new DefaultPersistenceDelegate(properties);
+                    internalPersistenceDelegates.put(typeName, pd);
+                }
+            }
+            catch (Exception e) {
+                System.err.println("Internal error: " + e);
+            }
+        }
+
+        return (pd != null) ? pd : defaultPersistenceDelegate;
+!!!6795522.java!!!	getConstructorProperties(inout type : Class) : String
+        String[] names = null;
+        int length = 0;
+        for (Constructor<?> constructor : type.getConstructors()) {
+            String[] value = getAnnotationValue(constructor);
+            if ((value != null) && (length < value.length) && isValid(constructor, value)) {
+                names = value;
+                length = value.length;
+            }
+        }
+        return names;
+!!!6795650.java!!!	getAnnotationValue(inout constructor : Constructor) : String
+        ConstructorProperties annotation = constructor.getAnnotation(ConstructorProperties.class);
+        return (annotation != null)
+                ? annotation.value()
+                : null;
+!!!6795778.java!!!	isValid(inout constructor : Constructor, inout names : String [[]]) : boolean
+        Class[] parameters = constructor.getParameterTypes();
+        if (names.length != parameters.length) {
+            return false;
+        }
+        for (String name : names) {
+            if (name == null) {
+                return false;
+            }
+        }
+        return true;
+!!!6795906.java!!!	getBeanAttribute(inout type : Class, inout attribute : String) : Object
+        try {
+            return Introspector.getBeanInfo(type).getBeanDescriptor().getValue(attribute);
+        } catch (IntrospectionException exception) {
+            return null;
+        }
+!!!6796034.java!!!	getPrivateFieldValue(inout instance : Object, inout name : String) : Object
+        Field field = fields.get(name);
+        if (field == null) {
+            int index = name.lastIndexOf('.');
+            final String className = name.substring(0, index);
+            final String fieldName = name.substring(1 + index);
+            field = AccessController.doPrivileged(new PrivilegedAction<Field>() {
+                public Field run() {
+                    try {
+                        Field field = Class.forName(className).getDeclaredField(fieldName);
+                        field.setAccessible(true);
+                        return field;
+                    }
+                    catch (ClassNotFoundException exception) {
+                        throw new IllegalStateException("Could not find class", exception);
+                    }
+                    catch (NoSuchFieldException exception) {
+                        throw new IllegalStateException("Could not find field", exception);
+                    }
+                }
+            });
+            fields.put(name, field);
+        }
+        try {
+            return field.get(instance);
+        }
+        catch (IllegalAccessException exception) {
+            throw new IllegalStateException("Could not get value of the field", exception);
+        }

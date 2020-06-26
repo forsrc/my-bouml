@@ -1,0 +1,191 @@
+class SerialBlob
+!!!10380674.java!!!	SerialBlob(inout b : byte [[]])
+
+        len = b.length;
+        buf = new byte[(int)len];
+        for(int i = 0; i < len; i++) {
+            buf[i] = b[i];
+        }
+        origLen = len;
+!!!10380802.java!!!	SerialBlob(inout blob : Blob)
+
+        if (blob == null) {
+            throw new SQLException(
+                    "Cannot instantiate a SerialBlob object with a null Blob object");
+        }
+
+        len = blob.length();
+        buf = blob.getBytes(1, (int)len );
+        this.blob = blob;
+        origLen = len;
+!!!10380930.java!!!	getBytes(in pos : long, in length : int) : byte
+        isValid();
+        if (length > len) {
+            length = (int)len;
+        }
+
+        if (pos < 1 || len - pos < 0 ) {
+            throw new SerialException("Invalid arguments: position cannot be "
+                    + "less than 1 or greater than the length of the SerialBlob");
+        }
+
+        pos--; // correct pos to array index
+
+        byte[] b = new byte[length];
+
+        for (int i = 0; i < length; i++) {
+            b[i] = this.buf[(int)pos];
+            pos++;
+        }
+        return b;
+!!!10381058.java!!!	length() : long
+        isValid();
+        return len;
+!!!10381186.java!!!	getBinaryStream() : InputStream
+        isValid();
+        InputStream stream = new ByteArrayInputStream(buf);
+        return stream;
+!!!10381314.java!!!	position(inout pattern : byte [[]], in start : long) : long
+
+        isValid();
+        if (start < 1 || start > len) {
+            return -1;
+        }
+
+        int pos = (int)start-1; // internally Blobs are stored as arrays.
+        int i = 0;
+        long patlen = pattern.length;
+
+        while (pos < len) {
+            if (pattern[i] == buf[pos]) {
+                if (i + 1 == patlen) {
+                    return (pos + 1) - (patlen - 1);
+                }
+                i++; pos++; // increment pos, and i
+            } else if (pattern[i] != buf[pos]) {
+                pos++; // increment pos only
+            }
+        }
+        return -1; // not found
+!!!10381442.java!!!	position(inout pattern : Blob, in start : long) : long
+        isValid();
+        return position(pattern.getBytes(1, (int)(pattern.length())), start);
+!!!10381570.java!!!	setBytes(in pos : long, inout bytes : byte [[]]) : int
+        return setBytes(pos, bytes, 0, bytes.length);
+!!!10381698.java!!!	setBytes(in pos : long, inout bytes : byte [[]], in offset : int, in length : int) : int
+
+        isValid();
+        if (offset < 0 || offset > bytes.length) {
+            throw new SerialException("Invalid offset in byte array set");
+        }
+
+        if (pos < 1 || pos > this.length()) {
+            throw new SerialException("Invalid position in BLOB object set");
+        }
+
+        if ((long)(length) > origLen) {
+            throw new SerialException("Buffer is not sufficient to hold the value");
+        }
+
+        if ((length + offset) > bytes.length) {
+            throw new SerialException("Invalid OffSet. Cannot have combined offset " +
+                    "and length that is greater that the Blob buffer");
+        }
+
+        int i = 0;
+        pos--; // correct to array indexing
+        while ( i < length || (offset + i +1) < (bytes.length-offset) ) {
+            this.buf[(int)pos + i] = bytes[offset + i ];
+            i++;
+        }
+        return i;
+!!!10381826.java!!!	setBinaryStream(in pos : long) : OutputStream
+
+        isValid();
+        if (this.blob != null) {
+            return this.blob.setBinaryStream(pos);
+        } else {
+            throw new SerialException("Unsupported operation. SerialBlob cannot " +
+                "return a writable binary stream, unless instantiated with a Blob object " +
+                "that provides a setBinaryStream() implementation");
+        }
+!!!10381954.java!!!	truncate(in length : long) : void
+        isValid();
+        if (length > len) {
+            throw new SerialException(
+                    "Length more than what can be truncated");
+        } else if((int)length == 0) {
+            buf = new byte[0];
+            len = length;
+        } else {
+            len = length;
+            buf = this.getBytes(1, (int)len);
+        }
+!!!10382082.java!!!	getBinaryStream(in pos : long, in length : long) : InputStream
+        isValid();
+        if (pos < 1 || pos > this.length()) {
+            throw new SerialException("Invalid position in BLOB object set");
+        }
+        if (length < 1 || length > len - pos + 1) {
+            throw new SerialException(
+                    "length is < 1 or pos + length > total number of bytes");
+        }
+        return new ByteArrayInputStream(buf, (int) pos - 1, (int) length);
+!!!10382210.java!!!	free() : void
+        if (buf != null) {
+            buf = null;
+            if (blob != null) {
+                blob.free();
+            }
+            blob = null;
+        }
+!!!10382338.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof SerialBlob) {
+            SerialBlob sb = (SerialBlob)obj;
+            if (this.len == sb.len) {
+                return Arrays.equals(buf, sb.buf);
+            }
+        }
+        return false;
+!!!10382466.java!!!	hashCode() : int
+       return ((31 + Arrays.hashCode(buf)) * 31 + (int)len) * 31 + (int)origLen;
+!!!10382594.java!!!	clone() : Object
+        try {
+            SerialBlob sb = (SerialBlob) super.clone();
+            sb.buf = (buf != null) ? Arrays.copyOf(buf, (int)len) : null;
+            sb.blob = null;
+            return sb;
+        } catch (CloneNotSupportedException ex) {
+            // this shouldn't happen, since we are Cloneable
+            throw new InternalError();
+        }
+!!!10382722.java!!!	readObject(inout s : ObjectInputStream) : void
+
+        ObjectInputStream.GetField fields = s.readFields();
+        byte[] tmp = (byte[])fields.get("buf", null);
+        if (tmp == null)
+            throw new InvalidObjectException("buf is null and should not be!");
+        buf = tmp.clone();
+        len = fields.get("len", 0L);
+        if (buf.length != len)
+            throw new InvalidObjectException("buf is not the expected size");
+        origLen = fields.get("origLen", 0L);
+        blob = (Blob) fields.get("blob", null);
+!!!10382850.java!!!	writeObject(inout s : ObjectOutputStream) : void
+
+        ObjectOutputStream.PutField fields = s.putFields();
+        fields.put("buf", buf);
+        fields.put("len", len);
+        fields.put("origLen", origLen);
+        // Note: this check to see if it is an instance of Serializable
+        // is for backwards compatibiity
+        fields.put("blob", blob instanceof Serializable ? blob : null);
+        s.writeFields();
+!!!10382978.java!!!	isValid() : void
+        if (buf == null) {
+            throw new SerialException("Error: You cannot call a method on a " +
+                    "SerialBlob instance once free() has been called.");
+        }

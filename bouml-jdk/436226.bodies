@@ -1,0 +1,246 @@
+class TrackListener
+!!!2608898.java!!!	mouseReleased(inout e : MouseEvent) : void
+            if (isDragging) {
+                updateThumbState(e.getX(), e.getY());
+            }
+            if (SwingUtilities.isRightMouseButton(e) ||
+                (!getSupportsAbsolutePositioning() &&
+                 SwingUtilities.isMiddleMouseButton(e)))
+                return;
+            if(!scrollbar.isEnabled())
+                return;
+
+            Rectangle r = getTrackBounds();
+            scrollbar.repaint(r.x, r.y, r.width, r.height);
+
+            trackHighlight = NO_HIGHLIGHT;
+            isDragging = false;
+            offset = 0;
+            scrollTimer.stop();
+            useCachedValue = true;
+            scrollbar.setValueIsAdjusting(false);
+!!!2609026.java!!!	mousePressed(inout e : MouseEvent) : void
+            if (SwingUtilities.isRightMouseButton(e) ||
+                (!getSupportsAbsolutePositioning() &&
+                 SwingUtilities.isMiddleMouseButton(e)))
+                return;
+            if(!scrollbar.isEnabled())
+                return;
+
+            if (!scrollbar.hasFocus() && scrollbar.isRequestFocusEnabled()) {
+                scrollbar.requestFocus();
+            }
+
+            useCachedValue = true;
+            scrollbar.setValueIsAdjusting(true);
+
+            currentMouseX = e.getX();
+            currentMouseY = e.getY();
+
+            // Clicked in the Thumb area?
+            if(getThumbBounds().contains(currentMouseX, currentMouseY)) {
+                switch (scrollbar.getOrientation()) {
+                case JScrollBar.VERTICAL:
+                    offset = currentMouseY - getThumbBounds().y;
+                    break;
+                case JScrollBar.HORIZONTAL:
+                    offset = currentMouseX - getThumbBounds().x;
+                    break;
+                }
+                isDragging = true;
+                return;
+            }
+            else if (getSupportsAbsolutePositioning() &&
+                     SwingUtilities.isMiddleMouseButton(e)) {
+                switch (scrollbar.getOrientation()) {
+                case JScrollBar.VERTICAL:
+                    offset = getThumbBounds().height / 2;
+                    break;
+                case JScrollBar.HORIZONTAL:
+                    offset = getThumbBounds().width / 2;
+                    break;
+                }
+                isDragging = true;
+                setValueFrom(e);
+                return;
+            }
+            isDragging = false;
+
+            Dimension sbSize = scrollbar.getSize();
+            direction = +1;
+
+            switch (scrollbar.getOrientation()) {
+            case JScrollBar.VERTICAL:
+                if (getThumbBounds().isEmpty()) {
+                    int scrollbarCenter = sbSize.height / 2;
+                    direction = (currentMouseY < scrollbarCenter) ? -1 : +1;
+                } else {
+                    int thumbY = getThumbBounds().y;
+                    direction = (currentMouseY < thumbY) ? -1 : +1;
+                }
+                break;
+            case JScrollBar.HORIZONTAL:
+                if (getThumbBounds().isEmpty()) {
+                    int scrollbarCenter = sbSize.width / 2;
+                    direction = (currentMouseX < scrollbarCenter) ? -1 : +1;
+                } else {
+                    int thumbX = getThumbBounds().x;
+                    direction = (currentMouseX < thumbX) ? -1 : +1;
+                }
+                if (!scrollbar.getComponentOrientation().isLeftToRight()) {
+                    direction = -direction;
+                }
+                break;
+            }
+            scrollByBlock(direction);
+
+            scrollTimer.stop();
+            scrollListener.setDirection(direction);
+            scrollListener.setScrollByBlock(true);
+            startScrollTimerIfNecessary();
+!!!2609154.java!!!	mouseDragged(inout e : MouseEvent) : void
+            if (SwingUtilities.isRightMouseButton(e) ||
+                (!getSupportsAbsolutePositioning() &&
+                 SwingUtilities.isMiddleMouseButton(e)))
+                return;
+            if(!scrollbar.isEnabled() || getThumbBounds().isEmpty()) {
+                return;
+            }
+            if (isDragging) {
+                setValueFrom(e);
+            } else {
+                currentMouseX = e.getX();
+                currentMouseY = e.getY();
+                updateThumbState(currentMouseX, currentMouseY);
+                startScrollTimerIfNecessary();
+            }
+!!!2609282.java!!!	setValueFrom(inout e : MouseEvent) : void
+            boolean active = isThumbRollover();
+            BoundedRangeModel model = scrollbar.getModel();
+            Rectangle thumbR = getThumbBounds();
+            float trackLength;
+            int thumbMin, thumbMax, thumbPos;
+
+            if (scrollbar.getOrientation() == JScrollBar.VERTICAL) {
+                thumbMin = trackRect.y;
+                thumbMax = trackRect.y + trackRect.height - thumbR.height;
+                thumbPos = Math.min(thumbMax, Math.max(thumbMin, (e.getY() - offset)));
+                setThumbBounds(thumbR.x, thumbPos, thumbR.width, thumbR.height);
+                trackLength = getTrackBounds().height;
+            }
+            else {
+                thumbMin = trackRect.x;
+                thumbMax = trackRect.x + trackRect.width - thumbR.width;
+                thumbPos = Math.min(thumbMax, Math.max(thumbMin, (e.getX() - offset)));
+                setThumbBounds(thumbPos, thumbR.y, thumbR.width, thumbR.height);
+                trackLength = getTrackBounds().width;
+            }
+
+            /* Set the scrollbars value.  If the thumb has reached the end of
+             * the scrollbar, then just set the value to its maximum.  Otherwise
+             * compute the value as accurately as possible.
+             */
+            if (thumbPos == thumbMax) {
+                if (scrollbar.getOrientation() == JScrollBar.VERTICAL ||
+                    scrollbar.getComponentOrientation().isLeftToRight()) {
+                    scrollbar.setValue(model.getMaximum() - model.getExtent());
+                } else {
+                    scrollbar.setValue(model.getMinimum());
+                }
+            }
+            else {
+                float valueMax = model.getMaximum() - model.getExtent();
+                float valueRange = valueMax - model.getMinimum();
+                float thumbValue = thumbPos - thumbMin;
+                float thumbRange = thumbMax - thumbMin;
+                int value;
+                if (scrollbar.getOrientation() == JScrollBar.VERTICAL ||
+                    scrollbar.getComponentOrientation().isLeftToRight()) {
+                    value = (int)(0.5 + ((thumbValue / thumbRange) * valueRange));
+                } else {
+                    value = (int)(0.5 + (((thumbMax - thumbPos) / thumbRange) * valueRange));
+                }
+
+                useCachedValue = true;
+                scrollBarValue = value + model.getMinimum();
+                scrollbar.setValue(adjustValueIfNecessary(scrollBarValue));
+            }
+            setThumbRollover(active);
+!!!2609410.java!!!	adjustValueIfNecessary(in value : int) : int
+            if (scrollbar.getParent() instanceof JScrollPane) {
+                JScrollPane scrollpane = (JScrollPane)scrollbar.getParent();
+                JViewport viewport = scrollpane.getViewport();
+                Component view = viewport.getView();
+                if (view instanceof JList) {
+                    JList list = (JList)view;
+                    if (DefaultLookup.getBoolean(list, list.getUI(),
+                                                 "List.lockToPositionOnScroll", false)) {
+                        int adjustedValue = value;
+                        int mode = list.getLayoutOrientation();
+                        int orientation = scrollbar.getOrientation();
+                        if (orientation == JScrollBar.VERTICAL && mode == JList.VERTICAL) {
+                            int index = list.locationToIndex(new Point(0, value));
+                            Rectangle rect = list.getCellBounds(index, index);
+                            if (rect != null) {
+                                adjustedValue = rect.y;
+                            }
+                        }
+                        if (orientation == JScrollBar.HORIZONTAL &&
+                            (mode == JList.VERTICAL_WRAP || mode == JList.HORIZONTAL_WRAP)) {
+                            if (scrollpane.getComponentOrientation().isLeftToRight()) {
+                                int index = list.locationToIndex(new Point(value, 0));
+                                Rectangle rect = list.getCellBounds(index, index);
+                                if (rect != null) {
+                                    adjustedValue = rect.x;
+                                }
+                            }
+                            else {
+                                Point loc = new Point(value, 0);
+                                int extent = viewport.getExtentSize().width;
+                                loc.x += extent - 1;
+                                int index = list.locationToIndex(loc);
+                                Rectangle rect = list.getCellBounds(index, index);
+                                if (rect != null) {
+                                    adjustedValue = rect.x + rect.width - extent;
+                                }
+                            }
+                        }
+                        value = adjustedValue;
+
+                    }
+                }
+            }
+            return value;
+!!!2609538.java!!!	startScrollTimerIfNecessary() : void
+            if (scrollTimer.isRunning()) {
+                return;
+            }
+
+            Rectangle tb = getThumbBounds();
+
+            switch (scrollbar.getOrientation()) {
+            case JScrollBar.VERTICAL:
+                if (direction > 0) {
+                    if (tb.y + tb.height < trackListener.currentMouseY) {
+                        scrollTimer.start();
+                    }
+                } else if (tb.y > trackListener.currentMouseY) {
+                    scrollTimer.start();
+                }
+                break;
+            case JScrollBar.HORIZONTAL:
+                if ((direction > 0 && isMouseAfterThumb())
+                        || (direction < 0 && isMouseBeforeThumb())) {
+
+                    scrollTimer.start();
+                }
+                break;
+            }
+!!!2609666.java!!!	mouseMoved(inout e : MouseEvent) : void
+            if (!isDragging) {
+                updateThumbState(e.getX(), e.getY());
+            }
+!!!2609794.java!!!	mouseExited(inout e : MouseEvent) : void
+            if (!isDragging) {
+                setThumbRollover(false);
+            }

@@ -1,0 +1,536 @@
+class JMenu
+!!!10646530.java!!!	JMenu()
+        this("");
+!!!10646658.java!!!	JMenu(inout s : String)
+        super(s);
+!!!10646786.java!!!	JMenu(inout a : Action)
+        this();
+        setAction(a);
+!!!10646914.java!!!	JMenu(inout s : String, inout b : boolean)
+        this(s);
+!!!10647170.java!!!	updateUI() : void
+        setUI((MenuItemUI)UIManager.getUI(this));
+
+        if ( popupMenu != null )
+          {
+            popupMenu.setUI((PopupMenuUI)UIManager.getUI(popupMenu));
+          }
+
+!!!10647298.java!!!	getUIClassID() : String
+        return uiClassID;
+!!!10647426.java!!!	setModel(inout newModel : ButtonModel) : void
+        ButtonModel oldModel = getModel();
+
+        super.setModel(newModel);
+
+        if (oldModel != null && menuChangeListener != null) {
+            oldModel.removeChangeListener(menuChangeListener);
+            menuChangeListener = null;
+        }
+
+        model = newModel;
+
+        if (newModel != null) {
+            menuChangeListener = createMenuChangeListener();
+            newModel.addChangeListener(menuChangeListener);
+        }
+!!!10647554.java!!!	isSelected() : boolean
+        return getModel().isSelected();
+!!!10647682.java!!!	setSelected(inout b : boolean) : void
+        ButtonModel model = getModel();
+        boolean oldValue = model.isSelected();
+
+        // TIGER - 4840653
+        // Removed code which fired an AccessibleState.SELECTED
+        // PropertyChangeEvent since this resulted in two
+        // identical events being fired since
+        // AbstractButton.fireItemStateChanged also fires the
+        // same event. This caused screen readers to speak the
+        // name of the item twice.
+
+        if (b != model.isSelected()) {
+            getModel().setSelected(b);
+        }
+!!!10647810.java!!!	isPopupMenuVisible() : boolean
+        ensurePopupMenuCreated();
+        return popupMenu.isVisible();
+!!!10647938.java!!!	setPopupMenuVisible(inout b : boolean) : void
+        if (DEBUG) {
+            System.out.println("in JMenu.setPopupMenuVisible " + b);
+            // Thread.dumpStack();
+        }
+
+        boolean isVisible = isPopupMenuVisible();
+        if (b != isVisible && (isEnabled() || !b)) {
+            ensurePopupMenuCreated();
+            if ((b==true) && isShowing()) {
+                // Set location of popupMenu (pulldown or pullright)
+                Point p = getCustomMenuLocation();
+                if (p == null) {
+                    p = getPopupMenuOrigin();
+                }
+                getPopupMenu().show(this, p.x, p.y);
+            } else {
+                getPopupMenu().setVisible(false);
+            }
+        }
+!!!10648066.java!!!	getPopupMenuOrigin() : Point
+        int x;
+        int y;
+        JPopupMenu pm = getPopupMenu();
+        // Figure out the sizes needed to caclulate the menu position
+        Dimension s = getSize();
+        Dimension pmSize = pm.getSize();
+        // For the first time the menu is popped up,
+        // the size has not yet been initiated
+        if (pmSize.width==0) {
+            pmSize = pm.getPreferredSize();
+        }
+        Point position = getLocationOnScreen();
+        Toolkit toolkit = Toolkit.getDefaultToolkit();
+        GraphicsConfiguration gc = getGraphicsConfiguration();
+        Rectangle screenBounds = new Rectangle(toolkit.getScreenSize());
+        GraphicsEnvironment ge =
+            GraphicsEnvironment.getLocalGraphicsEnvironment();
+        GraphicsDevice[] gd = ge.getScreenDevices();
+        for(int i = 0; i < gd.length; i++) {
+            if(gd[i].getType() == GraphicsDevice.TYPE_RASTER_SCREEN) {
+                GraphicsConfiguration dgc =
+                    gd[i].getDefaultConfiguration();
+                if(dgc.getBounds().contains(position)) {
+                    gc = dgc;
+                    break;
+                }
+            }
+        }
+
+
+        if (gc != null) {
+            screenBounds = gc.getBounds();
+            // take screen insets (e.g. taskbar) into account
+            Insets screenInsets = toolkit.getScreenInsets(gc);
+
+            screenBounds.width -=
+                        Math.abs(screenInsets.left + screenInsets.right);
+            screenBounds.height -=
+                        Math.abs(screenInsets.top + screenInsets.bottom);
+            position.x -= Math.abs(screenInsets.left);
+            position.y -= Math.abs(screenInsets.top);
+        }
+
+        Container parent = getParent();
+        if (parent instanceof JPopupMenu) {
+            // We are a submenu (pull-right)
+            int xOffset = UIManager.getInt("Menu.submenuPopupOffsetX");
+            int yOffset = UIManager.getInt("Menu.submenuPopupOffsetY");
+
+            if( SwingUtilities.isLeftToRight(this) ) {
+                // First determine x:
+                x = s.width + xOffset;   // Prefer placement to the right
+                if (position.x + x + pmSize.width >= screenBounds.width
+                                                     + screenBounds.x &&
+                    // popup doesn't fit - place it wherever there's more room
+                    screenBounds.width - s.width < 2*(position.x
+                                                    - screenBounds.x)) {
+
+                    x = 0 - xOffset - pmSize.width;
+                }
+            } else {
+                // First determine x:
+                x = 0 - xOffset - pmSize.width; // Prefer placement to the left
+                if (position.x + x < screenBounds.x &&
+                    // popup doesn't fit - place it wherever there's more room
+                    screenBounds.width - s.width > 2*(position.x -
+                                                    screenBounds.x)) {
+
+                    x = s.width + xOffset;
+                }
+            }
+            // Then the y:
+            y = yOffset;                     // Prefer dropping down
+            if (position.y + y + pmSize.height >= screenBounds.height
+                                                  + screenBounds.y &&
+                // popup doesn't fit - place it wherever there's more room
+                screenBounds.height - s.height < 2*(position.y
+                                                  - screenBounds.y)) {
+
+                y = s.height - yOffset - pmSize.height;
+            }
+        } else {
+            // We are a toplevel menu (pull-down)
+            int xOffset = UIManager.getInt("Menu.menuPopupOffsetX");
+            int yOffset = UIManager.getInt("Menu.menuPopupOffsetY");
+
+            if( SwingUtilities.isLeftToRight(this) ) {
+                // First determine the x:
+                x = xOffset;                   // Extend to the right
+                if (position.x + x + pmSize.width >= screenBounds.width
+                                                     + screenBounds.x &&
+                    // popup doesn't fit - place it wherever there's more room
+                    screenBounds.width - s.width < 2*(position.x
+                                                    - screenBounds.x)) {
+
+                    x = s.width - xOffset - pmSize.width;
+                }
+            } else {
+                // First determine the x:
+                x = s.width - xOffset - pmSize.width; // Extend to the left
+                if (position.x + x < screenBounds.x &&
+                    // popup doesn't fit - place it wherever there's more room
+                    screenBounds.width - s.width > 2*(position.x
+                                                    - screenBounds.x)) {
+
+                    x = xOffset;
+                }
+            }
+            // Then the y:
+            y = s.height + yOffset;    // Prefer dropping down
+            if (position.y + y + pmSize.height >= screenBounds.height
+                                                  + screenBounds.y &&
+                // popup doesn't fit - place it wherever there's more room
+                screenBounds.height - s.height < 2*(position.y
+                                                  - screenBounds.y)) {
+
+                y = 0 - yOffset - pmSize.height;   // Otherwise drop 'up'
+            }
+        }
+        return new Point(x,y);
+!!!10648194.java!!!	getDelay() : int
+        return delay;
+!!!10648322.java!!!	setDelay(in d : int) : void
+        if (d < 0)
+            throw new IllegalArgumentException("Delay must be a positive integer");
+
+        delay = d;
+!!!10648450.java!!!	ensurePopupMenuCreated() : void
+        if (popupMenu == null) {
+            final JMenu thisMenu = this;
+            this.popupMenu = new JPopupMenu();
+            popupMenu.setInvoker(this);
+            popupListener = createWinListener(popupMenu);
+        }
+!!!10648578.java!!!	getCustomMenuLocation() : Point
+        return customMenuLocation;
+!!!10648706.java!!!	setMenuLocation(in x : int, in y : int) : void
+        customMenuLocation = new Point(x, y);
+        if (popupMenu != null)
+            popupMenu.setLocation(x, y);
+!!!10648834.java!!!	add(inout menuItem : JMenuItem) : JMenuItem
+        ensurePopupMenuCreated();
+        return popupMenu.add(menuItem);
+!!!10648962.java!!!	add(inout c : Component) : Component
+        ensurePopupMenuCreated();
+        popupMenu.add(c);
+        return c;
+!!!10649090.java!!!	add(inout c : Component, in index : int) : Component
+        ensurePopupMenuCreated();
+        popupMenu.add(c, index);
+        return c;
+!!!10649218.java!!!	add(inout s : String) : JMenuItem
+        return add(new JMenuItem(s));
+!!!10649346.java!!!	add(inout a : Action) : JMenuItem
+        JMenuItem mi = createActionComponent(a);
+        mi.setAction(a);
+        add(mi);
+        return mi;
+!!!10649474.java!!!	createActionComponent(inout a : Action) : JMenuItem
+        JMenuItem mi = new JMenuItem() {
+            protected PropertyChangeListener createActionPropertyChangeListener(Action a) {
+                PropertyChangeListener pcl = createActionChangeListener(this);
+                if (pcl == null) {
+                    pcl = super.createActionPropertyChangeListener(a);
+                }
+                return pcl;
+            }
+        };
+        mi.setHorizontalTextPosition(JButton.TRAILING);
+        mi.setVerticalTextPosition(JButton.CENTER);
+        return mi;
+!!!10649602.java!!!	createActionChangeListener(inout b : JMenuItem) : PropertyChangeListener
+        return b.createActionPropertyChangeListener0(b.getAction());
+!!!10649730.java!!!	addSeparator() : void
+        ensurePopupMenuCreated();
+        popupMenu.addSeparator();
+!!!10649858.java!!!	insert(inout s : String, in pos : int) : void
+        if (pos < 0) {
+            throw new IllegalArgumentException("index less than zero.");
+        }
+
+        ensurePopupMenuCreated();
+        popupMenu.insert(new JMenuItem(s), pos);
+!!!10649986.java!!!	insert(inout mi : JMenuItem, in pos : int) : JMenuItem
+        if (pos < 0) {
+            throw new IllegalArgumentException("index less than zero.");
+        }
+        ensurePopupMenuCreated();
+        popupMenu.insert(mi, pos);
+        return mi;
+!!!10650114.java!!!	insert(inout a : Action, in pos : int) : JMenuItem
+        if (pos < 0) {
+            throw new IllegalArgumentException("index less than zero.");
+        }
+
+        ensurePopupMenuCreated();
+        JMenuItem mi = new JMenuItem(a);
+        mi.setHorizontalTextPosition(JButton.TRAILING);
+        mi.setVerticalTextPosition(JButton.CENTER);
+        popupMenu.insert(mi, pos);
+        return mi;
+!!!10650242.java!!!	insertSeparator(in index : int) : void
+        if (index < 0) {
+            throw new IllegalArgumentException("index less than zero.");
+        }
+
+        ensurePopupMenuCreated();
+        popupMenu.insert( new JPopupMenu.Separator(), index );
+!!!10650370.java!!!	getItem(in pos : int) : JMenuItem
+        if (pos < 0) {
+            throw new IllegalArgumentException("index less than zero.");
+        }
+
+        Component c = getMenuComponent(pos);
+        if (c instanceof JMenuItem) {
+            JMenuItem mi = (JMenuItem) c;
+            return mi;
+        }
+
+        // 4173633
+        return null;
+!!!10650498.java!!!	getItemCount() : int
+        return getMenuComponentCount();
+!!!10650626.java!!!	isTearOff() : boolean
+        throw new Error("boolean isTearOff() {} not yet implemented");
+!!!10650754.java!!!	remove(inout item : JMenuItem) : void
+        if (popupMenu != null)
+            popupMenu.remove(item);
+!!!10650882.java!!!	remove(in pos : int) : void
+        if (pos < 0) {
+            throw new IllegalArgumentException("index less than zero.");
+        }
+        if (pos > getItemCount()) {
+            throw new IllegalArgumentException("index greater than the number of items.");
+        }
+        if (popupMenu != null)
+            popupMenu.remove(pos);
+!!!10651010.java!!!	remove(inout c : Component) : void
+        if (popupMenu != null)
+            popupMenu.remove(c);
+!!!10651138.java!!!	removeAll() : void
+        if (popupMenu != null)
+            popupMenu.removeAll();
+!!!10651266.java!!!	getMenuComponentCount() : int
+        int componentCount = 0;
+        if (popupMenu != null)
+            componentCount = popupMenu.getComponentCount();
+        return componentCount;
+!!!10651394.java!!!	getMenuComponent(in n : int) : Component
+        if (popupMenu != null)
+            return popupMenu.getComponent(n);
+
+        return null;
+!!!10651522.java!!!	getMenuComponents() : Component
+        if (popupMenu != null)
+            return popupMenu.getComponents();
+
+        return new Component[0];
+!!!10651650.java!!!	isTopLevelMenu() : boolean
+        return getParent() instanceof JMenuBar;
+
+!!!10651778.java!!!	isMenuComponent(inout c : Component) : boolean
+        // Are we in the MenuItem part of the menu
+        if (c == this)
+            return true;
+        // Are we in the PopupMenu?
+        if (c instanceof JPopupMenu) {
+            JPopupMenu comp = (JPopupMenu) c;
+            if (comp == this.getPopupMenu())
+                return true;
+        }
+        // Are we in a Component on the PopupMenu
+        int ncomponents = this.getMenuComponentCount();
+        Component[] component = this.getMenuComponents();
+        for (int i = 0 ; i < ncomponents ; i++) {
+            Component comp = component[i];
+            // Are we in the current component?
+            if (comp == c)
+                return true;
+            // Hmmm, what about Non-menu containers?
+
+            // Recursive call for the Menu case
+            if (comp instanceof JMenu) {
+                JMenu subMenu = (JMenu) comp;
+                if (subMenu.isMenuComponent(c))
+                    return true;
+            }
+        }
+        return false;
+!!!10651906.java!!!	translateToPopupMenu(inout p : Point) : Point
+        return translateToPopupMenu(p.x, p.y);
+!!!10652034.java!!!	translateToPopupMenu(in x : int, in y : int) : Point
+            int newX;
+            int newY;
+
+            if (getParent() instanceof JPopupMenu) {
+                newX = x - getSize().width;
+                newY = y;
+            } else {
+                newX = x;
+                newY = y - getSize().height;
+            }
+
+            return new Point(newX, newY);
+!!!10652162.java!!!	getPopupMenu() : JPopupMenu
+        ensurePopupMenuCreated();
+        return popupMenu;
+!!!10652290.java!!!	addMenuListener(inout l : MenuListener) : void
+        listenerList.add(MenuListener.class, l);
+!!!10652418.java!!!	removeMenuListener(inout l : MenuListener) : void
+        listenerList.remove(MenuListener.class, l);
+!!!10652546.java!!!	getMenuListeners() : MenuListener
+        return listenerList.getListeners(MenuListener.class);
+!!!10652674.java!!!	fireMenuSelected() : void
+        if (DEBUG) {
+            System.out.println("In JMenu.fireMenuSelected");
+        }
+        // Guaranteed to return a non-null array
+        Object[] listeners = listenerList.getListenerList();
+        // Process the listeners last to first, notifying
+        // those that are interested in this event
+        for (int i = listeners.length-2; i>=0; i-=2) {
+            if (listeners[i]==MenuListener.class) {
+                if (listeners[i+1]== null) {
+                    throw new Error(getText() +" has a NULL Listener!! " + i);
+                } else {
+                    // Lazily create the event:
+                    if (menuEvent == null)
+                        menuEvent = new MenuEvent(this);
+                    ((MenuListener)listeners[i+1]).menuSelected(menuEvent);
+                }
+            }
+        }
+!!!10652802.java!!!	fireMenuDeselected() : void
+        if (DEBUG) {
+            System.out.println("In JMenu.fireMenuDeselected");
+        }
+        // Guaranteed to return a non-null array
+        Object[] listeners = listenerList.getListenerList();
+        // Process the listeners last to first, notifying
+        // those that are interested in this event
+        for (int i = listeners.length-2; i>=0; i-=2) {
+            if (listeners[i]==MenuListener.class) {
+                if (listeners[i+1]== null) {
+                    throw new Error(getText() +" has a NULL Listener!! " + i);
+                } else {
+                    // Lazily create the event:
+                    if (menuEvent == null)
+                        menuEvent = new MenuEvent(this);
+                    ((MenuListener)listeners[i+1]).menuDeselected(menuEvent);
+                }
+            }
+        }
+!!!10652930.java!!!	fireMenuCanceled() : void
+        if (DEBUG) {
+            System.out.println("In JMenu.fireMenuCanceled");
+        }
+        // Guaranteed to return a non-null array
+        Object[] listeners = listenerList.getListenerList();
+        // Process the listeners last to first, notifying
+        // those that are interested in this event
+        for (int i = listeners.length-2; i>=0; i-=2) {
+            if (listeners[i]==MenuListener.class) {
+                if (listeners[i+1]== null) {
+                    throw new Error(getText() +" has a NULL Listener!! "
+                                       + i);
+                } else {
+                    // Lazily create the event:
+                    if (menuEvent == null)
+                        menuEvent = new MenuEvent(this);
+                    ((MenuListener)listeners[i+1]).menuCanceled(menuEvent);
+                }
+            }
+        }
+!!!10653314.java!!!	createMenuChangeListener() : ChangeListener
+        return new MenuChangeListener();
+!!!10653442.java!!!	createWinListener(inout p : JPopupMenu) : JMenu::WinListener
+        return new WinListener(p);
+!!!10653826.java!!!	menuSelectionChanged(inout isIncluded : boolean) : void
+        if (DEBUG) {
+            System.out.println("In JMenu.menuSelectionChanged to " + isIncluded);
+        }
+        setSelected(isIncluded);
+!!!10653954.java!!!	getSubElements() : MenuElement
+        if(popupMenu == null)
+            return new MenuElement[0];
+        else {
+            MenuElement result[] = new MenuElement[1];
+            result[0] = popupMenu;
+            return result;
+        }
+!!!10654082.java!!!	getComponent() : Component
+        return this;
+!!!10654210.java!!!	applyComponentOrientation(inout o : ComponentOrientation) : void
+        super.applyComponentOrientation(o);
+
+        if ( popupMenu != null ) {
+            int ncomponents = getMenuComponentCount();
+            for (int i = 0 ; i < ncomponents ; ++i) {
+                getMenuComponent(i).applyComponentOrientation(o);
+            }
+            popupMenu.setComponentOrientation(o);
+        }
+!!!10654338.java!!!	setComponentOrientation(inout o : ComponentOrientation) : void
+        super.setComponentOrientation(o);
+        if ( popupMenu != null ) {
+            popupMenu.setComponentOrientation(o);
+        }
+!!!10654466.java!!!	setAccelerator(inout keyStroke : KeyStroke) : void
+        throw new Error("setAccelerator() is not defined for JMenu.  Use setMnemonic() instead.");
+!!!10654594.java!!!	processKeyEvent(inout evt : KeyEvent) : void
+        MenuSelectionManager.defaultManager().processKeyEvent(evt);
+        if (evt.isConsumed())
+            return;
+
+        super.processKeyEvent(evt);
+!!!10654722.java!!!	doClick(in pressTime : int) : void
+        MenuElement me[] = buildMenuElementArray(this);
+        MenuSelectionManager.defaultManager().setSelectedPath(me);
+!!!10654850.java!!!	buildMenuElementArray(inout leaf : JMenu) : MenuElement
+        Vector<MenuElement> elements = new Vector<MenuElement>();
+        Component current = leaf.getPopupMenu();
+        JPopupMenu pop;
+        JMenu menu;
+        JMenuBar bar;
+
+        while (true) {
+            if (current instanceof JPopupMenu) {
+                pop = (JPopupMenu) current;
+                elements.insertElementAt(pop, 0);
+                current = pop.getInvoker();
+            } else if (current instanceof JMenu) {
+                menu = (JMenu) current;
+                elements.insertElementAt(menu, 0);
+                current = menu.getParent();
+            } else if (current instanceof JMenuBar) {
+                bar = (JMenuBar) current;
+                elements.insertElementAt(bar, 0);
+                MenuElement me[] = new MenuElement[elements.size()];
+                elements.copyInto(me);
+                return me;
+            }
+        }
+!!!10654978.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        s.defaultWriteObject();
+        if (getUIClassID().equals(uiClassID)) {
+            byte count = JComponent.getWriteObjCounter(this);
+            JComponent.setWriteObjCounter(this, --count);
+            if (count == 0 && ui != null) {
+                ui.installUI(this);
+            }
+        }
+!!!10655106.java!!!	paramString() : String
+        return super.paramString();
+!!!10655234.java!!!	getAccessibleContext() : AccessibleContext
+        if (accessibleContext == null) {
+            accessibleContext = new AccessibleJMenu();
+        }
+        return accessibleContext;

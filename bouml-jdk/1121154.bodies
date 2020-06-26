@@ -1,0 +1,485 @@
+class LinkedBlockingDeque
+!!!9176194.java!!!	LinkedBlockingDeque()
+        this(Integer.MAX_VALUE);
+!!!9176322.java!!!	LinkedBlockingDeque(in capacity : int)
+        if (capacity <= 0) throw new IllegalArgumentException();
+        this.capacity = capacity;
+!!!9176450.java!!!	LinkedBlockingDeque(inout c : Collection)
+        this(Integer.MAX_VALUE);
+        final ReentrantLock lock = this.lock;
+        lock.lock(); // Never contended, but necessary for visibility
+        try {
+            for (E e : c) {
+                if (e == null)
+                    throw new NullPointerException();
+                if (!linkLast(new Node<E>(e)))
+                    throw new IllegalStateException("Deque full");
+            }
+        } finally {
+            lock.unlock();
+        }
+!!!9176578.java!!!	linkFirst(inout node : LinkedBlockingDeque::Node) : boolean
+        // assert lock.isHeldByCurrentThread();
+        if (count >= capacity)
+            return false;
+        Node<E> f = first;
+        node.next = f;
+        first = node;
+        if (last == null)
+            last = node;
+        else
+            f.prev = node;
+        ++count;
+        notEmpty.signal();
+        return true;
+!!!9176706.java!!!	linkLast(inout node : LinkedBlockingDeque::Node) : boolean
+        // assert lock.isHeldByCurrentThread();
+        if (count >= capacity)
+            return false;
+        Node<E> l = last;
+        node.prev = l;
+        last = node;
+        if (first == null)
+            first = node;
+        else
+            l.next = node;
+        ++count;
+        notEmpty.signal();
+        return true;
+!!!9176834.java!!!	unlinkFirst() : E
+        // assert lock.isHeldByCurrentThread();
+        Node<E> f = first;
+        if (f == null)
+            return null;
+        Node<E> n = f.next;
+        E item = f.item;
+        f.item = null;
+        f.next = f; // help GC
+        first = n;
+        if (n == null)
+            last = null;
+        else
+            n.prev = null;
+        --count;
+        notFull.signal();
+        return item;
+!!!9176962.java!!!	unlinkLast() : E
+        // assert lock.isHeldByCurrentThread();
+        Node<E> l = last;
+        if (l == null)
+            return null;
+        Node<E> p = l.prev;
+        E item = l.item;
+        l.item = null;
+        l.prev = l; // help GC
+        last = p;
+        if (p == null)
+            first = null;
+        else
+            p.next = null;
+        --count;
+        notFull.signal();
+        return item;
+!!!9177090.java!!!	unlink(inout x : LinkedBlockingDeque::Node) : void
+        // assert lock.isHeldByCurrentThread();
+        Node<E> p = x.prev;
+        Node<E> n = x.next;
+        if (p == null) {
+            unlinkFirst();
+        } else if (n == null) {
+            unlinkLast();
+        } else {
+            p.next = n;
+            n.prev = p;
+            x.item = null;
+            // Don't mess with x's links.  They may still be in use by
+            // an iterator.
+            --count;
+            notFull.signal();
+        }
+!!!9177218.java!!!	addFirst(inout e : E) : void
+        if (!offerFirst(e))
+            throw new IllegalStateException("Deque full");
+!!!9177346.java!!!	addLast(inout e : E) : void
+        if (!offerLast(e))
+            throw new IllegalStateException("Deque full");
+!!!9177474.java!!!	offerFirst(inout e : E) : boolean
+        if (e == null) throw new NullPointerException();
+        Node<E> node = new Node<E>(e);
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return linkFirst(node);
+        } finally {
+            lock.unlock();
+        }
+!!!9177602.java!!!	offerLast(inout e : E) : boolean
+        if (e == null) throw new NullPointerException();
+        Node<E> node = new Node<E>(e);
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return linkLast(node);
+        } finally {
+            lock.unlock();
+        }
+!!!9177730.java!!!	putFirst(inout e : E) : void
+        if (e == null) throw new NullPointerException();
+        Node<E> node = new Node<E>(e);
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            while (!linkFirst(node))
+                notFull.await();
+        } finally {
+            lock.unlock();
+        }
+!!!9177858.java!!!	putLast(inout e : E) : void
+        if (e == null) throw new NullPointerException();
+        Node<E> node = new Node<E>(e);
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            while (!linkLast(node))
+                notFull.await();
+        } finally {
+            lock.unlock();
+        }
+!!!9177986.java!!!	offerFirst(inout e : E, in timeout : long, inout unit : TimeUnit) : boolean
+        if (e == null) throw new NullPointerException();
+        Node<E> node = new Node<E>(e);
+        long nanos = unit.toNanos(timeout);
+        final ReentrantLock lock = this.lock;
+        lock.lockInterruptibly();
+        try {
+            while (!linkFirst(node)) {
+                if (nanos <= 0)
+                    return false;
+                nanos = notFull.awaitNanos(nanos);
+            }
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9178114.java!!!	offerLast(inout e : E, in timeout : long, inout unit : TimeUnit) : boolean
+        if (e == null) throw new NullPointerException();
+        Node<E> node = new Node<E>(e);
+        long nanos = unit.toNanos(timeout);
+        final ReentrantLock lock = this.lock;
+        lock.lockInterruptibly();
+        try {
+            while (!linkLast(node)) {
+                if (nanos <= 0)
+                    return false;
+                nanos = notFull.awaitNanos(nanos);
+            }
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9178242.java!!!	removeFirst() : E
+        E x = pollFirst();
+        if (x == null) throw new NoSuchElementException();
+        return x;
+!!!9178370.java!!!	removeLast() : E
+        E x = pollLast();
+        if (x == null) throw new NoSuchElementException();
+        return x;
+!!!9178498.java!!!	pollFirst() : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return unlinkFirst();
+        } finally {
+            lock.unlock();
+        }
+!!!9178626.java!!!	pollLast() : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return unlinkLast();
+        } finally {
+            lock.unlock();
+        }
+!!!9178754.java!!!	takeFirst() : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            E x;
+            while ( (x = unlinkFirst()) == null)
+                notEmpty.await();
+            return x;
+        } finally {
+            lock.unlock();
+        }
+!!!9178882.java!!!	takeLast() : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            E x;
+            while ( (x = unlinkLast()) == null)
+                notEmpty.await();
+            return x;
+        } finally {
+            lock.unlock();
+        }
+!!!9179010.java!!!	pollFirst(in timeout : long, inout unit : TimeUnit) : E
+        long nanos = unit.toNanos(timeout);
+        final ReentrantLock lock = this.lock;
+        lock.lockInterruptibly();
+        try {
+            E x;
+            while ( (x = unlinkFirst()) == null) {
+                if (nanos <= 0)
+                    return null;
+                nanos = notEmpty.awaitNanos(nanos);
+            }
+            return x;
+        } finally {
+            lock.unlock();
+        }
+!!!9179138.java!!!	pollLast(in timeout : long, inout unit : TimeUnit) : E
+        long nanos = unit.toNanos(timeout);
+        final ReentrantLock lock = this.lock;
+        lock.lockInterruptibly();
+        try {
+            E x;
+            while ( (x = unlinkLast()) == null) {
+                if (nanos <= 0)
+                    return null;
+                nanos = notEmpty.awaitNanos(nanos);
+            }
+            return x;
+        } finally {
+            lock.unlock();
+        }
+!!!9179266.java!!!	getFirst() : E
+        E x = peekFirst();
+        if (x == null) throw new NoSuchElementException();
+        return x;
+!!!9179394.java!!!	getLast() : E
+        E x = peekLast();
+        if (x == null) throw new NoSuchElementException();
+        return x;
+!!!9179522.java!!!	peekFirst() : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return (first == null) ? null : first.item;
+        } finally {
+            lock.unlock();
+        }
+!!!9179650.java!!!	peekLast() : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return (last == null) ? null : last.item;
+        } finally {
+            lock.unlock();
+        }
+!!!9179778.java!!!	removeFirstOccurrence(inout o : Object) : boolean
+        if (o == null) return false;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            for (Node<E> p = first; p != null; p = p.next) {
+                if (o.equals(p.item)) {
+                    unlink(p);
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            lock.unlock();
+        }
+!!!9179906.java!!!	removeLastOccurrence(inout o : Object) : boolean
+        if (o == null) return false;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            for (Node<E> p = last; p != null; p = p.prev) {
+                if (o.equals(p.item)) {
+                    unlink(p);
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            lock.unlock();
+        }
+!!!9180034.java!!!	add(inout e : E) : boolean
+        addLast(e);
+        return true;
+!!!9180162.java!!!	offer(inout e : E) : boolean
+        return offerLast(e);
+!!!9180290.java!!!	put(inout e : E) : void
+        putLast(e);
+!!!9180418.java!!!	offer(inout e : E, in timeout : long, inout unit : TimeUnit) : boolean
+        return offerLast(e, timeout, unit);
+!!!9180546.java!!!	remove() : E
+        return removeFirst();
+!!!9180674.java!!!	poll() : E
+        return pollFirst();
+!!!9180802.java!!!	take() : E
+        return takeFirst();
+!!!9180930.java!!!	poll(in timeout : long, inout unit : TimeUnit) : E
+        return pollFirst(timeout, unit);
+!!!9181058.java!!!	element() : E
+        return getFirst();
+!!!9181186.java!!!	peek() : E
+        return peekFirst();
+!!!9181314.java!!!	remainingCapacity() : int
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return capacity - count;
+        } finally {
+            lock.unlock();
+        }
+!!!9181442.java!!!	drainTo(inout c : Collection) : int
+        return drainTo(c, Integer.MAX_VALUE);
+!!!9181570.java!!!	drainTo(inout c : Collection, in maxElements : int) : int
+        if (c == null)
+            throw new NullPointerException();
+        if (c == this)
+            throw new IllegalArgumentException();
+        if (maxElements <= 0)
+            return 0;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            int n = Math.min(maxElements, count);
+            for (int i = 0; i < n; i++) {
+                c.add(first.item);   // In this order, in case add() throws.
+                unlinkFirst();
+            }
+            return n;
+        } finally {
+            lock.unlock();
+        }
+!!!9181698.java!!!	push(inout e : E) : void
+        addFirst(e);
+!!!9181826.java!!!	pop() : E
+        return removeFirst();
+!!!9181954.java!!!	remove(inout o : Object) : boolean
+        return removeFirstOccurrence(o);
+!!!9182082.java!!!	size() : int
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return count;
+        } finally {
+            lock.unlock();
+        }
+!!!9182210.java!!!	contains(inout o : Object) : boolean
+        if (o == null) return false;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            for (Node<E> p = first; p != null; p = p.next)
+                if (o.equals(p.item))
+                    return true;
+            return false;
+        } finally {
+            lock.unlock();
+        }
+!!!9182338.java!!!	toArray() : Object
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] a = new Object[count];
+            int k = 0;
+            for (Node<E> p = first; p != null; p = p.next)
+                a[k++] = p.item;
+            return a;
+        } finally {
+            lock.unlock();
+        }
+!!!9182466.java!!!	toArray(inout a : T [[]]) : T
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            if (a.length < count)
+                a = (T[])java.lang.reflect.Array.newInstance
+                    (a.getClass().getComponentType(), count);
+
+            int k = 0;
+            for (Node<E> p = first; p != null; p = p.next)
+                a[k++] = (T)p.item;
+            if (a.length > k)
+                a[k] = null;
+            return a;
+        } finally {
+            lock.unlock();
+        }
+!!!9182594.java!!!	toString() : String
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Node<E> p = first;
+            if (p == null)
+                return "[]";
+
+            StringBuilder sb = new StringBuilder();
+            sb.append('[');
+            for (;;) {
+                E e = p.item;
+                sb.append(e == this ? "(this Collection)" : e);
+                p = p.next;
+                if (p == null)
+                    return sb.append(']').toString();
+                sb.append(',').append(' ');
+            }
+        } finally {
+            lock.unlock();
+        }
+!!!9182722.java!!!	clear() : void
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            for (Node<E> f = first; f != null; ) {
+                f.item = null;
+                Node<E> n = f.next;
+                f.prev = null;
+                f.next = null;
+                f = n;
+            }
+            first = last = null;
+            count = 0;
+            notFull.signalAll();
+        } finally {
+            lock.unlock();
+        }
+!!!9182850.java!!!	iterator() : Iterator
+        return new Itr();
+!!!9182978.java!!!	descendingIterator() : Iterator
+        return new DescendingItr();
+!!!9185410.java!!!	spliterator() : Spliterator
+        return new LBDSpliterator<E>(this);
+!!!9185538.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            // Write out capacity and any hidden stuff
+            s.defaultWriteObject();
+            // Write out all elements in the proper order.
+            for (Node<E> p = first; p != null; p = p.next)
+                s.writeObject(p.item);
+            // Use trailing null as sentinel
+            s.writeObject(null);
+        } finally {
+            lock.unlock();
+        }
+!!!9185666.java!!!	readObject(inout s : ObjectInputStream) : void
+        s.defaultReadObject();
+        count = 0;
+        first = null;
+        last = null;
+        // Read in all elements and place in queue
+        for (;;) {
+            @SuppressWarnings("unchecked")
+            E item = (E)s.readObject();
+            if (item == null)
+                break;
+            add(item);
+        }

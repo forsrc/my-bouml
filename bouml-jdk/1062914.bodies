@@ -1,0 +1,318 @@
+class ComputedDayOfField
+!!!8566402.java!!!	ofDayOfWeekField(inout weekDef : WeekFields) : WeekFields::ComputedDayOfField
+            return new ComputedDayOfField("DayOfWeek", weekDef, DAYS, WEEKS, DAY_OF_WEEK_RANGE);
+!!!8566530.java!!!	ofWeekOfMonthField(inout weekDef : WeekFields) : WeekFields::ComputedDayOfField
+            return new ComputedDayOfField("WeekOfMonth", weekDef, WEEKS, MONTHS, WEEK_OF_MONTH_RANGE);
+!!!8566658.java!!!	ofWeekOfYearField(inout weekDef : WeekFields) : WeekFields::ComputedDayOfField
+            return new ComputedDayOfField("WeekOfYear", weekDef, WEEKS, YEARS, WEEK_OF_YEAR_RANGE);
+!!!8566786.java!!!	ofWeekOfWeekBasedYearField(inout weekDef : WeekFields) : WeekFields::ComputedDayOfField
+            return new ComputedDayOfField("WeekOfWeekBasedYear", weekDef, WEEKS, IsoFields.WEEK_BASED_YEARS, WEEK_OF_WEEK_BASED_YEAR_RANGE);
+!!!8566914.java!!!	ofWeekBasedYearField(inout weekDef : WeekFields) : WeekFields::ComputedDayOfField
+            return new ComputedDayOfField("WeekBasedYear", weekDef, IsoFields.WEEK_BASED_YEARS, FOREVER, ChronoField.YEAR.range());
+!!!8567042.java!!!	ofWeekBasedYear(inout chrono : Chronology, in yowby : int, in wowby : int, in dow : int) : ChronoLocalDate
+            ChronoLocalDate date = chrono.date(yowby, 1, 1);
+            int ldow = localizedDayOfWeek(date);
+            int offset = startOfWeekOffset(1, ldow);
+
+            // Clamp the week of year to keep it in the same year
+            int yearLen = date.lengthOfYear();
+            int newYearWeek = computeWeek(offset, yearLen + weekDef.getMinimalDaysInFirstWeek());
+            wowby = Math.min(wowby, newYearWeek - 1);
+
+            int days = -offset + (dow - 1) + (wowby - 1) * 7;
+            return date.plus(days, DAYS);
+!!!8567170.java!!!	ComputedDayOfField(inout name : String, inout weekDef : WeekFields, inout baseUnit : TemporalUnit, inout rangeUnit : TemporalUnit, inout range : ValueRange)
+            this.name = name;
+            this.weekDef = weekDef;
+            this.baseUnit = baseUnit;
+            this.rangeUnit = rangeUnit;
+            this.range = range;
+!!!8567298.java!!!	getFrom(inout temporal : TemporalAccessor) : long
+            if (rangeUnit == WEEKS) {  // day-of-week
+                return localizedDayOfWeek(temporal);
+            } else if (rangeUnit == MONTHS) {  // week-of-month
+                return localizedWeekOfMonth(temporal);
+            } else if (rangeUnit == YEARS) {  // week-of-year
+                return localizedWeekOfYear(temporal);
+            } else if (rangeUnit == WEEK_BASED_YEARS) {
+                return localizedWeekOfWeekBasedYear(temporal);
+            } else if (rangeUnit == FOREVER) {
+                return localizedWeekBasedYear(temporal);
+            } else {
+                throw new IllegalStateException("unreachable, rangeUnit: " + rangeUnit + ", this: " + this);
+            }
+!!!8567426.java!!!	localizedDayOfWeek(inout temporal : TemporalAccessor) : int
+            int sow = weekDef.getFirstDayOfWeek().getValue();
+            int isoDow = temporal.get(DAY_OF_WEEK);
+            return Math.floorMod(isoDow - sow, 7) + 1;
+!!!8567554.java!!!	localizedDayOfWeek(in isoDow : int) : int
+            int sow = weekDef.getFirstDayOfWeek().getValue();
+            return Math.floorMod(isoDow - sow, 7) + 1;
+!!!8567682.java!!!	localizedWeekOfMonth(inout temporal : TemporalAccessor) : long
+            int dow = localizedDayOfWeek(temporal);
+            int dom = temporal.get(DAY_OF_MONTH);
+            int offset = startOfWeekOffset(dom, dow);
+            return computeWeek(offset, dom);
+!!!8567810.java!!!	localizedWeekOfYear(inout temporal : TemporalAccessor) : long
+            int dow = localizedDayOfWeek(temporal);
+            int doy = temporal.get(DAY_OF_YEAR);
+            int offset = startOfWeekOffset(doy, dow);
+            return computeWeek(offset, doy);
+!!!8567938.java!!!	localizedWeekBasedYear(inout temporal : TemporalAccessor) : int
+            int dow = localizedDayOfWeek(temporal);
+            int year = temporal.get(YEAR);
+            int doy = temporal.get(DAY_OF_YEAR);
+            int offset = startOfWeekOffset(doy, dow);
+            int week = computeWeek(offset, doy);
+            if (week == 0) {
+                // Day is in end of week of previous year; return the previous year
+                return year - 1;
+            } else {
+                // If getting close to end of year, use higher precision logic
+                // Check if date of year is in partial week associated with next year
+                ValueRange dayRange = temporal.range(DAY_OF_YEAR);
+                int yearLen = (int)dayRange.getMaximum();
+                int newYearWeek = computeWeek(offset, yearLen + weekDef.getMinimalDaysInFirstWeek());
+                if (week >= newYearWeek) {
+                    return year + 1;
+                }
+            }
+            return year;
+!!!8568066.java!!!	localizedWeekOfWeekBasedYear(inout temporal : TemporalAccessor) : int
+            int dow = localizedDayOfWeek(temporal);
+            int doy = temporal.get(DAY_OF_YEAR);
+            int offset = startOfWeekOffset(doy, dow);
+            int week = computeWeek(offset, doy);
+            if (week == 0) {
+                // Day is in end of week of previous year
+                // Recompute from the last day of the previous year
+                ChronoLocalDate date = Chronology.from(temporal).date(temporal);
+                date = date.minus(doy, DAYS);   // Back down into previous year
+                return localizedWeekOfWeekBasedYear(date);
+            } else if (week > 50) {
+                // If getting close to end of year, use higher precision logic
+                // Check if date of year is in partial week associated with next year
+                ValueRange dayRange = temporal.range(DAY_OF_YEAR);
+                int yearLen = (int)dayRange.getMaximum();
+                int newYearWeek = computeWeek(offset, yearLen + weekDef.getMinimalDaysInFirstWeek());
+                if (week >= newYearWeek) {
+                    // Overlaps with week of following year; reduce to week in following year
+                    week = week - newYearWeek + 1;
+                }
+            }
+            return week;
+!!!8568194.java!!!	startOfWeekOffset(in day : int, in dow : int) : int
+            // offset of first day corresponding to the day of week in first 7 days (zero origin)
+            int weekStart = Math.floorMod(day - dow, 7);
+            int offset = -weekStart;
+            if (weekStart + 1 > weekDef.getMinimalDaysInFirstWeek()) {
+                // The previous week has the minimum days in the current month to be a 'week'
+                offset = 7 - weekStart;
+            }
+            return offset;
+!!!8568322.java!!!	computeWeek(in offset : int, in day : int) : int
+            return ((7 + offset + (day - 1)) / 7);
+!!!8568450.java!!!	adjustInto(inout temporal : R, in newValue : long) : R
+            // Check the new value and get the old value of the field
+            int newVal = range.checkValidIntValue(newValue, this);  // lenient check range
+            int currentVal = temporal.get(this);
+            if (newVal == currentVal) {
+                return temporal;
+            }
+
+            if (rangeUnit == FOREVER) {     // replace year of WeekBasedYear
+                // Create a new date object with the same chronology,
+                // the desired year and the same week and dow.
+                int idow = temporal.get(weekDef.dayOfWeek);
+                int wowby = temporal.get(weekDef.weekOfWeekBasedYear);
+                return (R) ofWeekBasedYear(Chronology.from(temporal), (int)newValue, wowby, idow);
+            } else {
+                // Compute the difference and add that using the base unit of the field
+                return (R) temporal.plus(newVal - currentVal, baseUnit);
+            }
+!!!8568578.java!!!	resolve(inout fieldValues : Map, inout partialTemporal : TemporalAccessor, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+            final long value = fieldValues.get(this);
+            final int newValue = Math.toIntExact(value);  // broad limit makes overflow checking lighter
+            // first convert localized day-of-week to ISO day-of-week
+            // doing this first handles case where both ISO and localized were parsed and might mismatch
+            // day-of-week is always strict as two different day-of-week values makes lenient complex
+            if (rangeUnit == WEEKS) {  // day-of-week
+                final int checkedValue = range.checkValidIntValue(value, this);  // no leniency as too complex
+                final int startDow = weekDef.getFirstDayOfWeek().getValue();
+                long isoDow = Math.floorMod((startDow - 1) + (checkedValue - 1), 7) + 1;
+                fieldValues.remove(this);
+                fieldValues.put(DAY_OF_WEEK, isoDow);
+                return null;
+            }
+
+            // can only build date if ISO day-of-week is present
+            if (fieldValues.containsKey(DAY_OF_WEEK) == false) {
+                return null;
+            }
+            int isoDow = DAY_OF_WEEK.checkValidIntValue(fieldValues.get(DAY_OF_WEEK));
+            int dow = localizedDayOfWeek(isoDow);
+
+            // build date
+            Chronology chrono = Chronology.from(partialTemporal);
+            if (fieldValues.containsKey(YEAR)) {
+                int year = YEAR.checkValidIntValue(fieldValues.get(YEAR));  // validate
+                if (rangeUnit == MONTHS && fieldValues.containsKey(MONTH_OF_YEAR)) {  // week-of-month
+                    long month = fieldValues.get(MONTH_OF_YEAR);  // not validated yet
+                    return resolveWoM(fieldValues, chrono, year, month, newValue, dow, resolverStyle);
+                }
+                if (rangeUnit == YEARS) {  // week-of-year
+                    return resolveWoY(fieldValues, chrono, year, newValue, dow, resolverStyle);
+                }
+            } else if ((rangeUnit == WEEK_BASED_YEARS || rangeUnit == FOREVER) &&
+                    fieldValues.containsKey(weekDef.weekBasedYear) &&
+                    fieldValues.containsKey(weekDef.weekOfWeekBasedYear)) { // week-of-week-based-year and year-of-week-based-year
+                return resolveWBY(fieldValues, chrono, dow, resolverStyle);
+            }
+            return null;
+!!!8568706.java!!!	resolveWoM(inout fieldValues : Map, inout chrono : Chronology, in year : int, in month : long, in wom : long, in localDow : int, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+            ChronoLocalDate date;
+            if (resolverStyle == ResolverStyle.LENIENT) {
+                date = chrono.date(year, 1, 1).plus(Math.subtractExact(month, 1), MONTHS);
+                long weeks = Math.subtractExact(wom, localizedWeekOfMonth(date));
+                int days = localDow - localizedDayOfWeek(date);  // safe from overflow
+                date = date.plus(Math.addExact(Math.multiplyExact(weeks, 7), days), DAYS);
+            } else {
+                int monthValid = MONTH_OF_YEAR.checkValidIntValue(month);  // validate
+                date = chrono.date(year, monthValid, 1);
+                int womInt = range.checkValidIntValue(wom, this);  // validate
+                int weeks = (int) (womInt - localizedWeekOfMonth(date));  // safe from overflow
+                int days = localDow - localizedDayOfWeek(date);  // safe from overflow
+                date = date.plus(weeks * 7 + days, DAYS);
+                if (resolverStyle == ResolverStyle.STRICT && date.getLong(MONTH_OF_YEAR) != month) {
+                    throw new DateTimeException("Strict mode rejected resolved date as it is in a different month");
+                }
+            }
+            fieldValues.remove(this);
+            fieldValues.remove(YEAR);
+            fieldValues.remove(MONTH_OF_YEAR);
+            fieldValues.remove(DAY_OF_WEEK);
+            return date;
+!!!8568834.java!!!	resolveWoY(inout fieldValues : Map, inout chrono : Chronology, in year : int, in woy : long, in localDow : int, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+            ChronoLocalDate date = chrono.date(year, 1, 1);
+            if (resolverStyle == ResolverStyle.LENIENT) {
+                long weeks = Math.subtractExact(woy, localizedWeekOfYear(date));
+                int days = localDow - localizedDayOfWeek(date);  // safe from overflow
+                date = date.plus(Math.addExact(Math.multiplyExact(weeks, 7), days), DAYS);
+            } else {
+                int womInt = range.checkValidIntValue(woy, this);  // validate
+                int weeks = (int) (womInt - localizedWeekOfYear(date));  // safe from overflow
+                int days = localDow - localizedDayOfWeek(date);  // safe from overflow
+                date = date.plus(weeks * 7 + days, DAYS);
+                if (resolverStyle == ResolverStyle.STRICT && date.getLong(YEAR) != year) {
+                    throw new DateTimeException("Strict mode rejected resolved date as it is in a different year");
+                }
+            }
+            fieldValues.remove(this);
+            fieldValues.remove(YEAR);
+            fieldValues.remove(DAY_OF_WEEK);
+            return date;
+!!!8568962.java!!!	resolveWBY(inout fieldValues : Map, inout chrono : Chronology, in localDow : int, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+            int yowby = weekDef.weekBasedYear.range().checkValidIntValue(
+                    fieldValues.get(weekDef.weekBasedYear), weekDef.weekBasedYear);
+            ChronoLocalDate date;
+            if (resolverStyle == ResolverStyle.LENIENT) {
+                date = ofWeekBasedYear(chrono, yowby, 1, localDow);
+                long wowby = fieldValues.get(weekDef.weekOfWeekBasedYear);
+                long weeks = Math.subtractExact(wowby, 1);
+                date = date.plus(weeks, WEEKS);
+            } else {
+                int wowby = weekDef.weekOfWeekBasedYear.range().checkValidIntValue(
+                        fieldValues.get(weekDef.weekOfWeekBasedYear), weekDef.weekOfWeekBasedYear);  // validate
+                date = ofWeekBasedYear(chrono, yowby, wowby, localDow);
+                if (resolverStyle == ResolverStyle.STRICT && localizedWeekBasedYear(date) != yowby) {
+                    throw new DateTimeException("Strict mode rejected resolved date as it is in a different week-based-year");
+                }
+            }
+            fieldValues.remove(this);
+            fieldValues.remove(weekDef.weekBasedYear);
+            fieldValues.remove(weekDef.weekOfWeekBasedYear);
+            fieldValues.remove(DAY_OF_WEEK);
+            return date;
+!!!8569090.java!!!	getDisplayName(inout locale : Locale) : String
+            Objects.requireNonNull(locale, "locale");
+            if (rangeUnit == YEARS) {  // only have values for week-of-year
+                LocaleResources lr = LocaleProviderAdapter.getResourceBundleBased()
+                        .getLocaleResources(locale);
+                ResourceBundle rb = lr.getJavaTimeFormatData();
+                return rb.containsKey("field.week") ? rb.getString("field.week") : name;
+            }
+            return name;
+!!!8569218.java!!!	getBaseUnit() : TemporalUnit
+            return baseUnit;
+!!!8569346.java!!!	getRangeUnit() : TemporalUnit
+            return rangeUnit;
+!!!8569474.java!!!	isDateBased() : boolean
+            return true;
+!!!8569602.java!!!	isTimeBased() : boolean
+            return false;
+!!!8569730.java!!!	range() : ValueRange
+            return range;
+!!!8569858.java!!!	isSupportedBy(inout temporal : TemporalAccessor) : boolean
+            if (temporal.isSupported(DAY_OF_WEEK)) {
+                if (rangeUnit == WEEKS) {  // day-of-week
+                    return true;
+                } else if (rangeUnit == MONTHS) {  // week-of-month
+                    return temporal.isSupported(DAY_OF_MONTH);
+                } else if (rangeUnit == YEARS) {  // week-of-year
+                    return temporal.isSupported(DAY_OF_YEAR);
+                } else if (rangeUnit == WEEK_BASED_YEARS) {
+                    return temporal.isSupported(DAY_OF_YEAR);
+                } else if (rangeUnit == FOREVER) {
+                    return temporal.isSupported(YEAR);
+                }
+            }
+            return false;
+!!!8569986.java!!!	rangeRefinedBy(inout temporal : TemporalAccessor) : ValueRange
+            if (rangeUnit == ChronoUnit.WEEKS) {  // day-of-week
+                return range;
+            } else if (rangeUnit == MONTHS) {  // week-of-month
+                return rangeByWeek(temporal, DAY_OF_MONTH);
+            } else if (rangeUnit == YEARS) {  // week-of-year
+                return rangeByWeek(temporal, DAY_OF_YEAR);
+            } else if (rangeUnit == WEEK_BASED_YEARS) {
+                return rangeWeekOfWeekBasedYear(temporal);
+            } else if (rangeUnit == FOREVER) {
+                return YEAR.range();
+            } else {
+                throw new IllegalStateException("unreachable, rangeUnit: " + rangeUnit + ", this: " + this);
+            }
+!!!8570114.java!!!	rangeByWeek(inout temporal : TemporalAccessor, inout field : TemporalField) : ValueRange
+            int dow = localizedDayOfWeek(temporal);
+            int offset = startOfWeekOffset(temporal.get(field), dow);
+            ValueRange fieldRange = temporal.range(field);
+            return ValueRange.of(computeWeek(offset, (int) fieldRange.getMinimum()),
+                    computeWeek(offset, (int) fieldRange.getMaximum()));
+!!!8570242.java!!!	rangeWeekOfWeekBasedYear(inout temporal : TemporalAccessor) : ValueRange
+            if (!temporal.isSupported(DAY_OF_YEAR)) {
+                return WEEK_OF_YEAR_RANGE;
+            }
+            int dow = localizedDayOfWeek(temporal);
+            int doy = temporal.get(DAY_OF_YEAR);
+            int offset = startOfWeekOffset(doy, dow);
+            int week = computeWeek(offset, doy);
+            if (week == 0) {
+                // Day is in end of week of previous year
+                // Recompute from the last day of the previous year
+                ChronoLocalDate date = Chronology.from(temporal).date(temporal);
+                date = date.minus(doy + 7, DAYS);   // Back down into previous year
+                return rangeWeekOfWeekBasedYear(date);
+            }
+            // Check if day of year is in partial week associated with next year
+            ValueRange dayRange = temporal.range(DAY_OF_YEAR);
+            int yearLen = (int)dayRange.getMaximum();
+            int newYearWeek = computeWeek(offset, yearLen + weekDef.getMinimalDaysInFirstWeek());
+
+            if (week >= newYearWeek) {
+                // Overlaps with weeks of following year; recompute from a week in following year
+                ChronoLocalDate date = Chronology.from(temporal).date(temporal);
+                date = date.plus(yearLen - doy + 1 + 7, ChronoUnit.DAYS);
+                return rangeWeekOfWeekBasedYear(date);
+            }
+            return ValueRange.of(1, newYearWeek-1);
+!!!8570370.java!!!	toString() : String
+            return name + "[" + weekDef.toString() + "]";

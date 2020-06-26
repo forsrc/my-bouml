@@ -1,0 +1,168 @@
+class SecureRandom
+!!!7996162.java!!!	SecureRandom()
+        /*
+         * This call to our superclass constructor will result in a call
+         * to our own {@code setSeed} method, which will return
+         * immediately when it is passed zero.
+         */
+        super(0);
+        getDefaultPRNG(false, null);
+!!!7996290.java!!!	SecureRandom(inout seed : byte [[]])
+        super(0);
+        getDefaultPRNG(true, seed);
+!!!7996418.java!!!	getDefaultPRNG(inout setSeed : boolean, inout seed : byte [[]]) : void
+        String prng = getPrngAlgorithm();
+        if (prng == null) {
+            // bummer, get the SUN implementation
+            prng = "SHA1PRNG";
+            this.secureRandomSpi = new sun.security.provider.SecureRandom();
+            this.provider = Providers.getSunProvider();
+            if (setSeed) {
+                this.secureRandomSpi.engineSetSeed(seed);
+            }
+        } else {
+            try {
+                SecureRandom random = SecureRandom.getInstance(prng);
+                this.secureRandomSpi = random.getSecureRandomSpi();
+                this.provider = random.getProvider();
+                if (setSeed) {
+                    this.secureRandomSpi.engineSetSeed(seed);
+                }
+            } catch (NoSuchAlgorithmException nsae) {
+                // never happens, because we made sure the algorithm exists
+                throw new RuntimeException(nsae);
+            }
+        }
+        // JDK 1.1 based implementations subclass SecureRandom instead of
+        // SecureRandomSpi. They will also go through this code path because
+        // they must call a SecureRandom constructor as it is their superclass.
+        // If we are dealing with such an implementation, do not set the
+        // algorithm value as it would be inaccurate.
+        if (getClass() == SecureRandom.class) {
+            this.algorithm = prng;
+        }
+!!!7996546.java!!!	SecureRandom(inout secureRandomSpi : SecureRandomSpi, inout provider : Provider)
+        this(secureRandomSpi, provider, null);
+!!!7996674.java!!!	SecureRandom(inout secureRandomSpi : SecureRandomSpi, inout provider : Provider, inout algorithm : String)
+        super(0);
+        this.secureRandomSpi = secureRandomSpi;
+        this.provider = provider;
+        this.algorithm = algorithm;
+
+        if (!skipDebug && pdebug != null) {
+            pdebug.println("SecureRandom." + algorithm +
+                " algorithm from: " + this.provider.getName());
+        }
+!!!7996802.java!!!	getInstance(inout algorithm : String) : SecureRandom
+        Instance instance = GetInstance.getInstance("SecureRandom",
+            SecureRandomSpi.class, algorithm);
+        return new SecureRandom((SecureRandomSpi)instance.impl,
+            instance.provider, algorithm);
+!!!7996930.java!!!	getInstance(inout algorithm : String, inout provider : String) : SecureRandom
+        Instance instance = GetInstance.getInstance("SecureRandom",
+            SecureRandomSpi.class, algorithm, provider);
+        return new SecureRandom((SecureRandomSpi)instance.impl,
+            instance.provider, algorithm);
+!!!7997058.java!!!	getInstance(inout algorithm : String, inout provider : Provider) : SecureRandom
+        Instance instance = GetInstance.getInstance("SecureRandom",
+            SecureRandomSpi.class, algorithm, provider);
+        return new SecureRandom((SecureRandomSpi)instance.impl,
+            instance.provider, algorithm);
+!!!7997186.java!!!	getSecureRandomSpi() : SecureRandomSpi
+        return secureRandomSpi;
+!!!7997314.java!!!	getProvider() : Provider
+        return provider;
+!!!7997442.java!!!	getAlgorithm() : String
+        return (algorithm != null) ? algorithm : "unknown";
+!!!7997570.java!!!	setSeed(inout seed : byte [[]]) : void
+        secureRandomSpi.engineSetSeed(seed);
+!!!7997698.java!!!	setSeed(in seed : long) : void
+        /*
+         * Ignore call from super constructor (as well as any other calls
+         * unfortunate enough to be passing 0).  It's critical that we
+         * ignore call from superclass constructor, as digest has not
+         * yet been initialized at that point.
+         */
+        if (seed != 0) {
+            secureRandomSpi.engineSetSeed(longToByteArray(seed));
+        }
+!!!7997826.java!!!	nextBytes(inout bytes : byte [[]]) : void
+        secureRandomSpi.engineNextBytes(bytes);
+!!!7997954.java!!!	next(in numBits : int) : int
+        int numBytes = (numBits+7)/8;
+        byte b[] = new byte[numBytes];
+        int next = 0;
+
+        nextBytes(b);
+        for (int i = 0; i < numBytes; i++) {
+            next = (next << 8) + (b[i] & 0xFF);
+        }
+
+        return next >>> (numBytes*8 - numBits);
+!!!7998082.java!!!	getSeed(in numBytes : int) : byte
+        if (seedGenerator == null) {
+            seedGenerator = new SecureRandom();
+        }
+        return seedGenerator.generateSeed(numBytes);
+!!!7998210.java!!!	generateSeed(in numBytes : int) : byte
+        return secureRandomSpi.engineGenerateSeed(numBytes);
+!!!7998338.java!!!	longToByteArray(in l : long) : byte
+        byte[] retVal = new byte[8];
+
+        for (int i = 0; i < 8; i++) {
+            retVal[i] = (byte) l;
+            l >>= 8;
+        }
+
+        return retVal;
+!!!7998466.java!!!	getPrngAlgorithm() : String
+        for (Provider p : Providers.getProviderList().providers()) {
+            for (Service s : p.getServices()) {
+                if (s.getType().equals("SecureRandom")) {
+                    return s.getAlgorithm();
+                }
+            }
+        }
+        return null;
+!!!7998594.java!!!	getInstanceStrong() : SecureRandom
+
+        String property = AccessController.doPrivileged(
+            new PrivilegedAction<String>() {
+                @Override
+                public String run() {
+                    return Security.getProperty(
+                        "securerandom.strongAlgorithms");
+                }
+            });
+
+        if ((property == null) || (property.length() == 0)) {
+            throw new NoSuchAlgorithmException(
+                "Null/empty securerandom.strongAlgorithms Security Property");
+        }
+
+        String remainder = property;
+        while (remainder != null) {
+            Matcher m;
+            if ((m = StrongPatternHolder.pattern.matcher(
+                    remainder)).matches()) {
+
+                String alg = m.group(1);
+                String prov = m.group(3);
+
+                try {
+                    if (prov == null) {
+                        return SecureRandom.getInstance(alg);
+                    } else {
+                        return SecureRandom.getInstance(alg, prov);
+                    }
+                } catch (NoSuchAlgorithmException |
+                        NoSuchProviderException e) {
+                }
+                remainder = m.group(5);
+            } else {
+                remainder = null;
+            }
+        }
+
+        throw new NoSuchAlgorithmException(
+            "No strong SecureRandom impls available: " + property);

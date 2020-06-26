@@ -1,0 +1,78 @@
+class IDATOutputStream
+!!!1856642.java!!!	IDATOutputStream(inout stream : ImageOutputStream, in chunkLength : int)
+        this.stream = stream;
+        this.chunkLength = chunkLength;
+        startChunk();
+!!!1856770.java!!!	startChunk() : void
+        crc.reset();
+        this.startPos = stream.getStreamPosition();
+        stream.writeInt(-1); // length, will backpatch
+
+        crc.update(chunkType, 0, 4);
+        stream.write(chunkType, 0, 4);
+
+        this.bytesRemaining = chunkLength;
+!!!1856898.java!!!	finishChunk() : void
+        // Write CRC
+        stream.writeInt(crc.getValue());
+
+        // Write length
+        long pos = stream.getStreamPosition();
+        stream.seek(startPos);
+        stream.writeInt((int)(pos - startPos) - 12);
+
+        // Return to end of chunk and flush to minimize buffering
+        stream.seek(pos);
+        stream.flushBefore(pos);
+!!!1857026.java!!!	read() : int
+        throw new RuntimeException("Method not available");
+!!!1857154.java!!!	read(inout b : byte [[]], in off : int, in len : int) : int
+        throw new RuntimeException("Method not available");
+!!!1857282.java!!!	write(inout b : byte [[]], in off : int, in len : int) : void
+        if (len == 0) {
+            return;
+        }
+
+        if (!def.finished()) {
+            def.setInput(b, off, len);
+            while (!def.needsInput()) {
+                deflate();
+            }
+        }
+!!!1857410.java!!!	deflate() : void
+        int len = def.deflate(buf, 0, buf.length);
+        int off = 0;
+
+        while (len > 0) {
+            if (bytesRemaining == 0) {
+                finishChunk();
+                startChunk();
+            }
+
+            int nbytes = Math.min(len, bytesRemaining);
+            crc.update(buf, off, nbytes);
+            stream.write(buf, off, nbytes);
+
+            off += nbytes;
+            len -= nbytes;
+            bytesRemaining -= nbytes;
+        }
+!!!1857538.java!!!	write(in b : int) : void
+        byte[] wbuf = new byte[1];
+        wbuf[0] = (byte)b;
+        write(wbuf, 0, 1);
+!!!1857666.java!!!	finish() : void
+        try {
+            if (!def.finished()) {
+                def.finish();
+                while (!def.finished()) {
+                    deflate();
+                }
+            }
+            finishChunk();
+        } finally {
+            def.end();
+        }
+!!!1857794.java!!!	finalize() : void
+        // Empty finalizer (for improved performance; no need to call
+        // super.finalize() in this case)

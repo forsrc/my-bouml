@@ -1,0 +1,77 @@
+class WeakCache
+!!!7366914.java!!!	WeakCache(inout subKeyFactory : BiFunction, inout valueFactory : BiFunction)
+        this.subKeyFactory = Objects.requireNonNull(subKeyFactory);
+        this.valueFactory = Objects.requireNonNull(valueFactory);
+!!!7367042.java!!!	get(inout key : K, inout parameter : P) : V
+        Objects.requireNonNull(parameter);
+
+        expungeStaleEntries();
+
+        Object cacheKey = CacheKey.valueOf(key, refQueue);
+
+        // lazily install the 2nd level valuesMap for the particular cacheKey
+        ConcurrentMap<Object, Supplier<V>> valuesMap = map.get(cacheKey);
+        if (valuesMap == null) {
+            ConcurrentMap<Object, Supplier<V>> oldValuesMap
+                = map.putIfAbsent(cacheKey,
+                                  valuesMap = new ConcurrentHashMap<>());
+            if (oldValuesMap != null) {
+                valuesMap = oldValuesMap;
+            }
+        }
+
+        // create subKey and retrieve the possible Supplier<V> stored by that
+        // subKey from valuesMap
+        Object subKey = Objects.requireNonNull(subKeyFactory.apply(key, parameter));
+        Supplier<V> supplier = valuesMap.get(subKey);
+        Factory factory = null;
+
+        while (true) {
+            if (supplier != null) {
+                // supplier might be a Factory or a CacheValue<V> instance
+                V value = supplier.get();
+                if (value != null) {
+                    return value;
+                }
+            }
+            // else no supplier in cache
+            // or a supplier that returned null (could be a cleared CacheValue
+            // or a Factory that wasn't successful in installing the CacheValue)
+
+            // lazily construct a Factory
+            if (factory == null) {
+                factory = new Factory(key, parameter, subKey, valuesMap);
+            }
+
+            if (supplier == null) {
+                supplier = valuesMap.putIfAbsent(subKey, factory);
+                if (supplier == null) {
+                    // successfully installed Factory
+                    supplier = factory;
+                }
+                // else retry with winning supplier
+            } else {
+                if (valuesMap.replace(subKey, supplier, factory)) {
+                    // successfully replaced
+                    // cleared CacheEntry / unsuccessful Factory
+                    // with our Factory
+                    supplier = factory;
+                } else {
+                    // retry with current supplier
+                    supplier = valuesMap.get(subKey);
+                }
+            }
+        }
+!!!7367170.java!!!	containsValue(inout value : V) : boolean
+        Objects.requireNonNull(value);
+
+        expungeStaleEntries();
+        return reverseMap.containsKey(new LookupValue<>(value));
+!!!7367298.java!!!	size() : int
+        expungeStaleEntries();
+        return reverseMap.size();
+!!!7367426.java!!!	expungeStaleEntries() : void
+        CacheKey<K> cacheKey;
+        while ((cacheKey = (CacheKey<K>)refQueue.poll()) != null) {
+            cacheKey.expungeFrom(map, reverseMap);
+        }

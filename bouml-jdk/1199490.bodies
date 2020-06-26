@@ -1,0 +1,317 @@
+class TabularDataSupport
+!!!9899522.java!!!	TabularDataSupport(inout tabularType : TabularType)
+
+        this(tabularType, 16, 0.75f);
+!!!9899650.java!!!	TabularDataSupport(inout tabularType : TabularType, in initialCapacity : int, in loadFactor : float)
+
+        // Check tabularType is not null
+        //
+        if (tabularType == null) {
+            throw new IllegalArgumentException("Argument tabularType cannot be null.");
+        }
+
+        // Initialize this.tabularType (and indexNamesArray for convenience)
+        //
+        this.tabularType = tabularType;
+        List<String> tmpNames = tabularType.getIndexNames();
+        this.indexNamesArray = tmpNames.toArray(new String[tmpNames.size()]);
+
+        // Since LinkedHashMap was introduced in SE 1.4, it's conceivable even
+        // if very unlikely that we might be the server of a 1.3 client.  In
+        // that case you'll need to set this property.  See CR 6334663.
+        String useHashMapProp = AccessController.doPrivileged(
+                new GetPropertyAction("jmx.tabular.data.hash.map"));
+        boolean useHashMap = "true".equalsIgnoreCase(useHashMapProp);
+
+        // Construct the empty contents HashMap
+        //
+        this.dataMap = useHashMap ?
+            new HashMap<Object,CompositeData>(initialCapacity, loadFactor) :
+            new LinkedHashMap<Object, CompositeData>(initialCapacity, loadFactor);
+!!!9899778.java!!!	getTabularType() : TabularType
+
+        return tabularType;
+!!!9899906.java!!!	calculateIndex(inout value : CompositeData) : Object
+
+        // Check value is valid
+        //
+        checkValueType(value);
+
+        // Return its calculated index
+        //
+        return internalCalculateIndex(value).toArray();
+!!!9900034.java!!!	containsKey(inout key : Object) : boolean
+
+        // if key is not an array of Object instances, return false
+        //
+        Object[] k;
+        try {
+            k = (Object[]) key;
+        } catch (ClassCastException e) {
+            return false;
+        }
+
+        return  this.containsKey(k);
+!!!9900162.java!!!	containsKey(inout key : Object [[]]) : boolean
+
+        return  ( key == null ? false : dataMap.containsKey(Arrays.asList(key)));
+!!!9900290.java!!!	containsValue(inout value : CompositeData) : boolean
+
+        return dataMap.containsValue(value);
+!!!9900418.java!!!	containsValue(inout value : Object) : boolean
+
+        return dataMap.containsValue(value);
+!!!9900546.java!!!	get(inout key : Object) : Object
+
+        return get((Object[]) key);
+!!!9900674.java!!!	get(inout key : Object [[]]) : CompositeData
+
+        // Check key is not null and valid with tabularType
+        // (throws NullPointerException, InvalidKeyException)
+        //
+        checkKeyType(key);
+
+        // Return the mapping stored in the parent HashMap
+        //
+        return dataMap.get(Arrays.asList(key));
+!!!9900802.java!!!	put(inout key : Object, inout value : Object) : Object
+        internalPut((CompositeData) value);
+        return value; // should be return internalPut(...); (5090566)
+!!!9900930.java!!!	put(inout value : CompositeData) : void
+        internalPut(value);
+!!!9901058.java!!!	internalPut(inout value : CompositeData) : CompositeData
+        // Check value is not null, value's type is the same as this instance's row type,
+        // and calculate the value's index according to this instance's tabularType and
+        // check it is not already used for a mapping in the parent HashMap
+        //
+        List<?> index = checkValueAndIndex(value);
+
+        // store the (key, value) mapping in the dataMap HashMap
+        //
+        return dataMap.put(index, value);
+!!!9901186.java!!!	remove(inout key : Object) : Object
+
+        return remove((Object[]) key);
+!!!9901314.java!!!	remove(inout key : Object [[]]) : CompositeData
+
+        // Check key is not null and valid with tabularType
+        // (throws NullPointerException, InvalidKeyException)
+        //
+        checkKeyType(key);
+
+        // Removes the (key, value) mapping in the parent HashMap
+        //
+        return dataMap.remove(Arrays.asList(key));
+!!!9901442.java!!!	putAll(inout t : Map) : void
+
+        // if t is null or empty, just return
+        //
+        if ( (t == null) || (t.size() == 0) ) {
+            return;
+        }
+
+        // Convert the values in t into an array of <tt>CompositeData</tt>
+        //
+        CompositeData[] values;
+        try {
+            values =
+                t.values().toArray(new CompositeData[t.size()]);
+        } catch (java.lang.ArrayStoreException e) {
+            throw new ClassCastException("Map argument t contains values which are not instances of <tt>CompositeData</tt>");
+        }
+
+        // Add the array of values
+        //
+        putAll(values);
+!!!9901570.java!!!	putAll(inout values : CompositeData [[]]) : void
+
+        // if values is null or empty, just return
+        //
+        if ( (values == null) || (values.length == 0) ) {
+            return;
+        }
+
+        // create the list of indexes corresponding to each value
+        List<List<?>> indexes =
+            new ArrayList<List<?>>(values.length + 1);
+
+        // Check all elements in values and build index list
+        //
+        List<?> index;
+        for (int i=0; i<values.length; i++) {
+            // check value and calculate index
+            index = checkValueAndIndex(values[i]);
+            // check index is different of those previously calculated
+            if (indexes.contains(index)) {
+                throw new KeyAlreadyExistsException("Argument elements values["+ i +"] and values["+ indexes.indexOf(index) +
+                                                    "] have the same indexes, "+
+                                                    "calculated according to this TabularData instance's tabularType.");
+            }
+            // add to index list
+            indexes.add(index);
+        }
+
+        // store all (index, value) mappings in the dataMap HashMap
+        //
+        for (int i=0; i<values.length; i++) {
+            dataMap.put(indexes.get(i), values[i]);
+        }
+!!!9901698.java!!!	clear() : void
+
+        dataMap.clear();
+!!!9901826.java!!!	size() : int
+
+        return dataMap.size();
+!!!9901954.java!!!	isEmpty() : boolean
+
+        return (this.size() == 0);
+!!!9902082.java!!!	keySet() : Set
+
+        return dataMap.keySet() ;
+!!!9902210.java!!!	values() : Collection
+
+        return Util.cast(dataMap.values());
+!!!9902338.java!!!	entrySet() : Set
+
+        return Util.cast(dataMap.entrySet());
+!!!9902466.java!!!	clone() : Object
+        try {
+            TabularDataSupport c = (TabularDataSupport) super.clone();
+            c.dataMap = new HashMap<Object,CompositeData>(c.dataMap);
+            return c;
+        }
+        catch (CloneNotSupportedException e) {
+            throw new InternalError(e.toString(), e);
+        }
+!!!9902594.java!!!	equals(inout obj : Object) : boolean
+
+        // if obj is null, return false
+        //
+        if (obj == null) {
+            return false;
+        }
+
+        // if obj is not a TabularData, return false
+        //
+        TabularData other;
+        try {
+            other = (TabularData) obj;
+        } catch (ClassCastException e) {
+            return false;
+        }
+
+        // Now, really test for equality between this TabularData implementation and the other:
+        //
+
+        // their tabularType should be equal
+        if ( ! this.getTabularType().equals(other.getTabularType()) ) {
+            return false;
+        }
+
+        // their contents should be equal:
+        // . same size
+        // . values in this instance are in the other (we know there are no duplicate elements possible)
+        // (row values comparison is enough, because keys are calculated according to tabularType)
+
+        if (this.size() != other.size()) {
+            return false;
+        }
+        for (CompositeData value : dataMap.values()) {
+            if ( ! other.containsValue(value) ) {
+                return false;
+            }
+        }
+
+        // All tests for equality were successfull
+        //
+        return true;
+!!!9902722.java!!!	hashCode() : int
+
+        int result = 0;
+
+        result += this.tabularType.hashCode();
+        for (Object value : values())
+            result += value.hashCode();
+
+        return result;
+
+!!!9902850.java!!!	toString() : String
+
+        return new StringBuilder()
+            .append(this.getClass().getName())
+            .append("(tabularType=")
+            .append(tabularType.toString())
+            .append(",contents=")
+            .append(dataMap.toString())
+            .append(")")
+            .toString();
+!!!9902978.java!!!	internalCalculateIndex(inout value : CompositeData) : List
+
+        return Collections.unmodifiableList(Arrays.asList(value.getAll(this.indexNamesArray)));
+!!!9903106.java!!!	checkKeyType(inout key : Object [[]]) : void
+
+        // Check key is neither null nor empty
+        //
+        if ( (key == null) || (key.length == 0) ) {
+            throw new NullPointerException("Argument key cannot be null or empty.");
+        }
+
+        /* Now check key is valid with tabularType index and row type definitions: */
+
+        // key[] should have the size expected for an index
+        //
+        if (key.length != this.indexNamesArray.length) {
+            throw new InvalidKeyException("Argument key's length="+ key.length +
+                                          " is different from the number of item values, which is "+ indexNamesArray.length +
+                                          ", specified for the indexing rows in this TabularData instance.");
+        }
+
+        // each element in key[] should be a value for its corresponding open type specified in rowType
+        //
+        OpenType<?> keyElementType;
+        for (int i=0; i<key.length; i++) {
+            keyElementType = tabularType.getRowType().getType(this.indexNamesArray[i]);
+            if ( (key[i] != null) && (! keyElementType.isValue(key[i])) ) {
+                throw new InvalidKeyException("Argument element key["+ i +"] is not a value for the open type expected for "+
+                                              "this element of the index, whose name is \""+ indexNamesArray[i] +
+                                              "\" and whose open type is "+ keyElementType);
+            }
+        }
+!!!9903234.java!!!	checkValueType(inout value : CompositeData) : void
+
+        // Check value is not null
+        //
+        if (value == null) {
+            throw new NullPointerException("Argument value cannot be null.");
+        }
+
+        // if value's type is not the same as this instance's row type, throw InvalidOpenTypeException
+        //
+        if (!tabularType.getRowType().isValue(value)) {
+            throw new InvalidOpenTypeException("Argument value's composite type ["+ value.getCompositeType() +
+                                               "] is not assignable to "+
+                                               "this TabularData instance's row type ["+ tabularType.getRowType() +"].");
+        }
+!!!9903362.java!!!	checkValueAndIndex(inout value : CompositeData) : List
+
+        // Check value is valid
+        //
+        checkValueType(value);
+
+        // Calculate value's index according to this instance's tabularType
+        // and check it is not already used for a mapping in the parent HashMap
+        //
+        List<?> index = internalCalculateIndex(value);
+
+        if (dataMap.containsKey(index)) {
+            throw new KeyAlreadyExistsException("Argument value's index, calculated according to this TabularData "+
+                                                "instance's tabularType, already refers to a value in this table.");
+        }
+
+        // The check is OK, so return the index
+        //
+        return index;
+!!!9903490.java!!!	readObject(inout in : ObjectInputStream) : void
+      in.defaultReadObject();
+      List<String> tmpNames = tabularType.getIndexNames();
+      indexNamesArray = tmpNames.toArray(new String[tmpNames.size()]);

@@ -1,0 +1,128 @@
+class MethodHandleProxies
+!!!7264642.java!!!	asInterfaceInstance(in intfc : Class, in target : MethodHandle) : T
+        if (!intfc.isInterface() || !Modifier.isPublic(intfc.getModifiers()))
+            throw newIllegalArgumentException("not a public interface", intfc.getName());
+        final MethodHandle mh;
+        if (System.getSecurityManager() != null) {
+            final Class<?> caller = Reflection.getCallerClass();
+            final ClassLoader ccl = caller != null ? caller.getClassLoader() : null;
+            ReflectUtil.checkProxyPackageAccess(ccl, intfc);
+            mh = ccl != null ? bindCaller(target, caller) : target;
+        } else {
+            mh = target;
+        }
+        ClassLoader proxyLoader = intfc.getClassLoader();
+        if (proxyLoader == null) {
+            ClassLoader cl = Thread.currentThread().getContextClassLoader(); // avoid use of BCP
+            proxyLoader = cl != null ? cl : ClassLoader.getSystemClassLoader();
+        }
+        final Method[] methods = getSingleNameMethods(intfc);
+        if (methods == null)
+            throw newIllegalArgumentException("not a single-method interface", intfc.getName());
+        final MethodHandle[] vaTargets = new MethodHandle[methods.length];
+        for (int i = 0; i < methods.length; i++) {
+            Method sm = methods[i];
+            MethodType smMT = MethodType.methodType(sm.getReturnType(), sm.getParameterTypes());
+            MethodHandle checkTarget = mh.asType(smMT);  // make throw WMT
+            checkTarget = checkTarget.asType(checkTarget.type().changeReturnType(Object.class));
+            vaTargets[i] = checkTarget.asSpreader(Object[].class, smMT.parameterCount());
+        }
+        final InvocationHandler ih = new InvocationHandler() {
+                private Object getArg(String name) {
+                    if ((Object)name == "getWrapperInstanceTarget")  return target;
+                    if ((Object)name == "getWrapperInstanceType")    return intfc;
+                    throw new AssertionError();
+                }
+                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                    for (int i = 0; i < methods.length; i++) {
+                        if (method.equals(methods[i]))
+                            return vaTargets[i].invokeExact(args);
+                    }
+                    if (method.getDeclaringClass() == WrapperInstance.class)
+                        return getArg(method.getName());
+                    if (isObjectMethod(method))
+                        return callObjectMethod(proxy, method, args);
+                    throw newInternalError("bad proxy method: "+method);
+                }
+            };
+
+        final Object proxy;
+        if (System.getSecurityManager() != null) {
+            // sun.invoke.WrapperInstance is a restricted interface not accessible
+            // by any non-null class loader.
+            final ClassLoader loader = proxyLoader;
+            proxy = AccessController.doPrivileged(new PrivilegedAction<Object>() {
+                public Object run() {
+                    return Proxy.newProxyInstance(
+                            loader,
+                            new Class<?>[]{ intfc, WrapperInstance.class },
+                            ih);
+                }
+            });
+        } else {
+            proxy = Proxy.newProxyInstance(proxyLoader,
+                                           new Class<?>[]{ intfc, WrapperInstance.class },
+                                           ih);
+        }
+        return intfc.cast(proxy);
+!!!7264770.java!!!	bindCaller(inout target : MethodHandle, inout hostClass : Class) : MethodHandle
+        MethodHandle cbmh = MethodHandleImpl.bindCaller(target, hostClass);
+        if (target.isVarargsCollector()) {
+            MethodType type = cbmh.type();
+            int arity = type.parameterCount();
+            return cbmh.asVarargsCollector(type.parameterType(arity-1));
+        }
+        return cbmh;
+!!!7264898.java!!!	isWrapperInstance(inout x : Object) : boolean
+        return x instanceof WrapperInstance;
+!!!7265026.java!!!	asWrapperInstance(inout x : Object) : WrapperInstance
+        try {
+            if (x != null)
+                return (WrapperInstance) x;
+        } catch (ClassCastException ex) {
+        }
+        throw newIllegalArgumentException("not a wrapper instance");
+!!!7265154.java!!!	wrapperInstanceTarget(inout x : Object) : MethodHandle
+        return asWrapperInstance(x).getWrapperInstanceTarget();
+!!!7265282.java!!!	wrapperInstanceType(inout x : Object) : Class
+        return asWrapperInstance(x).getWrapperInstanceType();
+!!!7265410.java!!!	isObjectMethod(inout m : Method) : boolean
+        switch (m.getName()) {
+        case "toString":
+            return (m.getReturnType() == String.class
+                    && m.getParameterTypes().length == 0);
+        case "hashCode":
+            return (m.getReturnType() == int.class
+                    && m.getParameterTypes().length == 0);
+        case "equals":
+            return (m.getReturnType() == boolean.class
+                    && m.getParameterTypes().length == 1
+                    && m.getParameterTypes()[0] == Object.class);
+        }
+        return false;
+!!!7265538.java!!!	callObjectMethod(inout self : Object, inout m : Method, inout args : Object [[]]) : Object
+        assert(isObjectMethod(m)) : m;
+        switch (m.getName()) {
+        case "toString":
+            return self.getClass().getName() + "@" + Integer.toHexString(self.hashCode());
+        case "hashCode":
+            return System.identityHashCode(self);
+        case "equals":
+            return (self == args[0]);
+        }
+        return null;
+!!!7265666.java!!!	getSingleNameMethods(inout intfc : Class) : Method
+        ArrayList<Method> methods = new ArrayList<Method>();
+        String uniqueName = null;
+        for (Method m : intfc.getMethods()) {
+            if (isObjectMethod(m))  continue;
+            if (!Modifier.isAbstract(m.getModifiers()))  continue;
+            String mname = m.getName();
+            if (uniqueName == null)
+                uniqueName = mname;
+            else if (!uniqueName.equals(mname))
+                return null;  // too many abstract methods
+            methods.add(m);
+        }
+        if (uniqueName == null)  return null;
+        return methods.toArray(new Method[methods.size()]);

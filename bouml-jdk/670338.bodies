@@ -1,0 +1,118 @@
+class TrailingMiscDriver
+!!!4364930.java!!!	next() : int
+            //this could for cases like <foo/>
+            //look at scanRootElementHook
+            if(fEmptyElement){
+                fEmptyElement = false;
+                return XMLEvent.END_ELEMENT;
+            }
+
+            try {
+                if(fScannerState == SCANNER_STATE_TERMINATED){
+                    return XMLEvent.END_DOCUMENT ;}
+                do {
+                    switch (fScannerState) {
+                        case SCANNER_STATE_TRAILING_MISC: {
+
+                            fEntityScanner.skipSpaces();
+                            //we should have reached the end of the document in
+                            //most cases.
+                            if(fScannerState == SCANNER_STATE_TERMINATED ){
+                                return XMLEvent.END_DOCUMENT ;
+                            }
+                            if (fEntityScanner.skipChar('<', null)) {
+                                setScannerState(SCANNER_STATE_START_OF_MARKUP);
+                            } else {
+                                setScannerState(SCANNER_STATE_CONTENT);
+                            }
+                            break;
+                        }
+                        case SCANNER_STATE_START_OF_MARKUP: {
+                            fMarkupDepth++;
+                            if (fEntityScanner.skipChar('?', null)) {
+                                setScannerState(SCANNER_STATE_PI);
+                            } else if (fEntityScanner.skipChar('!', null)) {
+                                setScannerState(SCANNER_STATE_COMMENT);
+                            } else if (fEntityScanner.skipChar('/', null)) {
+                                reportFatalError("MarkupNotRecognizedInMisc",
+                                        null);
+                            } else if (isValidNameStartChar(fEntityScanner.peekChar()) ||
+                                    isValidNameStartHighSurrogate(fEntityScanner.peekChar())) {
+                                reportFatalError("MarkupNotRecognizedInMisc",
+                                        null);
+                                scanStartElement();
+                                setScannerState(SCANNER_STATE_CONTENT);
+                            } else {
+                                reportFatalError("MarkupNotRecognizedInMisc",
+                                        null);
+                            }
+                            break;
+                        }
+                    }
+                }while(fScannerState == SCANNER_STATE_START_OF_MARKUP || fScannerState == SCANNER_STATE_TRAILING_MISC);
+                if(DEBUG_NEXT){
+                    System.out.println("State set by deciding while loop [TrailingMiscellaneous] is = " + getScannerStateName(fScannerState));
+                }
+                switch (fScannerState){
+                    case SCANNER_STATE_PI: {
+                        fContentBuffer.clear();
+                        scanPI(fContentBuffer);
+                        setScannerState(SCANNER_STATE_TRAILING_MISC);
+                        return XMLEvent.PROCESSING_INSTRUCTION ;
+                    }
+                    case SCANNER_STATE_COMMENT: {
+                        if (!fEntityScanner.skipString(COMMENTSTRING)) {
+                            reportFatalError("InvalidCommentStart", null);
+                        }
+                        scanComment();
+                        setScannerState(SCANNER_STATE_TRAILING_MISC);
+                        return XMLEvent.COMMENT;
+                    }
+                    case SCANNER_STATE_CONTENT: {
+                        int ch = fEntityScanner.peekChar();
+                        if (ch == -1) {
+                            setScannerState(SCANNER_STATE_TERMINATED);
+                            return XMLEvent.END_DOCUMENT ;
+                        } else{
+                            reportFatalError("ContentIllegalInTrailingMisc",
+                                    null);
+                            fEntityScanner.scanChar(null);
+                            setScannerState(SCANNER_STATE_TRAILING_MISC);
+                            return XMLEvent.CHARACTERS;
+                        }
+
+                    }
+                    case SCANNER_STATE_REFERENCE: {
+                        reportFatalError("ReferenceIllegalInTrailingMisc",
+                                null);
+                        setScannerState(SCANNER_STATE_TRAILING_MISC);
+                        return XMLEvent.ENTITY_REFERENCE ;
+                    }
+                    case SCANNER_STATE_TERMINATED: {
+                        //there can't be any element after SCANNER_STATE_TERMINATED or when the parser
+                        //has reached the end of document
+                        setScannerState(SCANNER_STATE_NO_SUCH_ELEMENT_EXCEPTION);
+                        //xxx what to do when the scanner has reached the terminating state.
+                        return XMLEvent.END_DOCUMENT ;
+                    }
+                    case SCANNER_STATE_NO_SUCH_ELEMENT_EXCEPTION:{
+                        throw new java.util.NoSuchElementException("No more events to be parsed");
+                    }
+                    default: throw new XNIException("Scanner State " + fScannerState + " not Recognized ");
+                }//switch
+
+            } catch (EOFException e) {
+                // NOTE: This is the only place we're allowed to reach
+                //       the real end of the document stream. Unless the
+                //       end of file was reached prematurely.
+                if (fMarkupDepth != 0) {
+                    reportFatalError("PrematureEOF", null);
+                    return -1;
+                    //throw e;
+                }
+                //System.out.println("EOFException thrown") ;
+                setScannerState(SCANNER_STATE_TERMINATED);
+            }
+
+            return XMLEvent.END_DOCUMENT;
+

@@ -1,0 +1,93 @@
+class BnM
+!!!9471490.java!!!	optimize(inout node : Pattern::Node) : Pattern::Node
+            if (!(node instanceof Slice)) {
+                return node;
+            }
+
+            int[] src = ((Slice) node).buffer;
+            int patternLength = src.length;
+            // The BM algorithm requires a bit of overhead;
+            // If the pattern is short don't use it, since
+            // a shift larger than the pattern length cannot
+            // be used anyway.
+            if (patternLength < 4) {
+                return node;
+            }
+            int i, j, k;
+            int[] lastOcc = new int[128];
+            int[] optoSft = new int[patternLength];
+            // Precalculate part of the bad character shift
+            // It is a table for where in the pattern each
+            // lower 7-bit value occurs
+            for (i = 0; i < patternLength; i++) {
+                lastOcc[src[i]&0x7F] = i + 1;
+            }
+            // Precalculate the good suffix shift
+            // i is the shift amount being considered
+NEXT:       for (i = patternLength; i > 0; i--) {
+                // j is the beginning index of suffix being considered
+                for (j = patternLength - 1; j >= i; j--) {
+                    // Testing for good suffix
+                    if (src[j] == src[j-i]) {
+                        // src[j..len] is a good suffix
+                        optoSft[j-1] = i;
+                    } else {
+                        // No match. The array has already been
+                        // filled up with correct values before.
+                        continue NEXT;
+                    }
+                }
+                // This fills up the remaining of optoSft
+                // any suffix can not have larger shift amount
+                // then its sub-suffix. Why???
+                while (j > 0) {
+                    optoSft[--j] = i;
+                }
+            }
+            // Set the guard value because of unicode compression
+            optoSft[patternLength-1] = 1;
+            if (node instanceof SliceS)
+                return new BnMS(src, lastOcc, optoSft, node.next);
+            return new BnM(src, lastOcc, optoSft, node.next);
+!!!9471618.java!!!	BnM(inout src : int [[]], inout lastOcc : int [[]], inout optoSft : int [[]], inout next : Pattern::Node)
+            this.buffer = src;
+            this.lastOcc = lastOcc;
+            this.optoSft = optoSft;
+            this.next = next;
+!!!9471746.java!!!	match(inout matcher : Matcher, in i : int, inout seq : CharSequence) : boolean
+            int[] src = buffer;
+            int patternLength = src.length;
+            int last = matcher.to - patternLength;
+
+            // Loop over all possible match positions in text
+NEXT:       while (i <= last) {
+                // Loop over pattern from right to left
+                for (int j = patternLength - 1; j >= 0; j--) {
+                    int ch = seq.charAt(i+j);
+                    if (ch != src[j]) {
+                        // Shift search to the right by the maximum of the
+                        // bad character shift and the good suffix shift
+                        i += Math.max(j + 1 - lastOcc[ch&0x7F], optoSft[j]);
+                        continue NEXT;
+                    }
+                }
+                // Entire pattern matched starting at i
+                matcher.first = i;
+                boolean ret = next.match(matcher, i + patternLength, seq);
+                if (ret) {
+                    matcher.first = i;
+                    matcher.groups[0] = matcher.first;
+                    matcher.groups[1] = matcher.last;
+                    return true;
+                }
+                i++;
+            }
+            // BnM is only used as the leading node in the unanchored case,
+            // and it replaced its Start() which always searches to the end
+            // if it doesn't find what it's looking for, so hitEnd is true.
+            matcher.hitEnd = true;
+            return false;
+!!!9471874.java!!!	study(inout info : Pattern::TreeInfo) : boolean
+            info.minLength += buffer.length;
+            info.maxValid = false;
+            return next.study(info);

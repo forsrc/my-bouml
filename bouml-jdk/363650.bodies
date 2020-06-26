@@ -1,0 +1,312 @@
+class UIDefaults
+!!!2124418.java!!!	UIDefaults()
+        this(700, .75f);
+!!!2124546.java!!!	UIDefaults(in initialCapacity : int, in loadFactor : float)
+        super(initialCapacity, loadFactor);
+        resourceCache = new HashMap<Locale, Map<String, Object>>();
+!!!2124674.java!!!	UIDefaults(inout keyValueList : Object [[]])
+        super(keyValueList.length / 2);
+        for(int i = 0; i < keyValueList.length; i += 2) {
+            super.put(keyValueList[i], keyValueList[i + 1]);
+        }
+!!!2124802.java!!!	get(inout key : Object) : Object
+        Object value = getFromHashtable( key );
+        return (value != null) ? value : getFromResourceBundle(key, null);
+!!!2124930.java!!!	getFromHashtable(in key : Object) : Object
+        /* Quickly handle the common case, without grabbing
+         * a lock.
+         */
+        Object value = super.get(key);
+        if ((value != PENDING) &&
+            !(value instanceof ActiveValue) &&
+            !(value instanceof LazyValue)) {
+            return value;
+        }
+
+        /* If the LazyValue for key is being constructed by another
+         * thread then wait and then return the new value, otherwise drop
+         * the lock and construct the ActiveValue or the LazyValue.
+         * We use the special value PENDING to mark LazyValues that
+         * are being constructed.
+         */
+        synchronized(this) {
+            value = super.get(key);
+            if (value == PENDING) {
+                do {
+                    try {
+                        this.wait();
+                    }
+                    catch (InterruptedException e) {
+                    }
+                    value = super.get(key);
+                }
+                while(value == PENDING);
+                return value;
+            }
+            else if (value instanceof LazyValue) {
+                super.put(key, PENDING);
+            }
+            else if (!(value instanceof ActiveValue)) {
+                return value;
+            }
+        }
+
+        /* At this point we know that the value of key was
+         * a LazyValue or an ActiveValue.
+         */
+        if (value instanceof LazyValue) {
+            try {
+                /* If an exception is thrown we'll just put the LazyValue
+                 * back in the table.
+                 */
+                value = ((LazyValue)value).createValue(this);
+            }
+            finally {
+                synchronized(this) {
+                    if (value == null) {
+                        super.remove(key);
+                    }
+                    else {
+                        super.put(key, value);
+                    }
+                    this.notifyAll();
+                }
+            }
+        }
+        else {
+            value = ((ActiveValue)value).createValue(this);
+        }
+
+        return value;
+!!!2125058.java!!!	get(inout key : Object, inout l : Locale) : Object
+        Object value = getFromHashtable( key );
+        return (value != null) ? value : getFromResourceBundle(key, l);
+!!!2125186.java!!!	getFromResourceBundle(inout key : Object, inout l : Locale) : Object
+
+        if( resourceBundles == null ||
+            resourceBundles.isEmpty() ||
+            !(key instanceof String) ) {
+            return null;
+        }
+
+        // A null locale means use the default locale.
+        if( l == null ) {
+            if( defaultLocale == null )
+                return null;
+            else
+                l = defaultLocale;
+        }
+
+        synchronized(this) {
+            return getResourceCache(l).get(key);
+        }
+!!!2125314.java!!!	getResourceCache(inout l : Locale) : Map
+        Map<String, Object> values = resourceCache.get(l);
+
+        if (values == null) {
+            values = new TextAndMnemonicHashMap();
+            for (int i=resourceBundles.size()-1; i >= 0; i--) {
+                String bundleName = resourceBundles.get(i);
+                try {
+                    Control c = CoreResourceBundleControl.getRBControlInstance(bundleName);
+                    ResourceBundle b;
+                    if (c != null) {
+                        b = ResourceBundle.getBundle(bundleName, l, c);
+                    } else {
+                        b = ResourceBundle.getBundle(bundleName, l);
+                    }
+                    Enumeration keys = b.getKeys();
+
+                    while (keys.hasMoreElements()) {
+                        String key = (String)keys.nextElement();
+
+                        if (values.get(key) == null) {
+                            Object value = b.getObject(key);
+
+                            values.put(key, value);
+                        }
+                    }
+                } catch( MissingResourceException mre ) {
+                    // Keep looking
+                }
+            }
+            resourceCache.put(l, values);
+        }
+        return values;
+!!!2125442.java!!!	put(inout key : Object, inout value : Object) : Object
+        Object oldValue = (value == null) ? super.remove(key) : super.put(key, value);
+        if (key instanceof String) {
+            firePropertyChange((String)key, oldValue, value);
+        }
+        return oldValue;
+!!!2125570.java!!!	putDefaults(inout keyValueList : Object [[]]) : void
+        for(int i = 0, max = keyValueList.length; i < max; i += 2) {
+            Object value = keyValueList[i + 1];
+            if (value == null) {
+                super.remove(keyValueList[i]);
+            }
+            else {
+                super.put(keyValueList[i], value);
+            }
+        }
+        firePropertyChange("UIDefaults", null, null);
+!!!2125698.java!!!	getFont(inout key : Object) : Font
+        Object value = get(key);
+        return (value instanceof Font) ? (Font)value : null;
+!!!2125826.java!!!	getFont(inout key : Object, inout l : Locale) : Font
+        Object value = get(key,l);
+        return (value instanceof Font) ? (Font)value : null;
+!!!2125954.java!!!	getColor(inout key : Object) : Color
+        Object value = get(key);
+        return (value instanceof Color) ? (Color)value : null;
+!!!2126082.java!!!	getColor(inout key : Object, inout l : Locale) : Color
+        Object value = get(key,l);
+        return (value instanceof Color) ? (Color)value : null;
+!!!2126210.java!!!	getIcon(inout key : Object) : Icon
+        Object value = get(key);
+        return (value instanceof Icon) ? (Icon)value : null;
+!!!2126338.java!!!	getIcon(inout key : Object, inout l : Locale) : Icon
+        Object value = get(key,l);
+        return (value instanceof Icon) ? (Icon)value : null;
+!!!2126466.java!!!	getBorder(inout key : Object) : Border
+        Object value = get(key);
+        return (value instanceof Border) ? (Border)value : null;
+!!!2126594.java!!!	getBorder(inout key : Object, inout l : Locale) : Border
+        Object value = get(key,l);
+        return (value instanceof Border) ? (Border)value : null;
+!!!2126722.java!!!	getString(inout key : Object) : String
+        Object value = get(key);
+        return (value instanceof String) ? (String)value : null;
+!!!2126850.java!!!	getString(inout key : Object, inout l : Locale) : String
+        Object value = get(key,l);
+        return (value instanceof String) ? (String)value : null;
+!!!2126978.java!!!	getInt(inout key : Object) : int
+        Object value = get(key);
+        return (value instanceof Integer) ? ((Integer)value).intValue() : 0;
+!!!2127106.java!!!	getInt(inout key : Object, inout l : Locale) : int
+        Object value = get(key,l);
+        return (value instanceof Integer) ? ((Integer)value).intValue() : 0;
+!!!2127234.java!!!	getBoolean(inout key : Object) : boolean
+        Object value = get(key);
+        return (value instanceof Boolean) ? ((Boolean)value).booleanValue() : false;
+!!!2127362.java!!!	getBoolean(inout key : Object, inout l : Locale) : boolean
+        Object value = get(key,l);
+        return (value instanceof Boolean) ? ((Boolean)value).booleanValue() : false;
+!!!2127490.java!!!	getInsets(inout key : Object) : Insets
+        Object value = get(key);
+        return (value instanceof Insets) ? (Insets)value : null;
+!!!2127618.java!!!	getInsets(inout key : Object, inout l : Locale) : Insets
+        Object value = get(key,l);
+        return (value instanceof Insets) ? (Insets)value : null;
+!!!2127746.java!!!	getDimension(inout key : Object) : Dimension
+        Object value = get(key);
+        return (value instanceof Dimension) ? (Dimension)value : null;
+!!!2127874.java!!!	getDimension(inout key : Object, inout l : Locale) : Dimension
+        Object value = get(key,l);
+        return (value instanceof Dimension) ? (Dimension)value : null;
+!!!2128002.java!!!	getUIClass(inout uiClassID : String, inout uiClassLoader : ClassLoader) : Class
+        try {
+            String className = (String)get(uiClassID);
+            if (className != null) {
+                ReflectUtil.checkPackageAccess(className);
+
+                Class cls = (Class)get(className);
+                if (cls == null) {
+                    if (uiClassLoader == null) {
+                        cls = SwingUtilities.loadSystemClass(className);
+                    }
+                    else {
+                        cls = uiClassLoader.loadClass(className);
+                    }
+                    if (cls != null) {
+                        // Save lookup for future use, as forName is slow.
+                        put(className, cls);
+                    }
+                }
+                return cls;
+            }
+        }
+        catch (ClassNotFoundException e) {
+            return null;
+        }
+        catch (ClassCastException e) {
+            return null;
+        }
+        return null;
+!!!2128130.java!!!	getUIClass(inout uiClassID : String) : Class
+        return getUIClass(uiClassID, null);
+!!!2128258.java!!!	getUIError(inout msg : String) : void
+        System.err.println("UIDefaults.getUI() failed: " + msg);
+        try {
+            throw new Error();
+        }
+        catch (Throwable e) {
+            e.printStackTrace();
+        }
+!!!2128386.java!!!	getUI(inout target : JComponent) : ComponentUI
+
+        Object cl = get("ClassLoader");
+        ClassLoader uiClassLoader =
+            (cl != null) ? (ClassLoader)cl : target.getClass().getClassLoader();
+        Class<? extends ComponentUI> uiClass = getUIClass(target.getUIClassID(), uiClassLoader);
+        Object uiObject = null;
+
+        if (uiClass == null) {
+            getUIError("no ComponentUI class for: " + target);
+        }
+        else {
+            try {
+                Method m = (Method)get(uiClass);
+                if (m == null) {
+                    m = uiClass.getMethod("createUI", new Class[]{JComponent.class});
+                    put(uiClass, m);
+                }
+                uiObject = MethodUtil.invoke(m, null, new Object[]{target});
+            }
+            catch (NoSuchMethodException e) {
+                getUIError("static createUI() method not found in " + uiClass);
+            }
+            catch (Exception e) {
+                getUIError("createUI() failed for " + target + " " + e);
+            }
+        }
+
+        return (ComponentUI)uiObject;
+!!!2128514.java!!!	addPropertyChangeListener(inout listener : PropertyChangeListener) : void
+        if (changeSupport == null) {
+            changeSupport = new SwingPropertyChangeSupport(this);
+        }
+        changeSupport.addPropertyChangeListener(listener);
+!!!2128642.java!!!	removePropertyChangeListener(inout listener : PropertyChangeListener) : void
+        if (changeSupport != null) {
+            changeSupport.removePropertyChangeListener(listener);
+        }
+!!!2128770.java!!!	getPropertyChangeListeners() : PropertyChangeListener
+        if (changeSupport == null) {
+            return new PropertyChangeListener[0];
+        }
+        return changeSupport.getPropertyChangeListeners();
+!!!2128898.java!!!	firePropertyChange(inout propertyName : String, inout oldValue : Object, inout newValue : Object) : void
+        if (changeSupport != null) {
+            changeSupport.firePropertyChange(propertyName, oldValue, newValue);
+        }
+!!!2129026.java!!!	addResourceBundle(inout bundleName : String) : void
+        if( bundleName == null ) {
+            return;
+        }
+        if( resourceBundles == null ) {
+            resourceBundles = new Vector<String>(5);
+        }
+        if (!resourceBundles.contains(bundleName)) {
+            resourceBundles.add( bundleName );
+            resourceCache.clear();
+        }
+!!!2129154.java!!!	removeResourceBundle(inout bundleName : String) : void
+        if( resourceBundles != null ) {
+            resourceBundles.remove( bundleName );
+        }
+        resourceCache.clear();
+!!!2129282.java!!!	setDefaultLocale(inout l : Locale) : void
+        defaultLocale = l;
+!!!2129410.java!!!	getDefaultLocale() : Locale
+        return defaultLocale;

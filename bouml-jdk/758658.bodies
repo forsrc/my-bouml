@@ -1,0 +1,180 @@
+class Canonicalizer20010315Excl
+!!!5330178.java!!!	Canonicalizer20010315Excl(inout includeComments : boolean)
+        super(includeComments);
+!!!5330306.java!!!	engineCanonicalizeSubTree(inout rootNode : Node) : byte
+        return engineCanonicalizeSubTree(rootNode, "", null);
+!!!5330434.java!!!	engineCanonicalizeSubTree(inout rootNode : Node, inout inclusiveNamespaces : String) : byte
+        return engineCanonicalizeSubTree(rootNode, inclusiveNamespaces, null);
+!!!5330562.java!!!	engineCanonicalizeSubTree(inout rootNode : Node, inout inclusiveNamespaces : String, inout excl : Node) : byte
+        inclusiveNSSet = InclusiveNamespaces.prefixStr2Set(inclusiveNamespaces);
+        return super.engineCanonicalizeSubTree(rootNode, excl);
+!!!5330690.java!!!	engineCanonicalize(inout rootNode : XMLSignatureInput, inout inclusiveNamespaces : String) : byte
+        inclusiveNSSet = InclusiveNamespaces.prefixStr2Set(inclusiveNamespaces);
+        return super.engineCanonicalize(rootNode);
+!!!5330818.java!!!	engineCanonicalizeXPathNodeSet(inout xpathNodeSet : Set, inout inclusiveNamespaces : String) : byte
+        inclusiveNSSet = InclusiveNamespaces.prefixStr2Set(inclusiveNamespaces);
+        return super.engineCanonicalizeXPathNodeSet(xpathNodeSet);
+!!!5330946.java!!!	handleAttributesSubtree(inout element : Element, inout ns : NameSpaceSymbTable) : Iterator
+        // result will contain the attrs which have to be output
+        final SortedSet<Attr> result = this.result;
+        result.clear();
+
+        // The prefix visibly utilized (in the attribute or in the name) in
+        // the element
+        SortedSet<String> visiblyUtilized = new TreeSet<String>();
+        if (inclusiveNSSet != null && !inclusiveNSSet.isEmpty()) {
+            visiblyUtilized.addAll(inclusiveNSSet);
+        }
+
+        if (element.hasAttributes()) {
+            NamedNodeMap attrs = element.getAttributes();
+            int attrsLength = attrs.getLength();
+            for (int i = 0; i < attrsLength; i++) {
+                Attr attribute = (Attr) attrs.item(i);
+                String NName = attribute.getLocalName();
+                String NNodeValue = attribute.getNodeValue();
+
+                if (!XMLNS_URI.equals(attribute.getNamespaceURI())) {
+                    // Not a namespace definition.
+                    // The Element is output element, add the prefix (if used) to
+                    // visiblyUtilized
+                    String prefix = attribute.getPrefix();
+                    if (prefix != null && !(prefix.equals(XML) || prefix.equals(XMLNS))) {
+                        visiblyUtilized.add(prefix);
+                    }
+                    // Add to the result.
+                    result.add(attribute);
+                } else if (!(XML.equals(NName) && XML_LANG_URI.equals(NNodeValue))
+                    && ns.addMapping(NName, NNodeValue, attribute)
+                    && C14nHelper.namespaceIsRelative(NNodeValue)) {
+                    // The default mapping for xml must not be output.
+                    // New definition check if it is relative.
+                    Object exArgs[] = {element.getTagName(), NName, attribute.getNodeValue()};
+                    throw new CanonicalizationException(
+                        "c14n.Canonicalizer.RelativeNamespace", exArgs
+                    );
+                }
+            }
+        }
+        String prefix = null;
+        if (element.getNamespaceURI() != null
+            && !(element.getPrefix() == null || element.getPrefix().length() == 0)) {
+            prefix = element.getPrefix();
+        } else {
+            prefix = XMLNS;
+        }
+        visiblyUtilized.add(prefix);
+
+        for (String s : visiblyUtilized) {
+            Attr key = ns.getMapping(s);
+            if (key != null) {
+                result.add(key);
+            }
+        }
+
+        return result.iterator();
+!!!5331074.java!!!	handleAttributes(inout element : Element, inout ns : NameSpaceSymbTable) : Iterator
+        // result will contain the attrs which have to be output
+        final SortedSet<Attr> result = this.result;
+        result.clear();
+
+        // The prefix visibly utilized (in the attribute or in the name) in
+        // the element
+        Set<String> visiblyUtilized = null;
+        // It's the output selected.
+        boolean isOutputElement = isVisibleDO(element, ns.getLevel()) == 1;
+        if (isOutputElement) {
+            visiblyUtilized = new TreeSet<String>();
+            if (inclusiveNSSet != null && !inclusiveNSSet.isEmpty()) {
+                visiblyUtilized.addAll(inclusiveNSSet);
+            }
+        }
+
+        if (element.hasAttributes()) {
+            NamedNodeMap attrs = element.getAttributes();
+            int attrsLength = attrs.getLength();
+            for (int i = 0; i < attrsLength; i++) {
+                Attr attribute = (Attr) attrs.item(i);
+
+                String NName = attribute.getLocalName();
+                String NNodeValue = attribute.getNodeValue();
+
+                if (!XMLNS_URI.equals(attribute.getNamespaceURI())) {
+                    if (isVisible(attribute) && isOutputElement) {
+                        // The Element is output element, add the prefix (if used)
+                        // to visibyUtilized
+                        String prefix = attribute.getPrefix();
+                        if (prefix != null && !(prefix.equals(XML) || prefix.equals(XMLNS))) {
+                            visiblyUtilized.add(prefix);
+                        }
+                        // Add to the result.
+                        result.add(attribute);
+                    }
+                } else if (isOutputElement && !isVisible(attribute) && !XMLNS.equals(NName)) {
+                    ns.removeMappingIfNotRender(NName);
+                } else {
+                    if (!isOutputElement && isVisible(attribute)
+                        && inclusiveNSSet.contains(NName)
+                        && !ns.removeMappingIfRender(NName)) {
+                        Node n = ns.addMappingAndRender(NName, NNodeValue, attribute);
+                        if (n != null) {
+                            result.add((Attr)n);
+                            if (C14nHelper.namespaceIsRelative(attribute)) {
+                                Object exArgs[] = { element.getTagName(), NName, attribute.getNodeValue() };
+                                throw new CanonicalizationException(
+                                    "c14n.Canonicalizer.RelativeNamespace", exArgs
+                                );
+                            }
+                        }
+                    }
+
+                    if (ns.addMapping(NName, NNodeValue, attribute)
+                        && C14nHelper.namespaceIsRelative(NNodeValue)) {
+                        // New definition check if it is relative
+                        Object exArgs[] = { element.getTagName(), NName, attribute.getNodeValue() };
+                        throw new CanonicalizationException(
+                            "c14n.Canonicalizer.RelativeNamespace", exArgs
+                        );
+                    }
+                }
+            }
+        }
+
+        if (isOutputElement) {
+            // The element is visible, handle the xmlns definition
+            Attr xmlns = element.getAttributeNodeNS(XMLNS_URI, XMLNS);
+            if (xmlns != null && !isVisible(xmlns)) {
+                // There is a definition but the xmlns is not selected by the
+                // xpath. then xmlns=""
+                ns.addMapping(XMLNS, "", getNullNode(xmlns.getOwnerDocument()));
+            }
+
+            String prefix = null;
+            if (element.getNamespaceURI() != null
+                && !(element.getPrefix() == null || element.getPrefix().length() == 0)) {
+                prefix = element.getPrefix();
+            } else {
+                prefix = XMLNS;
+            }
+            visiblyUtilized.add(prefix);
+
+            for (String s : visiblyUtilized) {
+                Attr key = ns.getMapping(s);
+                if (key != null) {
+                    result.add(key);
+                }
+            }
+        }
+
+        return result.iterator();
+!!!5331202.java!!!	circumventBugIfNeeded(inout input : XMLSignatureInput) : void
+        if (!input.isNeedsToBeExpanded() || inclusiveNSSet.isEmpty() || inclusiveNSSet.isEmpty()) {
+            return;
+        }
+        Document doc = null;
+        if (input.getSubNode() != null) {
+            doc = XMLUtils.getOwnerDocument(input.getSubNode());
+        } else {
+            doc = XMLUtils.getOwnerDocument(input.getNodeSet());
+        }
+        XMLUtils.circumventBug2650(doc);

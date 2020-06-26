@@ -1,0 +1,322 @@
+class CharInfo
+!!!5557250.java!!!	CharInfo(inout entitiesResource : String, inout method : String)
+        this(entitiesResource, method, false);
+!!!5557378.java!!!	CharInfo(inout entitiesResource : String, inout method : String, inout internal : boolean)
+        ResourceBundle entities = null;
+        boolean noExtraEntities = true;
+
+        // Make various attempts to interpret the parameter as a properties
+        // file or resource file, as follows:
+        //
+        //   1) attempt to load .properties file using ResourceBundle
+        //   2) try using the class loader to find the specified file a resource
+        //      file
+        //   3) try treating the resource a URI
+
+        try {
+            if (internal) {
+                // Load entity property files by using PropertyResourceBundle,
+                // cause of security issure for applets
+                entities = PropertyResourceBundle.getBundle(entitiesResource);
+            } else {
+                ClassLoader cl = SecuritySupport.getContextClassLoader();
+                if (cl != null) {
+                    entities = PropertyResourceBundle.getBundle(entitiesResource,
+                            Locale.getDefault(), cl);
+                }
+            }
+        } catch (Exception e) {}
+
+        if (entities != null) {
+            Enumeration keys = entities.getKeys();
+            while (keys.hasMoreElements()){
+                String name = (String) keys.nextElement();
+                String value = entities.getString(name);
+                int code = Integer.parseInt(value);
+                defineEntity(name, (char) code);
+                if (extraEntity(code))
+                    noExtraEntities = false;
+            }
+            set(S_LINEFEED);
+            set(S_CARRIAGERETURN);
+        } else {
+            InputStream is = null;
+            String err = null;
+
+            // Load user specified resource file by using URL loading, it
+            // requires a valid URI as parameter
+            try {
+                if (internal) {
+                    is = CharInfo.class.getResourceAsStream(entitiesResource);
+                } else {
+                    ClassLoader cl = SecuritySupport.getContextClassLoader();
+                    if (cl != null) {
+                        try {
+                            is = cl.getResourceAsStream(entitiesResource);
+                        } catch (Exception e) {
+                            err = e.getMessage();
+                        }
+                    }
+
+                    if (is == null) {
+                        try {
+                            URL url = new URL(entitiesResource);
+                            is = url.openStream();
+                        } catch (Exception e) {
+                            err = e.getMessage();
+                        }
+                    }
+                }
+
+                if (is == null) {
+                    throw new RuntimeException(
+                        Utils.messages.createMessage(
+                            MsgKey.ER_RESOURCE_COULD_NOT_FIND,
+                            new Object[] {entitiesResource, err}));
+                }
+
+                // Fix Bugzilla#4000: force reading in UTF-8
+                //  This creates the de facto standard that Xalan's resource
+                //  files must be encoded in UTF-8. This should work in all
+                // JVMs.
+                //
+                // %REVIEW% KNOWN ISSUE: IT FAILS IN MICROSOFT VJ++, which
+                // didn't implement the UTF-8 encoding. Theoretically, we should
+                // simply let it fail in that case, since the JVM is obviously
+                // broken if it doesn't support such a basic standard.  But
+                // since there are still some users attempting to use VJ++ for
+                // development, we have dropped in a fallback which makes a
+                // second attempt using the platform's default encoding. In VJ++
+                // this is apparently ASCII, which is subset of UTF-8... and
+                // since the strings we'll be reading here are also primarily
+                // limited to the 7-bit ASCII range (at least, in English
+                // versions of Xalan), this should work well enough to keep us
+                // on the air until we're ready to officially decommit from
+                // VJ++.
+
+                BufferedReader reader;
+                try {
+                    reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+                } catch (UnsupportedEncodingException e) {
+                    reader = new BufferedReader(new InputStreamReader(is));
+                }
+
+                String line = reader.readLine();
+
+                while (line != null) {
+                    if (line.length() == 0 || line.charAt(0) == '#') {
+                        line = reader.readLine();
+
+                        continue;
+                    }
+
+                    int index = line.indexOf(' ');
+
+                    if (index > 1) {
+                        String name = line.substring(0, index);
+
+                        ++index;
+
+                        if (index < line.length()) {
+                            String value = line.substring(index);
+                            index = value.indexOf(' ');
+
+                            if (index > 0) {
+                                value = value.substring(0, index);
+                            }
+
+                            int code = Integer.parseInt(value);
+
+                            defineEntity(name, (char) code);
+                            if (extraEntity(code))
+                                noExtraEntities = false;
+                        }
+                    }
+
+                    line = reader.readLine();
+                }
+
+                is.close();
+                set(S_LINEFEED);
+                set(S_CARRIAGERETURN);
+            } catch (Exception e) {
+                throw new RuntimeException(
+                    Utils.messages.createMessage(
+                        MsgKey.ER_RESOURCE_COULD_NOT_LOAD,
+                        new Object[] { entitiesResource,
+                                       e.toString(),
+                                       entitiesResource,
+                                       e.toString()}));
+            } finally {
+                if (is != null) {
+                    try {
+                        is.close();
+                    } catch (Exception except) {}
+                }
+            }
+        }
+
+        /* initialize the array isCleanTextASCII[] with a cache of values
+         * for use by ToStream.character(char[], int , int)
+         * and the array isSpecialTextASCII[] with the opposite values
+         * (all in the name of performance!)
+         */
+        for (int ch = 0; ch <ASCII_MAX; ch++)
+        if((((0x20 <= ch || (0x0A == ch || 0x0D == ch || 0x09 == ch)))
+             && (!get(ch))) || ('"' == ch))
+        {
+            isCleanTextASCII[ch] = true;
+            isSpecialTextASCII[ch] = false;
+        }
+        else {
+            isCleanTextASCII[ch] = false;
+            isSpecialTextASCII[ch] = true;
+        }
+
+
+
+        onlyQuotAmpLtGt = noExtraEntities;
+
+        // initialize the array with a cache of the BitSet values
+        for (int i=0; i<ASCII_MAX; i++)
+            isSpecialAttrASCII[i] = get(i);
+
+        /* Now that we've used get(ch) just above to initialize the
+         * two arrays we will change by adding a tab to the set of
+         * special chars for XML (but not HTML!).
+         * We do this because a tab is always a
+         * special character in an XML attribute,
+         * but only a special character in XML text
+         * if it has an entity defined for it.
+         * This is the reason for this delay.
+         */
+        if (Method.XML.equals(method))
+        {
+            isSpecialAttrASCII[S_HORIZONAL_TAB] = true;
+        }
+!!!5557506.java!!!	defineEntity(inout name : String, in value : char) : void
+        StringBuilder sb = new StringBuilder("&");
+        sb.append(name);
+        sb.append(';');
+        String entityString = sb.toString();
+
+        defineChar2StringMapping(entityString, value);
+!!!5557634.java!!!	getOutputStringForChar(in value : char) : String
+        CharKey charKey = new CharKey();
+        charKey.setChar(value);
+        return (String) m_charToString.get(charKey);
+!!!5557762.java!!!	isSpecialAttrChar(in value : int) : boolean
+        // for performance try the values in the boolean array first,
+        // this is faster access than the BitSet for common ASCII values
+
+        if (value < ASCII_MAX)
+            return isSpecialAttrASCII[value];
+
+        // rather than java.util.BitSet, our private
+        // implementation is faster (and less general).
+        return get(value);
+!!!5557890.java!!!	isSpecialTextChar(in value : int) : boolean
+        // for performance try the values in the boolean array first,
+        // this is faster access than the BitSet for common ASCII values
+
+        if (value < ASCII_MAX)
+            return isSpecialTextASCII[value];
+
+        // rather than java.util.BitSet, our private
+        // implementation is faster (and less general).
+        return get(value);
+!!!5558018.java!!!	isTextASCIIClean(in value : int) : boolean
+        return isCleanTextASCII[value];
+!!!5558146.java!!!	getCharInfoInternal(inout entitiesFileName : String, inout method : String) : CharInfo
+        CharInfo charInfo = (CharInfo) m_getCharInfoCache.get(entitiesFileName);
+        if (charInfo != null) {
+            return charInfo;
+        }
+
+        charInfo = new CharInfo(entitiesFileName, method, true);
+        m_getCharInfoCache.put(entitiesFileName, charInfo);
+        return charInfo;
+!!!5558274.java!!!	getCharInfo(inout entitiesFileName : String, inout method : String) : CharInfo
+        try {
+            return new CharInfo(entitiesFileName, method, false);
+        } catch (Exception e) {}
+
+        String absoluteEntitiesFileName;
+
+        if (entitiesFileName.indexOf(':') < 0) {
+            absoluteEntitiesFileName =
+                SystemIDResolver.getAbsoluteURIFromRelative(entitiesFileName);
+        } else {
+            try {
+                absoluteEntitiesFileName =
+                    SystemIDResolver.getAbsoluteURI(entitiesFileName, null);
+            } catch (TransformerException te) {
+                throw new WrappedRuntimeException(te);
+            }
+        }
+
+        return new CharInfo(absoluteEntitiesFileName, method, false);
+!!!5558402.java!!!	arrayIndex(in i : int) : int
+        return (i >> SHIFT_PER_WORD);
+!!!5558530.java!!!	bit(in i : int) : int
+        int ret = (1 << (i & LOW_ORDER_BITMASK));
+        return ret;
+!!!5558658.java!!!	createEmptySetOfIntegers(in max : int) : int
+        firstWordNotUsed = 0; // an optimization
+
+        int[] arr = new int[arrayIndex(max - 1) + 1];
+            return arr;
+
+!!!5558786.java!!!	set(in i : int) : void
+        setASCIIdirty(i);
+
+        int j = (i >> SHIFT_PER_WORD); // this word is used
+        int k = j + 1;
+
+        if(firstWordNotUsed < k) // for optimization purposes.
+            firstWordNotUsed = k;
+
+        array_of_bits[j] |= (1 << (i & LOW_ORDER_BITMASK));
+!!!5558914.java!!!	get(in i : int) : boolean
+
+        boolean in_the_set = false;
+        int j = (i >> SHIFT_PER_WORD); // wordIndex(i)
+        // an optimization here, ... a quick test to see
+        // if this integer is beyond any of the words in use
+        if(j < firstWordNotUsed)
+            in_the_set = (array_of_bits[j] &
+                          (1 << (i & LOW_ORDER_BITMASK))
+            ) != 0;  // 0L for 64 bit words
+        return in_the_set;
+!!!5559042.java!!!	extraEntity(in entityValue : int) : boolean
+        boolean extra = false;
+        if (entityValue < 128)
+        {
+            switch (entityValue)
+            {
+                case 34 : // quot
+                case 38 : // amp
+                case 60 : // lt
+                case 62 : // gt
+                    break;
+                default : // other entity in range 0 to 127
+                    extra = true;
+            }
+        }
+        return extra;
+!!!5559170.java!!!	setASCIIdirty(in j : int) : void
+        if (0 <= j && j < ASCII_MAX)
+        {
+            isCleanTextASCII[j] = false;
+            isSpecialTextASCII[j] = true;
+        }
+!!!5559298.java!!!	setASCIIclean(in j : int) : void
+        if (0 <= j && j < ASCII_MAX)
+        {
+            isCleanTextASCII[j] = true;
+            isSpecialTextASCII[j] = false;
+        }
+!!!5559426.java!!!	defineChar2StringMapping(inout outputString : String, in inputChar : char) : void
+        CharKey character = new CharKey(inputChar);
+        m_charToString.put(character, outputString);
+        set(inputChar);

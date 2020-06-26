@@ -1,0 +1,740 @@
+class XSAttributeChecker
+!!!4802946.java!!!	XSAttributeChecker(inout schemaHandler : XSDHandler)
+        fSchemaHandler = schemaHandler;
+!!!4803074.java!!!	reset(inout symbolTable : SymbolTable) : void
+        fSymbolTable = symbolTable;
+        fNonSchemaAttrs.clear();
+!!!4803202.java!!!	checkAttributes(inout element : Element, inout isGlobal : boolean, inout schemaDoc : XSDocumentInfo) : Object
+        return checkAttributes(element, isGlobal, schemaDoc, false);
+!!!4803330.java!!!	checkAttributes(inout element : Element, inout isGlobal : boolean, inout schemaDoc : XSDocumentInfo, inout enumAsQName : boolean) : Object
+        if (element == null)
+            return null;
+
+        // get all attributes
+        Attr[] attrs = DOMUtil.getAttrs(element);
+
+        // update NamespaceSupport
+        resolveNamespace(element, attrs, schemaDoc.fNamespaceSupport);
+
+        String uri = DOMUtil.getNamespaceURI(element);
+        String elName = DOMUtil.getLocalName(element);
+
+        if (!SchemaSymbols.URI_SCHEMAFORSCHEMA.equals(uri)) {
+            reportSchemaError("s4s-elt-schema-ns", new Object[] {elName}, element);
+        }
+
+        Map eleAttrsMap = fEleAttrsMapG;
+        String lookupName = elName;
+
+        // REVISIT: only local element and attribute are different from others.
+        //          it's possible to have either name or ref. all the others
+        //          are only allowed to have one of name or ref, or neither of them.
+        //          we'd better move such checking to the traverser.
+        if (!isGlobal) {
+            eleAttrsMap = fEleAttrsMapL;
+            if (elName.equals(SchemaSymbols.ELT_ELEMENT)) {
+                if (DOMUtil.getAttr(element, SchemaSymbols.ATT_REF) != null)
+                    lookupName = ELEMENT_R;
+                else
+                    lookupName = ELEMENT_N;
+            } else if (elName.equals(SchemaSymbols.ELT_ATTRIBUTE)) {
+                if (DOMUtil.getAttr(element, SchemaSymbols.ATT_REF) != null)
+                    lookupName = ATTRIBUTE_R;
+                else
+                    lookupName = ATTRIBUTE_N;
+            }
+        }
+
+        // get desired attribute list of this element
+        Container attrList = (Container)eleAttrsMap.get(lookupName);
+        if (attrList == null) {
+            // should never gets here.
+            // when this method is called, the call already knows that
+            // the element can appear.
+            reportSchemaError ("s4s-elt-invalid", new Object[] {elName}, element);
+            return null;
+        }
+
+        Object[] attrValues = getAvailableArray();
+        long fromDefault = 0;
+
+        // clear the "seen" flag.
+        System.arraycopy(fSeenTemp, 0, fSeen, 0, ATTIDX_COUNT);
+
+        // traverse all attributes
+        int length = attrs.length;
+        Attr sattr = null;
+        for (int i = 0; i < length; i++) {
+            sattr = attrs[i];
+            // get the attribute name/value
+            //String attrName = DOMUtil.getLocalName(sattr);
+            String attrName = sattr.getName();
+            String attrURI = DOMUtil.getNamespaceURI(sattr);
+            String attrVal = DOMUtil.getValue(sattr);
+
+            if (attrName.startsWith("xml")) {
+                String attrPrefix = DOMUtil.getPrefix(sattr);
+                // we don't want to add namespace declarations to the non-schema attributes
+                if ("xmlns".equals(attrPrefix) || "xmlns".equals(attrName)) {
+                    continue;
+                }
+                // Both <schema> and <documentation> may have an xml:lang attribute.
+                // Set the URI for this attribute to null so that we process it
+                // like any other schema attribute.
+                else if (SchemaSymbols.ATT_XML_LANG.equals(attrName) &&
+                        (SchemaSymbols.ELT_SCHEMA.equals(elName) ||
+                                SchemaSymbols.ELT_DOCUMENTATION.equals(elName))) {
+                    attrURI = null;
+                }
+            }
+
+            // for attributes with namespace prefix
+            //
+            if (attrURI != null && attrURI.length() != 0) {
+                // attributes with schema namespace are not allowed
+                // and not allowed on "document" and "appInfo"
+                if (attrURI.equals(SchemaSymbols.URI_SCHEMAFORSCHEMA)) {
+                    reportSchemaError ("s4s-att-not-allowed", new Object[] {elName, attrName}, element);
+                }
+                else {
+                    if(attrValues[ATTIDX_NONSCHEMA] == null) {
+                        // these are usually small
+                        attrValues[ATTIDX_NONSCHEMA] = new Vector(4,2);
+                    }
+                    ((Vector)attrValues[ATTIDX_NONSCHEMA]).addElement(attrName);
+                    ((Vector)attrValues[ATTIDX_NONSCHEMA]).addElement(attrVal);
+                    // for attributes from other namespace
+                    // store them in a list, and TRY to validate them after
+                    // schema traversal (because it's "lax")
+                    //otherValues.put(attrName, attrVal);
+                    // REVISIT:  actually use this some day...
+                    // String attrRName = attrURI + "," + attrName;
+                    // Vector values = (Vector)fNonSchemaAttrs.get(attrRName);
+                    // if (values == null) {
+                        // values = new Vector();
+                        // values.addElement(attrName);
+                        // values.addElement(elName);
+                        // values.addElement(attrVal);
+                        // fNonSchemaAttrs.put(attrRName, values);
+                    // }
+                    // else {
+                        // values.addElement(elName);
+                        // values.addElement(attrVal);
+                    // }
+                }
+                continue;
+            }
+
+            // check whether this attribute is allowed
+            OneAttr oneAttr = attrList.get(attrName);
+            if (oneAttr == null) {
+                reportSchemaError ("s4s-att-not-allowed",
+                                   new Object[] {elName, attrName},
+                                   element);
+                continue;
+            }
+
+            // we've seen this attribute
+            fSeen[oneAttr.valueIndex] = true;
+
+            // check the value against the datatype
+            try {
+                // no checking on string needs to be done here.
+                // no checking on xpath needs to be done here.
+                // xpath values are validated in xpath parser
+                if (oneAttr.dvIndex >= 0) {
+                    if (oneAttr.dvIndex != DT_STRING &&
+                        oneAttr.dvIndex != DT_XPATH &&
+                        oneAttr.dvIndex != DT_XPATH1) {
+                        XSSimpleType dv = fExtraDVs[oneAttr.dvIndex];
+                        Object avalue = dv.validate(attrVal, schemaDoc.fValidationContext, null);
+                        // kludge to handle chameleon includes/redefines...
+                        if (oneAttr.dvIndex == DT_QNAME) {
+                            QName qname = (QName)avalue;
+                            if(qname.prefix == XMLSymbols.EMPTY_STRING && qname.uri == null && schemaDoc.fIsChameleonSchema)
+                                qname.uri = schemaDoc.fTargetNamespace;
+                        }
+                        attrValues[oneAttr.valueIndex] = avalue;
+                    } else {
+                        attrValues[oneAttr.valueIndex] = attrVal;
+                    }
+                }
+                else {
+                    attrValues[oneAttr.valueIndex] = validate(attrValues, attrName, attrVal, oneAttr.dvIndex, schemaDoc);
+                }
+            } catch (InvalidDatatypeValueException ide) {
+                reportSchemaError ("s4s-att-invalid-value",
+                                   new Object[] {elName, attrName, ide.getMessage()},
+                                   element);
+                if (oneAttr.dfltValue != null)
+                    //attrValues.put(attrName, oneAttr.dfltValue);
+                    attrValues[oneAttr.valueIndex] = oneAttr.dfltValue;
+            }
+
+            // For "enumeration", and type is possible to be a QName, we need
+            // to return namespace context for later QName resolution.
+            if (elName.equals(SchemaSymbols.ELT_ENUMERATION) && enumAsQName) {
+                attrValues[ATTIDX_ENUMNSDECLS] = new SchemaNamespaceSupport(schemaDoc.fNamespaceSupport);
+            }
+        }
+
+        // apply default values
+        OneAttr[] reqAttrs = attrList.values;
+        for (int i = 0; i < reqAttrs.length; i++) {
+            OneAttr oneAttr = reqAttrs[i];
+
+            // if the attribute didn't apprear, and
+            // if the attribute is optional with default value, apply it
+            if (oneAttr.dfltValue != null && !fSeen[oneAttr.valueIndex]) {
+                //attrValues.put(oneAttr.name, oneAttr.dfltValue);
+                attrValues[oneAttr.valueIndex] = oneAttr.dfltValue;
+                fromDefault |= (1<<oneAttr.valueIndex);
+            }
+        }
+
+        attrValues[ATTIDX_FROMDEFAULT] = new Long(fromDefault);
+        //attrValues[ATTIDX_OTHERVALUES] = otherValues;
+
+        // Check that minOccurs isn't greater than maxOccurs.
+        // p-props-correct 2.1
+        if (attrValues[ATTIDX_MAXOCCURS] != null) {
+            int min = ((XInt)attrValues[ATTIDX_MINOCCURS]).intValue();
+            int max = ((XInt)attrValues[ATTIDX_MAXOCCURS]).intValue();
+            if (max != SchemaSymbols.OCCURRENCE_UNBOUNDED) {
+
+                // maxOccurLimit is only check in secure mode
+                if (fSchemaHandler.fSecurityManager != null) {
+                    String localName = element.getLocalName();
+
+                // The maxOccurs restriction no longer applies to elements
+                    // and wildcards in a sequence in which they are the only
+                    // particle. These are now validated using a constant
+                    // space algorithm. The restriction still applies to all
+                    // other cases.
+
+                    // Determine if constant-space algorithm can be applied
+                    final boolean optimize =
+                            (localName.equals("element") || localName.equals("any")) &&
+                            (element.getNextSibling() == null) &&
+                            (element.getPreviousSibling() == null) &&
+                            (element.getParentNode().getLocalName().equals("sequence"));
+
+                    if (!optimize) {
+                    //Revisit :: IMO this is not right place to check
+                    // maxOccurNodeLimit.
+                    int maxOccurNodeLimit = fSchemaHandler.fSecurityManager.getLimit(XMLSecurityManager.Limit.MAX_OCCUR_NODE_LIMIT);
+                    if (max > maxOccurNodeLimit && !fSchemaHandler.fSecurityManager.isNoLimit(maxOccurNodeLimit)) {
+                        reportSchemaFatalError("MaxOccurLimit", new Object[] {new Integer(maxOccurNodeLimit)}, element);
+
+                        // reset max values in case processing continues on error
+                        attrValues[ATTIDX_MAXOCCURS] = fXIntPool.getXInt(maxOccurNodeLimit);
+                                                //new Integer(maxOccurNodeLimit);
+                        max = maxOccurNodeLimit;
+                    }
+                }
+                }
+
+                if (min > max) {
+                    reportSchemaError ("p-props-correct.2.1",
+                                       new Object[] {elName, attrValues[ATTIDX_MINOCCURS], attrValues[ATTIDX_MAXOCCURS]},
+                                       element);
+                    attrValues[ATTIDX_MINOCCURS] = attrValues[ATTIDX_MAXOCCURS];
+                }
+            }
+        }
+
+        return attrValues;
+!!!4803458.java!!!	validate(inout attrValues : Object [[]], inout attr : String, inout ivalue : String, in dvIndex : int, inout schemaDoc : XSDocumentInfo) : Object
+        if (ivalue == null)
+            return null;
+
+        // To validate these types, we don't actually need to normalize the
+        // strings. We only need to remove the whitespace from both ends.
+        // In some special cases (list types), StringTokenizer can correctly
+        // process the un-normalized whitespace.
+
+        String value = XMLChar.trim(ivalue);
+        Object retValue = null;
+        Vector memberType;
+        int choice;
+
+        switch (dvIndex) {
+        case DT_BOOLEAN:
+            if (value.equals(SchemaSymbols.ATTVAL_FALSE) ||
+                value.equals(SchemaSymbols.ATTVAL_FALSE_0)) {
+                retValue = Boolean.FALSE;
+            } else if (value.equals(SchemaSymbols.ATTVAL_TRUE) ||
+                       value.equals(SchemaSymbols.ATTVAL_TRUE_1)) {
+                retValue = Boolean.TRUE;
+            } else {
+                throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.1", new Object[]{value, "boolean"});
+            }
+            break;
+        case DT_NONNEGINT:
+            try {
+                if (value.length() > 0 && value.charAt(0) == '+')
+                    value = value.substring(1);
+                retValue = fXIntPool.getXInt(Integer.parseInt(value));
+            } catch (NumberFormatException e) {
+                throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.1", new Object[]{value, "nonNegativeInteger"});
+            }
+            if (((XInt)retValue).intValue() < 0)
+                throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.1", new Object[]{value, "nonNegativeInteger"});
+            break;
+        case DT_POSINT:
+            try {
+                if (value.length() > 0 && value.charAt(0) == '+')
+                    value = value.substring(1);
+                retValue = fXIntPool.getXInt(Integer.parseInt(value));
+            } catch (NumberFormatException e) {
+                throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.1", new Object[]{value, "positiveInteger"});
+            }
+            if (((XInt)retValue).intValue() <= 0)
+                throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.1", new Object[]{value, "positiveInteger"});
+            break;
+        case DT_BLOCK:
+            // block = (#all | List of (extension | restriction | substitution))
+            choice = 0;
+            if (value.equals (SchemaSymbols.ATTVAL_POUNDALL)) {
+                choice = XSConstants.DERIVATION_SUBSTITUTION|XSConstants.DERIVATION_EXTENSION|
+                         XSConstants.DERIVATION_RESTRICTION;
+            }
+            else {
+                StringTokenizer t = new StringTokenizer(value, " \n\t\r");
+                while (t.hasMoreTokens()) {
+                    String token = t.nextToken ();
+
+                    if (token.equals (SchemaSymbols.ATTVAL_EXTENSION)) {
+                        choice |= XSConstants.DERIVATION_EXTENSION;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_RESTRICTION)) {
+                        choice |= XSConstants.DERIVATION_RESTRICTION;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_SUBSTITUTION)) {
+                        choice |= XSConstants.DERIVATION_SUBSTITUTION;
+                    }
+                    else {
+                        throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.3", new Object[]{value, "(#all | List of (extension | restriction | substitution))"});
+                    }
+                }
+            }
+            retValue = fXIntPool.getXInt(choice);
+            break;
+        case DT_BLOCK1:
+        case DT_FINAL:
+            // block = (#all | List of (extension | restriction))
+            // final = (#all | List of (extension | restriction))
+            choice = 0;
+            if (value.equals (SchemaSymbols.ATTVAL_POUNDALL)) {
+                //choice = SchemaSymbols.EXTENSION|SchemaSymbols.RESTRICTION;
+                // REVISIT: if #all, then make the result the combination of
+                //          everything: substitution/externsion/restriction/list/union.
+                //          would this be a problem?
+                // the reason doing so is that when final/blockFinal on <schema>
+                // is #all, it's not always the same as the conbination of those
+                // values allowed by final/blockFinal.
+                // for example, finalDefault="#all" is not always the same as
+                // finalDefault="extension restriction".
+                // if finalDefault="#all", final on any simple type would be
+                // "extension restriction list union".
+                choice = XSConstants.DERIVATION_SUBSTITUTION|XSConstants.DERIVATION_EXTENSION|
+                         XSConstants.DERIVATION_RESTRICTION|XSConstants.DERIVATION_LIST|
+                         XSConstants.DERIVATION_UNION;
+            }
+            else {
+                StringTokenizer t = new StringTokenizer(value, " \n\t\r");
+                while (t.hasMoreTokens()) {
+                    String token = t.nextToken ();
+
+                    if (token.equals (SchemaSymbols.ATTVAL_EXTENSION)) {
+                        choice |= XSConstants.DERIVATION_EXTENSION;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_RESTRICTION)) {
+                        choice |= XSConstants.DERIVATION_RESTRICTION;
+                    }
+                    else {
+                        throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.3", new Object[]{value, "(#all | List of (extension | restriction))"});
+                    }
+                }
+            }
+            retValue = fXIntPool.getXInt(choice);
+            break;
+        case DT_FINAL1:
+            // final = (#all | List of (list | union | restriction))
+            choice = 0;
+            if (value.equals (SchemaSymbols.ATTVAL_POUNDALL)) {
+                //choice = SchemaSymbols.RESTRICTION|SchemaSymbols.LIST|
+                //         SchemaSymbols.UNION;
+                // REVISIT: if #all, then make the result the combination of
+                //          everything: substitution/externsion/restriction/list/union.
+                //          would this be a problem?
+                // same reason as above DT_BLOCK1/DT_FINAL
+                choice = XSConstants.DERIVATION_SUBSTITUTION|XSConstants.DERIVATION_EXTENSION|
+                         XSConstants.DERIVATION_RESTRICTION|XSConstants.DERIVATION_LIST|
+                         XSConstants.DERIVATION_UNION;
+            }
+            else {
+                StringTokenizer t = new StringTokenizer(value, " \n\t\r");
+                while (t.hasMoreTokens()) {
+                    String token = t.nextToken ();
+
+                    if (token.equals (SchemaSymbols.ATTVAL_LIST)) {
+                        choice |= XSConstants.DERIVATION_LIST;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_UNION)) {
+                        choice |= XSConstants.DERIVATION_UNION;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_RESTRICTION)) {
+                        choice |= XSConstants.DERIVATION_RESTRICTION;
+                    }
+                    else {
+                        throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.3", new Object[]{value, "(#all | List of (list | union | restriction))"});
+                    }
+                }
+            }
+            retValue = fXIntPool.getXInt(choice);
+            break;
+        case DT_FINAL2:
+            // finalDefault = (#all | List of (extension | restriction | list | union))
+            choice = 0;
+            if (value.equals (SchemaSymbols.ATTVAL_POUNDALL)) {
+                //choice = SchemaSymbols.RESTRICTION|SchemaSymbols.LIST|
+                //         SchemaSymbols.UNION;
+                // REVISIT: if #all, then make the result the combination of
+                //          everything: substitution/externsion/restriction/list/union.
+                //          would this be a problem?
+                // same reason as above DT_BLOCK1/DT_FINAL
+                choice = XSConstants.DERIVATION_SUBSTITUTION|XSConstants.DERIVATION_EXTENSION|
+                         XSConstants.DERIVATION_RESTRICTION|XSConstants.DERIVATION_LIST|
+                         XSConstants.DERIVATION_UNION;
+            }
+            else {
+                StringTokenizer t = new StringTokenizer(value, " \n\t\r");
+                while (t.hasMoreTokens()) {
+                    String token = t.nextToken ();
+
+                    if (token.equals (SchemaSymbols.ATTVAL_EXTENSION)) {
+                        choice |= XSConstants.DERIVATION_EXTENSION;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_RESTRICTION)) {
+                        choice |= XSConstants.DERIVATION_RESTRICTION;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_LIST)) {
+                        choice |= XSConstants.DERIVATION_LIST;
+                    }
+                    else if (token.equals (SchemaSymbols.ATTVAL_UNION)) {
+                        choice |= XSConstants.DERIVATION_UNION;
+                    }
+                    else {
+                        throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.3", new Object[]{value, "(#all | List of (extension | restriction | list | union))"});
+                    }
+                }
+            }
+            retValue = fXIntPool.getXInt(choice);
+            break;
+        case DT_FORM:
+            // form = (qualified | unqualified)
+            if (value.equals (SchemaSymbols.ATTVAL_QUALIFIED))
+                retValue = INT_QUALIFIED;
+            else if (value.equals (SchemaSymbols.ATTVAL_UNQUALIFIED))
+                retValue = INT_UNQUALIFIED;
+            else
+                throw new InvalidDatatypeValueException("cvc-enumeration-valid",
+                                                        new Object[]{value, "(qualified | unqualified)"});
+            break;
+        case DT_MAXOCCURS:
+            // maxOccurs = (nonNegativeInteger | unbounded)
+            if (value.equals(SchemaSymbols.ATTVAL_UNBOUNDED)) {
+                retValue = INT_UNBOUNDED;
+            } else {
+                try {
+                    retValue = validate(attrValues, attr, value, DT_NONNEGINT, schemaDoc);
+                } catch (NumberFormatException e) {
+                    throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.3", new Object[]{value, "(nonNegativeInteger | unbounded)"});
+                }
+            }
+            break;
+        case DT_MAXOCCURS1:
+            // maxOccurs = 1
+            if (value.equals("1"))
+                retValue = fXIntPool.getXInt(1);
+            else
+                throw new InvalidDatatypeValueException("cvc-enumeration-valid",
+                                                        new Object[]{value, "(1)"});
+            break;
+        case DT_MEMBERTYPES:
+            // memberTypes = List of QName
+            memberType = new Vector();
+            try {
+                StringTokenizer t = new StringTokenizer(value, " \n\t\r");
+                while (t.hasMoreTokens()) {
+                    String token = t.nextToken ();
+                    QName qname = (QName)fExtraDVs[DT_QNAME].validate(token, schemaDoc.fValidationContext, null);
+                    // kludge to handle chameleon includes/redefines...
+                    if(qname.prefix == XMLSymbols.EMPTY_STRING && qname.uri == null && schemaDoc.fIsChameleonSchema)
+                        qname.uri = schemaDoc.fTargetNamespace;
+                    memberType.addElement(qname);
+                }
+                retValue = memberType;
+            }
+            catch (InvalidDatatypeValueException ide) {
+                throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.2", new Object[]{value, "(List of QName)"});
+            }
+            break;
+        case DT_MINOCCURS1:
+            // minOccurs = (0 | 1)
+            if (value.equals("0"))
+                retValue = fXIntPool.getXInt(0);
+            else if (value.equals("1"))
+                retValue = fXIntPool.getXInt(1);
+            else
+                throw new InvalidDatatypeValueException("cvc-enumeration-valid",
+                                                        new Object[]{value, "(0 | 1)"});
+            break;
+        case DT_NAMESPACE:
+            // namespace = ((##any | ##other) | List of (anyURI | (##targetNamespace | ##local)) )
+            if (value.equals(SchemaSymbols.ATTVAL_TWOPOUNDANY)) {
+                // ##any
+                retValue = INT_ANY_ANY;
+            } else if (value.equals(SchemaSymbols.ATTVAL_TWOPOUNDOTHER)) {
+                // ##other
+                retValue = INT_ANY_NOT;
+                String[] list = new String[2];
+                list[0] = schemaDoc.fTargetNamespace;
+                list[1] = null;
+                attrValues[ATTIDX_NAMESPACE_LIST] = list;
+            } else {
+                // list
+                retValue = INT_ANY_LIST;
+
+                fNamespaceList.removeAllElements();
+
+                // tokenize
+                StringTokenizer tokens = new StringTokenizer(value, " \n\t\r");
+                String token;
+                String tempNamespace;
+                try {
+                    while (tokens.hasMoreTokens()) {
+                        token = tokens.nextToken();
+                        if (token.equals(SchemaSymbols.ATTVAL_TWOPOUNDLOCAL)) {
+                            tempNamespace = null;
+                        } else if (token.equals(SchemaSymbols.ATTVAL_TWOPOUNDTARGETNS)) {
+                            tempNamespace = schemaDoc.fTargetNamespace;
+                        } else {
+                            // we have found namespace URI here
+                            // need to add it to the symbol table
+                            fExtraDVs[DT_ANYURI].validate(token, schemaDoc.fValidationContext, null);
+                            tempNamespace = fSymbolTable.addSymbol(token);
+                        }
+
+                        //check for duplicate namespaces in the list
+                        if (!fNamespaceList.contains(tempNamespace)) {
+                            fNamespaceList.addElement(tempNamespace);
+                        }
+                    }
+                } catch (InvalidDatatypeValueException ide) {
+                    throw new InvalidDatatypeValueException("cvc-datatype-valid.1.2.3", new Object[]{value, "((##any | ##other) | List of (anyURI | (##targetNamespace | ##local)) )"});
+                }
+
+                // convert the vector to an array
+                int num = fNamespaceList.size();
+                String[] list = new String[num];
+                fNamespaceList.copyInto(list);
+                attrValues[ATTIDX_NAMESPACE_LIST] = list;
+            }
+            break;
+        case DT_PROCESSCONTENTS:
+            // processContents = (lax | skip | strict)
+            if (value.equals (SchemaSymbols.ATTVAL_STRICT))
+                retValue = INT_ANY_STRICT;
+            else if (value.equals (SchemaSymbols.ATTVAL_LAX))
+                retValue = INT_ANY_LAX;
+            else if (value.equals (SchemaSymbols.ATTVAL_SKIP))
+                retValue = INT_ANY_SKIP;
+            else
+                throw new InvalidDatatypeValueException("cvc-enumeration-valid",
+                                                        new Object[]{value, "(lax | skip | strict)"});
+            break;
+        case DT_USE:
+            // use = (optional | prohibited | required)
+            if (value.equals (SchemaSymbols.ATTVAL_OPTIONAL))
+                retValue = INT_USE_OPTIONAL;
+            else if (value.equals (SchemaSymbols.ATTVAL_REQUIRED))
+                retValue = INT_USE_REQUIRED;
+            else if (value.equals (SchemaSymbols.ATTVAL_PROHIBITED))
+                retValue = INT_USE_PROHIBITED;
+            else
+                throw new InvalidDatatypeValueException("cvc-enumeration-valid",
+                                                        new Object[]{value, "(optional | prohibited | required)"});
+            break;
+        case DT_WHITESPACE:
+            // value = preserve | replace | collapse
+            if (value.equals (SchemaSymbols.ATTVAL_PRESERVE))
+                retValue = INT_WS_PRESERVE;
+            else if (value.equals (SchemaSymbols.ATTVAL_REPLACE))
+                retValue = INT_WS_REPLACE;
+            else if (value.equals (SchemaSymbols.ATTVAL_COLLAPSE))
+                retValue = INT_WS_COLLAPSE;
+            else
+                throw new InvalidDatatypeValueException("cvc-enumeration-valid",
+                                                        new Object[]{value, "(preserve | replace | collapse)"});
+            break;
+        }
+
+        return retValue;
+!!!4803586.java!!!	reportSchemaFatalError(inout key : String, inout args : Object [[]], inout ele : Element) : void
+        fSchemaHandler.reportSchemaFatalError(key, args, ele);
+!!!4803714.java!!!	reportSchemaError(inout key : String, inout args : Object [[]], inout ele : Element) : void
+        fSchemaHandler.reportSchemaError(key, args, ele);
+!!!4803842.java!!!	checkNonSchemaAttributes(inout grammarBucket : XSGrammarBucket) : void
+        // for all attributes
+        Iterator entries = fNonSchemaAttrs.entrySet().iterator();
+        XSAttributeDecl attrDecl;
+        while (entries.hasNext()) {
+            Map.Entry entry = (Map.Entry) entries.next();
+            // get name, uri, localpart
+            String attrRName = (String) entry.getKey();
+            String attrURI = attrRName.substring(0,attrRName.indexOf(','));
+            String attrLocal = attrRName.substring(attrRName.indexOf(',')+1);
+            // find associated grammar
+            SchemaGrammar sGrammar = grammarBucket.getGrammar(attrURI);
+            if (sGrammar == null) {
+                continue;
+            }
+            // and get the datatype validator, if there is one
+            attrDecl = sGrammar.getGlobalAttributeDecl(attrLocal);
+            if (attrDecl == null) {
+                continue;
+            }
+            XSSimpleType dv = (XSSimpleType)attrDecl.getTypeDefinition();
+            if (dv == null) {
+                continue;
+            }
+
+            // get all values appeared with this attribute name
+            Vector values = (Vector) entry.getValue();
+            String elName;
+            String attrName = (String)values.elementAt(0);
+            // for each of the values
+            int count = values.size();
+            for (int i = 1; i < count; i += 2) {
+                elName = (String)values.elementAt(i);
+                try {
+                    // and validate it using the XSSimpleType
+                    // REVISIT: what would be the proper validation context?
+                    //          guess we need to save that in the vectors too.
+                    dv.validate((String)values.elementAt(i+1), null, null);
+                } catch(InvalidDatatypeValueException ide) {
+                    reportSchemaError ("s4s-att-invalid-value",
+                                       new Object[] {elName, attrName, ide.getMessage()},
+                                       null);
+                }
+            }
+        }
+!!!4803970.java!!!	normalize(inout content : String, in ws : short) : String
+        int len = content == null ? 0 : content.length();
+        if (len == 0 || ws == XSSimpleType.WS_PRESERVE)
+            return content;
+
+        StringBuffer sb = new StringBuffer();
+        if (ws == XSSimpleType.WS_REPLACE) {
+            char ch;
+            // when it's replace, just replace #x9, #xa, #xd by #x20
+            for (int i = 0; i < len; i++) {
+                ch = content.charAt(i);
+                if (ch != 0x9 && ch != 0xa && ch != 0xd)
+                    sb.append(ch);
+                else
+                    sb.append((char)0x20);
+            }
+        } else {
+            char ch;
+            int i;
+            boolean isLeading = true;
+            // when it's collapse
+            for (i = 0; i < len; i++) {
+                ch = content.charAt(i);
+                // append real characters, so we passed leading ws
+                if (ch != 0x9 && ch != 0xa && ch != 0xd && ch != 0x20) {
+                    sb.append(ch);
+                    isLeading = false;
+                }
+                else {
+                    // for whitespaces, we skip all following ws
+                    for (; i < len-1; i++) {
+                        ch = content.charAt(i+1);
+                        if (ch != 0x9 && ch != 0xa && ch != 0xd && ch != 0x20)
+                            break;
+                    }
+                    // if it's not a leading or tailing ws, then append a space
+                    if (i < len - 1 && !isLeading)
+                        sb.append((char)0x20);
+                }
+            }
+        }
+
+        return sb.toString();
+!!!4804098.java!!!	getAvailableArray() : Object
+        // if no array left in the pool, increase the pool size
+        if (fArrayPool.length == fPoolPos) {
+            // increase size
+            fArrayPool = new Object[fPoolPos+INC_POOL_SIZE][];
+            // initialize each *new* array
+            for (int i = fPoolPos; i < fArrayPool.length; i++)
+                fArrayPool[i] = new Object[ATTIDX_COUNT];
+        }
+        // get the next available one
+        Object[] retArray = fArrayPool[fPoolPos];
+        // clear it from the pool. this is for GC: if a caller forget to
+        // return the array, we want that array to be GCed.
+        fArrayPool[fPoolPos++] = null;
+        // to make sure that one array is not returned twice, we use
+        // the last entry to indicate whether an array is already returned
+        // now set it to false.
+        System.arraycopy(fTempArray, 0, retArray, 0, ATTIDX_COUNT-1);
+        retArray[ATTIDX_ISRETURNED] = Boolean.FALSE;
+
+        return retArray;
+!!!4804226.java!!!	returnAttrArray(inout attrArray : Object [[]], inout schemaDoc : XSDocumentInfo) : void
+        // pop the namespace context
+        if (schemaDoc != null)
+            schemaDoc.fNamespaceSupport.popContext();
+
+        // if 1. the pool is full; 2. the array is null;
+        // 3. the array is of wrong size; 4. the array is already returned
+        // then we can't accept this array to be returned
+        if (fPoolPos == 0 ||
+            attrArray == null ||
+            attrArray.length != ATTIDX_COUNT ||
+            ((Boolean)attrArray[ATTIDX_ISRETURNED]).booleanValue()) {
+            return;
+        }
+
+        // mark this array as returned
+        attrArray[ATTIDX_ISRETURNED] = Boolean.TRUE;
+        // better clear nonschema vector
+        if(attrArray[ATTIDX_NONSCHEMA] != null)
+            ((Vector)attrArray[ATTIDX_NONSCHEMA]).clear();
+        // and put it into the pool
+        fArrayPool[--fPoolPos] = attrArray;
+!!!4804354.java!!!	resolveNamespace(inout element : Element, inout attrs : Attr [[]], inout nsSupport : SchemaNamespaceSupport) : void
+        // push the namespace context
+        nsSupport.pushContext();
+
+        // search for new namespace bindings
+        int length = attrs.length;
+        Attr sattr = null;
+        String rawname, prefix, uri;
+        for (int i = 0; i < length; i++) {
+            sattr = attrs[i];
+            rawname = DOMUtil.getName(sattr);
+            prefix = null;
+            if (rawname.equals(XMLSymbols.PREFIX_XMLNS))
+                prefix = XMLSymbols.EMPTY_STRING;
+            else if (rawname.startsWith("xmlns:"))
+                prefix = fSymbolTable.addSymbol(DOMUtil.getLocalName(sattr));
+            if (prefix != null) {
+                uri = fSymbolTable.addSymbol(DOMUtil.getValue(sattr));
+                nsSupport.declarePrefix(prefix, uri.length()!=0 ? uri : null);
+            }
+        }

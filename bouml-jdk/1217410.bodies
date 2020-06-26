@@ -1,0 +1,150 @@
+class Rfc2253Parser
+!!!10076930.java!!!	Rfc2253Parser(inout name : String)
+            this.name = name;
+            len = name.length();
+            chars = name.toCharArray();
+!!!10077058.java!!!	parseDn() : List
+            cur = 0;
+
+            // ArrayList<Rdn> rdns =
+            //  new ArrayList<Rdn>(len / 3 + 10);  // leave room for growth
+
+            ArrayList<Rdn> rdns =
+                new ArrayList<>(len / 3 + 10);  // leave room for growth
+
+            if (len == 0) {
+                return rdns;
+            }
+
+            rdns.add(doParse(new Rdn()));
+            while (cur < len) {
+                if (chars[cur] == ',' || chars[cur] == ';') {
+                    ++cur;
+                    rdns.add(0, doParse(new Rdn()));
+                } else {
+                    throw new InvalidNameException("Invalid name: " + name);
+                }
+            }
+            return rdns;
+!!!10077186.java!!!	parseRdn() : Rdn
+            return parseRdn(new Rdn());
+!!!10077314.java!!!	parseRdn(inout rdn : Rdn) : Rdn
+            rdn = doParse(rdn);
+            if (cur < len) {
+                throw new InvalidNameException("Invalid RDN: " + name);
+            }
+            return rdn;
+!!!10077442.java!!!	doParse(inout rdn : Rdn) : Rdn
+
+            while (cur < len) {
+                consumeWhitespace();
+                String attrType = parseAttrType();
+                consumeWhitespace();
+                if (cur >= len || chars[cur] != '=') {
+                    throw new InvalidNameException("Invalid name: " + name);
+                }
+                ++cur;          // consume '='
+                consumeWhitespace();
+                String value = parseAttrValue();
+                consumeWhitespace();
+
+                rdn.put(attrType, Rdn.unescapeValue(value));
+                if (cur >= len || chars[cur] != '+') {
+                    break;
+                }
+                ++cur;          // consume '+'
+            }
+            rdn.sort();
+            return rdn;
+!!!10077570.java!!!	parseAttrType() : String
+
+            final int beg = cur;
+            while (cur < len) {
+                char c = chars[cur];
+                if (Character.isLetterOrDigit(c) ||
+                        c == '.' ||
+                        c == '-' ||
+                        c == ' ') {
+                    ++cur;
+                } else {
+                    break;
+                }
+            }
+            // Back out any trailing spaces.
+            while ((cur > beg) && (chars[cur - 1] == ' ')) {
+                --cur;
+            }
+
+            if (beg == cur) {
+                throw new InvalidNameException("Invalid name: " + name);
+            }
+            return new String(chars, beg, cur - beg);
+!!!10077698.java!!!	parseAttrValue() : String
+
+            if (cur < len && chars[cur] == '#') {
+                return parseBinaryAttrValue();
+            } else if (cur < len && chars[cur] == '"') {
+                return parseQuotedAttrValue();
+            } else {
+                return parseStringAttrValue();
+            }
+!!!10077826.java!!!	parseBinaryAttrValue() : String
+            final int beg = cur;
+            ++cur;                      // consume '#'
+            while ((cur < len) &&
+                    Character.isLetterOrDigit(chars[cur])) {
+                ++cur;
+            }
+            return new String(chars, beg, cur - beg);
+!!!10077954.java!!!	parseQuotedAttrValue() : String
+
+            final int beg = cur;
+            ++cur;                      // consume '"'
+
+            while ((cur < len) && chars[cur] != '"') {
+                if (chars[cur] == '\\') {
+                    ++cur;              // consume backslash, then what follows
+                }
+                ++cur;
+            }
+            if (cur >= len) {   // no closing quote
+                throw new InvalidNameException("Invalid name: " + name);
+            }
+            ++cur;      // consume closing quote
+
+            return new String(chars, beg, cur - beg);
+!!!10078082.java!!!	parseStringAttrValue() : String
+
+            final int beg = cur;
+            int esc = -1;       // index of the most recently escaped character
+
+            while ((cur < len) && !atTerminator()) {
+                if (chars[cur] == '\\') {
+                    ++cur;              // consume backslash, then what follows
+                    esc = cur;
+                }
+                ++cur;
+            }
+            if (cur > len) {            // 'twas backslash followed by nothing
+                throw new InvalidNameException("Invalid name: " + name);
+            }
+
+            // Trim off (unescaped) trailing whitespace.
+            int end;
+            for (end = cur; end > beg; end--) {
+                if (!isWhitespace(chars[end - 1]) || (esc == end - 1)) {
+                    break;
+                }
+            }
+            return new String(chars, beg, end - beg);
+!!!10078210.java!!!	consumeWhitespace() : void
+            while ((cur < len) && isWhitespace(chars[cur])) {
+                ++cur;
+            }
+!!!10078338.java!!!	atTerminator() : boolean
+            return (cur < len &&
+                    (chars[cur] == ',' ||
+                        chars[cur] == ';' ||
+                        chars[cur] == '+'));
+!!!10078466.java!!!	isWhitespace(in c : char) : boolean
+            return (c == ' ' || c == '\r');

@@ -1,0 +1,193 @@
+class Control
+!!!1737346.java!!!	getControl(inout formats : List) : ResourceBundle::Control
+            if (formats.equals(Control.FORMAT_PROPERTIES)) {
+                return SingleFormatControl.PROPERTIES_ONLY;
+            }
+            if (formats.equals(Control.FORMAT_CLASS)) {
+                return SingleFormatControl.CLASS_ONLY;
+            }
+            if (formats.equals(Control.FORMAT_DEFAULT)) {
+                return Control.INSTANCE;
+            }
+            throw new IllegalArgumentException();
+!!!1737474.java!!!	getNoFallbackControl(inout formats : List) : ResourceBundle::Control
+            if (formats.equals(Control.FORMAT_DEFAULT)) {
+                return NoFallbackControl.NO_FALLBACK;
+            }
+            if (formats.equals(Control.FORMAT_PROPERTIES)) {
+                return NoFallbackControl.PROPERTIES_ONLY_NO_FALLBACK;
+            }
+            if (formats.equals(Control.FORMAT_CLASS)) {
+                return NoFallbackControl.CLASS_ONLY_NO_FALLBACK;
+            }
+            throw new IllegalArgumentException();
+!!!1737602.java!!!	getFormats(inout baseName : String) : List
+            if (baseName == null) {
+                throw new NullPointerException();
+            }
+            return FORMAT_DEFAULT;
+!!!1737730.java!!!	getCandidateLocales(inout baseName : String, inout locale : Locale) : List
+            if (baseName == null) {
+                throw new NullPointerException();
+            }
+            return new ArrayList<>(CANDIDATES_CACHE.get(locale.getBaseLocale()));
+!!!1738114.java!!!	getFallbackLocale(inout baseName : String, inout locale : Locale) : Locale
+            if (baseName == null) {
+                throw new NullPointerException();
+            }
+            Locale defaultLocale = Locale.getDefault();
+            return locale.equals(defaultLocale) ? null : defaultLocale;
+!!!1738242.java!!!	newBundle(inout baseName : String, inout locale : Locale, inout format : String, inout loader : ClassLoader, inout reload : boolean) : ResourceBundle
+            String bundleName = toBundleName(baseName, locale);
+            ResourceBundle bundle = null;
+            if (format.equals("java.class")) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Class<? extends ResourceBundle> bundleClass
+                        = (Class<? extends ResourceBundle>)loader.loadClass(bundleName);
+
+                    // If the class isn't a ResourceBundle subclass, throw a
+                    // ClassCastException.
+                    if (ResourceBundle.class.isAssignableFrom(bundleClass)) {
+                        bundle = bundleClass.newInstance();
+                    } else {
+                        throw new ClassCastException(bundleClass.getName()
+                                     + " cannot be cast to ResourceBundle");
+                    }
+                } catch (ClassNotFoundException e) {
+                }
+            } else if (format.equals("java.properties")) {
+                final String resourceName = toResourceName0(bundleName, "properties");
+                if (resourceName == null) {
+                    return bundle;
+                }
+                final ClassLoader classLoader = loader;
+                final boolean reloadFlag = reload;
+                InputStream stream = null;
+                try {
+                    stream = AccessController.doPrivileged(
+                        new PrivilegedExceptionAction<InputStream>() {
+                            public InputStream run() throws IOException {
+                                InputStream is = null;
+                                if (reloadFlag) {
+                                    URL url = classLoader.getResource(resourceName);
+                                    if (url != null) {
+                                        URLConnection connection = url.openConnection();
+                                        if (connection != null) {
+                                            // Disable caches to get fresh data for
+                                            // reloading.
+                                            connection.setUseCaches(false);
+                                            is = connection.getInputStream();
+                                        }
+                                    }
+                                } else {
+                                    is = classLoader.getResourceAsStream(resourceName);
+                                }
+                                return is;
+                            }
+                        });
+                } catch (PrivilegedActionException e) {
+                    throw (IOException) e.getException();
+                }
+                if (stream != null) {
+                    try {
+                        bundle = new PropertyResourceBundle(stream);
+                    } finally {
+                        stream.close();
+                    }
+                }
+            } else {
+                throw new IllegalArgumentException("unknown format: " + format);
+            }
+            return bundle;
+!!!1738370.java!!!	getTimeToLive(inout baseName : String, inout locale : Locale) : long
+            if (baseName == null || locale == null) {
+                throw new NullPointerException();
+            }
+            return TTL_NO_EXPIRATION_CONTROL;
+!!!1738498.java!!!	needsReload(inout baseName : String, inout locale : Locale, inout format : String, inout loader : ClassLoader, inout bundle : ResourceBundle, in loadTime : long) : boolean
+            if (bundle == null) {
+                throw new NullPointerException();
+            }
+            if (format.equals("java.class") || format.equals("java.properties")) {
+                format = format.substring(5);
+            }
+            boolean result = false;
+            try {
+                String resourceName = toResourceName0(toBundleName(baseName, locale), format);
+                if (resourceName == null) {
+                    return result;
+                }
+                URL url = loader.getResource(resourceName);
+                if (url != null) {
+                    long lastModified = 0;
+                    URLConnection connection = url.openConnection();
+                    if (connection != null) {
+                        // disable caches to get the correct data
+                        connection.setUseCaches(false);
+                        if (connection instanceof JarURLConnection) {
+                            JarEntry ent = ((JarURLConnection)connection).getJarEntry();
+                            if (ent != null) {
+                                lastModified = ent.getTime();
+                                if (lastModified == -1) {
+                                    lastModified = 0;
+                                }
+                            }
+                        } else {
+                            lastModified = connection.getLastModified();
+                        }
+                    }
+                    result = lastModified >= loadTime;
+                }
+            } catch (NullPointerException npe) {
+                throw npe;
+            } catch (Exception e) {
+                // ignore other exceptions
+            }
+            return result;
+!!!1738626.java!!!	toBundleName(inout baseName : String, inout locale : Locale) : String
+            if (locale == Locale.ROOT) {
+                return baseName;
+            }
+
+            String language = locale.getLanguage();
+            String script = locale.getScript();
+            String country = locale.getCountry();
+            String variant = locale.getVariant();
+
+            if (language == "" && country == "" && variant == "") {
+                return baseName;
+            }
+
+            StringBuilder sb = new StringBuilder(baseName);
+            sb.append('_');
+            if (script != "") {
+                if (variant != "") {
+                    sb.append(language).append('_').append(script).append('_').append(country).append('_').append(variant);
+                } else if (country != "") {
+                    sb.append(language).append('_').append(script).append('_').append(country);
+                } else {
+                    sb.append(language).append('_').append(script);
+                }
+            } else {
+                if (variant != "") {
+                    sb.append(language).append('_').append(country).append('_').append(variant);
+                } else if (country != "") {
+                    sb.append(language).append('_').append(country);
+                } else {
+                    sb.append(language);
+                }
+            }
+            return sb.toString();
+
+!!!1738754.java!!!	toResourceName(inout bundleName : String, inout suffix : String) : String
+            StringBuilder sb = new StringBuilder(bundleName.length() + 1 + suffix.length());
+            sb.append(bundleName.replace('.', '/')).append('.').append(suffix);
+            return sb.toString();
+!!!1738882.java!!!	toResourceName0(inout bundleName : String, inout suffix : String) : String
+            // application protocol check
+            if (bundleName.contains("://")) {
+                return null;
+            } else {
+                return toResourceName(bundleName, suffix);
+            }

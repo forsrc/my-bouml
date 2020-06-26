@@ -1,0 +1,735 @@
+class DocumentImpl
+!!!4227714.java!!!	DocumentImpl()
+        super();
+!!!4227842.java!!!	DocumentImpl(inout grammarAccess : boolean)
+        super(grammarAccess);
+!!!4227970.java!!!	DocumentImpl(inout doctype : DocumentType)
+        super(doctype);
+!!!4228098.java!!!	DocumentImpl(inout doctype : DocumentType, inout grammarAccess : boolean)
+        super(doctype, grammarAccess);
+!!!4228226.java!!!	cloneNode(inout deep : boolean) : Node
+
+        DocumentImpl newdoc = new DocumentImpl();
+        callUserDataHandlers(this, newdoc, UserDataHandler.NODE_CLONED);
+        cloneNode(newdoc, deep);
+
+        // experimental
+        newdoc.mutationEvents = mutationEvents;
+
+        return newdoc;
+
+!!!4228354.java!!!	getImplementation() : DOMImplementation
+        // Currently implemented as a singleton, since it's hardcoded
+        // information anyway.
+        return DOMImplementationImpl.getDOMImplementation();
+!!!4228482.java!!!	createNodeIterator(inout root : Node, in whatToShow : short, inout filter : NodeFilter) : NodeIterator
+        return createNodeIterator(root, whatToShow, filter, true);
+!!!4228610.java!!!	createNodeIterator(inout root : Node, in whatToShow : int, inout filter : NodeFilter, inout entityReferenceExpansion : boolean) : NodeIterator
+
+        if (root == null) {
+                  String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+                  throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+        }
+
+        NodeIterator iterator = new NodeIteratorImpl(this,
+                                                     root,
+                                                     whatToShow,
+                                                     filter,
+                                                     entityReferenceExpansion);
+        if (iterators == null) {
+            iterators = new ArrayList<>();
+        }
+
+        iterators.add(iterator);
+
+        return iterator;
+!!!4228738.java!!!	createTreeWalker(inout root : Node, in whatToShow : short, inout filter : NodeFilter) : TreeWalker
+        return createTreeWalker(root, whatToShow, filter, true);
+!!!4228866.java!!!	createTreeWalker(inout root : Node, in whatToShow : int, inout filter : NodeFilter, inout entityReferenceExpansion : boolean) : TreeWalker
+        if (root == null) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+            throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+        }
+        return new TreeWalkerImpl(root, whatToShow, filter,
+                                  entityReferenceExpansion);
+!!!4228994.java!!!	removeNodeIterator(inout nodeIterator : NodeIterator) : void
+
+        if (nodeIterator == null) return;
+        if (iterators == null) return;
+
+        iterators.remove(nodeIterator);
+!!!4229122.java!!!	createRange() : Range
+
+        if (ranges == null) {
+            ranges = new ArrayList<>();
+        }
+
+        Range range = new RangeImpl(this);
+        ranges.add(range);
+
+        return range;
+
+!!!4229250.java!!!	removeRange(inout range : Range) : void
+
+        if (range == null) return;
+        if (ranges == null) return;
+
+        ranges.remove(range);
+!!!4229378.java!!!	replacedText(inout node : NodeImpl) : void
+        // notify ranges
+        if (ranges != null) {
+            int size = ranges.size();
+            for (int i = 0; i != size; i++) {
+                ((RangeImpl)ranges.get(i)).receiveReplacedText(node);
+            }
+        }
+!!!4229506.java!!!	deletedText(inout node : NodeImpl, in offset : int, in count : int) : void
+        // notify ranges
+        if (ranges != null) {
+            int size = ranges.size();
+            for (int i = 0; i != size; i++) {
+                ((RangeImpl)ranges.get(i)).receiveDeletedText(node,
+                                                                offset, count);
+            }
+        }
+!!!4229634.java!!!	insertedText(inout node : NodeImpl, in offset : int, in count : int) : void
+        // notify ranges
+        if (ranges != null) {
+            int size = ranges.size();
+            for (int i = 0; i != size; i++) {
+                ((RangeImpl)ranges.get(i)).receiveInsertedText(node,
+                                                                offset, count);
+            }
+        }
+!!!4229762.java!!!	splitData(inout node : Node, inout newNode : Node, in offset : int) : void
+        // notify ranges
+        if (ranges != null) {
+            int size = ranges.size();
+            for (int i = 0; i != size; i++) {
+                ((RangeImpl)ranges.get(i)).receiveSplitData(node,
+                                                              newNode, offset);
+            }
+        }
+!!!4229890.java!!!	createEvent(inout type : String) : Event
+            if (type.equalsIgnoreCase("Events") || "Event".equals(type))
+                return new EventImpl();
+            if (type.equalsIgnoreCase("MutationEvents") ||
+                "MutationEvent".equals(type))
+                return new MutationEventImpl();
+            else {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+        }
+!!!4230018.java!!!	setMutationEvents(inout set : boolean) : void
+        mutationEvents = set;
+!!!4230146.java!!!	getMutationEvents() : boolean
+        return mutationEvents;
+!!!4230274.java!!!	setEventListeners(inout n : NodeImpl, inout listeners : List) : void
+        if (eventListeners == null) {
+            eventListeners = new HashMap<>();
+        }
+        if (listeners == null) {
+            eventListeners.remove(n);
+            if (eventListeners.isEmpty()) {
+                // stop firing events when there isn't any listener
+                mutationEvents = false;
+            }
+        } else {
+            eventListeners.put(n, listeners);
+            // turn mutation events on
+            mutationEvents = true;
+        }
+!!!4230402.java!!!	getEventListeners(inout n : NodeImpl) : List
+        if (eventListeners == null) {
+            return null;
+        }
+        return eventListeners.get(n);
+!!!4230658.java!!!	addEventListener(inout node : NodeImpl, inout type : String, inout listener : EventListener, inout useCapture : boolean) : void
+        // We can't dispatch to blank type-name, and of course we need
+        // a listener to dispatch to
+        if (type == null || type.equals("") || listener == null)
+            return;
+
+        // Each listener may be registered only once per type per phase.
+        // Simplest way to code that is to zap the previous entry, if any.
+        removeEventListener(node, type, listener, useCapture);
+
+        List<LEntry> nodeListeners = getEventListeners(node);
+        if(nodeListeners == null) {
+            nodeListeners = new ArrayList<>();
+            setEventListeners(node, nodeListeners);
+        }
+        nodeListeners.add(new LEntry(type, listener, useCapture));
+
+        // Record active listener
+        LCount lc = LCount.lookup(type);
+        if (useCapture) {
+            ++lc.captures;
+            ++lc.total;
+        }
+        else {
+            ++lc.bubbles;
+            ++lc.total;
+        }
+
+!!!4230786.java!!!	removeEventListener(inout node : NodeImpl, inout type : String, inout listener : EventListener, inout useCapture : boolean) : void
+        // If this couldn't be a valid listener registration, ignore request
+        if (type == null || type.equals("") || listener == null)
+            return;
+        List<LEntry> nodeListeners = getEventListeners(node);
+        if (nodeListeners == null)
+            return;
+
+        // Note that addListener has previously ensured that
+        // each listener may be registered only once per type per phase.
+        // count-down is OK for deletions!
+        for (int i = nodeListeners.size() - 1; i >= 0; --i) {
+            LEntry le = nodeListeners.get(i);
+            if (le.useCapture == useCapture && le.listener == listener &&
+                le.type.equals(type)) {
+                nodeListeners.remove(i);
+                // Storage management: Discard empty listener lists
+                if (nodeListeners.isEmpty())
+                    setEventListeners(node, null);
+
+                // Remove active listener
+                LCount lc = LCount.lookup(type);
+                if (useCapture) {
+                    --lc.captures;
+                    --lc.total;
+                }
+                else {
+                    --lc.bubbles;
+                    --lc.total;
+                }
+
+                break;  // Found it; no need to loop farther.
+            }
+        }
+!!!4230914.java!!!	copyEventListeners(inout src : NodeImpl, inout tgt : NodeImpl) : void
+        List<LEntry> nodeListeners = getEventListeners(src);
+        if (nodeListeners == null) {
+            return;
+        }
+        setEventListeners(tgt, new ArrayList<>(nodeListeners));
+!!!4231042.java!!!	dispatchEvent(inout node : NodeImpl, inout event : Event) : boolean
+        if (event == null) return false;
+
+        // Can't use anyone else's implementation, since there's no public
+        // API for setting the event's processing-state fields.
+        EventImpl evt = (EventImpl)event;
+
+        // VALIDATE -- must have been initialized at least once, must have
+        // a non-null non-blank name.
+        if(!evt.initialized || evt.type == null || evt.type.equals("")) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "UNSPECIFIED_EVENT_TYPE_ERR", null);
+            throw new EventException(EventException.UNSPECIFIED_EVENT_TYPE_ERR, msg);
+        }
+
+        // If nobody is listening for this event, discard immediately
+        LCount lc = LCount.lookup(evt.getType());
+        if (lc.total == 0)
+            return evt.preventDefault;
+
+        // INITIALIZE THE EVENT'S DISPATCH STATUS
+        // (Note that Event objects are reusable in our implementation;
+        // that doesn't seem to be explicitly guaranteed in the DOM, but
+        // I believe it is the intent.)
+        evt.target = node;
+        evt.stopPropagation = false;
+        evt.preventDefault = false;
+
+        // Capture pre-event parentage chain, not including target;
+        // use pre-event-dispatch ancestors even if event handlers mutate
+        // document and change the target's context.
+        // Note that this is parents ONLY; events do not
+        // cross the Attr/Element "blood/brain barrier".
+        // DOMAttrModified. which looks like an exception,
+        // is issued to the Element rather than the Attr
+        // and causes a _second_ DOMSubtreeModified in the Element's
+        // tree.
+        List<Node> pv = new ArrayList<>(10);
+        Node p = node;
+        Node n = p.getParentNode();
+        while (n != null) {
+            pv.add(n);
+            p = n;
+            n = n.getParentNode();
+        }
+
+        // CAPTURING_PHASE:
+        if (lc.captures > 0) {
+            evt.eventPhase = Event.CAPTURING_PHASE;
+            // Ancestors are scanned, root to target, for
+            // Capturing listeners.
+            for (int j = pv.size() - 1; j >= 0; --j) {
+                if (evt.stopPropagation)
+                    break;  // Someone set the flag. Phase ends.
+
+                // Handle all capturing listeners on this node
+                NodeImpl nn = (NodeImpl) pv.get(j);
+                evt.currentTarget = nn;
+                List<LEntry> nodeListeners = getEventListeners(nn);
+                if (nodeListeners != null) {
+                    List<LEntry> nl = (List)((ArrayList)nodeListeners).clone();
+                    // call listeners in the order in which they got registered
+                    int nlsize = nl.size();
+                    for (int i = 0; i < nlsize; i++) {
+                        LEntry le = nl.get(i);
+                        if (le.useCapture && le.type.equals(evt.type) &&
+                            nodeListeners.contains(le)) {
+                            try {
+                                le.listener.handleEvent(evt);
+                            }
+                            catch (Exception e) {
+                                // All exceptions are ignored.
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // Both AT_TARGET and BUBBLE use non-capturing listeners.
+        if (lc.bubbles > 0) {
+            // AT_TARGET PHASE: Event is dispatched to NON-CAPTURING listeners
+            // on the target node. Note that capturing listeners on the target
+            // node are _not_ invoked, even during the capture phase.
+            evt.eventPhase = Event.AT_TARGET;
+            evt.currentTarget = node;
+            List<LEntry> nodeListeners = getEventListeners(node);
+            if (!evt.stopPropagation && nodeListeners != null) {
+                List<LEntry> nl = (List)((ArrayList)nodeListeners).clone();
+                // call listeners in the order in which they got registered
+                int nlsize = nl.size();
+                for (int i = 0; i < nlsize; i++) {
+                    LEntry le = (LEntry) nl.get(i);
+                    if (!le.useCapture && le.type.equals(evt.type) &&
+                        nodeListeners.contains(le)) {
+                        try {
+                            le.listener.handleEvent(evt);
+                        }
+                        catch (Exception e) {
+                            // All exceptions are ignored.
+                        }
+                    }
+                }
+            }
+            // BUBBLING_PHASE: Ancestors are scanned, target to root, for
+            // non-capturing listeners. If the event's preventBubbling flag
+            // has been set before processing of a node commences, we
+            // instead immediately advance to the default phase.
+            // Note that not all events bubble.
+            if (evt.bubbles) {
+                evt.eventPhase = Event.BUBBLING_PHASE;
+                int pvsize = pv.size();
+                for (int j = 0; j < pvsize; j++) {
+                    if (evt.stopPropagation)
+                        break;  // Someone set the flag. Phase ends.
+
+                    // Handle all bubbling listeners on this node
+                    NodeImpl nn = (NodeImpl) pv.get(j);
+                    evt.currentTarget = nn;
+                    nodeListeners = getEventListeners(nn);
+                    if (nodeListeners != null) {
+                        List<LEntry> nl = (List)((ArrayList)nodeListeners).clone();
+                        // call listeners in the order in which they got
+                        // registered
+                        int nlsize = nl.size();
+                        for (int i = 0; i < nlsize; i++) {
+                            LEntry le = nl.get(i);
+                            if (!le.useCapture && le.type.equals(evt.type) &&
+                                nodeListeners.contains(le)) {
+                                try {
+                                    le.listener.handleEvent(evt);
+                                }
+                                catch (Exception e) {
+                                    // All exceptions are ignored.
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // DEFAULT PHASE: Some DOMs have default behaviors bound to specific
+        // nodes. If this DOM does, and if the event's preventDefault flag has
+        // not been set, we now return to the target node and process its
+        // default handler for this event, if any.
+        // No specific phase value defined, since this is DOM-internal
+        if (lc.defaults > 0 && (!evt.cancelable || !evt.preventDefault)) {
+            // evt.eventPhase = Event.DEFAULT_PHASE;
+            // evt.currentTarget = node;
+            // DO_DEFAULT_OPERATION
+        }
+
+        return evt.preventDefault;
+!!!4231170.java!!!	dispatchEventToSubtree(inout n : Node, inout e : Event) : void
+
+        ((NodeImpl) n).dispatchEvent(e);
+        if (n.getNodeType() == Node.ELEMENT_NODE) {
+            NamedNodeMap a = n.getAttributes();
+            for (int i = a.getLength() - 1; i >= 0; --i)
+                dispatchingEventToSubtree(a.item(i), e);
+        }
+        dispatchingEventToSubtree(n.getFirstChild(), e);
+
+!!!4231298.java!!!	dispatchingEventToSubtree(inout n : Node, inout e : Event) : void
+        if (n==null)
+                return;
+
+        // ***** Recursive implementation. This is excessively expensive,
+        // and should be replaced in conjunction with optimization
+        // mentioned above.
+        ((NodeImpl) n).dispatchEvent(e);
+        if (n.getNodeType() == Node.ELEMENT_NODE) {
+            NamedNodeMap a = n.getAttributes();
+            for (int i = a.getLength() - 1; i >= 0; --i)
+                dispatchingEventToSubtree(a.item(i), e);
+        }
+        dispatchingEventToSubtree(n.getFirstChild(), e);
+        dispatchingEventToSubtree(n.getNextSibling(), e);
+!!!4231426.java!!!	dispatchAggregateEvents(inout node : NodeImpl, inout ea : DocumentImpl::EnclosingAttr) : void
+        if (ea != null)
+            dispatchAggregateEvents(node, ea.node, ea.oldvalue,
+                                    MutationEvent.MODIFICATION);
+        else
+            dispatchAggregateEvents(node, null, null, (short) 0);
+
+!!!4231554.java!!!	dispatchAggregateEvents(inout node : NodeImpl, inout enclosingAttr : AttrImpl, inout oldvalue : String, in change : short) : void
+        // We have to send DOMAttrModified.
+        NodeImpl owner = null;
+        if (enclosingAttr != null) {
+            LCount lc = LCount.lookup(MutationEventImpl.DOM_ATTR_MODIFIED);
+            owner = (NodeImpl) enclosingAttr.getOwnerElement();
+            if (lc.total > 0) {
+                if (owner != null) {
+                    MutationEventImpl me =  new MutationEventImpl();
+                    me.initMutationEvent(MutationEventImpl.DOM_ATTR_MODIFIED,
+                                         true, false, enclosingAttr,
+                                         oldvalue,
+                                         enclosingAttr.getNodeValue(),
+                                         enclosingAttr.getNodeName(),
+                                         change);
+                    owner.dispatchEvent(me);
+                }
+            }
+        }
+        // DOMSubtreeModified gets sent to the lowest common root of a
+        // set of changes.
+        // "This event is dispatched after all other events caused by the
+        // mutation have been fired."
+        LCount lc = LCount.lookup(MutationEventImpl.DOM_SUBTREE_MODIFIED);
+        if (lc.total > 0) {
+            MutationEvent me =  new MutationEventImpl();
+            me.initMutationEvent(MutationEventImpl.DOM_SUBTREE_MODIFIED,
+                                 true, false, null, null,
+                                 null, null, (short) 0);
+
+            // If we're within an Attr, DStM gets sent to the Attr
+            // and to its owningElement. Otherwise we dispatch it
+            // locally.
+            if (enclosingAttr != null) {
+                dispatchEvent(enclosingAttr, me);
+                if (owner != null)
+                    dispatchEvent(owner, me);
+            }
+            else
+                dispatchEvent(node, me);
+        }
+!!!4231682.java!!!	saveEnclosingAttr(inout node : NodeImpl) : void
+        savedEnclosingAttr = null;
+        // MUTATION PREPROCESSING AND PRE-EVENTS:
+        // If we're within the scope of an Attr and DOMAttrModified
+        // was requested, we need to preserve its previous value for
+        // that event.
+        LCount lc = LCount.lookup(MutationEventImpl.DOM_ATTR_MODIFIED);
+        if (lc.total > 0) {
+            NodeImpl eventAncestor = node;
+            while (true) {
+                if (eventAncestor == null)
+                    return;
+                int type = eventAncestor.getNodeType();
+                if (type == Node.ATTRIBUTE_NODE) {
+                    EnclosingAttr retval = new EnclosingAttr();
+                    retval.node = (AttrImpl) eventAncestor;
+                    retval.oldvalue = retval.node.getNodeValue();
+                    savedEnclosingAttr = retval;
+                    return;
+                }
+                else if (type == Node.ENTITY_REFERENCE_NODE)
+                    eventAncestor = eventAncestor.parentNode();
+                else if (type == Node.TEXT_NODE)
+                    eventAncestor = eventAncestor.parentNode();
+                else
+                    return;
+                // Any other parent means we're not in an Attr
+            }
+        }
+!!!4231810.java!!!	modifyingCharacterData(inout node : NodeImpl, inout replace : boolean) : void
+        if (mutationEvents) {
+                if (!replace) {
+                        saveEnclosingAttr(node);
+                }
+        }
+!!!4231938.java!!!	modifiedCharacterData(inout node : NodeImpl, inout oldvalue : String, inout value : String, inout replace : boolean) : void
+        if (mutationEvents) {
+                if (!replace) {
+                        // MUTATION POST-EVENTS:
+                        LCount lc =
+                                LCount.lookup(MutationEventImpl.DOM_CHARACTER_DATA_MODIFIED);
+                        if (lc.total > 0) {
+                                MutationEvent me = new MutationEventImpl();
+                                me.initMutationEvent(
+                                        MutationEventImpl.DOM_CHARACTER_DATA_MODIFIED,
+                                        true, false, null,
+                                                                                oldvalue, value, null, (short) 0);
+                                dispatchEvent(node, me);
+                        }
+
+                        // Subroutine: Transmit DOMAttrModified and DOMSubtreeModified,
+                        // if required. (Common to most kinds of mutation)
+                        dispatchAggregateEvents(node, savedEnclosingAttr);
+                } // End mutation postprocessing
+        }
+!!!4232066.java!!!	replacedCharacterData(inout node : NodeImpl, inout oldvalue : String, inout value : String) : void
+        //now that we have finished replacing data, we need to perform the same actions
+        //that are required after a character data node has been modified
+        //send the value of false for replace parameter so that mutation
+        //events if appropriate will be initiated
+        modifiedCharacterData(node, oldvalue, value, false);
+!!!4232194.java!!!	insertingNode(inout node : NodeImpl, inout replace : boolean) : void
+        if (mutationEvents) {
+            if (!replace) {
+                saveEnclosingAttr(node);
+            }
+        }
+!!!4232322.java!!!	insertedNode(inout node : NodeImpl, inout newInternal : NodeImpl, inout replace : boolean) : void
+        if (mutationEvents) {
+            // MUTATION POST-EVENTS:
+            // "Local" events (non-aggregated)
+            // New child is told it was inserted, and where
+            LCount lc = LCount.lookup(MutationEventImpl.DOM_NODE_INSERTED);
+            if (lc.total > 0) {
+                MutationEventImpl me = new MutationEventImpl();
+                me.initMutationEvent(MutationEventImpl.DOM_NODE_INSERTED,
+                                     true, false, node,
+                                     null, null, null, (short) 0);
+                dispatchEvent(newInternal, me);
+            }
+
+            // If within the Document, tell the subtree it's been added
+            // to the Doc.
+            lc = LCount.lookup(
+                            MutationEventImpl.DOM_NODE_INSERTED_INTO_DOCUMENT);
+            if (lc.total > 0) {
+                NodeImpl eventAncestor = node;
+                if (savedEnclosingAttr != null)
+                    eventAncestor = (NodeImpl)
+                        savedEnclosingAttr.node.getOwnerElement();
+                if (eventAncestor != null) { // Might have been orphan Attr
+                    NodeImpl p = eventAncestor;
+                    while (p != null) {
+                        eventAncestor = p; // Last non-null ancestor
+                        // In this context, ancestry includes
+                        // walking back from Attr to Element
+                        if (p.getNodeType() == ATTRIBUTE_NODE) {
+                            p = (NodeImpl) ((AttrImpl)p).getOwnerElement();
+                        }
+                        else {
+                            p = p.parentNode();
+                        }
+                    }
+                    if (eventAncestor.getNodeType() == Node.DOCUMENT_NODE){
+                        MutationEventImpl me = new MutationEventImpl();
+                        me.initMutationEvent(MutationEventImpl
+                                             .DOM_NODE_INSERTED_INTO_DOCUMENT,
+                                             false,false,null,null,
+                                             null,null,(short)0);
+                        dispatchEventToSubtree(newInternal, me);
+                    }
+                }
+            }
+            if (!replace) {
+                // Subroutine: Transmit DOMAttrModified and DOMSubtreeModified
+                // (Common to most kinds of mutation)
+                dispatchAggregateEvents(node, savedEnclosingAttr);
+            }
+        }
+
+        // notify the range of insertions
+        if (ranges != null) {
+            int size = ranges.size();
+            for (int i = 0; i != size; i++) {
+                ((RangeImpl)ranges.get(i)).insertedNodeFromDOM(newInternal);
+            }
+        }
+!!!4232450.java!!!	removingNode(inout node : NodeImpl, inout oldChild : NodeImpl, inout replace : boolean) : void
+
+        // notify iterators
+        if (iterators != null) {
+            int size = iterators.size();
+            for (int i = 0; i != size; i++) {
+               ((NodeIteratorImpl)iterators.get(i)).removeNode(oldChild);
+            }
+        }
+
+        // notify ranges
+        if (ranges != null) {
+            int size = ranges.size();
+            for (int i = 0; i != size; i++) {
+                ((RangeImpl)ranges.get(i)).removeNode(oldChild);
+            }
+        }
+
+        // mutation events
+        if (mutationEvents) {
+            // MUTATION PREPROCESSING AND PRE-EVENTS:
+            // If we're within the scope of an Attr and DOMAttrModified
+            // was requested, we need to preserve its previous value for
+            // that event.
+            if (!replace) {
+                saveEnclosingAttr(node);
+            }
+            // Child is told that it is about to be removed
+            LCount lc = LCount.lookup(MutationEventImpl.DOM_NODE_REMOVED);
+            if (lc.total > 0) {
+                MutationEventImpl me= new MutationEventImpl();
+                me.initMutationEvent(MutationEventImpl.DOM_NODE_REMOVED,
+                                     true, false, node, null,
+                                     null, null, (short) 0);
+                dispatchEvent(oldChild, me);
+            }
+
+            // If within Document, child's subtree is informed that it's
+            // losing that status
+            lc = LCount.lookup(
+                             MutationEventImpl.DOM_NODE_REMOVED_FROM_DOCUMENT);
+            if (lc.total > 0) {
+                NodeImpl eventAncestor = this;
+                if(savedEnclosingAttr != null)
+                    eventAncestor = (NodeImpl)
+                        savedEnclosingAttr.node.getOwnerElement();
+                if (eventAncestor != null) { // Might have been orphan Attr
+                    for (NodeImpl p = eventAncestor.parentNode();
+                         p != null; p = p.parentNode()) {
+                        eventAncestor = p; // Last non-null ancestor
+                    }
+                    if (eventAncestor.getNodeType() == Node.DOCUMENT_NODE){
+                        MutationEventImpl me = new MutationEventImpl();
+                        me.initMutationEvent(
+                              MutationEventImpl.DOM_NODE_REMOVED_FROM_DOCUMENT,
+                                             false, false, null,
+                                             null, null, null, (short) 0);
+                        dispatchEventToSubtree(oldChild, me);
+                    }
+                }
+            }
+        } // End mutation preprocessing
+!!!4232578.java!!!	removedNode(inout node : NodeImpl, inout replace : boolean) : void
+        if (mutationEvents) {
+            // MUTATION POST-EVENTS:
+            // Subroutine: Transmit DOMAttrModified and DOMSubtreeModified,
+            // if required. (Common to most kinds of mutation)
+            if (!replace) {
+                dispatchAggregateEvents(node, savedEnclosingAttr);
+            }
+        } // End mutation postprocessing
+!!!4232706.java!!!	replacingNode(inout node : NodeImpl) : void
+        if (mutationEvents) {
+            saveEnclosingAttr(node);
+        }
+!!!4232834.java!!!	replacingData(inout node : NodeImpl) : void
+        if (mutationEvents) {
+                        saveEnclosingAttr(node);
+        }
+!!!4232962.java!!!	replacedNode(inout node : NodeImpl) : void
+        if (mutationEvents) {
+            dispatchAggregateEvents(node, savedEnclosingAttr);
+        }
+!!!4233090.java!!!	modifiedAttrValue(inout attr : AttrImpl, inout oldvalue : String) : void
+        if (mutationEvents) {
+            // MUTATION POST-EVENTS:
+            dispatchAggregateEvents(attr, attr, oldvalue,
+                                    MutationEvent.MODIFICATION);
+        }
+!!!4233218.java!!!	setAttrNode(inout attr : AttrImpl, inout previous : AttrImpl) : void
+        if (mutationEvents) {
+            // MUTATION POST-EVENTS:
+            if (previous == null) {
+                dispatchAggregateEvents(attr.ownerNode, attr, null,
+                                        MutationEvent.ADDITION);
+            }
+            else {
+                dispatchAggregateEvents(attr.ownerNode, attr,
+                                        previous.getNodeValue(),
+                                        MutationEvent.MODIFICATION);
+            }
+        }
+!!!4233346.java!!!	removedAttrNode(inout attr : AttrImpl, inout oldOwner : NodeImpl, inout name : String) : void
+        // We can't use the standard dispatchAggregate, since it assumes
+        // that the Attr is still attached to an owner. This code is
+        // similar but dispatches to the previous owner, "element".
+        if (mutationEvents) {
+            // If we have to send DOMAttrModified (determined earlier),
+            // do so.
+            LCount lc = LCount.lookup(MutationEventImpl.DOM_ATTR_MODIFIED);
+            if (lc.total > 0) {
+                MutationEventImpl me= new MutationEventImpl();
+                me.initMutationEvent(MutationEventImpl.DOM_ATTR_MODIFIED,
+                                     true, false, attr,
+                                     attr.getNodeValue(), null, name,
+                                     MutationEvent.REMOVAL);
+                dispatchEvent(oldOwner, me);
+            }
+
+            // We can hand off to process DOMSubtreeModified, though.
+            // Note that only the Element needs to be informed; the
+            // Attr's subtree has not been changed by this operation.
+            dispatchAggregateEvents(oldOwner, null, null, (short) 0);
+        }
+!!!4233474.java!!!	renamedAttrNode(inout oldAt : Attr, inout newAt : Attr) : void
+        // REVISIT: To be implemented!!!
+!!!4233602.java!!!	renamedElement(inout oldEl : Element, inout newEl : Element) : void
+        // REVISIT: To be implemented!!!
+!!!4233730.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        // Convert Maps to Hashtables, Lists to Vectors
+        Vector<NodeIterator> it = (iterators == null)? null : new Vector<>(iterators);
+        Vector<Range> r = (ranges == null)? null : new Vector<>(ranges);
+
+        Hashtable<NodeImpl, Vector<LEntry>> el = null;
+        if (eventListeners != null) {
+            el = new Hashtable<>();
+            for (Map.Entry<NodeImpl, List<LEntry>> e : eventListeners.entrySet()) {
+                 el.put(e.getKey(), new Vector<>(e.getValue()));
+            }
+        }
+
+        // Write serialized fields
+        ObjectOutputStream.PutField pf = out.putFields();
+        pf.put("iterators", it);
+        pf.put("ranges", r);
+        pf.put("eventListeners", el);
+        pf.put("mutationEvents", mutationEvents);
+        out.writeFields();
+!!!4233858.java!!!	readObject(inout in : ObjectInputStream) : void
+        // We have to read serialized fields first.
+        ObjectInputStream.GetField gf = in.readFields();
+        Vector<NodeIterator> it = (Vector<NodeIterator>)gf.get("iterators", null);
+        Vector<Range> r = (Vector<Range>)gf.get("ranges", null);
+        Hashtable<NodeImpl, Vector<LEntry>> el =
+                (Hashtable<NodeImpl, Vector<LEntry>>)gf.get("eventListeners", null);
+
+        mutationEvents = gf.get("mutationEvents", false);
+
+        //convert Hashtables back to HashMaps and Vectors to Lists
+        if (it != null) iterators = new ArrayList<>(it);
+        if (r != null) ranges = new ArrayList<>(r);
+        if (el != null) {
+            eventListeners = new HashMap<>();
+            for (Map.Entry<NodeImpl, Vector<LEntry>> e : el.entrySet()) {
+                 eventListeners.put(e.getKey(), new ArrayList<>(e.getValue()));
+            }
+        }

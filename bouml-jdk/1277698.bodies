@@ -1,0 +1,185 @@
+class SwingWorker
+!!!10580994.java!!!	SwingWorker()
+        Callable<T> callable =
+                new Callable<T>() {
+                    public T call() throws Exception {
+                        setState(StateValue.STARTED);
+                        return doInBackground();
+                    }
+                };
+
+        future = new FutureTask<T>(callable) {
+                       @Override
+                       protected void done() {
+                           doneEDT();
+                           setState(StateValue.DONE);
+                       }
+                   };
+
+       state = StateValue.PENDING;
+       propertyChangeSupport = new SwingWorkerPropertyChangeSupport(this);
+       doProcess = null;
+       doNotifyProgressChange = null;
+!!!10581250.java!!!	run() : void
+        future.run();
+!!!10581378.java!!!	publish(inout  : V...chunks) : void
+        synchronized (this) {
+            if (doProcess == null) {
+                doProcess = new AccumulativeRunnable<V>() {
+                    @Override
+                    public void run(List<V> args) {
+                        process(args);
+                    }
+                    @Override
+                    protected void submit() {
+                        doSubmit.add(this);
+                    }
+                };
+            }
+        }
+        doProcess.add(chunks);
+!!!10581762.java!!!	setProgress(in progress : int) : void
+        if (progress < 0 || progress > 100) {
+            throw new IllegalArgumentException("the value should be from 0 to 100");
+        }
+        if (this.progress == progress) {
+            return;
+        }
+        int oldProgress = this.progress;
+        this.progress = progress;
+        if (! getPropertyChangeSupport().hasListeners("progress")) {
+            return;
+        }
+        synchronized (this) {
+            if (doNotifyProgressChange == null) {
+                doNotifyProgressChange =
+                    new AccumulativeRunnable<Integer>() {
+                        @Override
+                        public void run(List<Integer> args) {
+                            firePropertyChange("progress",
+                               args.get(0),
+                               args.get(args.size() - 1));
+                        }
+                        @Override
+                        protected void submit() {
+                            doSubmit.add(this);
+                        }
+                    };
+            }
+        }
+        doNotifyProgressChange.add(oldProgress, progress);
+!!!10581890.java!!!	getProgress() : int
+        return progress;
+!!!10582018.java!!!	execute() : void
+        getWorkersExecutorService().execute(this);
+!!!10582146.java!!!	cancel(inout mayInterruptIfRunning : boolean) : boolean
+        return future.cancel(mayInterruptIfRunning);
+!!!10582274.java!!!	isCancelled() : boolean
+        return future.isCancelled();
+!!!10582402.java!!!	isDone() : boolean
+        return future.isDone();
+!!!10582530.java!!!	get() : T
+        return future.get();
+!!!10582658.java!!!	get(in timeout : long, inout unit : TimeUnit) : T
+        return future.get(timeout, unit);
+!!!10582786.java!!!	addPropertyChangeListener(inout listener : PropertyChangeListener) : void
+        getPropertyChangeSupport().addPropertyChangeListener(listener);
+!!!10582914.java!!!	removePropertyChangeListener(inout listener : PropertyChangeListener) : void
+        getPropertyChangeSupport().removePropertyChangeListener(listener);
+!!!10583042.java!!!	firePropertyChange(inout propertyName : String, inout oldValue : Object, inout newValue : Object) : void
+        getPropertyChangeSupport().firePropertyChange(propertyName,
+            oldValue, newValue);
+!!!10583170.java!!!	getPropertyChangeSupport() : PropertyChangeSupport
+        return propertyChangeSupport;
+!!!10583298.java!!!	getState() : SwingWorker::StateValue
+        /*
+         * DONE is a speacial case
+         * to keep getState and isDone is sync
+         */
+        if (isDone()) {
+            return StateValue.DONE;
+        } else {
+            return state;
+        }
+!!!10583426.java!!!	setState(inout state : SwingWorker::StateValue) : void
+        StateValue old = this.state;
+        this.state = state;
+        firePropertyChange("state", old, state);
+!!!10583554.java!!!	doneEDT() : void
+        Runnable doDone =
+            new Runnable() {
+                public void run() {
+                    done();
+                }
+            };
+        if (SwingUtilities.isEventDispatchThread()) {
+            doDone.run();
+        } else {
+            doSubmit.add(doDone);
+        }
+!!!10583682.java!!!	getWorkersExecutorService() : ExecutorService
+        final AppContext appContext = AppContext.getAppContext();
+        ExecutorService executorService =
+            (ExecutorService) appContext.get(SwingWorker.class);
+        if (executorService == null) {
+            //this creates daemon threads.
+            ThreadFactory threadFactory =
+                new ThreadFactory() {
+                    final ThreadFactory defaultFactory =
+                        Executors.defaultThreadFactory();
+                    public Thread newThread(final Runnable r) {
+                        Thread thread =
+                            defaultFactory.newThread(r);
+                        thread.setName("SwingWorker-"
+                            + thread.getName());
+                        thread.setDaemon(true);
+                        return thread;
+                    }
+                };
+
+            executorService =
+                new ThreadPoolExecutor(MAX_WORKER_THREADS, MAX_WORKER_THREADS,
+                                       10L, TimeUnit.MINUTES,
+                                       new LinkedBlockingQueue<Runnable>(),
+                                       threadFactory);
+            appContext.put(SwingWorker.class, executorService);
+
+            // Don't use ShutdownHook here as it's not enough. We should track
+            // AppContext disposal instead of JVM shutdown, see 6799345 for details
+            final ExecutorService es = executorService;
+            appContext.addPropertyChangeListener(AppContext.DISPOSED_PROPERTY_NAME,
+                new PropertyChangeListener() {
+                    @Override
+                    public void propertyChange(PropertyChangeEvent pce) {
+                        boolean disposed = (Boolean)pce.getNewValue();
+                        if (disposed) {
+                            final WeakReference<ExecutorService> executorServiceRef =
+                                new WeakReference<ExecutorService>(es);
+                            final ExecutorService executorService =
+                                executorServiceRef.get();
+                            if (executorService != null) {
+                                AccessController.doPrivileged(
+                                    new PrivilegedAction<Void>() {
+                                        public Void run() {
+                                            executorService.shutdown();
+                                            return null;
+                                        }
+                                    }
+                                );
+                            }
+                        }
+                    }
+                }
+            );
+        }
+        return executorService;
+!!!10583810.java!!!	getDoSubmit() : Runnable
+        synchronized (DO_SUBMIT_KEY) {
+            final AppContext appContext = AppContext.getAppContext();
+            Object doSubmit = appContext.get(DO_SUBMIT_KEY);
+            if (doSubmit == null) {
+                doSubmit = new DoSubmitAccumulativeRunnable();
+                appContext.put(DO_SUBMIT_KEY, doSubmit);
+            }
+            return (AccumulativeRunnable<Runnable>) doSubmit;
+        }

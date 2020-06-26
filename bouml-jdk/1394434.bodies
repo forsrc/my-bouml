@@ -1,0 +1,330 @@
+class MinimalHTMLWriter
+!!!11796610.java!!!	MinimalHTMLWriter(inout w : Writer, inout doc : StyledDocument)
+        super(w, doc);
+!!!11796738.java!!!	MinimalHTMLWriter(inout w : Writer, inout doc : StyledDocument, in pos : int, in len : int)
+        super(w, doc, pos, len);
+!!!11796866.java!!!	write() : void
+        styleNameMapping = new Hashtable<String, String>();
+        writeStartTag("<html>");
+        writeHeader();
+        writeBody();
+        writeEndTag("</html>");
+!!!11796994.java!!!	writeAttributes(inout attr : AttributeSet) : void
+        Enumeration attributeNames = attr.getAttributeNames();
+        while (attributeNames.hasMoreElements()) {
+            Object name = attributeNames.nextElement();
+            if ((name instanceof StyleConstants.ParagraphConstants) ||
+                (name instanceof StyleConstants.CharacterConstants) ||
+                (name instanceof StyleConstants.FontConstants) ||
+                (name instanceof StyleConstants.ColorConstants)) {
+                indent();
+                write(name.toString());
+                write(':');
+                write(css.styleConstantsValueToCSSValue
+                      ((StyleConstants)name, attr.getAttribute(name)).
+                      toString());
+                write(';');
+                write(NEWLINE);
+            }
+        }
+!!!11797122.java!!!	text(inout elem : Element) : void
+        String contentStr = getText(elem);
+        if ((contentStr.length() > 0) &&
+            (contentStr.charAt(contentStr.length()-1) == NEWLINE)) {
+            contentStr = contentStr.substring(0, contentStr.length()-1);
+        }
+        if (contentStr.length() > 0) {
+            write(contentStr);
+        }
+!!!11797250.java!!!	writeStartTag(inout tag : String) : void
+        indent();
+        write(tag);
+        write(NEWLINE);
+        incrIndent();
+!!!11797378.java!!!	writeEndTag(inout endTag : String) : void
+        decrIndent();
+        indent();
+        write(endTag);
+        write(NEWLINE);
+!!!11797506.java!!!	writeHeader() : void
+        writeStartTag("<head>");
+        writeStartTag("<style>");
+        writeStartTag("<!--");
+        writeStyles();
+        writeEndTag("-->");
+        writeEndTag("</style>");
+        writeEndTag("</head>");
+!!!11797634.java!!!	writeStyles() : void
+        /*
+         *  Access to DefaultStyledDocument done to workaround
+         *  a missing API in styled document to access the
+         *  stylenames.
+         */
+        DefaultStyledDocument styledDoc =  ((DefaultStyledDocument)getDocument());
+        Enumeration styleNames = styledDoc.getStyleNames();
+
+        while (styleNames.hasMoreElements()) {
+            Style s = styledDoc.getStyle((String)styleNames.nextElement());
+
+            /** PENDING: Once the name attribute is removed
+                from the list we check check for 0. **/
+            if (s.getAttributeCount() == 1 &&
+                s.isDefined(StyleConstants.NameAttribute)) {
+                continue;
+            }
+            indent();
+            write("p." + addStyleName(s.getName()));
+            write(" {\n");
+            incrIndent();
+            writeAttributes(s);
+            decrIndent();
+            indent();
+            write("}\n");
+        }
+!!!11797762.java!!!	writeBody() : void
+        ElementIterator it = getElementIterator();
+
+        /*
+          This will be a section element for a styled document.
+          We represent this element in HTML as the body tags.
+          Therefore we ignore it.
+         */
+        it.current();
+
+        Element next;
+
+        writeStartTag("<body>");
+
+        boolean inContent = false;
+
+        while((next = it.next()) != null) {
+            if (!inRange(next)) {
+                continue;
+            }
+            if (next instanceof AbstractDocument.BranchElement) {
+                if (inContent) {
+                    writeEndParagraph();
+                    inContent = false;
+                    fontMask = 0;
+                }
+                writeStartParagraph(next);
+            } else if (isText(next)) {
+                writeContent(next, !inContent);
+                inContent = true;
+            } else {
+                writeLeaf(next);
+                inContent = true;
+            }
+        }
+        if (inContent) {
+            writeEndParagraph();
+        }
+        writeEndTag("</body>");
+!!!11797890.java!!!	writeEndParagraph() : void
+        writeEndMask(fontMask);
+        if (inFontTag()) {
+            endSpanTag();
+        } else {
+            write(NEWLINE);
+        }
+        writeEndTag("</p>");
+!!!11798018.java!!!	writeStartParagraph(inout elem : Element) : void
+        AttributeSet attr = elem.getAttributes();
+        Object resolveAttr = attr.getAttribute(StyleConstants.ResolveAttribute);
+        if (resolveAttr instanceof StyleContext.NamedStyle) {
+            writeStartTag("<p class=" + mapStyleName(((StyleContext.NamedStyle)resolveAttr).getName()) + ">");
+        } else {
+            writeStartTag("<p>");
+        }
+!!!11798146.java!!!	writeLeaf(inout elem : Element) : void
+        indent();
+        if (elem.getName() == StyleConstants.IconElementName) {
+            writeImage(elem);
+        } else if (elem.getName() == StyleConstants.ComponentElementName) {
+            writeComponent(elem);
+        }
+!!!11798530.java!!!	isText(inout elem : Element) : boolean
+        return (elem.getName() == AbstractDocument.ContentElementName);
+!!!11798658.java!!!	writeContent(inout elem : Element, inout needsIndenting : boolean) : void
+
+        AttributeSet attr = elem.getAttributes();
+        writeNonHTMLAttributes(attr);
+        if (needsIndenting) {
+            indent();
+        }
+        writeHTMLTags(attr);
+        text(elem);
+!!!11798786.java!!!	writeHTMLTags(inout attr : AttributeSet) : void
+
+        int oldMask = fontMask;
+        setFontMask(attr);
+
+        int endMask = 0;
+        int startMask = 0;
+        if ((oldMask & BOLD) != 0) {
+            if ((fontMask & BOLD) == 0) {
+                endMask |= BOLD;
+            }
+        } else if ((fontMask & BOLD) != 0) {
+            startMask |= BOLD;
+        }
+
+        if ((oldMask & ITALIC) != 0) {
+            if ((fontMask & ITALIC) == 0) {
+                endMask |= ITALIC;
+            }
+        } else if ((fontMask & ITALIC) != 0) {
+            startMask |= ITALIC;
+        }
+
+        if ((oldMask & UNDERLINE) != 0) {
+            if ((fontMask & UNDERLINE) == 0) {
+                endMask |= UNDERLINE;
+            }
+        } else if ((fontMask & UNDERLINE) != 0) {
+            startMask |= UNDERLINE;
+        }
+        writeEndMask(endMask);
+        writeStartMask(startMask);
+!!!11798914.java!!!	setFontMask(inout attr : AttributeSet) : void
+        if (StyleConstants.isBold(attr)) {
+            fontMask |= BOLD;
+        }
+
+        if (StyleConstants.isItalic(attr)) {
+            fontMask |= ITALIC;
+        }
+
+        if (StyleConstants.isUnderline(attr)) {
+            fontMask |= UNDERLINE;
+        }
+!!!11799042.java!!!	writeStartMask(in mask : int) : void
+        if (mask != 0) {
+            if ((mask & UNDERLINE) != 0) {
+                write("<u>");
+            }
+            if ((mask & ITALIC) != 0) {
+                write("<i>");
+            }
+            if ((mask & BOLD) != 0) {
+                write("<b>");
+            }
+        }
+!!!11799170.java!!!	writeEndMask(in mask : int) : void
+        if (mask != 0) {
+            if ((mask & BOLD) != 0) {
+                write("</b>");
+            }
+            if ((mask & ITALIC) != 0) {
+                write("</i>");
+            }
+            if ((mask & UNDERLINE) != 0) {
+                write("</u>");
+            }
+        }
+!!!11799298.java!!!	writeNonHTMLAttributes(inout attr : AttributeSet) : void
+
+        String style = "";
+        String separator = "; ";
+
+        if (inFontTag() && fontAttributes.isEqual(attr)) {
+            return;
+        }
+
+        boolean first = true;
+        Color color = (Color)attr.getAttribute(StyleConstants.Foreground);
+        if (color != null) {
+            style += "color: " + css.styleConstantsValueToCSSValue
+                                    ((StyleConstants)StyleConstants.Foreground,
+                                     color);
+            first = false;
+        }
+        Integer size = (Integer)attr.getAttribute(StyleConstants.FontSize);
+        if (size != null) {
+            if (!first) {
+                style += separator;
+            }
+            style += "font-size: " + size.intValue() + "pt";
+            first = false;
+        }
+
+        String family = (String)attr.getAttribute(StyleConstants.FontFamily);
+        if (family != null) {
+            if (!first) {
+                style += separator;
+            }
+            style += "font-family: " + family;
+            first = false;
+        }
+
+        if (style.length() > 0) {
+            if (fontMask != 0) {
+                writeEndMask(fontMask);
+                fontMask = 0;
+            }
+            startSpanTag(style);
+            fontAttributes = attr;
+        }
+        else if (fontAttributes != null) {
+            writeEndMask(fontMask);
+            fontMask = 0;
+            endSpanTag();
+        }
+!!!11799426.java!!!	inFontTag() : boolean
+        return (fontAttributes != null);
+!!!11799554.java!!!	endFontTag() : void
+        write(NEWLINE);
+        writeEndTag("</font>");
+        fontAttributes = null;
+!!!11799682.java!!!	startFontTag(inout style : String) : void
+        boolean callIndent = false;
+        if (inFontTag()) {
+            endFontTag();
+            callIndent = true;
+        }
+        writeStartTag("<font style=\"" + style + "\">");
+        if (callIndent) {
+            indent();
+        }
+!!!11799810.java!!!	startSpanTag(inout style : String) : void
+        boolean callIndent = false;
+        if (inFontTag()) {
+            endSpanTag();
+            callIndent = true;
+        }
+        writeStartTag("<span style=\"" + style + "\">");
+        if (callIndent) {
+            indent();
+        }
+!!!11799938.java!!!	endSpanTag() : void
+        write(NEWLINE);
+        writeEndTag("</span>");
+        fontAttributes = null;
+!!!11800066.java!!!	addStyleName(inout style : String) : String
+        if (styleNameMapping == null) {
+            return style;
+        }
+        StringBuilder sb = null;
+        for (int counter = style.length() - 1; counter >= 0; counter--) {
+            if (!isValidCharacter(style.charAt(counter))) {
+                if (sb == null) {
+                    sb = new StringBuilder(style);
+                }
+                sb.setCharAt(counter, 'a');
+            }
+        }
+        String mappedName = (sb != null) ? sb.toString() : style;
+        while (styleNameMapping.get(mappedName) != null) {
+            mappedName = mappedName + 'x';
+        }
+        styleNameMapping.put(style, mappedName);
+        return mappedName;
+!!!11800194.java!!!	mapStyleName(inout style : String) : String
+        if (styleNameMapping == null) {
+            return style;
+        }
+        String retValue = styleNameMapping.get(style);
+        return (retValue == null) ? style : retValue;
+!!!11800322.java!!!	isValidCharacter(in character : char) : boolean
+        return ((character >= 'a' && character <= 'z') ||
+                (character >= 'A' && character <= 'Z'));

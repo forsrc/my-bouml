@@ -1,0 +1,180 @@
+class TransferHandler
+!!!1970818.java!!!	getCutAction() : Action
+        return cutAction;
+!!!1970946.java!!!	getCopyAction() : Action
+        return copyAction;
+!!!1971074.java!!!	getPasteAction() : Action
+        return pasteAction;
+!!!1971202.java!!!	TransferHandler(inout property : String)
+        propertyName = property;
+!!!1971330.java!!!	TransferHandler()
+        this(null);
+!!!1971458.java!!!	setDragImage(inout img : Image) : void
+        dragImage = img;
+!!!1971586.java!!!	getDragImage() : Image
+        return dragImage;
+!!!1971714.java!!!	setDragImageOffset(inout p : Point) : void
+        dragImageOffset = new Point(p);
+!!!1971842.java!!!	getDragImageOffset() : Point
+        if (dragImageOffset == null) {
+            return new Point(0,0);
+        }
+        return new Point(dragImageOffset);
+!!!1971970.java!!!	exportAsDrag(inout comp : JComponent, inout e : InputEvent, in action : int) : void
+        int srcActions = getSourceActions(comp);
+
+        // only mouse events supported for drag operations
+        if (!(e instanceof MouseEvent)
+                // only support known actions
+                || !(action == COPY || action == MOVE || action == LINK)
+                // only support valid source actions
+                || (srcActions & action) == 0) {
+
+            action = NONE;
+        }
+
+        if (action != NONE && !GraphicsEnvironment.isHeadless()) {
+            if (recognizer == null) {
+                recognizer = new SwingDragGestureRecognizer(new DragHandler());
+            }
+            recognizer.gestured(comp, (MouseEvent)e, srcActions, action);
+        } else {
+            exportDone(comp, null, NONE);
+        }
+!!!1972098.java!!!	exportToClipboard(inout comp : JComponent, inout clip : Clipboard, in action : int) : void
+
+        if ((action == COPY || action == MOVE)
+                && (getSourceActions(comp) & action) != 0) {
+
+            Transferable t = createTransferable(comp);
+            if (t != null) {
+                try {
+                    clip.setContents(t, null);
+                    exportDone(comp, t, action);
+                    return;
+                } catch (IllegalStateException ise) {
+                    exportDone(comp, t, NONE);
+                    throw ise;
+                }
+            }
+        }
+
+        exportDone(comp, null, NONE);
+!!!1972226.java!!!	importData(inout support : TransferHandler::TransferSupport) : boolean
+        return support.getComponent() instanceof JComponent
+            ? importData((JComponent)support.getComponent(), support.getTransferable())
+            : false;
+!!!1972354.java!!!	importData(inout comp : JComponent, inout t : Transferable) : boolean
+        PropertyDescriptor prop = getPropertyDescriptor(comp);
+        if (prop != null) {
+            Method writer = prop.getWriteMethod();
+            if (writer == null) {
+                // read-only property. ignore
+                return false;
+            }
+            Class<?>[] params = writer.getParameterTypes();
+            if (params.length != 1) {
+                // zero or more than one argument, ignore
+                return false;
+            }
+            DataFlavor flavor = getPropertyDataFlavor(params[0], t.getTransferDataFlavors());
+            if (flavor != null) {
+                try {
+                    Object value = t.getTransferData(flavor);
+                    Object[] args = { value };
+                    MethodUtil.invoke(writer, comp, args);
+                    return true;
+                } catch (Exception ex) {
+                    System.err.println("Invocation failed");
+                    // invocation code
+                }
+            }
+        }
+        return false;
+!!!1972482.java!!!	canImport(inout support : TransferHandler::TransferSupport) : boolean
+        return support.getComponent() instanceof JComponent
+            ? canImport((JComponent)support.getComponent(), support.getDataFlavors())
+            : false;
+!!!1972610.java!!!	canImport(inout comp : JComponent, inout transferFlavors : DataFlavor [[]]) : boolean
+        PropertyDescriptor prop = getPropertyDescriptor(comp);
+        if (prop != null) {
+            Method writer = prop.getWriteMethod();
+            if (writer == null) {
+                // read-only property. ignore
+                return false;
+            }
+            Class<?>[] params = writer.getParameterTypes();
+            if (params.length != 1) {
+                // zero or more than one argument, ignore
+                return false;
+            }
+            DataFlavor flavor = getPropertyDataFlavor(params[0], transferFlavors);
+            if (flavor != null) {
+                return true;
+            }
+        }
+        return false;
+!!!1972738.java!!!	getSourceActions(inout c : JComponent) : int
+        PropertyDescriptor prop = getPropertyDescriptor(c);
+        if (prop != null) {
+            return COPY;
+        }
+        return NONE;
+!!!1972866.java!!!	getVisualRepresentation(inout t : Transferable) : Icon
+        return null;
+!!!1972994.java!!!	createTransferable(inout c : JComponent) : Transferable
+        PropertyDescriptor property = getPropertyDescriptor(c);
+        if (property != null) {
+            return new PropertyTransferable(property, c);
+        }
+        return null;
+!!!1973250.java!!!	getPropertyDescriptor(inout comp : JComponent) : PropertyDescriptor
+        if (propertyName == null) {
+            return null;
+        }
+        Class<?> k = comp.getClass();
+        BeanInfo bi;
+        try {
+            bi = Introspector.getBeanInfo(k);
+        } catch (IntrospectionException ex) {
+            return null;
+        }
+        PropertyDescriptor props[] = bi.getPropertyDescriptors();
+        for (int i=0; i < props.length; i++) {
+            if (propertyName.equals(props[i].getName())) {
+                Method reader = props[i].getReadMethod();
+
+                if (reader != null) {
+                    Class<?>[] params = reader.getParameterTypes();
+
+                    if (params == null || params.length == 0) {
+                        // found the desired descriptor
+                        return props[i];
+                    }
+                }
+            }
+        }
+        return null;
+!!!1973378.java!!!	getPropertyDataFlavor(inout k : Class, inout flavors : DataFlavor [[]]) : DataFlavor
+        for(int i = 0; i < flavors.length; i++) {
+            DataFlavor flavor = flavors[i];
+            if ("application".equals(flavor.getPrimaryType()) &&
+                "x-java-jvm-local-objectref".equals(flavor.getSubType()) &&
+                k.isAssignableFrom(flavor.getRepresentationClass())) {
+
+                return flavor;
+            }
+        }
+        return null;
+!!!1973506.java!!!	getDropTargetListener() : DropTargetListener
+        synchronized(DropHandler.class) {
+            DropHandler handler =
+                (DropHandler)AppContext.getAppContext().get(DropHandler.class);
+
+            if (handler == null) {
+                handler = new DropHandler();
+                AppContext.getAppContext().put(DropHandler.class, handler);
+            }
+
+            return handler;
+        }

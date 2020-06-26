@@ -1,0 +1,224 @@
+class CorbaClientDelegateImpl
+!!!1342850.java!!!	CorbaClientDelegateImpl(inout orb : ORB, inout contactInfoList : CorbaContactInfoList)
+        this.orb = orb;
+        this.wrapper = ORBUtilSystemException.get( orb,
+            CORBALogDomains.RPC_PROTOCOL ) ;
+        this.contactInfoList = contactInfoList;
+!!!1342978.java!!!	getBroker() : Broker
+        return orb;
+!!!1343106.java!!!	getContactInfoList() : ContactInfoList
+        return contactInfoList;
+!!!1343234.java!!!	request(inout self : Object, inout operation : String, inout responseExpected : boolean) : OutputStream
+        ClientInvocationInfo invocationInfo =
+            orb.createOrIncrementInvocationInfo();
+        Iterator contactInfoListIterator =
+            invocationInfo.getContactInfoListIterator();
+        if (contactInfoListIterator == null) {
+            contactInfoListIterator = contactInfoList.iterator();
+            invocationInfo.setContactInfoListIterator(contactInfoListIterator);
+        }
+        if (! contactInfoListIterator.hasNext()) {
+            throw ((CorbaContactInfoListIterator)contactInfoListIterator)
+                .getFailureException();
+        }
+        CorbaContactInfo contactInfo = (CorbaContactInfo) contactInfoListIterator.next();
+        ClientRequestDispatcher subcontract = contactInfo.getClientRequestDispatcher();
+        // Remember chosen subcontract for invoke and releaseReply.
+        // NOTE: This is necessary since a stream is not available in
+        // releaseReply if there is a client marshaling error or an
+        // error in _invoke.
+        invocationInfo.setClientRequestDispatcher(subcontract);
+        return (OutputStream)
+            subcontract.beginRequest(self, operation,
+                                     !responseExpected, contactInfo);
+!!!1343362.java!!!	invoke(inout self : Object, inout output : OutputStream) : InputStream
+        ClientRequestDispatcher subcontract = getClientRequestDispatcher();
+        return (InputStream)
+            subcontract.marshalingComplete((Object)self, (OutputObject)output);
+!!!1343490.java!!!	releaseReply(inout self : Object, inout input : InputStream) : void
+        // NOTE: InputStream may be null (e.g., exception request from PI).
+        ClientRequestDispatcher subcontract = getClientRequestDispatcher();
+        subcontract.endRequest(orb, self, (InputObject)input);
+        orb.releaseOrDecrementInvocationInfo();
+!!!1343618.java!!!	getClientRequestDispatcher() : ClientRequestDispatcher
+        return (ClientRequestDispatcher)
+            ((CorbaInvocationInfo)orb.getInvocationInfo())
+            .getClientRequestDispatcher();
+!!!1343746.java!!!	get_interface_def(inout obj : Object) : Object
+        InputStream is = null;
+        // instantiate the stub
+        org.omg.CORBA.Object stub = null ;
+
+        try {
+            OutputStream os = request(null, "_interface", true);
+            is = (InputStream) invoke((org.omg.CORBA.Object)null, os);
+
+            org.omg.CORBA.Object objimpl =
+                (org.omg.CORBA.Object) is.read_Object();
+
+            // check if returned object is of correct type
+            if ( !objimpl._is_a("IDL:omg.org/CORBA/InterfaceDef:1.0") )
+                throw wrapper.wrongInterfaceDef(CompletionStatus.COMPLETED_MAYBE);
+
+            try {
+                stub = (org.omg.CORBA.Object)
+                    JDKBridge.loadClass("org.omg.CORBA._InterfaceDefStub").
+                        newInstance();
+            } catch (Exception ex) {
+                throw wrapper.noInterfaceDefStub( ex ) ;
+            }
+
+            org.omg.CORBA.portable.Delegate del =
+                StubAdapter.getDelegate( objimpl ) ;
+            StubAdapter.setDelegate( stub, del ) ;
+        } catch (ApplicationException e) {
+            // This cannot happen.
+            throw wrapper.applicationExceptionInSpecialMethod( e ) ;
+        } catch (RemarshalException e) {
+            return get_interface_def(obj);
+        } finally {
+            releaseReply((org.omg.CORBA.Object)null, (InputStream)is);
+        }
+
+        return stub;
+!!!1343874.java!!!	is_a(inout obj : Object, inout dest : String) : boolean
+        // dest is the typeId of the interface to compare against.
+        // repositoryIds is the list of typeIds that the stub knows about.
+
+        // First we look for an answer using local information.
+
+        String [] repositoryIds = StubAdapter.getTypeIds( obj ) ;
+        String myid = contactInfoList.getTargetIOR().getTypeId();
+        if ( dest.equals(myid) ) {
+            return true;
+        }
+        for ( int i=0; i<repositoryIds.length; i++ ) {
+            if ( dest.equals(repositoryIds[i]) ) {
+                return true;
+            }
+        }
+
+        // But repositoryIds may not be complete, so it may be necessary to
+        // go to server.
+
+        InputStream is = null;
+        try {
+            OutputStream os = request(null, "_is_a", true);
+            os.write_string(dest);
+            is = (InputStream) invoke((org.omg.CORBA.Object) null, os);
+
+            return is.read_boolean();
+
+        } catch (ApplicationException e) {
+            // This cannot happen.
+            throw wrapper.applicationExceptionInSpecialMethod( e ) ;
+        } catch (RemarshalException e) {
+            return is_a(obj, dest);
+        } finally {
+            releaseReply((org.omg.CORBA.Object)null, (InputStream)is);
+        }
+!!!1344002.java!!!	non_existent(inout obj : Object) : boolean
+        InputStream is = null;
+        try {
+            OutputStream os = request(null, "_non_existent", true);
+            is = (InputStream) invoke((org.omg.CORBA.Object)null, os);
+
+            return is.read_boolean();
+
+        } catch (ApplicationException e) {
+            // This cannot happen.
+            throw wrapper.applicationExceptionInSpecialMethod( e ) ;
+        } catch (RemarshalException e) {
+            return non_existent(obj);
+        } finally {
+            releaseReply((org.omg.CORBA.Object)null, (InputStream)is);
+        }
+!!!1344130.java!!!	duplicate(inout obj : Object) : Object
+        return obj;
+!!!1344258.java!!!	release(inout obj : Object) : void
+        // DO NOT clear out internal variables to release memory
+        // This delegate may be pointed-to by other objrefs.
+!!!1344386.java!!!	is_equivalent(inout obj : Object, inout ref : Object) : boolean
+        if ( ref == null )
+            return false;
+
+        // If ref is a local object, it is not a Stub!
+        if (!StubAdapter.isStub(ref))
+            return false ;
+
+        Delegate del = StubAdapter.getDelegate(ref) ;
+        if (del == null)
+            return false ;
+
+        // Optimize the x.is_equivalent( x ) case
+        if (del == this)
+            return true;
+
+        // If delegate was created by a different ORB, return false
+        if (!(del instanceof CorbaClientDelegateImpl))
+            return false ;
+
+        CorbaClientDelegateImpl corbaDelegate = (CorbaClientDelegateImpl)del ;
+        CorbaContactInfoList ccil =
+            (CorbaContactInfoList)corbaDelegate.getContactInfoList() ;
+        return this.contactInfoList.getTargetIOR().isEquivalent(
+            ccil.getTargetIOR() );
+!!!1344514.java!!!	equals(inout self : Object, inout other : Object) : boolean
+        if (other == null)
+            return false ;
+
+        if (!StubAdapter.isStub(other)) {
+            return false;
+        }
+
+        Delegate delegate = StubAdapter.getDelegate( other ) ;
+        if (delegate == null)
+            return false ;
+
+        if (delegate instanceof CorbaClientDelegateImpl) {
+            CorbaClientDelegateImpl otherDel = (CorbaClientDelegateImpl)
+                delegate ;
+            IOR otherIor = otherDel.contactInfoList.getTargetIOR();
+            return this.contactInfoList.getTargetIOR().equals(otherIor);
+        }
+
+        // Come here if other is not implemented by our ORB.
+        return false;
+!!!1344642.java!!!	hashCode(inout obj : Object) : int
+        return this.hashCode() ;
+!!!1344770.java!!!	hash(inout obj : Object, in maximum : int) : int
+        int h = this.hashCode();
+        if ( h > maximum )
+            return 0;
+        return h;
+!!!1344898.java!!!	request(inout obj : Object, inout operation : String) : Request
+        return new RequestImpl(orb, obj, null, operation, null, null, null,
+                               null);
+!!!1345026.java!!!	create_request(inout obj : Object, inout ctx : Context, inout operation : String, inout arg_list : NVList, inout result : NamedValue) : Request
+        return new RequestImpl(orb, obj, ctx, operation, arg_list,
+                               result, null, null);
+!!!1345154.java!!!	create_request(inout obj : Object, inout ctx : Context, inout operation : String, inout arg_list : NVList, inout result : NamedValue, inout exclist : ExceptionList, inout ctxlist : ContextList) : Request
+        return new RequestImpl(orb, obj, ctx, operation, arg_list, result,
+                               exclist, ctxlist);
+!!!1345282.java!!!	orb(inout obj : Object) : ORB
+        return this.orb;
+!!!1345410.java!!!	is_local(inout self : Object) : boolean
+        // XXX this need to check isNextCallValid
+        return contactInfoList.getEffectiveTargetIOR().getProfile().
+            isLocal();
+!!!1345538.java!!!	servant_preinvoke(inout self : Object, inout operation : String, inout expectedType : Class) : ServantObject
+        return
+            contactInfoList.getLocalClientRequestDispatcher()
+            .servant_preinvoke(self, operation, expectedType);
+!!!1345666.java!!!	servant_postinvoke(inout self : Object, inout servant : ServantObject) : void
+        contactInfoList.getLocalClientRequestDispatcher()
+            .servant_postinvoke(self, servant);
+!!!1345794.java!!!	get_codebase(inout self : Object) : String
+        if (contactInfoList.getTargetIOR() != null) {
+            return contactInfoList.getTargetIOR().getProfile().getCodebase();
+        }
+        return null;
+!!!1345922.java!!!	toString(inout self : Object) : String
+        return contactInfoList.getTargetIOR().stringify();
+!!!1346050.java!!!	hashCode() : int
+        return this.contactInfoList.hashCode();

@@ -1,0 +1,200 @@
+class MenuKeyboardHelper
+!!!2589826.java!!!	removeItems() : void
+            if (lastFocused != null) {
+                if(!lastFocused.requestFocusInWindow()) {
+                    // Workarounr for 4810575.
+                    // If lastFocused is not in currently focused window
+                    // requestFocusInWindow will fail. In this case we must
+                    // request focus by requestFocus() if it was not
+                    // transferred from our popup.
+                    Window cfw = KeyboardFocusManager
+                                 .getCurrentKeyboardFocusManager()
+                                  .getFocusedWindow();
+                    if(cfw != null &&
+                       "###focusableSwingPopup###".equals(cfw.getName())) {
+                        lastFocused.requestFocus();
+                    }
+
+                }
+                lastFocused = null;
+            }
+            if (invokerRootPane != null) {
+                invokerRootPane.removeKeyListener(this);
+                invokerRootPane.setFocusTraversalKeysEnabled(focusTraversalKeysEnabled);
+                removeUIInputMap(invokerRootPane, menuInputMap);
+                removeUIActionMap(invokerRootPane, menuActionMap);
+                invokerRootPane = null;
+            }
+            receivedKeyPressed = false;
+!!!2589954.java!!!	getActivePopup(inout path : MenuElement [[]]) : JPopupMenu
+            for (int i=path.length-1; i>=0; i--) {
+                MenuElement elem = path[i];
+                if (elem instanceof JPopupMenu) {
+                    return (JPopupMenu)elem;
+                }
+            }
+            return null;
+!!!2590082.java!!!	addUIInputMap(inout c : JComponent, inout map : InputMap) : void
+            InputMap lastNonUI = null;
+            InputMap parent = c.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+
+            while (parent != null && !(parent instanceof UIResource)) {
+                lastNonUI = parent;
+                parent = parent.getParent();
+            }
+
+            if (lastNonUI == null) {
+                c.setInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW, map);
+            } else {
+                lastNonUI.setParent(map);
+            }
+            map.setParent(parent);
+!!!2590210.java!!!	addUIActionMap(inout c : JComponent, inout map : ActionMap) : void
+            ActionMap lastNonUI = null;
+            ActionMap parent = c.getActionMap();
+
+            while (parent != null && !(parent instanceof UIResource)) {
+                lastNonUI = parent;
+                parent = parent.getParent();
+            }
+
+            if (lastNonUI == null) {
+                c.setActionMap(map);
+            } else {
+                lastNonUI.setParent(map);
+            }
+            map.setParent(parent);
+!!!2590338.java!!!	removeUIInputMap(inout c : JComponent, inout map : InputMap) : void
+            InputMap im = null;
+            InputMap parent = c.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+
+            while (parent != null) {
+                if (parent == map) {
+                    if (im == null) {
+                        c.setInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW,
+                                      map.getParent());
+                    } else {
+                        im.setParent(map.getParent());
+                    }
+                    break;
+                }
+                im = parent;
+                parent = parent.getParent();
+            }
+!!!2590466.java!!!	removeUIActionMap(inout c : JComponent, inout map : ActionMap) : void
+            ActionMap im = null;
+            ActionMap parent = c.getActionMap();
+
+            while (parent != null) {
+                if (parent == map) {
+                    if (im == null) {
+                        c.setActionMap(map.getParent());
+                    } else {
+                        im.setParent(map.getParent());
+                    }
+                    break;
+                }
+                im = parent;
+                parent = parent.getParent();
+            }
+!!!2590594.java!!!	stateChanged(inout ev : ChangeEvent) : void
+            if (!(UIManager.getLookAndFeel() instanceof BasicLookAndFeel)) {
+                uninstall();
+                return;
+            }
+            MenuSelectionManager msm = (MenuSelectionManager)ev.getSource();
+            MenuElement[] p = msm.getSelectedPath();
+            JPopupMenu popup = getActivePopup(p);
+            if (popup != null && !popup.isFocusable()) {
+                // Do nothing for non-focusable popups
+                return;
+            }
+
+            if (lastPathSelected.length != 0 && p.length != 0 ) {
+                if (!checkInvokerEqual(p[0],lastPathSelected[0])) {
+                    removeItems();
+                    lastPathSelected = new MenuElement[0];
+                }
+            }
+
+            if (lastPathSelected.length == 0 && p.length > 0) {
+                // menu posted
+                JComponent invoker;
+
+                if (popup == null) {
+                    if (p.length == 2 && p[0] instanceof JMenuBar &&
+                        p[1] instanceof JMenu) {
+                        // a menu has been selected but not open
+                        invoker = (JComponent)p[1];
+                        popup = ((JMenu)invoker).getPopupMenu();
+                    } else {
+                        return;
+                    }
+                } else {
+                    Component c = popup.getInvoker();
+                    if(c instanceof JFrame) {
+                        invoker = ((JFrame)c).getRootPane();
+                    } else if(c instanceof JDialog) {
+                        invoker = ((JDialog)c).getRootPane();
+                    } else if(c instanceof JApplet) {
+                        invoker = ((JApplet)c).getRootPane();
+                    } else {
+                        while (!(c instanceof JComponent)) {
+                            if (c == null) {
+                                return;
+                            }
+                            c = c.getParent();
+                        }
+                        invoker = (JComponent)c;
+                    }
+                }
+
+                // remember current focus owner
+                lastFocused = KeyboardFocusManager.
+                    getCurrentKeyboardFocusManager().getFocusOwner();
+
+                // request focus on root pane and install keybindings
+                // used for menu navigation
+                invokerRootPane = SwingUtilities.getRootPane(invoker);
+                if (invokerRootPane != null) {
+                    invokerRootPane.addFocusListener(rootPaneFocusListener);
+                    invokerRootPane.requestFocus(true);
+                    invokerRootPane.addKeyListener(this);
+                    focusTraversalKeysEnabled = invokerRootPane.
+                                      getFocusTraversalKeysEnabled();
+                    invokerRootPane.setFocusTraversalKeysEnabled(false);
+
+                    menuInputMap = getInputMap(popup, invokerRootPane);
+                    addUIInputMap(invokerRootPane, menuInputMap);
+                    addUIActionMap(invokerRootPane, menuActionMap);
+                }
+            } else if (lastPathSelected.length != 0 && p.length == 0) {
+                // menu hidden -- return focus to where it had been before
+                // and uninstall menu keybindings
+                   removeItems();
+            } else {
+                if (popup != lastPopup) {
+                    receivedKeyPressed = false;
+                }
+            }
+
+            // Remember the last path selected
+            lastPathSelected = p;
+            lastPopup = popup;
+!!!2590722.java!!!	keyPressed(inout ev : KeyEvent) : void
+            receivedKeyPressed = true;
+            MenuSelectionManager.defaultManager().processKeyEvent(ev);
+!!!2590850.java!!!	keyReleased(inout ev : KeyEvent) : void
+            if (receivedKeyPressed) {
+                receivedKeyPressed = false;
+                MenuSelectionManager.defaultManager().processKeyEvent(ev);
+            }
+!!!2590978.java!!!	keyTyped(inout ev : KeyEvent) : void
+            if (receivedKeyPressed) {
+                MenuSelectionManager.defaultManager().processKeyEvent(ev);
+            }
+!!!2591106.java!!!	uninstall() : void
+            synchronized (MENU_KEYBOARD_HELPER_KEY) {
+                MenuSelectionManager.defaultManager().removeChangeListener(this);
+                AppContext.getAppContext().remove(MENU_KEYBOARD_HELPER_KEY);
+            }

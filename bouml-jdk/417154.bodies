@@ -1,0 +1,1865 @@
+class Pattern
+!!!9443714.java!!!	compile(inout regex : String) : Pattern
+        return new Pattern(regex, 0);
+!!!9443842.java!!!	compile(inout regex : String, in flags : int) : Pattern
+        return new Pattern(regex, flags);
+!!!9443970.java!!!	pattern() : String
+        return pattern;
+!!!9444098.java!!!	toString() : String
+        return pattern;
+!!!9444226.java!!!	matcher(inout input : CharSequence) : Matcher
+        if (!compiled) {
+            synchronized(this) {
+                if (!compiled)
+                    compile();
+            }
+        }
+        Matcher m = new Matcher(this, input);
+        return m;
+!!!9444354.java!!!	flags() : int
+        return flags;
+!!!9444482.java!!!	matches(inout regex : String, inout input : CharSequence) : boolean
+        Pattern p = Pattern.compile(regex);
+        Matcher m = p.matcher(input);
+        return m.matches();
+!!!9444610.java!!!	split(inout input : CharSequence, in limit : int) : String
+        int index = 0;
+        boolean matchLimited = limit > 0;
+        ArrayList<String> matchList = new ArrayList<>();
+        Matcher m = matcher(input);
+
+        // Add segments before each match found
+        while(m.find()) {
+            if (!matchLimited || matchList.size() < limit - 1) {
+                if (index == 0 && index == m.start() && m.start() == m.end()) {
+                    // no empty leading substring included for zero-width match
+                    // at the beginning of the input char sequence.
+                    continue;
+                }
+                String match = input.subSequence(index, m.start()).toString();
+                matchList.add(match);
+                index = m.end();
+            } else if (matchList.size() == limit - 1) { // last one
+                String match = input.subSequence(index,
+                                                 input.length()).toString();
+                matchList.add(match);
+                index = m.end();
+            }
+        }
+
+        // If no match was found, return this
+        if (index == 0)
+            return new String[] {input.toString()};
+
+        // Add remaining segment
+        if (!matchLimited || matchList.size() < limit)
+            matchList.add(input.subSequence(index, input.length()).toString());
+
+        // Construct result
+        int resultSize = matchList.size();
+        if (limit == 0)
+            while (resultSize > 0 && matchList.get(resultSize-1).equals(""))
+                resultSize--;
+        String[] result = new String[resultSize];
+        return matchList.subList(0, resultSize).toArray(result);
+!!!9444738.java!!!	split(inout input : CharSequence) : String
+        return split(input, 0);
+!!!9444866.java!!!	quote(inout s : String) : String
+        int slashEIndex = s.indexOf("\\E");
+        if (slashEIndex == -1)
+            return "\\Q" + s + "\\E";
+
+        StringBuilder sb = new StringBuilder(s.length() * 2);
+        sb.append("\\Q");
+        slashEIndex = 0;
+        int current = 0;
+        while ((slashEIndex = s.indexOf("\\E", current)) != -1) {
+            sb.append(s.substring(current, slashEIndex));
+            current = slashEIndex + 2;
+            sb.append("\\E\\\\E\\Q");
+        }
+        sb.append(s.substring(current, s.length()));
+        sb.append("\\E");
+        return sb.toString();
+!!!9444994.java!!!	readObject(inout s : ObjectInputStream) : void
+
+        // Read in all fields
+        s.defaultReadObject();
+
+        // Initialize counts
+        capturingGroupCount = 1;
+        localCount = 0;
+
+        // if length > 0, the Pattern is lazily compiled
+        compiled = false;
+        if (pattern.length() == 0) {
+            root = new Start(lastAccept);
+            matchRoot = lastAccept;
+            compiled = true;
+        }
+!!!9445122.java!!!	Pattern(inout p : String, in f : int)
+        pattern = p;
+        flags = f;
+
+        // to use UNICODE_CASE if UNICODE_CHARACTER_CLASS present
+        if ((flags & UNICODE_CHARACTER_CLASS) != 0)
+            flags |= UNICODE_CASE;
+
+        // Reset group index count
+        capturingGroupCount = 1;
+        localCount = 0;
+
+        if (pattern.length() > 0) {
+            compile();
+        } else {
+            root = new Start(lastAccept);
+            matchRoot = lastAccept;
+        }
+!!!9445250.java!!!	normalize() : void
+        boolean inCharClass = false;
+        int lastCodePoint = -1;
+
+        // Convert pattern into normalizedD form
+        normalizedPattern = Normalizer.normalize(pattern, Normalizer.Form.NFD);
+        patternLength = normalizedPattern.length();
+
+        // Modify pattern to match canonical equivalences
+        StringBuilder newPattern = new StringBuilder(patternLength);
+        for(int i=0; i<patternLength; ) {
+            int c = normalizedPattern.codePointAt(i);
+            StringBuilder sequenceBuffer;
+            if ((Character.getType(c) == Character.NON_SPACING_MARK)
+                && (lastCodePoint != -1)) {
+                sequenceBuffer = new StringBuilder();
+                sequenceBuffer.appendCodePoint(lastCodePoint);
+                sequenceBuffer.appendCodePoint(c);
+                while(Character.getType(c) == Character.NON_SPACING_MARK) {
+                    i += Character.charCount(c);
+                    if (i >= patternLength)
+                        break;
+                    c = normalizedPattern.codePointAt(i);
+                    sequenceBuffer.appendCodePoint(c);
+                }
+                String ea = produceEquivalentAlternation(
+                                               sequenceBuffer.toString());
+                newPattern.setLength(newPattern.length()-Character.charCount(lastCodePoint));
+                newPattern.append("(?:").append(ea).append(")");
+            } else if (c == '[' && lastCodePoint != '\\') {
+                i = normalizeCharClass(newPattern, i);
+            } else {
+                newPattern.appendCodePoint(c);
+            }
+            lastCodePoint = c;
+            i += Character.charCount(c);
+        }
+        normalizedPattern = newPattern.toString();
+!!!9445378.java!!!	normalizeCharClass(inout newPattern : StringBuilder, in i : int) : int
+        StringBuilder charClass = new StringBuilder();
+        StringBuilder eq = null;
+        int lastCodePoint = -1;
+        String result;
+
+        i++;
+        charClass.append("[");
+        while(true) {
+            int c = normalizedPattern.codePointAt(i);
+            StringBuilder sequenceBuffer;
+
+            if (c == ']' && lastCodePoint != '\\') {
+                charClass.append((char)c);
+                break;
+            } else if (Character.getType(c) == Character.NON_SPACING_MARK) {
+                sequenceBuffer = new StringBuilder();
+                sequenceBuffer.appendCodePoint(lastCodePoint);
+                while(Character.getType(c) == Character.NON_SPACING_MARK) {
+                    sequenceBuffer.appendCodePoint(c);
+                    i += Character.charCount(c);
+                    if (i >= normalizedPattern.length())
+                        break;
+                    c = normalizedPattern.codePointAt(i);
+                }
+                String ea = produceEquivalentAlternation(
+                                                  sequenceBuffer.toString());
+
+                charClass.setLength(charClass.length()-Character.charCount(lastCodePoint));
+                if (eq == null)
+                    eq = new StringBuilder();
+                eq.append('|');
+                eq.append(ea);
+            } else {
+                charClass.appendCodePoint(c);
+                i++;
+            }
+            if (i == normalizedPattern.length())
+                throw error("Unclosed character class");
+            lastCodePoint = c;
+        }
+
+        if (eq != null) {
+            result = "(?:"+charClass.toString()+eq.toString()+")";
+        } else {
+            result = charClass.toString();
+        }
+
+        newPattern.append(result);
+        return i;
+!!!9445506.java!!!	produceEquivalentAlternation(inout source : String) : String
+        int len = countChars(source, 0, 1);
+        if (source.length() == len)
+            // source has one character.
+            return source;
+
+        String base = source.substring(0,len);
+        String combiningMarks = source.substring(len);
+
+        String[] perms = producePermutations(combiningMarks);
+        StringBuilder result = new StringBuilder(source);
+
+        // Add combined permutations
+        for(int x=0; x<perms.length; x++) {
+            String next = base + perms[x];
+            if (x>0)
+                result.append("|"+next);
+            next = composeOneStep(next);
+            if (next != null)
+                result.append("|"+produceEquivalentAlternation(next));
+        }
+        return result.toString();
+!!!9445634.java!!!	producePermutations(inout input : String) : String
+        if (input.length() == countChars(input, 0, 1))
+            return new String[] {input};
+
+        if (input.length() == countChars(input, 0, 2)) {
+            int c0 = Character.codePointAt(input, 0);
+            int c1 = Character.codePointAt(input, Character.charCount(c0));
+            if (getClass(c1) == getClass(c0)) {
+                return new String[] {input};
+            }
+            String[] result = new String[2];
+            result[0] = input;
+            StringBuilder sb = new StringBuilder(2);
+            sb.appendCodePoint(c1);
+            sb.appendCodePoint(c0);
+            result[1] = sb.toString();
+            return result;
+        }
+
+        int length = 1;
+        int nCodePoints = countCodePoints(input);
+        for(int x=1; x<nCodePoints; x++)
+            length = length * (x+1);
+
+        String[] temp = new String[length];
+
+        int combClass[] = new int[nCodePoints];
+        for(int x=0, i=0; x<nCodePoints; x++) {
+            int c = Character.codePointAt(input, i);
+            combClass[x] = getClass(c);
+            i +=  Character.charCount(c);
+        }
+
+        // For each char, take it out and add the permutations
+        // of the remaining chars
+        int index = 0;
+        int len;
+        // offset maintains the index in code units.
+loop:   for(int x=0, offset=0; x<nCodePoints; x++, offset+=len) {
+            len = countChars(input, offset, 1);
+            boolean skip = false;
+            for(int y=x-1; y>=0; y--) {
+                if (combClass[y] == combClass[x]) {
+                    continue loop;
+                }
+            }
+            StringBuilder sb = new StringBuilder(input);
+            String otherChars = sb.delete(offset, offset+len).toString();
+            String[] subResult = producePermutations(otherChars);
+
+            String prefix = input.substring(offset, offset+len);
+            for(int y=0; y<subResult.length; y++)
+                temp[index++] =  prefix + subResult[y];
+        }
+        String[] result = new String[index];
+        for (int x=0; x<index; x++)
+            result[x] = temp[x];
+        return result;
+!!!9445762.java!!!	getClass(in c : int) : int
+        return sun.text.Normalizer.getCombiningClass(c);
+!!!9445890.java!!!	composeOneStep(inout input : String) : String
+        int len = countChars(input, 0, 2);
+        String firstTwoCharacters = input.substring(0, len);
+        String result = Normalizer.normalize(firstTwoCharacters, Normalizer.Form.NFC);
+
+        if (result.equals(firstTwoCharacters))
+            return null;
+        else {
+            String remainder = input.substring(len);
+            return result + remainder;
+        }
+!!!9446018.java!!!	RemoveQEQuoting() : void
+        final int pLen = patternLength;
+        int i = 0;
+        while (i < pLen-1) {
+            if (temp[i] != '\\')
+                i += 1;
+            else if (temp[i + 1] != 'Q')
+                i += 2;
+            else
+                break;
+        }
+        if (i >= pLen - 1)    // No \Q sequence found
+            return;
+        int j = i;
+        i += 2;
+        int[] newtemp = new int[j + 3*(pLen-i) + 2];
+        System.arraycopy(temp, 0, newtemp, 0, j);
+
+        boolean inQuote = true;
+        boolean beginQuote = true;
+        while (i < pLen) {
+            int c = temp[i++];
+            if (!ASCII.isAscii(c) || ASCII.isAlpha(c)) {
+                newtemp[j++] = c;
+            } else if (ASCII.isDigit(c)) {
+                if (beginQuote) {
+                    /*
+                     * A unicode escape \[0xu] could be before this quote,
+                     * and we don't want this numeric char to processed as
+                     * part of the escape.
+                     */
+                    newtemp[j++] = '\\';
+                    newtemp[j++] = 'x';
+                    newtemp[j++] = '3';
+                }
+                newtemp[j++] = c;
+            } else if (c != '\\') {
+                if (inQuote) newtemp[j++] = '\\';
+                newtemp[j++] = c;
+            } else if (inQuote) {
+                if (temp[i] == 'E') {
+                    i++;
+                    inQuote = false;
+                } else {
+                    newtemp[j++] = '\\';
+                    newtemp[j++] = '\\';
+                }
+            } else {
+                if (temp[i] == 'Q') {
+                    i++;
+                    inQuote = true;
+                    beginQuote = true;
+                    continue;
+                } else {
+                    newtemp[j++] = c;
+                    if (i != pLen)
+                        newtemp[j++] = temp[i++];
+                }
+            }
+
+            beginQuote = false;
+        }
+
+        patternLength = j;
+        temp = Arrays.copyOf(newtemp, j + 2); // double zero termination
+!!!9446146.java!!!	compile() : void
+        // Handle canonical equivalences
+        if (has(CANON_EQ) && !has(LITERAL)) {
+            normalize();
+        } else {
+            normalizedPattern = pattern;
+        }
+        patternLength = normalizedPattern.length();
+
+        // Copy pattern to int array for convenience
+        // Use double zero to terminate pattern
+        temp = new int[patternLength + 2];
+
+        hasSupplementary = false;
+        int c, count = 0;
+        // Convert all chars into code points
+        for (int x = 0; x < patternLength; x += Character.charCount(c)) {
+            c = normalizedPattern.codePointAt(x);
+            if (isSupplementary(c)) {
+                hasSupplementary = true;
+            }
+            temp[count++] = c;
+        }
+
+        patternLength = count;   // patternLength now in code points
+
+        if (! has(LITERAL))
+            RemoveQEQuoting();
+
+        // Allocate all temporary objects here.
+        buffer = new int[32];
+        groupNodes = new GroupHead[10];
+        namedGroups = null;
+
+        if (has(LITERAL)) {
+            // Literal pattern handling
+            matchRoot = newSlice(temp, patternLength, hasSupplementary);
+            matchRoot.next = lastAccept;
+        } else {
+            // Start recursive descent parsing
+            matchRoot = expr(lastAccept);
+            // Check extra pattern characters
+            if (patternLength != cursor) {
+                if (peek() == ')') {
+                    throw error("Unmatched closing ')'");
+                } else {
+                    throw error("Unexpected internal error");
+                }
+            }
+        }
+
+        // Peephole optimization
+        if (matchRoot instanceof Slice) {
+            root = BnM.optimize(matchRoot);
+            if (root == matchRoot) {
+                root = hasSupplementary ? new StartS(matchRoot) : new Start(matchRoot);
+            }
+        } else if (matchRoot instanceof Begin || matchRoot instanceof First) {
+            root = matchRoot;
+        } else {
+            root = hasSupplementary ? new StartS(matchRoot) : new Start(matchRoot);
+        }
+
+        // Release temporary storage
+        temp = null;
+        buffer = null;
+        groupNodes = null;
+        patternLength = 0;
+        compiled = true;
+!!!9446274.java!!!	namedGroups() : Map
+        if (namedGroups == null)
+            namedGroups = new HashMap<>(2);
+        return namedGroups;
+!!!9446402.java!!!	printObjectTree(inout node : Pattern::Node) : void
+        while(node != null) {
+            if (node instanceof Prolog) {
+                System.out.println(node);
+                printObjectTree(((Prolog)node).loop);
+                System.out.println("**** end contents prolog loop");
+            } else if (node instanceof Loop) {
+                System.out.println(node);
+                printObjectTree(((Loop)node).body);
+                System.out.println("**** end contents Loop body");
+            } else if (node instanceof Curly) {
+                System.out.println(node);
+                printObjectTree(((Curly)node).atom);
+                System.out.println("**** end contents Curly body");
+            } else if (node instanceof GroupCurly) {
+                System.out.println(node);
+                printObjectTree(((GroupCurly)node).atom);
+                System.out.println("**** end contents GroupCurly body");
+            } else if (node instanceof GroupTail) {
+                System.out.println(node);
+                System.out.println("Tail next is "+node.next);
+                return;
+            } else {
+                System.out.println(node);
+            }
+            node = node.next;
+            if (node != null)
+                System.out.println("->next:");
+            if (node == Pattern.accept) {
+                System.out.println("Accept Node");
+                node = null;
+            }
+       }
+!!!9446786.java!!!	has(in f : int) : boolean
+        return (flags & f) != 0;
+!!!9446914.java!!!	accept(in ch : int, inout s : String) : void
+        int testChar = temp[cursor++];
+        if (has(COMMENTS))
+            testChar = parsePastWhitespace(testChar);
+        if (ch != testChar) {
+            throw error(s);
+        }
+!!!9447042.java!!!	mark(in c : int) : void
+        temp[patternLength] = c;
+!!!9447170.java!!!	peek() : int
+        int ch = temp[cursor];
+        if (has(COMMENTS))
+            ch = peekPastWhitespace(ch);
+        return ch;
+!!!9447298.java!!!	read() : int
+        int ch = temp[cursor++];
+        if (has(COMMENTS))
+            ch = parsePastWhitespace(ch);
+        return ch;
+!!!9447426.java!!!	readEscaped() : int
+        int ch = temp[cursor++];
+        return ch;
+!!!9447554.java!!!	next() : int
+        int ch = temp[++cursor];
+        if (has(COMMENTS))
+            ch = peekPastWhitespace(ch);
+        return ch;
+!!!9447682.java!!!	nextEscaped() : int
+        int ch = temp[++cursor];
+        return ch;
+!!!9447810.java!!!	peekPastWhitespace(in ch : int) : int
+        while (ASCII.isSpace(ch) || ch == '#') {
+            while (ASCII.isSpace(ch))
+                ch = temp[++cursor];
+            if (ch == '#') {
+                ch = peekPastLine();
+            }
+        }
+        return ch;
+!!!9447938.java!!!	parsePastWhitespace(in ch : int) : int
+        while (ASCII.isSpace(ch) || ch == '#') {
+            while (ASCII.isSpace(ch))
+                ch = temp[cursor++];
+            if (ch == '#')
+                ch = parsePastLine();
+        }
+        return ch;
+!!!9448066.java!!!	parsePastLine() : int
+        int ch = temp[cursor++];
+        while (ch != 0 && !isLineSeparator(ch))
+            ch = temp[cursor++];
+        return ch;
+!!!9448194.java!!!	peekPastLine() : int
+        int ch = temp[++cursor];
+        while (ch != 0 && !isLineSeparator(ch))
+            ch = temp[++cursor];
+        return ch;
+!!!9448322.java!!!	isLineSeparator(in ch : int) : boolean
+        if (has(UNIX_LINES)) {
+            return ch == '\n';
+        } else {
+            return (ch == '\n' ||
+                    ch == '\r' ||
+                    (ch|1) == '\u2029' ||
+                    ch == '\u0085');
+        }
+!!!9448450.java!!!	skip() : int
+        int i = cursor;
+        int ch = temp[i+1];
+        cursor = i + 2;
+        return ch;
+!!!9448578.java!!!	unread() : void
+        cursor--;
+!!!9448706.java!!!	error(inout s : String) : PatternSyntaxException
+        return new PatternSyntaxException(s, normalizedPattern,  cursor - 1);
+!!!9448834.java!!!	findSupplementary(in start : int, in end : int) : boolean
+        for (int i = start; i < end; i++) {
+            if (isSupplementary(temp[i]))
+                return true;
+        }
+        return false;
+!!!9448962.java!!!	isSupplementary(in ch : int) : boolean
+        return ch >= Character.MIN_SUPPLEMENTARY_CODE_POINT ||
+               Character.isSurrogate((char)ch);
+!!!9449090.java!!!	expr(inout end : Pattern::Node) : Pattern::Node
+        Node prev = null;
+        Node firstTail = null;
+        Branch branch = null;
+        Node branchConn = null;
+
+        for (;;) {
+            Node node = sequence(end);
+            Node nodeTail = root;      //double return
+            if (prev == null) {
+                prev = node;
+                firstTail = nodeTail;
+            } else {
+                // Branch
+                if (branchConn == null) {
+                    branchConn = new BranchConn();
+                    branchConn.next = end;
+                }
+                if (node == end) {
+                    // if the node returned from sequence() is "end"
+                    // we have an empty expr, set a null atom into
+                    // the branch to indicate to go "next" directly.
+                    node = null;
+                } else {
+                    // the "tail.next" of each atom goes to branchConn
+                    nodeTail.next = branchConn;
+                }
+                if (prev == branch) {
+                    branch.add(node);
+                } else {
+                    if (prev == end) {
+                        prev = null;
+                    } else {
+                        // replace the "end" with "branchConn" at its tail.next
+                        // when put the "prev" into the branch as the first atom.
+                        firstTail.next = branchConn;
+                    }
+                    prev = branch = new Branch(prev, node, branchConn);
+                }
+            }
+            if (peek() != '|') {
+                return prev;
+            }
+            next();
+        }
+!!!9449218.java!!!	sequence(inout end : Pattern::Node) : Pattern::Node
+        Node head = null;
+        Node tail = null;
+        Node node = null;
+    LOOP:
+        for (;;) {
+            int ch = peek();
+            switch (ch) {
+            case '(':
+                // Because group handles its own closure,
+                // we need to treat it differently
+                node = group0();
+                // Check for comment or flag group
+                if (node == null)
+                    continue;
+                if (head == null)
+                    head = node;
+                else
+                    tail.next = node;
+                // Double return: Tail was returned in root
+                tail = root;
+                continue;
+            case '[':
+                node = clazz(true);
+                break;
+            case '\\':
+                ch = nextEscaped();
+                if (ch == 'p' || ch == 'P') {
+                    boolean oneLetter = true;
+                    boolean comp = (ch == 'P');
+                    ch = next(); // Consume { if present
+                    if (ch != '{') {
+                        unread();
+                    } else {
+                        oneLetter = false;
+                    }
+                    node = family(oneLetter, comp);
+                } else {
+                    unread();
+                    node = atom();
+                }
+                break;
+            case '^':
+                next();
+                if (has(MULTILINE)) {
+                    if (has(UNIX_LINES))
+                        node = new UnixCaret();
+                    else
+                        node = new Caret();
+                } else {
+                    node = new Begin();
+                }
+                break;
+            case '$':
+                next();
+                if (has(UNIX_LINES))
+                    node = new UnixDollar(has(MULTILINE));
+                else
+                    node = new Dollar(has(MULTILINE));
+                break;
+            case '.':
+                next();
+                if (has(DOTALL)) {
+                    node = new All();
+                } else {
+                    if (has(UNIX_LINES))
+                        node = new UnixDot();
+                    else {
+                        node = new Dot();
+                    }
+                }
+                break;
+            case '|':
+            case ')':
+                break LOOP;
+            case ']': // Now interpreting dangling ] and } as literals
+            case '}':
+                node = atom();
+                break;
+            case '?':
+            case '*':
+            case '+':
+                next();
+                throw error("Dangling meta character '" + ((char)ch) + "'");
+            case 0:
+                if (cursor >= patternLength) {
+                    break LOOP;
+                }
+                // Fall through
+            default:
+                node = atom();
+                break;
+            }
+
+            node = closure(node);
+
+            if (head == null) {
+                head = tail = node;
+            } else {
+                tail.next = node;
+                tail = node;
+            }
+        }
+        if (head == null) {
+            return end;
+        }
+        tail.next = end;
+        root = tail;      //double return
+        return head;
+!!!9449346.java!!!	atom() : Pattern::Node
+        int first = 0;
+        int prev = -1;
+        boolean hasSupplementary = false;
+        int ch = peek();
+        for (;;) {
+            switch (ch) {
+            case '*':
+            case '+':
+            case '?':
+            case '{':
+                if (first > 1) {
+                    cursor = prev;    // Unwind one character
+                    first--;
+                }
+                break;
+            case '$':
+            case '.':
+            case '^':
+            case '(':
+            case '[':
+            case '|':
+            case ')':
+                break;
+            case '\\':
+                ch = nextEscaped();
+                if (ch == 'p' || ch == 'P') { // Property
+                    if (first > 0) { // Slice is waiting; handle it first
+                        unread();
+                        break;
+                    } else { // No slice; just return the family node
+                        boolean comp = (ch == 'P');
+                        boolean oneLetter = true;
+                        ch = next(); // Consume { if present
+                        if (ch != '{')
+                            unread();
+                        else
+                            oneLetter = false;
+                        return family(oneLetter, comp);
+                    }
+                }
+                unread();
+                prev = cursor;
+                ch = escape(false, first == 0, false);
+                if (ch >= 0) {
+                    append(ch, first);
+                    first++;
+                    if (isSupplementary(ch)) {
+                        hasSupplementary = true;
+                    }
+                    ch = peek();
+                    continue;
+                } else if (first == 0) {
+                    return root;
+                }
+                // Unwind meta escape sequence
+                cursor = prev;
+                break;
+            case 0:
+                if (cursor >= patternLength) {
+                    break;
+                }
+                // Fall through
+            default:
+                prev = cursor;
+                append(ch, first);
+                first++;
+                if (isSupplementary(ch)) {
+                    hasSupplementary = true;
+                }
+                ch = next();
+                continue;
+            }
+            break;
+        }
+        if (first == 1) {
+            return newSingle(buffer[0]);
+        } else {
+            return newSlice(buffer, first, hasSupplementary);
+        }
+!!!9449474.java!!!	append(in ch : int, in len : int) : void
+        if (len >= buffer.length) {
+            int[] tmp = new int[len+len];
+            System.arraycopy(buffer, 0, tmp, 0, len);
+            buffer = tmp;
+        }
+        buffer[len] = ch;
+!!!9449602.java!!!	ref(in refNum : int) : Pattern::Node
+        boolean done = false;
+        while(!done) {
+            int ch = peek();
+            switch(ch) {
+            case '0':
+            case '1':
+            case '2':
+            case '3':
+            case '4':
+            case '5':
+            case '6':
+            case '7':
+            case '8':
+            case '9':
+                int newRefNum = (refNum * 10) + (ch - '0');
+                // Add another number if it doesn't make a group
+                // that doesn't exist
+                if (capturingGroupCount - 1 < newRefNum) {
+                    done = true;
+                    break;
+                }
+                refNum = newRefNum;
+                read();
+                break;
+            default:
+                done = true;
+                break;
+            }
+        }
+        if (has(CASE_INSENSITIVE))
+            return new CIBackRef(refNum, has(UNICODE_CASE));
+        else
+            return new BackRef(refNum);
+!!!9449730.java!!!	escape(inout inclass : boolean, inout create : boolean, inout isrange : boolean) : int
+        int ch = skip();
+        switch (ch) {
+        case '0':
+            return o();
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+            if (inclass) break;
+            if (create) {
+                root = ref((ch - '0'));
+            }
+            return -1;
+        case 'A':
+            if (inclass) break;
+            if (create) root = new Begin();
+            return -1;
+        case 'B':
+            if (inclass) break;
+            if (create) root = new Bound(Bound.NONE, has(UNICODE_CHARACTER_CLASS));
+            return -1;
+        case 'C':
+            break;
+        case 'D':
+            if (create) root = has(UNICODE_CHARACTER_CLASS)
+                               ? new Utype(UnicodeProp.DIGIT).complement()
+                               : new Ctype(ASCII.DIGIT).complement();
+            return -1;
+        case 'E':
+        case 'F':
+            break;
+        case 'G':
+            if (inclass) break;
+            if (create) root = new LastMatch();
+            return -1;
+        case 'H':
+            if (create) root = new HorizWS().complement();
+            return -1;
+        case 'I':
+        case 'J':
+        case 'K':
+        case 'L':
+        case 'M':
+        case 'N':
+        case 'O':
+        case 'P':
+        case 'Q':
+            break;
+        case 'R':
+            if (inclass) break;
+            if (create) root = new LineEnding();
+            return -1;
+        case 'S':
+            if (create) root = has(UNICODE_CHARACTER_CLASS)
+                               ? new Utype(UnicodeProp.WHITE_SPACE).complement()
+                               : new Ctype(ASCII.SPACE).complement();
+            return -1;
+        case 'T':
+        case 'U':
+            break;
+        case 'V':
+            if (create) root = new VertWS().complement();
+            return -1;
+        case 'W':
+            if (create) root = has(UNICODE_CHARACTER_CLASS)
+                               ? new Utype(UnicodeProp.WORD).complement()
+                               : new Ctype(ASCII.WORD).complement();
+            return -1;
+        case 'X':
+        case 'Y':
+            break;
+        case 'Z':
+            if (inclass) break;
+            if (create) {
+                if (has(UNIX_LINES))
+                    root = new UnixDollar(false);
+                else
+                    root = new Dollar(false);
+            }
+            return -1;
+        case 'a':
+            return '\007';
+        case 'b':
+            if (inclass) break;
+            if (create) root = new Bound(Bound.BOTH, has(UNICODE_CHARACTER_CLASS));
+            return -1;
+        case 'c':
+            return c();
+        case 'd':
+            if (create) root = has(UNICODE_CHARACTER_CLASS)
+                               ? new Utype(UnicodeProp.DIGIT)
+                               : new Ctype(ASCII.DIGIT);
+            return -1;
+        case 'e':
+            return '\033';
+        case 'f':
+            return '\f';
+        case 'g':
+            break;
+        case 'h':
+            if (create) root = new HorizWS();
+            return -1;
+        case 'i':
+        case 'j':
+            break;
+        case 'k':
+            if (inclass)
+                break;
+            if (read() != '<')
+                throw error("\\k is not followed by '<' for named capturing group");
+            String name = groupname(read());
+            if (!namedGroups().containsKey(name))
+                throw error("(named capturing group <"+ name+"> does not exit");
+            if (create) {
+                if (has(CASE_INSENSITIVE))
+                    root = new CIBackRef(namedGroups().get(name), has(UNICODE_CASE));
+                else
+                    root = new BackRef(namedGroups().get(name));
+            }
+            return -1;
+        case 'l':
+        case 'm':
+            break;
+        case 'n':
+            return '\n';
+        case 'o':
+        case 'p':
+        case 'q':
+            break;
+        case 'r':
+            return '\r';
+        case 's':
+            if (create) root = has(UNICODE_CHARACTER_CLASS)
+                               ? new Utype(UnicodeProp.WHITE_SPACE)
+                               : new Ctype(ASCII.SPACE);
+            return -1;
+        case 't':
+            return '\t';
+        case 'u':
+            return u();
+        case 'v':
+            // '\v' was implemented as VT/0x0B in releases < 1.8 (though
+            // undocumented). In JDK8 '\v' is specified as a predefined
+            // character class for all vertical whitespace characters.
+            // So [-1, root=VertWS node] pair is returned (instead of a
+            // single 0x0B). This breaks the range if '\v' is used as
+            // the start or end value, such as [\v-...] or [...-\v], in
+            // which a single definite value (0x0B) is expected. For
+            // compatibility concern '\013'/0x0B is returned if isrange.
+            if (isrange)
+                return '\013';
+            if (create) root = new VertWS();
+            return -1;
+        case 'w':
+            if (create) root = has(UNICODE_CHARACTER_CLASS)
+                               ? new Utype(UnicodeProp.WORD)
+                               : new Ctype(ASCII.WORD);
+            return -1;
+        case 'x':
+            return x();
+        case 'y':
+            break;
+        case 'z':
+            if (inclass) break;
+            if (create) root = new End();
+            return -1;
+        default:
+            return ch;
+        }
+        throw error("Illegal/unsupported escape sequence");
+!!!9449858.java!!!	clazz(inout consume : boolean) : Pattern::CharProperty
+        CharProperty prev = null;
+        CharProperty node = null;
+        BitClass bits = new BitClass();
+        boolean include = true;
+        boolean firstInClass = true;
+        int ch = next();
+        for (;;) {
+            switch (ch) {
+                case '^':
+                    // Negates if first char in a class, otherwise literal
+                    if (firstInClass) {
+                        if (temp[cursor-1] != '[')
+                            break;
+                        ch = next();
+                        include = !include;
+                        continue;
+                    } else {
+                        // ^ not first in class, treat as literal
+                        break;
+                    }
+                case '[':
+                    firstInClass = false;
+                    node = clazz(true);
+                    if (prev == null)
+                        prev = node;
+                    else
+                        prev = union(prev, node);
+                    ch = peek();
+                    continue;
+                case '&':
+                    firstInClass = false;
+                    ch = next();
+                    if (ch == '&') {
+                        ch = next();
+                        CharProperty rightNode = null;
+                        while (ch != ']' && ch != '&') {
+                            if (ch == '[') {
+                                if (rightNode == null)
+                                    rightNode = clazz(true);
+                                else
+                                    rightNode = union(rightNode, clazz(true));
+                            } else { // abc&&def
+                                unread();
+                                rightNode = clazz(false);
+                            }
+                            ch = peek();
+                        }
+                        if (rightNode != null)
+                            node = rightNode;
+                        if (prev == null) {
+                            if (rightNode == null)
+                                throw error("Bad class syntax");
+                            else
+                                prev = rightNode;
+                        } else {
+                            prev = intersection(prev, node);
+                        }
+                    } else {
+                        // treat as a literal &
+                        unread();
+                        break;
+                    }
+                    continue;
+                case 0:
+                    firstInClass = false;
+                    if (cursor >= patternLength)
+                        throw error("Unclosed character class");
+                    break;
+                case ']':
+                    firstInClass = false;
+                    if (prev != null) {
+                        if (consume)
+                            next();
+                        return prev;
+                    }
+                    break;
+                default:
+                    firstInClass = false;
+                    break;
+            }
+            node = range(bits);
+            if (include) {
+                if (prev == null) {
+                    prev = node;
+                } else {
+                    if (prev != node)
+                        prev = union(prev, node);
+                }
+            } else {
+                if (prev == null) {
+                    prev = node.complement();
+                } else {
+                    if (prev != node)
+                        prev = setDifference(prev, node);
+                }
+            }
+            ch = peek();
+        }
+!!!9449986.java!!!	bitsOrSingle(inout bits : Pattern::BitClass, in ch : int) : Pattern::CharProperty
+        /* Bits can only handle codepoints in [u+0000-u+00ff] range.
+           Use "single" node instead of bits when dealing with unicode
+           case folding for codepoints listed below.
+           (1)Uppercase out of range: u+00ff, u+00b5
+              toUpperCase(u+00ff) -> u+0178
+              toUpperCase(u+00b5) -> u+039c
+           (2)LatinSmallLetterLongS u+17f
+              toUpperCase(u+017f) -> u+0053
+           (3)LatinSmallLetterDotlessI u+131
+              toUpperCase(u+0131) -> u+0049
+           (4)LatinCapitalLetterIWithDotAbove u+0130
+              toLowerCase(u+0130) -> u+0069
+           (5)KelvinSign u+212a
+              toLowerCase(u+212a) ==> u+006B
+           (6)AngstromSign u+212b
+              toLowerCase(u+212b) ==> u+00e5
+        */
+        int d;
+        if (ch < 256 &&
+            !(has(CASE_INSENSITIVE) && has(UNICODE_CASE) &&
+              (ch == 0xff || ch == 0xb5 ||
+               ch == 0x49 || ch == 0x69 ||  //I and i
+               ch == 0x53 || ch == 0x73 ||  //S and s
+               ch == 0x4b || ch == 0x6b ||  //K and k
+               ch == 0xc5 || ch == 0xe5)))  //A+ring
+            return bits.add(ch, flags());
+        return newSingle(ch);
+!!!9450114.java!!!	range(inout bits : Pattern::BitClass) : Pattern::CharProperty
+        int ch = peek();
+        if (ch == '\\') {
+            ch = nextEscaped();
+            if (ch == 'p' || ch == 'P') { // A property
+                boolean comp = (ch == 'P');
+                boolean oneLetter = true;
+                // Consume { if present
+                ch = next();
+                if (ch != '{')
+                    unread();
+                else
+                    oneLetter = false;
+                return family(oneLetter, comp);
+            } else { // ordinary escape
+                boolean isrange = temp[cursor+1] == '-';
+                unread();
+                ch = escape(true, true, isrange);
+                if (ch == -1)
+                    return (CharProperty) root;
+            }
+        } else {
+            next();
+        }
+        if (ch >= 0) {
+            if (peek() == '-') {
+                int endRange = temp[cursor+1];
+                if (endRange == '[') {
+                    return bitsOrSingle(bits, ch);
+                }
+                if (endRange != ']') {
+                    next();
+                    int m = peek();
+                    if (m == '\\') {
+                        m = escape(true, false, true);
+                    } else {
+                        next();
+                    }
+                    if (m < ch) {
+                        throw error("Illegal character range");
+                    }
+                    if (has(CASE_INSENSITIVE))
+                        return caseInsensitiveRangeFor(ch, m);
+                    else
+                        return rangeFor(ch, m);
+                }
+            }
+            return bitsOrSingle(bits, ch);
+        }
+        throw error("Unexpected character '"+((char)ch)+"'");
+!!!9450242.java!!!	family(inout singleLetter : boolean, inout maybeComplement : boolean) : Pattern::CharProperty
+        next();
+        String name;
+        CharProperty node = null;
+
+        if (singleLetter) {
+            int c = temp[cursor];
+            if (!Character.isSupplementaryCodePoint(c)) {
+                name = String.valueOf((char)c);
+            } else {
+                name = new String(temp, cursor, 1);
+            }
+            read();
+        } else {
+            int i = cursor;
+            mark('}');
+            while(read() != '}') {
+            }
+            mark('\000');
+            int j = cursor;
+            if (j > patternLength)
+                throw error("Unclosed character family");
+            if (i + 1 >= j)
+                throw error("Empty character family");
+            name = new String(temp, i, j-i-1);
+        }
+
+        int i = name.indexOf('=');
+        if (i != -1) {
+            // property construct \p{name=value}
+            String value = name.substring(i + 1);
+            name = name.substring(0, i).toLowerCase(Locale.ENGLISH);
+            if ("sc".equals(name) || "script".equals(name)) {
+                node = unicodeScriptPropertyFor(value);
+            } else if ("blk".equals(name) || "block".equals(name)) {
+                node = unicodeBlockPropertyFor(value);
+            } else if ("gc".equals(name) || "general_category".equals(name)) {
+                node = charPropertyNodeFor(value);
+            } else {
+                throw error("Unknown Unicode property {name=<" + name + ">, "
+                             + "value=<" + value + ">}");
+            }
+        } else {
+            if (name.startsWith("In")) {
+                // \p{inBlockName}
+                node = unicodeBlockPropertyFor(name.substring(2));
+            } else if (name.startsWith("Is")) {
+                // \p{isGeneralCategory} and \p{isScriptName}
+                name = name.substring(2);
+                UnicodeProp uprop = UnicodeProp.forName(name);
+                if (uprop != null)
+                    node = new Utype(uprop);
+                if (node == null)
+                    node = CharPropertyNames.charPropertyFor(name);
+                if (node == null)
+                    node = unicodeScriptPropertyFor(name);
+            } else {
+                if (has(UNICODE_CHARACTER_CLASS)) {
+                    UnicodeProp uprop = UnicodeProp.forPOSIXName(name);
+                    if (uprop != null)
+                        node = new Utype(uprop);
+                }
+                if (node == null)
+                    node = charPropertyNodeFor(name);
+            }
+        }
+        if (maybeComplement) {
+            if (node instanceof Category || node instanceof Block)
+                hasSupplementary = true;
+            node = node.complement();
+        }
+        return node;
+!!!9450370.java!!!	unicodeScriptPropertyFor(inout name : String) : Pattern::CharProperty
+        final Character.UnicodeScript script;
+        try {
+            script = Character.UnicodeScript.forName(name);
+        } catch (IllegalArgumentException iae) {
+            throw error("Unknown character script name {" + name + "}");
+        }
+        return new Script(script);
+!!!9450498.java!!!	unicodeBlockPropertyFor(inout name : String) : Pattern::CharProperty
+        final Character.UnicodeBlock block;
+        try {
+            block = Character.UnicodeBlock.forName(name);
+        } catch (IllegalArgumentException iae) {
+            throw error("Unknown character block name {" + name + "}");
+        }
+        return new Block(block);
+!!!9450626.java!!!	charPropertyNodeFor(inout name : String) : Pattern::CharProperty
+        CharProperty p = CharPropertyNames.charPropertyFor(name);
+        if (p == null)
+            throw error("Unknown character property name {" + name + "}");
+        return p;
+!!!9450754.java!!!	groupname(in ch : int) : String
+        StringBuilder sb = new StringBuilder();
+        sb.append(Character.toChars(ch));
+        while (ASCII.isLower(ch=read()) || ASCII.isUpper(ch) ||
+               ASCII.isDigit(ch)) {
+            sb.append(Character.toChars(ch));
+        }
+        if (sb.length() == 0)
+            throw error("named capturing group has 0 length name");
+        if (ch != '>')
+            throw error("named capturing group is missing trailing '>'");
+        return sb.toString();
+!!!9450882.java!!!	group0() : Pattern::Node
+        boolean capturingGroup = false;
+        Node head = null;
+        Node tail = null;
+        int save = flags;
+        root = null;
+        int ch = next();
+        if (ch == '?') {
+            ch = skip();
+            switch (ch) {
+            case ':':   //  (?:xxx) pure group
+                head = createGroup(true);
+                tail = root;
+                head.next = expr(tail);
+                break;
+            case '=':   // (?=xxx) and (?!xxx) lookahead
+            case '!':
+                head = createGroup(true);
+                tail = root;
+                head.next = expr(tail);
+                if (ch == '=') {
+                    head = tail = new Pos(head);
+                } else {
+                    head = tail = new Neg(head);
+                }
+                break;
+            case '>':   // (?>xxx)  independent group
+                head = createGroup(true);
+                tail = root;
+                head.next = expr(tail);
+                head = tail = new Ques(head, INDEPENDENT);
+                break;
+            case '<':   // (?<xxx)  look behind
+                ch = read();
+                if (ASCII.isLower(ch) || ASCII.isUpper(ch)) {
+                    // named captured group
+                    String name = groupname(ch);
+                    if (namedGroups().containsKey(name))
+                        throw error("Named capturing group <" + name
+                                    + "> is already defined");
+                    capturingGroup = true;
+                    head = createGroup(false);
+                    tail = root;
+                    namedGroups().put(name, capturingGroupCount-1);
+                    head.next = expr(tail);
+                    break;
+                }
+                int start = cursor;
+                head = createGroup(true);
+                tail = root;
+                head.next = expr(tail);
+                tail.next = lookbehindEnd;
+                TreeInfo info = new TreeInfo();
+                head.study(info);
+                if (info.maxValid == false) {
+                    throw error("Look-behind group does not have "
+                                + "an obvious maximum length");
+                }
+                boolean hasSupplementary = findSupplementary(start, patternLength);
+                if (ch == '=') {
+                    head = tail = (hasSupplementary ?
+                                   new BehindS(head, info.maxLength,
+                                               info.minLength) :
+                                   new Behind(head, info.maxLength,
+                                              info.minLength));
+                } else if (ch == '!') {
+                    head = tail = (hasSupplementary ?
+                                   new NotBehindS(head, info.maxLength,
+                                                  info.minLength) :
+                                   new NotBehind(head, info.maxLength,
+                                                 info.minLength));
+                } else {
+                    throw error("Unknown look-behind group");
+                }
+                break;
+            case '$':
+            case '@':
+                throw error("Unknown group type");
+            default:    // (?xxx:) inlined match flags
+                unread();
+                addFlag();
+                ch = read();
+                if (ch == ')') {
+                    return null;    // Inline modifier only
+                }
+                if (ch != ':') {
+                    throw error("Unknown inline modifier");
+                }
+                head = createGroup(true);
+                tail = root;
+                head.next = expr(tail);
+                break;
+            }
+        } else { // (xxx) a regular group
+            capturingGroup = true;
+            head = createGroup(false);
+            tail = root;
+            head.next = expr(tail);
+        }
+
+        accept(')', "Unclosed group");
+        flags = save;
+
+        // Check for quantifiers
+        Node node = closure(head);
+        if (node == head) { // No closure
+            root = tail;
+            return node;    // Dual return
+        }
+        if (head == tail) { // Zero length assertion
+            root = node;
+            return node;    // Dual return
+        }
+
+        if (node instanceof Ques) {
+            Ques ques = (Ques) node;
+            if (ques.type == POSSESSIVE) {
+                root = node;
+                return node;
+            }
+            tail.next = new BranchConn();
+            tail = tail.next;
+            if (ques.type == GREEDY) {
+                head = new Branch(head, null, tail);
+            } else { // Reluctant quantifier
+                head = new Branch(null, head, tail);
+            }
+            root = tail;
+            return head;
+        } else if (node instanceof Curly) {
+            Curly curly = (Curly) node;
+            if (curly.type == POSSESSIVE) {
+                root = node;
+                return node;
+            }
+            // Discover if the group is deterministic
+            TreeInfo info = new TreeInfo();
+            if (head.study(info)) { // Deterministic
+                GroupTail temp = (GroupTail) tail;
+                head = root = new GroupCurly(head.next, curly.cmin,
+                                   curly.cmax, curly.type,
+                                   ((GroupTail)tail).localIndex,
+                                   ((GroupTail)tail).groupIndex,
+                                             capturingGroup);
+                return head;
+            } else { // Non-deterministic
+                int temp = ((GroupHead) head).localIndex;
+                Loop loop;
+                if (curly.type == GREEDY)
+                    loop = new Loop(this.localCount, temp);
+                else  // Reluctant Curly
+                    loop = new LazyLoop(this.localCount, temp);
+                Prolog prolog = new Prolog(loop);
+                this.localCount += 1;
+                loop.cmin = curly.cmin;
+                loop.cmax = curly.cmax;
+                loop.body = head;
+                tail.next = loop;
+                root = loop;
+                return prolog; // Dual return
+            }
+        }
+        throw error("Internal logic error");
+!!!9451010.java!!!	createGroup(inout anonymous : boolean) : Pattern::Node
+        int localIndex = localCount++;
+        int groupIndex = 0;
+        if (!anonymous)
+            groupIndex = capturingGroupCount++;
+        GroupHead head = new GroupHead(localIndex);
+        root = new GroupTail(localIndex, groupIndex);
+        if (!anonymous && groupIndex < 10)
+            groupNodes[groupIndex] = head;
+        return head;
+!!!9451138.java!!!	addFlag() : void
+        int ch = peek();
+        for (;;) {
+            switch (ch) {
+            case 'i':
+                flags |= CASE_INSENSITIVE;
+                break;
+            case 'm':
+                flags |= MULTILINE;
+                break;
+            case 's':
+                flags |= DOTALL;
+                break;
+            case 'd':
+                flags |= UNIX_LINES;
+                break;
+            case 'u':
+                flags |= UNICODE_CASE;
+                break;
+            case 'c':
+                flags |= CANON_EQ;
+                break;
+            case 'x':
+                flags |= COMMENTS;
+                break;
+            case 'U':
+                flags |= (UNICODE_CHARACTER_CLASS | UNICODE_CASE);
+                break;
+            case '-': // subFlag then fall through
+                ch = next();
+                subFlag();
+            default:
+                return;
+            }
+            ch = next();
+        }
+!!!9451266.java!!!	subFlag() : void
+        int ch = peek();
+        for (;;) {
+            switch (ch) {
+            case 'i':
+                flags &= ~CASE_INSENSITIVE;
+                break;
+            case 'm':
+                flags &= ~MULTILINE;
+                break;
+            case 's':
+                flags &= ~DOTALL;
+                break;
+            case 'd':
+                flags &= ~UNIX_LINES;
+                break;
+            case 'u':
+                flags &= ~UNICODE_CASE;
+                break;
+            case 'c':
+                flags &= ~CANON_EQ;
+                break;
+            case 'x':
+                flags &= ~COMMENTS;
+                break;
+            case 'U':
+                flags &= ~(UNICODE_CHARACTER_CLASS | UNICODE_CASE);
+            default:
+                return;
+            }
+            ch = next();
+        }
+!!!9451394.java!!!	closure(inout prev : Pattern::Node) : Pattern::Node
+        Node atom;
+        int ch = peek();
+        switch (ch) {
+        case '?':
+            ch = next();
+            if (ch == '?') {
+                next();
+                return new Ques(prev, LAZY);
+            } else if (ch == '+') {
+                next();
+                return new Ques(prev, POSSESSIVE);
+            }
+            return new Ques(prev, GREEDY);
+        case '*':
+            ch = next();
+            if (ch == '?') {
+                next();
+                return new Curly(prev, 0, MAX_REPS, LAZY);
+            } else if (ch == '+') {
+                next();
+                return new Curly(prev, 0, MAX_REPS, POSSESSIVE);
+            }
+            return new Curly(prev, 0, MAX_REPS, GREEDY);
+        case '+':
+            ch = next();
+            if (ch == '?') {
+                next();
+                return new Curly(prev, 1, MAX_REPS, LAZY);
+            } else if (ch == '+') {
+                next();
+                return new Curly(prev, 1, MAX_REPS, POSSESSIVE);
+            }
+            return new Curly(prev, 1, MAX_REPS, GREEDY);
+        case '{':
+            ch = temp[cursor+1];
+            if (ASCII.isDigit(ch)) {
+                skip();
+                int cmin = 0;
+                do {
+                    cmin = cmin * 10 + (ch - '0');
+                } while (ASCII.isDigit(ch = read()));
+                int cmax = cmin;
+                if (ch == ',') {
+                    ch = read();
+                    cmax = MAX_REPS;
+                    if (ch != '}') {
+                        cmax = 0;
+                        while (ASCII.isDigit(ch)) {
+                            cmax = cmax * 10 + (ch - '0');
+                            ch = read();
+                        }
+                    }
+                }
+                if (ch != '}')
+                    throw error("Unclosed counted closure");
+                if (((cmin) | (cmax) | (cmax - cmin)) < 0)
+                    throw error("Illegal repetition range");
+                Curly curly;
+                ch = peek();
+                if (ch == '?') {
+                    next();
+                    curly = new Curly(prev, cmin, cmax, LAZY);
+                } else if (ch == '+') {
+                    next();
+                    curly = new Curly(prev, cmin, cmax, POSSESSIVE);
+                } else {
+                    curly = new Curly(prev, cmin, cmax, GREEDY);
+                }
+                return curly;
+            } else {
+                throw error("Illegal repetition");
+            }
+        default:
+            return prev;
+        }
+!!!9451522.java!!!	c() : int
+        if (cursor < patternLength) {
+            return read() ^ 64;
+        }
+        throw error("Illegal control escape sequence");
+!!!9451650.java!!!	o() : int
+        int n = read();
+        if (((n-'0')|('7'-n)) >= 0) {
+            int m = read();
+            if (((m-'0')|('7'-m)) >= 0) {
+                int o = read();
+                if ((((o-'0')|('7'-o)) >= 0) && (((n-'0')|('3'-n)) >= 0)) {
+                    return (n - '0') * 64 + (m - '0') * 8 + (o - '0');
+                }
+                unread();
+                return (n - '0') * 8 + (m - '0');
+            }
+            unread();
+            return (n - '0');
+        }
+        throw error("Illegal octal escape sequence");
+!!!9451778.java!!!	x() : int
+        int n = read();
+        if (ASCII.isHexDigit(n)) {
+            int m = read();
+            if (ASCII.isHexDigit(m)) {
+                return ASCII.toDigit(n) * 16 + ASCII.toDigit(m);
+            }
+        } else if (n == '{' && ASCII.isHexDigit(peek())) {
+            int ch = 0;
+            while (ASCII.isHexDigit(n = read())) {
+                ch = (ch << 4) + ASCII.toDigit(n);
+                if (ch > Character.MAX_CODE_POINT)
+                    throw error("Hexadecimal codepoint is too big");
+            }
+            if (n != '}')
+                throw error("Unclosed hexadecimal escape sequence");
+            return ch;
+        }
+        throw error("Illegal hexadecimal escape sequence");
+!!!9451906.java!!!	cursor() : int
+        return cursor;
+!!!9452034.java!!!	setcursor(in pos : int) : void
+        cursor = pos;
+!!!9452162.java!!!	uxxxx() : int
+        int n = 0;
+        for (int i = 0; i < 4; i++) {
+            int ch = read();
+            if (!ASCII.isHexDigit(ch)) {
+                throw error("Illegal Unicode escape sequence");
+            }
+            n = n * 16 + ASCII.toDigit(ch);
+        }
+        return n;
+!!!9452290.java!!!	u() : int
+        int n = uxxxx();
+        if (Character.isHighSurrogate((char)n)) {
+            int cur = cursor();
+            if (read() == '\\' && read() == 'u') {
+                int n2 = uxxxx();
+                if (Character.isLowSurrogate((char)n2))
+                    return Character.toCodePoint((char)n, (char)n2);
+            }
+            setcursor(cur);
+        }
+        return n;
+!!!9452418.java!!!	countChars(inout seq : CharSequence, in index : int, in lengthInCodePoints : int) : int
+        // optimization
+        if (lengthInCodePoints == 1 && !Character.isHighSurrogate(seq.charAt(index))) {
+            assert (index >= 0 && index < seq.length());
+            return 1;
+        }
+        int length = seq.length();
+        int x = index;
+        if (lengthInCodePoints >= 0) {
+            assert (index >= 0 && index < length);
+            for (int i = 0; x < length && i < lengthInCodePoints; i++) {
+                if (Character.isHighSurrogate(seq.charAt(x++))) {
+                    if (x < length && Character.isLowSurrogate(seq.charAt(x))) {
+                        x++;
+                    }
+                }
+            }
+            return x - index;
+        }
+
+        assert (index >= 0 && index <= length);
+        if (index == 0) {
+            return 0;
+        }
+        int len = -lengthInCodePoints;
+        for (int i = 0; x > 0 && i < len; i++) {
+            if (Character.isLowSurrogate(seq.charAt(--x))) {
+                if (x > 0 && Character.isHighSurrogate(seq.charAt(x-1))) {
+                    x--;
+                }
+            }
+        }
+        return index - x;
+!!!9452546.java!!!	countCodePoints(inout seq : CharSequence) : int
+        int length = seq.length();
+        int n = 0;
+        for (int i = 0; i < length; ) {
+            n++;
+            if (Character.isHighSurrogate(seq.charAt(i++))) {
+                if (i < length && Character.isLowSurrogate(seq.charAt(i))) {
+                    i++;
+                }
+            }
+        }
+        return n;
+!!!9453186.java!!!	newSingle(in ch : int) : Pattern::CharProperty
+        if (has(CASE_INSENSITIVE)) {
+            int lower, upper;
+            if (has(UNICODE_CASE)) {
+                upper = Character.toUpperCase(ch);
+                lower = Character.toLowerCase(upper);
+                if (upper != lower)
+                    return new SingleU(lower);
+            } else if (ASCII.isAscii(ch)) {
+                lower = ASCII.toLower(ch);
+                upper = ASCII.toUpper(ch);
+                if (lower != upper)
+                    return new SingleI(lower, upper);
+            }
+        }
+        if (isSupplementary(ch))
+            return new SingleS(ch);    // Match a given Unicode character
+        return new Single(ch);         // Match a given BMP character
+!!!9453314.java!!!	newSlice(inout buf : int [[]], in count : int, inout hasSupplementary : boolean) : Pattern::Node
+        int[] tmp = new int[count];
+        if (has(CASE_INSENSITIVE)) {
+            if (has(UNICODE_CASE)) {
+                for (int i = 0; i < count; i++) {
+                    tmp[i] = Character.toLowerCase(
+                                 Character.toUpperCase(buf[i]));
+                }
+                return hasSupplementary? new SliceUS(tmp) : new SliceU(tmp);
+            }
+            for (int i = 0; i < count; i++) {
+                tmp[i] = ASCII.toLower(buf[i]);
+            }
+            return hasSupplementary? new SliceIS(tmp) : new SliceI(tmp);
+        }
+        for (int i = 0; i < count; i++) {
+            tmp[i] = buf[i];
+        }
+        return hasSupplementary ? new SliceS(tmp) : new Slice(tmp);
+!!!9461378.java!!!	inRange(in lower : int, in ch : int, in upper : int) : boolean
+        return lower <= ch && ch <= upper;
+!!!9461506.java!!!	rangeFor(in lower : int, in upper : int) : Pattern::CharProperty
+        return new CharProperty() {
+                boolean isSatisfiedBy(int ch) {
+                    return inRange(lower, ch, upper);}};
+!!!9461634.java!!!	caseInsensitiveRangeFor(in lower : int, in upper : int) : Pattern::CharProperty
+        if (has(UNICODE_CASE))
+            return new CharProperty() {
+                boolean isSatisfiedBy(int ch) {
+                    if (inRange(lower, ch, upper))
+                        return true;
+                    int up = Character.toUpperCase(ch);
+                    return inRange(lower, up, upper) ||
+                           inRange(lower, Character.toLowerCase(up), upper);}};
+        return new CharProperty() {
+            boolean isSatisfiedBy(int ch) {
+                return inRange(lower, ch, upper) ||
+                    ASCII.isAscii(ch) &&
+                        (inRange(lower, ASCII.toUpper(ch), upper) ||
+                         inRange(lower, ASCII.toLower(ch), upper));
+            }};
+!!!9470466.java!!!	union(in lhs : Pattern::CharProperty, in rhs : Pattern::CharProperty) : Pattern::CharProperty
+        return new CharProperty() {
+                boolean isSatisfiedBy(int ch) {
+                    return lhs.isSatisfiedBy(ch) || rhs.isSatisfiedBy(ch);}};
+!!!9470594.java!!!	intersection(in lhs : Pattern::CharProperty, in rhs : Pattern::CharProperty) : Pattern::CharProperty
+        return new CharProperty() {
+                boolean isSatisfiedBy(int ch) {
+                    return lhs.isSatisfiedBy(ch) && rhs.isSatisfiedBy(ch);}};
+!!!9470722.java!!!	setDifference(in lhs : Pattern::CharProperty, in rhs : Pattern::CharProperty) : Pattern::CharProperty
+        return new CharProperty() {
+                boolean isSatisfiedBy(int ch) {
+                    return ! rhs.isSatisfiedBy(ch) && lhs.isSatisfiedBy(ch);}};
+!!!9471362.java!!!	hasBaseCharacter(inout matcher : Matcher, in i : int, inout seq : CharSequence) : boolean
+        int start = (!matcher.transparentBounds) ?
+            matcher.from : 0;
+        for (int x=i; x >= start; x--) {
+            int ch = Character.codePointAt(seq, x);
+            if (Character.isLetterOrDigit(ch))
+                return true;
+            if (Character.getType(ch) == Character.NON_SPACING_MARK)
+                continue;
+            return false;
+        }
+        return false;
+!!!9473154.java!!!	asPredicate() : Predicate
+        return s -> matcher(s).find();
+!!!9473282.java!!!	splitAsStream(in input : CharSequence) : Stream
+        class MatcherIterator implements Iterator<String> {
+            private final Matcher matcher;
+            // The start position of the next sub-sequence of input
+            // when current == input.length there are no more elements
+            private int current;
+            // null if the next element, if any, needs to obtained
+            private String nextElement;
+            // > 0 if there are N next empty elements
+            private int emptyElementCount;
+
+            MatcherIterator() {
+                this.matcher = matcher(input);
+            }
+
+            public String next() {
+                if (!hasNext())
+                    throw new NoSuchElementException();
+
+                if (emptyElementCount == 0) {
+                    String n = nextElement;
+                    nextElement = null;
+                    return n;
+                } else {
+                    emptyElementCount--;
+                    return "";
+                }
+            }
+
+            public boolean hasNext() {
+                if (nextElement != null || emptyElementCount > 0)
+                    return true;
+
+                if (current == input.length())
+                    return false;
+
+                // Consume the next matching element
+                // Count sequence of matching empty elements
+                while (matcher.find()) {
+                    nextElement = input.subSequence(current, matcher.start()).toString();
+                    current = matcher.end();
+                    if (!nextElement.isEmpty()) {
+                        return true;
+                    } else if (current > 0) { // no empty leading substring for zero-width
+                                              // match at the beginning of the input
+                        emptyElementCount++;
+                    }
+                }
+
+                // Consume last matching element
+                nextElement = input.subSequence(current, input.length()).toString();
+                current = input.length();
+                if (!nextElement.isEmpty()) {
+                    return true;
+                } else {
+                    // Ignore a terminal sequence of matching empty elements
+                    emptyElementCount = 0;
+                    nextElement = null;
+                    return false;
+                }
+            }
+        }
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(
+                new MatcherIterator(), Spliterator.ORDERED | Spliterator.NONNULL), false);

@@ -1,0 +1,741 @@
+class EnvironmentCheck
+!!!3667202.java!!!	main(inout args : String [[]]) : void
+    // Default to System.out, autoflushing
+    PrintWriter sendOutputTo = new PrintWriter(System.out, true);
+
+    // Read our simplistic input args, if supplied
+    for (int i = 0; i < args.length; i++)
+    {
+      if ("-out".equalsIgnoreCase(args[i]))
+      {
+        i++;
+
+        if (i < args.length)
+        {
+          try
+          {
+            sendOutputTo = new PrintWriter(new FileWriter(args[i], true));
+          }
+          catch (Exception e)
+          {
+            System.err.println("# WARNING: -out " + args[i] + " threw "
+                               + e.toString());
+          }
+        }
+        else
+        {
+          System.err.println(
+            "# WARNING: -out argument should have a filename, output sent to console");
+        }
+      }
+    }
+
+    EnvironmentCheck app = new EnvironmentCheck();
+    app.checkEnvironment(sendOutputTo);
+!!!3667330.java!!!	checkEnvironment(inout pw : PrintWriter) : boolean
+
+    // Use user-specified output writer if non-null
+    if (null != pw)
+      outWriter = pw;
+
+    // Setup a hash to store various environment information in
+    Map<String, Object> hash = getEnvironmentHash();
+
+    // Check for ERROR keys in the hashtable, and print report
+    boolean environmentHasErrors = writeEnvironmentReport(hash);
+
+    if (environmentHasErrors)
+    {
+      // Note: many logMsg calls have # at the start to
+      //  fake a property-file like output
+      logMsg("# WARNING: Potential problems found in your environment!");
+      logMsg("#    Check any 'ERROR' items above against the Xalan FAQs");
+      logMsg("#    to correct potential problems with your classes/jars");
+      logMsg("#    http://xml.apache.org/xalan-j/faq.html");
+      if (null != outWriter)
+        outWriter.flush();
+      return false;
+    }
+    else
+    {
+      logMsg("# YAHOO! Your environment seems to be OK.");
+      if (null != outWriter)
+        outWriter.flush();
+      return true;
+    }
+!!!3667458.java!!!	getEnvironmentHash() : Map
+    // Setup a hash to store various environment information in
+    Map<String, Object> hash = new HashMap<>();
+
+    // Call various worker methods to fill in the hash
+    //  These are explicitly separate for maintenance and so
+    //  advanced users could call them standalone
+    checkJAXPVersion(hash);
+    checkProcessorVersion(hash);
+    checkParserVersion(hash);
+    checkAntVersion(hash);
+    if (!checkDOML3(hash)) {
+    checkDOMVersion(hash);
+    }
+    checkSAXVersion(hash);
+    checkSystemProperties(hash);
+
+    return hash;
+!!!3667586.java!!!	writeEnvironmentReport(inout h : Map) : boolean
+
+    if (null == h)
+    {
+      logMsg("# ERROR: writeEnvironmentReport called with null Map");
+      return false;
+    }
+
+    boolean errors = false;
+
+    logMsg(
+      "#---- BEGIN writeEnvironmentReport($Revision: 1.10 $): Useful stuff found: ----");
+
+    // Fake the Properties-like output
+    for (Map.Entry<String, Object> entry : h.entrySet()) {
+        String keyStr = entry.getKey();
+        try {
+            // Special processing for classes found..
+            if (keyStr.startsWith(FOUNDCLASSES)) {
+                List<Map> v = (ArrayList<Map>)entry.getValue();
+                errors |= logFoundJars(v, keyStr);
+            }
+            // ..normal processing for all other entries
+            else {
+                // Note: we could just check for the ERROR key by itself,
+                //    since we now set that, but since we have to go
+                //    through the whole hash anyway, do it this way,
+                //    which is safer for maintenance
+                if (keyStr.startsWith(ERROR)) {
+                    errors = true;
+                }
+                logMsg(keyStr + "=" + h.get(keyStr));
+            }
+        } catch (Exception e) {
+            logMsg("Reading-" + keyStr + "= threw: " + e.toString());
+        }
+    }
+
+    logMsg(
+      "#----- END writeEnvironmentReport: Useful properties found: -----");
+
+    return errors;
+!!!3667714.java!!!	logFoundJars(inout v : List, inout desc : String) : boolean
+
+    if ((null == v) || (v.size() < 1))
+      return false;
+
+    boolean errors = false;
+
+    logMsg("#---- BEGIN Listing XML-related jars in: " + desc + " ----");
+
+    for (Map<String, String> v1 : v) {
+        for (Map.Entry<String, String> entry : v1.entrySet()) {
+            String keyStr = entry.getKey();
+            try {
+                if (keyStr.startsWith(ERROR)) {
+                    errors = true;
+                }
+                logMsg(keyStr + "=" + entry.getValue());
+
+            } catch (Exception e) {
+                errors = true;
+                logMsg("Reading-" + keyStr + "= threw: " + e.toString());
+            }
+        }
+    }
+
+    logMsg("#----- END Listing XML-related jars in: " + desc + " -----");
+
+    return errors;
+!!!3667842.java!!!	appendEnvironmentReport(inout container : Node, inout factory : Document, inout h : Map) : void
+    if ((null == container) || (null == factory))
+    {
+      return;
+    }
+
+    try
+    {
+      Element envCheckNode = factory.createElement("EnvironmentCheck");
+      envCheckNode.setAttribute("version", "$Revision: 1.10 $");
+      container.appendChild(envCheckNode);
+
+      if (null == h)
+      {
+        Element statusNode = factory.createElement("status");
+        statusNode.setAttribute("result", "ERROR");
+        statusNode.appendChild(factory.createTextNode("appendEnvironmentReport called with null Map!"));
+        envCheckNode.appendChild(statusNode);
+        return;
+      }
+
+      boolean errors = false;
+
+      Element hashNode = factory.createElement("environment");
+      envCheckNode.appendChild(hashNode);
+
+      for (Map.Entry<String, Object> entry : h.entrySet()) {
+          String keyStr = entry.getKey();
+          try {
+              // Special processing for classes found..
+              if (keyStr.startsWith(FOUNDCLASSES)) {
+                  List<Map> v = (List<Map>)entry.getValue();
+                  // errors |= logFoundJars(v, keyStr);
+                  errors |= appendFoundJars(hashNode, factory, v, keyStr);
+              } // ..normal processing for all other entries
+              else {
+                  // Note: we could just check for the ERROR key by itself,
+                  //    since we now set that, but since we have to go
+                  //    through the whole hash anyway, do it this way,
+                  //    which is safer for maintenance
+                  if (keyStr.startsWith(ERROR)) {
+                      errors = true;
+                  }
+                  Element node = factory.createElement("item");
+                  node.setAttribute("key", keyStr);
+                  node.appendChild(factory.createTextNode((String) h.get(keyStr)));
+                  hashNode.appendChild(node);
+              }
+          } catch (Exception e) {
+              errors = true;
+              Element node = factory.createElement("item");
+              node.setAttribute("key", keyStr);
+              node.appendChild(factory.createTextNode(ERROR + " Reading " + keyStr + " threw: " + e.toString()));
+              hashNode.appendChild(node);
+          }
+      } // end of for...
+
+      Element statusNode = factory.createElement("status");
+      statusNode.setAttribute("result", (errors ? "ERROR" : "OK" ));
+      envCheckNode.appendChild(statusNode);
+    }
+    catch (Exception e2)
+    {
+      System.err.println("appendEnvironmentReport threw: " + e2.toString());
+      e2.printStackTrace();
+    }
+!!!3667970.java!!!	appendFoundJars(inout container : Node, inout factory : Document, inout v : List, inout desc : String) : boolean
+
+    if ((null == v) || (v.size() < 1))
+      return false;
+
+    boolean errors = false;
+
+    for (Map<String, String> v1 : v) {
+        for (Map.Entry<String, String> entry : v1.entrySet()) {
+            String keyStr = entry.getKey();
+            try {
+                if (keyStr.startsWith(ERROR)) {
+                    errors = true;
+                }
+                Element node = factory.createElement("foundJar");
+                node.setAttribute("name", keyStr.substring(0, keyStr.indexOf("-")));
+                node.setAttribute("desc", keyStr.substring(keyStr.indexOf("-") + 1));
+                node.appendChild(factory.createTextNode(entry.getValue()));
+                container.appendChild(node);
+            } catch (Exception e) {
+                errors = true;
+                Element node = factory.createElement("foundJar");
+                node.appendChild(factory.createTextNode(ERROR + " Reading " + keyStr + " threw: " + e.toString()));
+                container.appendChild(node);
+            }
+        }
+    }
+    return errors;
+!!!3668098.java!!!	checkSystemProperties(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    // Grab java version for later use
+    try
+    {
+      String javaVersion = SecuritySupport.getSystemProperty("java.version");
+
+      h.put("java.version", javaVersion);
+    }
+    catch (SecurityException se)
+    {
+
+      // For applet context, etc.
+      h.put(
+        "java.version",
+        "WARNING: SecurityException thrown accessing system version properties");
+    }
+
+    // Printout jar files on classpath(s) that may affect operation
+    //  Do this in order
+    try
+    {
+
+      // This is present in all JVM's
+      String cp = SecuritySupport.getSystemProperty("java.class.path");
+
+      h.put("java.class.path", cp);
+
+      List<Map> classpathJars = checkPathForJars(cp, jarNames);
+
+      if (null != classpathJars) {
+          h.put(FOUNDCLASSES + "java.class.path", classpathJars);
+      }
+
+      // Also check for JDK 1.2+ type classpaths
+      String othercp = SecuritySupport.getSystemProperty("sun.boot.class.path");
+
+      if (null != othercp) {
+          h.put("sun.boot.class.path", othercp);
+          classpathJars = checkPathForJars(othercp, jarNames);
+
+          if (null != classpathJars) {
+              h.put(FOUNDCLASSES + "sun.boot.class.path", classpathJars);
+          }
+      }
+
+      //@todo NOTE: We don't actually search java.ext.dirs for
+      //  *.jar files therein! This should be updated
+      othercp = SecuritySupport.getSystemProperty("java.ext.dirs");
+
+      if (null != othercp)
+      {
+        h.put("java.ext.dirs", othercp);
+
+        classpathJars = checkPathForJars(othercp, jarNames);
+
+        if (null != classpathJars)
+          h.put(FOUNDCLASSES + "java.ext.dirs", classpathJars);
+      }
+
+      //@todo also check other System properties' paths?
+      //  v2 = checkPathForJars(System.getProperty("sun.boot.library.path"), jarNames);   // ?? may not be needed
+      //  v3 = checkPathForJars(System.getProperty("java.library.path"), jarNames);   // ?? may not be needed
+    }
+    catch (SecurityException se2)
+    {
+      // For applet context, etc.
+      h.put(
+        "java.class.path",
+        "WARNING: SecurityException thrown accessing system classpath properties");
+    }
+!!!3668226.java!!!	checkPathForJars(inout cp : String, inout jars : String [[]]) : List
+
+    if ((null == cp) || (null == jars) || (0 == cp.length())
+            || (0 == jars.length))
+      return null;
+
+    List<Map> v = new ArrayList<>();
+    StringTokenizer st = new StringTokenizer(cp, File.pathSeparator);
+
+    while (st.hasMoreTokens())
+    {
+
+      // Look at each classpath entry for each of our requested jarNames
+      String filename = st.nextToken();
+
+      for (int i = 0; i < jars.length; i++)
+      {
+        if (filename.indexOf(jars[i]) > -1)
+        {
+          File f = new File(filename);
+
+          if (f.exists())
+          {
+
+            // If any requested jarName exists, report on
+            //  the details of that .jar file
+            try {
+                Map<String, String> h = new HashMap<>(2);
+                // Note "-" char is looked for in appendFoundJars
+                h.put(jars[i] + "-path", f.getAbsolutePath());
+
+                // We won't bother reporting on the xalan.jar apparent version
+                // since this requires knowing the jar size of the xalan.jar
+                // before we build it.
+                // For other jars, eg. xml-apis.jar and xercesImpl.jar, we
+                // report the apparent version of the file we've found
+                if (!("xalan.jar".equalsIgnoreCase(jars[i]))) {
+                    h.put(jars[i] + "-apparent.version",
+                            getApparentVersion(jars[i], f.length()));
+                }
+                v.add(h);
+            } catch (Exception e) {
+
+                /* no-op, don't add it  */
+            }
+          } else {
+            Map<String, String> h = new HashMap<>(2);
+            // Note "-" char is looked for in appendFoundJars
+            h.put(jars[i] + "-path", WARNING + " Classpath entry: "
+                    + filename + " does not exist");
+            h.put(jars[i] + "-apparent.version", CLASS_NOTPRESENT);
+            v.add(h);
+          }
+        }
+      }
+    }
+
+    return v;
+!!!3668354.java!!!	getApparentVersion(inout jarName : String, in jarSize : long) : String
+    // If we found a matching size and it's for our
+    //  jar, then return it's description
+    // Lookup in static JARVERSIONS Map
+    String foundSize = JARVERSIONS.get(new Long(jarSize));
+
+    if ((null != foundSize) && (foundSize.startsWith(jarName)))
+    {
+      return foundSize;
+    }
+    else
+    {
+      if ("xerces.jar".equalsIgnoreCase(jarName)
+              || "xercesImpl.jar".equalsIgnoreCase(jarName))
+//              || "xalan.jar".equalsIgnoreCase(jarName))
+      {
+
+        // For xalan.jar and xerces.jar/xercesImpl.jar, which we ship together:
+        // The jar is not from a shipped copy of xalan-j, so
+        //  it's up to the user to ensure that it's compatible
+        return jarName + " " + WARNING + CLASS_PRESENT;
+      }
+      else
+      {
+
+        // Otherwise, it's just a jar we don't have the version info calculated for
+        return jarName + " " + CLASS_PRESENT;
+      }
+    }
+!!!3668482.java!!!	checkJAXPVersion(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    Class clazz = null;
+
+    try
+    {
+      final String JAXP1_CLASS = "javax.xml.stream.XMLStreamConstants";
+
+      clazz = ObjectFactory.findProviderClass(JAXP1_CLASS, true);
+
+      // If we succeeded, we have JAXP 1.4 available
+      h.put(VERSION + "JAXP", "1.4");
+    }
+    catch (Exception e)
+    {
+        h.put(ERROR + VERSION + "JAXP", "1.3");
+        h.put(ERROR, ERROR_FOUND);
+      }
+!!!3668610.java!!!	checkProcessorVersion(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    try
+    {
+      final String XALAN1_VERSION_CLASS =
+        "com.sun.org.apache.xalan.internal.xslt.XSLProcessorVersion";
+
+      Class clazz = ObjectFactory.findProviderClass(XALAN1_VERSION_CLASS, true);
+
+      // Found Xalan-J 1.x, grab it's version fields
+      StringBuffer buf = new StringBuffer();
+      Field f = clazz.getField("PRODUCT");
+
+      buf.append(f.get(null));
+      buf.append(';');
+
+      f = clazz.getField("LANGUAGE");
+
+      buf.append(f.get(null));
+      buf.append(';');
+
+      f = clazz.getField("S_VERSION");
+
+      buf.append(f.get(null));
+      buf.append(';');
+      h.put(VERSION + "xalan1", buf.toString());
+    }
+    catch (Exception e1)
+    {
+      h.put(VERSION + "xalan1", CLASS_NOTPRESENT);
+    }
+
+    try
+    {
+      // NOTE: This is the old Xalan 2.0, 2.1, 2.2 version class,
+      //    is being replaced by class below
+      final String XALAN2_VERSION_CLASS =
+        "com.sun.org.apache.xalan.internal.processor.XSLProcessorVersion";
+
+      Class clazz = ObjectFactory.findProviderClass(XALAN2_VERSION_CLASS, true);
+
+      // Found Xalan-J 2.x, grab it's version fields
+      StringBuffer buf = new StringBuffer();
+      Field f = clazz.getField("S_VERSION");
+      buf.append(f.get(null));
+
+      h.put(VERSION + "xalan2x", buf.toString());
+    }
+    catch (Exception e2)
+    {
+      h.put(VERSION + "xalan2x", CLASS_NOTPRESENT);
+    }
+    try
+    {
+      // NOTE: This is the new Xalan 2.2+ version class
+      final String XALAN2_2_VERSION_CLASS =
+        "com.sun.org.apache.xalan.internal.Version";
+      final String XALAN2_2_VERSION_METHOD = "getVersion";
+      final Class noArgs[] = new Class[0];
+
+      Class clazz = ObjectFactory.findProviderClass(XALAN2_2_VERSION_CLASS, true);
+
+      Method method = clazz.getMethod(XALAN2_2_VERSION_METHOD, noArgs);
+      Object returnValue = method.invoke(null, new Object[0]);
+
+      h.put(VERSION + "xalan2_2", (String)returnValue);
+    }
+    catch (Exception e2)
+    {
+      h.put(VERSION + "xalan2_2", CLASS_NOTPRESENT);
+    }
+!!!3668738.java!!!	checkParserVersion(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    try
+    {
+      final String XERCES1_VERSION_CLASS = "com.sun.org.apache.xerces.internal.framework.Version";
+
+      Class clazz = ObjectFactory.findProviderClass(XERCES1_VERSION_CLASS, true);
+
+      // Found Xerces-J 1.x, grab it's version fields
+      Field f = clazz.getField("fVersion");
+      String parserVersion = (String) f.get(null);
+
+      h.put(VERSION + "xerces1", parserVersion);
+    }
+    catch (Exception e)
+    {
+      h.put(VERSION + "xerces1", CLASS_NOTPRESENT);
+    }
+
+    // Look for xerces1 and xerces2 parsers separately
+    try
+    {
+      final String XERCES2_VERSION_CLASS = "com.sun.org.apache.xerces.internal.impl.Version";
+
+      Class clazz = ObjectFactory.findProviderClass(XERCES2_VERSION_CLASS, true);
+
+      // Found Xerces-J 2.x, grab it's version fields
+      Field f = clazz.getField("fVersion");
+      String parserVersion = (String) f.get(null);
+
+      h.put(VERSION + "xerces2", parserVersion);
+    }
+    catch (Exception e)
+    {
+      h.put(VERSION + "xerces2", CLASS_NOTPRESENT);
+    }
+
+    try
+    {
+      final String CRIMSON_CLASS = "org.apache.crimson.parser.Parser2";
+
+      Class clazz = ObjectFactory.findProviderClass(CRIMSON_CLASS, true);
+
+      //@todo determine specific crimson version
+      h.put(VERSION + "crimson", CLASS_PRESENT);
+    }
+    catch (Exception e)
+    {
+      h.put(VERSION + "crimson", CLASS_NOTPRESENT);
+    }
+!!!3668866.java!!!	checkAntVersion(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    try
+    {
+      final String ANT_VERSION_CLASS = "org.apache.tools.ant.Main";
+      final String ANT_VERSION_METHOD = "getAntVersion"; // noArgs
+      final Class noArgs[] = new Class[0];
+
+      Class clazz = ObjectFactory.findProviderClass(ANT_VERSION_CLASS, true);
+
+      Method method = clazz.getMethod(ANT_VERSION_METHOD, noArgs);
+      Object returnValue = method.invoke(null, new Object[0]);
+
+      h.put(VERSION + "ant", (String)returnValue);
+    }
+    catch (Exception e)
+    {
+      h.put(VERSION + "ant", CLASS_NOTPRESENT);
+    }
+!!!3668994.java!!!	checkDOML3(inout h : Map) : boolean
+
+    if (null == h)
+      h = new HashMap<>();
+
+    final String DOM_CLASS = "org.w3c.dom.Document";
+    final String DOM_LEVEL3_METHOD = "getDoctype";  // no parameter
+
+    try
+    {
+      Class clazz = ObjectFactory.findProviderClass(DOM_CLASS, true);
+
+      Method method = clazz.getMethod(DOM_LEVEL3_METHOD, (Class<?>[])null);
+
+      // If we succeeded, we have loaded interfaces from a
+      //  level 3 DOM somewhere
+      h.put(VERSION + "DOM", "3.0");
+      return true;
+    }
+    catch (Exception e)
+    {
+      return false;
+    }
+!!!3669122.java!!!	checkDOMVersion(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    final String DOM_LEVEL2_CLASS = "org.w3c.dom.Document";
+    final String DOM_LEVEL2_METHOD = "createElementNS";  // String, String
+    final String DOM_LEVEL3_METHOD = "getDoctype";  // no parameter
+    final String DOM_LEVEL2WD_CLASS = "org.w3c.dom.Node";
+    final String DOM_LEVEL2WD_METHOD = "supported";  // String, String
+    final String DOM_LEVEL2FD_CLASS = "org.w3c.dom.Node";
+    final String DOM_LEVEL2FD_METHOD = "isSupported";  // String, String
+    final Class twoStringArgs[] = { java.lang.String.class,
+                                    java.lang.String.class };
+
+    try
+    {
+      Class clazz = ObjectFactory.findProviderClass(DOM_LEVEL2_CLASS, true);
+
+      Method method = clazz.getMethod(DOM_LEVEL2_METHOD, twoStringArgs);
+
+      // If we succeeded, we have loaded interfaces from a
+      //  level 2 DOM somewhere
+      h.put(VERSION + "DOM", "2.0");
+
+      try
+      {
+        // Check for the working draft version, which is
+        //  commonly found, but won't work anymore
+        clazz = ObjectFactory.findProviderClass(DOM_LEVEL2WD_CLASS, true);
+
+        method = clazz.getMethod(DOM_LEVEL2WD_METHOD, twoStringArgs);
+
+        h.put(ERROR + VERSION + "DOM.draftlevel", "2.0wd");
+        h.put(ERROR, ERROR_FOUND);
+      }
+      catch (Exception e2)
+      {
+        try
+        {
+          // Check for the final draft version as well
+          clazz = ObjectFactory.findProviderClass(DOM_LEVEL2FD_CLASS, true);
+
+          method = clazz.getMethod(DOM_LEVEL2FD_METHOD, twoStringArgs);
+
+          h.put(VERSION + "DOM.draftlevel", "2.0fd");
+        }
+        catch (Exception e3)
+        {
+          h.put(ERROR + VERSION + "DOM.draftlevel", "2.0unknown");
+          h.put(ERROR, ERROR_FOUND);
+        }
+      }
+    }
+    catch (Exception e)
+    {
+      h.put(ERROR + VERSION + "DOM",
+            "ERROR attempting to load DOM level 2 class: " + e.toString());
+      h.put(ERROR, ERROR_FOUND);
+    }
+
+    //@todo load an actual DOM implmementation and query it as well
+    //@todo load an actual DOM implmementation and check if
+    //  isNamespaceAware() == true, which is needed to parse
+    //  xsl stylesheet files into a DOM
+!!!3669250.java!!!	checkSAXVersion(inout h : Map) : void
+
+    if (null == h)
+      h = new HashMap<>();
+
+    final String SAX_VERSION1_CLASS = "org.xml.sax.Parser";
+    final String SAX_VERSION1_METHOD = "parse";  // String
+    final String SAX_VERSION2_CLASS = "org.xml.sax.XMLReader";
+    final String SAX_VERSION2_METHOD = "parse";  // String
+    final String SAX_VERSION2BETA_CLASSNF = "org.xml.sax.helpers.AttributesImpl";
+    final String SAX_VERSION2BETA_METHODNF = "setAttributes";  // Attributes
+    final Class oneStringArg[] = { java.lang.String.class };
+    // Note this introduces a minor compile dependency on SAX...
+    final Class attributesArg[] = { org.xml.sax.Attributes.class };
+
+    try
+    {
+      // This method was only added in the final SAX 2.0 release;
+      //  see changes.html "Changes from SAX 2.0beta2 to SAX 2.0prerelease"
+      Class clazz = ObjectFactory.findProviderClass(SAX_VERSION2BETA_CLASSNF, true);
+
+      Method method = clazz.getMethod(SAX_VERSION2BETA_METHODNF, attributesArg);
+
+      // If we succeeded, we have loaded interfaces from a
+      //  real, final SAX version 2.0 somewhere
+      h.put(VERSION + "SAX", "2.0");
+    }
+    catch (Exception e)
+    {
+      // If we didn't find the SAX 2.0 class, look for a 2.0beta2
+      h.put(ERROR + VERSION + "SAX",
+            "ERROR attempting to load SAX version 2 class: " + e.toString());
+      h.put(ERROR, ERROR_FOUND);
+
+      try
+      {
+        Class clazz = ObjectFactory.findProviderClass(SAX_VERSION2_CLASS, true);
+
+        Method method = clazz.getMethod(SAX_VERSION2_METHOD, oneStringArg);
+
+        // If we succeeded, we have loaded interfaces from a
+        //  SAX version 2.0beta2 or earlier; these might work but
+        //  you should really have the final SAX 2.0
+        h.put(VERSION + "SAX-backlevel", "2.0beta2-or-earlier");
+      }
+      catch (Exception e2)
+      {
+        // If we didn't find the SAX 2.0beta2 class, look for a 1.0 one
+        h.put(ERROR + VERSION + "SAX",
+              "ERROR attempting to load SAX version 2 class: " + e.toString());
+        h.put(ERROR, ERROR_FOUND);
+
+        try
+        {
+          Class clazz = ObjectFactory.findProviderClass(SAX_VERSION1_CLASS, true);
+
+          Method method = clazz.getMethod(SAX_VERSION1_METHOD, oneStringArg);
+
+          // If we succeeded, we have loaded interfaces from a
+          //  SAX version 1.0 somewhere; which won't work very
+          //  well for JAXP 1.1 or beyond!
+          h.put(VERSION + "SAX-backlevel", "1.0");
+        }
+        catch (Exception e3)
+        {
+          // If we didn't find the SAX 2.0 class, look for a 1.0 one
+          // Note that either 1.0 or no SAX are both errors
+          h.put(ERROR + VERSION + "SAX-backlevel",
+                "ERROR attempting to load SAX version 1 class: " + e3.toString());
+
+        }
+      }
+    }
+!!!3669378.java!!!	logMsg(inout s : String) : void
+    outWriter.println(s);

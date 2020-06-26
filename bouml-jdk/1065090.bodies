@@ -1,0 +1,130 @@
+class CumulateTask
+!!!8616450.java!!!	CumulateTask(inout parent : ArrayPrefixHelpers::CumulateTask, inout function : BinaryOperator, inout array : T [[]], in lo : int, in hi : int)
+            super(parent);
+            this.function = function; this.array = array;
+            this.lo = this.origin = lo; this.hi = this.fence = hi;
+            int p;
+            this.threshold =
+                    (p = (hi - lo) / (ForkJoinPool.getCommonPoolParallelism() << 3))
+                    <= MIN_PARTITION ? MIN_PARTITION : p;
+!!!8616578.java!!!	CumulateTask(inout parent : ArrayPrefixHelpers::CumulateTask, inout function : BinaryOperator, inout array : T [[]], in origin : int, in fence : int, in threshold : int, in lo : int, in hi : int)
+            super(parent);
+            this.function = function; this.array = array;
+            this.origin = origin; this.fence = fence;
+            this.threshold = threshold;
+            this.lo = lo; this.hi = hi;
+!!!8616706.java!!!	compute() : void
+            final BinaryOperator<T> fn;
+            final T[] a;
+            if ((fn = this.function) == null || (a = this.array) == null)
+                throw new NullPointerException();    // hoist checks
+            int th = threshold, org = origin, fnc = fence, l, h;
+            CumulateTask<T> t = this;
+            outer: while ((l = t.lo) >= 0 && (h = t.hi) <= a.length) {
+                if (h - l > th) {
+                    CumulateTask<T> lt = t.left, rt = t.right, f;
+                    if (lt == null) {                // first pass
+                        int mid = (l + h) >>> 1;
+                        f = rt = t.right =
+                                new CumulateTask<T>(t, fn, a, org, fnc, th, mid, h);
+                        t = lt = t.left  =
+                                new CumulateTask<T>(t, fn, a, org, fnc, th, l, mid);
+                    }
+                    else {                           // possibly refork
+                        T pin = t.in;
+                        lt.in = pin;
+                        f = t = null;
+                        if (rt != null) {
+                            T lout = lt.out;
+                            rt.in = (l == org ? lout :
+                                     fn.apply(pin, lout));
+                            for (int c;;) {
+                                if (((c = rt.getPendingCount()) & CUMULATE) != 0)
+                                    break;
+                                if (rt.compareAndSetPendingCount(c, c|CUMULATE)){
+                                    t = rt;
+                                    break;
+                                }
+                            }
+                        }
+                        for (int c;;) {
+                            if (((c = lt.getPendingCount()) & CUMULATE) != 0)
+                                break;
+                            if (lt.compareAndSetPendingCount(c, c|CUMULATE)) {
+                                if (t != null)
+                                    f = t;
+                                t = lt;
+                                break;
+                            }
+                        }
+                        if (t == null)
+                            break;
+                    }
+                    if (f != null)
+                        f.fork();
+                }
+                else {
+                    int state; // Transition to sum, cumulate, or both
+                    for (int b;;) {
+                        if (((b = t.getPendingCount()) & FINISHED) != 0)
+                            break outer;                      // already done
+                        state = ((b & CUMULATE) != 0? FINISHED :
+                                 (l > org) ? SUMMED : (SUMMED|FINISHED));
+                        if (t.compareAndSetPendingCount(b, b|state))
+                            break;
+                    }
+
+                    T sum;
+                    if (state != SUMMED) {
+                        int first;
+                        if (l == org) {                       // leftmost; no in
+                            sum = a[org];
+                            first = org + 1;
+                        }
+                        else {
+                            sum = t.in;
+                            first = l;
+                        }
+                        for (int i = first; i < h; ++i)       // cumulate
+                            a[i] = sum = fn.apply(sum, a[i]);
+                    }
+                    else if (h < fnc) {                       // skip rightmost
+                        sum = a[l];
+                        for (int i = l + 1; i < h; ++i)       // sum only
+                            sum = fn.apply(sum, a[i]);
+                    }
+                    else
+                        sum = t.in;
+                    t.out = sum;
+                    for (CumulateTask<T> par;;) {             // propagate
+                        if ((par = (CumulateTask<T>)t.getCompleter()) == null) {
+                            if ((state & FINISHED) != 0)      // enable join
+                                t.quietlyComplete();
+                            break outer;
+                        }
+                        int b = par.getPendingCount();
+                        if ((b & state & FINISHED) != 0)
+                            t = par;                          // both done
+                        else if ((b & state & SUMMED) != 0) { // both summed
+                            int nextState; CumulateTask<T> lt, rt;
+                            if ((lt = par.left) != null &&
+                                (rt = par.right) != null) {
+                                T lout = lt.out;
+                                par.out = (rt.hi == fnc ? lout :
+                                           fn.apply(lout, rt.out));
+                            }
+                            int refork = (((b & CUMULATE) == 0 &&
+                                           par.lo == org) ? CUMULATE : 0);
+                            if ((nextState = b|state|refork) == b ||
+                                par.compareAndSetPendingCount(b, nextState)) {
+                                state = SUMMED;               // drop finished
+                                t = par;
+                                if (refork != 0)
+                                    par.fork();
+                            }
+                        }
+                        else if (par.compareAndSetPendingCount(b, b|state))
+                            break outer;                      // sib not ready
+                    }
+                }
+            }

@@ -1,0 +1,294 @@
+class PredicatedNodeTest
+!!!5806210.java!!!	PredicatedNodeTest(inout locPathIterator : LocPathIterator)
+    m_lpi = locPathIterator;
+!!!5806466.java!!!	readObject(inout stream : ObjectInputStream) : void
+    try
+    {
+      stream.defaultReadObject();
+      m_predicateIndex = -1;
+      resetProximityPositions();
+    }
+    catch (ClassNotFoundException cnfe)
+    {
+      throw new javax.xml.transform.TransformerException(cnfe);
+    }
+!!!5806594.java!!!	clone() : Object
+    // Do not access the location path itterator during this operation!
+
+    PredicatedNodeTest clone = (PredicatedNodeTest) super.clone();
+
+    if ((null != this.m_proximityPositions)
+            && (this.m_proximityPositions == clone.m_proximityPositions))
+    {
+      clone.m_proximityPositions = new int[this.m_proximityPositions.length];
+
+      System.arraycopy(this.m_proximityPositions, 0,
+                       clone.m_proximityPositions, 0,
+                       this.m_proximityPositions.length);
+    }
+
+    if(clone.m_lpi == this)
+      clone.m_lpi = (LocPathIterator)clone;
+
+    return clone;
+!!!5806722.java!!!	getPredicateCount() : int
+    if(-1 == m_predCount)
+      return (null == m_predicates) ? 0 : m_predicates.length;
+    else
+      return m_predCount;
+!!!5806850.java!!!	setPredicateCount(in count : int) : void
+    if(count > 0)
+    {
+      Expression[] newPredicates = new Expression[count];
+      for (int i = 0; i < count; i++)
+      {
+        newPredicates[i] = m_predicates[i];
+      }
+      m_predicates = newPredicates;
+    }
+    else
+      m_predicates = null;
+
+!!!5806978.java!!!	initPredicateInfo(inout compiler : Compiler, in opPos : int) : void
+
+    int pos = compiler.getFirstPredicateOpPos(opPos);
+
+    if(pos > 0)
+    {
+      m_predicates = compiler.getCompiledPredicates(pos);
+      if(null != m_predicates)
+      {
+        for(int i = 0; i < m_predicates.length; i++)
+        {
+                m_predicates[i].exprSetParent(this);
+        }
+      }
+    }
+!!!5807106.java!!!	getPredicate(in index : int) : Expression
+    return m_predicates[index];
+!!!5807234.java!!!	getProximityPosition() : int
+
+    // System.out.println("getProximityPosition - m_predicateIndex: "+m_predicateIndex);
+    return getProximityPosition(m_predicateIndex);
+!!!5807362.java!!!	getProximityPosition(inout xctxt : XPathContext) : int
+    return getProximityPosition();
+!!!5807618.java!!!	getProximityPosition(in predicateIndex : int) : int
+    return (predicateIndex >= 0) ? m_proximityPositions[predicateIndex] : 0;
+!!!5807746.java!!!	resetProximityPositions() : void
+    int nPredicates = getPredicateCount();
+    if (nPredicates > 0)
+    {
+      if (null == m_proximityPositions)
+        m_proximityPositions = new int[nPredicates];
+
+      for (int i = 0; i < nPredicates; i++)
+      {
+        try
+        {
+          initProximityPosition(i);
+        }
+        catch(Exception e)
+        {
+          // TODO: Fix this...
+          throw new com.sun.org.apache.xml.internal.utils.WrappedRuntimeException(e);
+        }
+      }
+    }
+!!!5807874.java!!!	initProximityPosition(in i : int) : void
+    m_proximityPositions[i] = 0;
+!!!5808002.java!!!	countProximityPosition(in i : int) : void
+        // Note that in the case of a UnionChildIterator, this may be a
+        // static object and so m_proximityPositions may indeed be null!
+        int[] pp = m_proximityPositions;
+    if ((null != pp) && (i < pp.length))
+      pp[i]++;
+!!!5808130.java!!!	isReverseAxes() : boolean
+    return false;
+!!!5808258.java!!!	getPredicateIndex() : int
+    return m_predicateIndex;
+!!!5808386.java!!!	executePredicates(in context : int, inout xctxt : XPathContext) : boolean
+
+    int nPredicates = getPredicateCount();
+    // System.out.println("nPredicates: "+nPredicates);
+    if (nPredicates == 0)
+      return true;
+
+    PrefixResolver savedResolver = xctxt.getNamespaceContext();
+
+    try
+    {
+      m_predicateIndex = 0;
+      xctxt.pushSubContextList(this);
+      xctxt.pushNamespaceContext(m_lpi.getPrefixResolver());
+      xctxt.pushCurrentNode(context);
+
+      for (int i = 0; i < nPredicates; i++)
+      {
+        // System.out.println("Executing predicate expression - waiting count: "+m_lpi.getWaitingCount());
+        XObject pred = m_predicates[i].execute(xctxt);
+        // System.out.println("\nBack from executing predicate expression - waiting count: "+m_lpi.getWaitingCount());
+        // System.out.println("pred.getType(): "+pred.getType());
+        if (XObject.CLASS_NUMBER == pred.getType())
+        {
+          if (DEBUG_PREDICATECOUNTING)
+          {
+            System.out.flush();
+            System.out.println("\n===== start predicate count ========");
+            System.out.println("m_predicateIndex: " + m_predicateIndex);
+            // System.out.println("getProximityPosition(m_predicateIndex): "
+            //                   + getProximityPosition(m_predicateIndex));
+            System.out.println("pred.num(): " + pred.num());
+          }
+
+          int proxPos = this.getProximityPosition(m_predicateIndex);
+          int predIndex = (int) pred.num();
+          if (proxPos != predIndex)
+          {
+            if (DEBUG_PREDICATECOUNTING)
+            {
+              System.out.println("\nnode context: "+nodeToString(context));
+              System.out.println("index predicate is false: "+proxPos);
+              System.out.println("\n===== end predicate count ========");
+            }
+            return false;
+          }
+          else if (DEBUG_PREDICATECOUNTING)
+          {
+            System.out.println("\nnode context: "+nodeToString(context));
+            System.out.println("index predicate is true: "+proxPos);
+            System.out.println("\n===== end predicate count ========");
+          }
+
+          // If there is a proximity index that will not change during the
+          // course of itteration, then we know there can be no more true
+          // occurances of this predicate, so flag that we're done after
+          // this.
+          //
+          // bugzilla 14365
+          // We can't set m_foundLast = true unless we're sure that -all-
+          // remaining parameters are stable, or else last() fails. Fixed so
+          // only sets m_foundLast if on the last predicate
+          if(m_predicates[i].isStableNumber() && i == nPredicates - 1)
+          {
+            m_foundLast = true;
+          }
+        }
+        else if (!pred.bool())
+          return false;
+
+        countProximityPosition(++m_predicateIndex);
+      }
+    }
+    finally
+    {
+      xctxt.popCurrentNode();
+      xctxt.popNamespaceContext();
+      xctxt.popSubContextList();
+      m_predicateIndex = -1;
+    }
+
+    return true;
+!!!5808514.java!!!	fixupVariables(inout vars : Vector, in globalsSize : int) : void
+    super.fixupVariables(vars, globalsSize);
+
+    int nPredicates = getPredicateCount();
+
+    for (int i = 0; i < nPredicates; i++)
+    {
+      m_predicates[i].fixupVariables(vars, globalsSize);
+    }
+!!!5808642.java!!!	nodeToString(in n : int) : String
+    if(DTM.NULL != n)
+    {
+      DTM dtm = m_lpi.getXPathContext().getDTM(n);
+      return dtm.getNodeName(n) + "{" + (n+1) + "}";
+    }
+    else
+    {
+      return "null";
+    }
+!!!5808770.java!!!	acceptNode(in n : int) : short
+
+    XPathContext xctxt = m_lpi.getXPathContext();
+
+    try
+    {
+      xctxt.pushCurrentNode(n);
+
+      XObject score = execute(xctxt, n);
+
+      // System.out.println("\n::acceptNode - score: "+score.num()+"::");
+      if (score != NodeTest.SCORE_NONE)
+      {
+        if (getPredicateCount() > 0)
+        {
+          countProximityPosition(0);
+
+          if (!executePredicates(n, xctxt))
+            return DTMIterator.FILTER_SKIP;
+        }
+
+        return DTMIterator.FILTER_ACCEPT;
+      }
+    }
+    catch (javax.xml.transform.TransformerException se)
+    {
+
+      // TODO: Fix this.
+      throw new RuntimeException(se.getMessage());
+    }
+    finally
+    {
+      xctxt.popCurrentNode();
+    }
+
+    return DTMIterator.FILTER_SKIP;
+!!!5808898.java!!!	getLocPathIterator() : LocPathIterator
+    return m_lpi;
+!!!5809026.java!!!	setLocPathIterator(inout li : LocPathIterator) : void
+    m_lpi = li;
+    if(this != li)
+      li.exprSetParent(this);
+!!!5809154.java!!!	canTraverseOutsideSubtree() : boolean
+    int n = getPredicateCount();
+    for (int i = 0; i < n; i++)
+    {
+      if(getPredicate(i).canTraverseOutsideSubtree())
+        return true;
+    }
+    return false;
+!!!5809282.java!!!	callPredicateVisitors(inout visitor : XPathVisitor) : void
+          if (null != m_predicates)
+            {
+            int n = m_predicates.length;
+            for (int i = 0; i < n; i++)
+              {
+              ExpressionOwner predOwner = new PredOwner(i);
+              if (visitor.visitPredicate(predOwner, m_predicates[i]))
+                {
+                m_predicates[i].callVisitors(predOwner, visitor);
+              }
+
+            }
+          }
+!!!5809410.java!!!	deepEquals(inout expr : Expression) : boolean
+      if (!super.deepEquals(expr))
+            return false;
+
+      PredicatedNodeTest pnt = (PredicatedNodeTest) expr;
+      if (null != m_predicates)
+      {
+
+        int n = m_predicates.length;
+        if ((null == pnt.m_predicates) || (pnt.m_predicates.length != n))
+              return false;
+        for (int i = 0; i < n; i++)
+        {
+          if (!m_predicates[i].deepEquals(pnt.m_predicates[i]))
+                return false;
+        }
+      }
+      else if (null != pnt.m_predicates)
+              return false;
+
+      return true;

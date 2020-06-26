@@ -1,0 +1,586 @@
+class HTMLDocument
+!!!10972034.java!!!	HTMLDocument()
+        this(new GapContent(BUFFER_SIZE_DEFAULT), new StyleSheet());
+!!!10972162.java!!!	HTMLDocument(inout styles : StyleSheet)
+        this(new GapContent(BUFFER_SIZE_DEFAULT), styles);
+!!!10972290.java!!!	HTMLDocument(inout c : AbstractDocument::Content, inout styles : StyleSheet)
+        super(c, styles);
+!!!10972418.java!!!	getReader(in pos : int) : HTMLEditorKit::ParserCallback
+        Object desc = getProperty(Document.StreamDescriptionProperty);
+        if (desc instanceof URL) {
+            setBase((URL)desc);
+        }
+        HTMLReader reader = new HTMLReader(pos);
+        return reader;
+!!!10972546.java!!!	getReader(in pos : int, in popDepth : int, in pushDepth : int, inout insertTag : HTML::Tag) : HTMLEditorKit::ParserCallback
+        return getReader(pos, popDepth, pushDepth, insertTag, true);
+!!!10972674.java!!!	getReader(in pos : int, in popDepth : int, in pushDepth : int, inout insertTag : HTML::Tag, inout insertInsertTag : boolean) : HTMLEditorKit::ParserCallback
+        Object desc = getProperty(Document.StreamDescriptionProperty);
+        if (desc instanceof URL) {
+            setBase((URL)desc);
+        }
+        HTMLReader reader = new HTMLReader(pos, popDepth, pushDepth,
+                                           insertTag, insertInsertTag, false,
+                                           true);
+        return reader;
+!!!10972802.java!!!	getBase() : URL
+        return base;
+!!!10972930.java!!!	setBase(inout u : URL) : void
+        base = u;
+        getStyleSheet().setBase(u);
+!!!10973058.java!!!	insert(in offset : int, inout data : DefaultStyledDocument::ElementSpec [[]]) : void
+        super.insert(offset, data);
+!!!10973186.java!!!	insertUpdate(inout chng : AbstractDocument::DefaultDocumentEvent, inout attr : AttributeSet) : void
+        if(attr == null) {
+            attr = contentAttributeSet;
+        }
+
+        // If this is the composed text element, merge the content attribute to it
+        else if (attr.isDefined(StyleConstants.ComposedTextAttribute)) {
+            ((MutableAttributeSet)attr).addAttributes(contentAttributeSet);
+        }
+
+        if (attr.isDefined(IMPLIED_CR)) {
+            ((MutableAttributeSet)attr).removeAttribute(IMPLIED_CR);
+        }
+
+        super.insertUpdate(chng, attr);
+!!!10973314.java!!!	create(inout data : DefaultStyledDocument::ElementSpec [[]]) : void
+        super.create(data);
+!!!10973442.java!!!	setParagraphAttributes(in offset : int, in length : int, inout s : AttributeSet, inout replace : boolean) : void
+        try {
+            writeLock();
+            // Make sure we send out a change for the length of the paragraph.
+            int end = Math.min(offset + length, getLength());
+            Element e = getParagraphElement(offset);
+            offset = e.getStartOffset();
+            e = getParagraphElement(end);
+            length = Math.max(0, e.getEndOffset() - offset);
+            DefaultDocumentEvent changes =
+                new DefaultDocumentEvent(offset, length,
+                                         DocumentEvent.EventType.CHANGE);
+            AttributeSet sCopy = s.copyAttributes();
+            int lastEnd = Integer.MAX_VALUE;
+            for (int pos = offset; pos <= end; pos = lastEnd) {
+                Element paragraph = getParagraphElement(pos);
+                if (lastEnd == paragraph.getEndOffset()) {
+                    lastEnd++;
+                }
+                else {
+                    lastEnd = paragraph.getEndOffset();
+                }
+                MutableAttributeSet attr =
+                    (MutableAttributeSet) paragraph.getAttributes();
+                changes.addEdit(new AttributeUndoableEdit(paragraph, sCopy, replace));
+                if (replace) {
+                    attr.removeAttributes(attr);
+                }
+                attr.addAttributes(s);
+            }
+            changes.end();
+            fireChangedUpdate(changes);
+            fireUndoableEditUpdate(new UndoableEditEvent(this, changes));
+        } finally {
+            writeUnlock();
+        }
+!!!10973570.java!!!	getStyleSheet() : StyleSheet
+        return (StyleSheet) getAttributeContext();
+!!!10973698.java!!!	getIterator(inout t : HTML::Tag) : HTMLDocument::Iterator
+        if (t.isBlock()) {
+            // TBD
+            return null;
+        }
+        return new LeafIterator(t, this);
+!!!10973826.java!!!	createLeafElement(inout parent : Element, inout a : AttributeSet, in p0 : int, in p1 : int) : Element
+        return new RunElement(parent, a, p0, p1);
+!!!10973954.java!!!	createBranchElement(inout parent : Element, inout a : AttributeSet) : Element
+        return new BlockElement(parent, a);
+!!!10974082.java!!!	createDefaultRoot() : AbstractDocument::AbstractElement
+        // grabs a write-lock for this initialization and
+        // abandon it during initialization so in normal
+        // operation we can detect an illegitimate attempt
+        // to mutate attributes.
+        writeLock();
+        MutableAttributeSet a = new SimpleAttributeSet();
+        a.addAttribute(StyleConstants.NameAttribute, HTML.Tag.HTML);
+        BlockElement html = new BlockElement(null, a.copyAttributes());
+        a.removeAttributes(a);
+        a.addAttribute(StyleConstants.NameAttribute, HTML.Tag.BODY);
+        BlockElement body = new BlockElement(html, a.copyAttributes());
+        a.removeAttributes(a);
+        a.addAttribute(StyleConstants.NameAttribute, HTML.Tag.P);
+        getStyleSheet().addCSSAttributeFromHTML(a, CSS.Attribute.MARGIN_TOP, "0");
+        BlockElement paragraph = new BlockElement(body, a.copyAttributes());
+        a.removeAttributes(a);
+        a.addAttribute(StyleConstants.NameAttribute, HTML.Tag.CONTENT);
+        RunElement brk = new RunElement(paragraph, a, 0, 1);
+        Element[] buff = new Element[1];
+        buff[0] = brk;
+        paragraph.replace(0, 0, buff);
+        buff[0] = paragraph;
+        body.replace(0, 0, buff);
+        buff[0] = body;
+        html.replace(0, 0, buff);
+        writeUnlock();
+        return html;
+!!!10974210.java!!!	setTokenThreshold(in n : int) : void
+        putProperty(TokenThreshold, new Integer(n));
+!!!10974338.java!!!	getTokenThreshold() : int
+        Integer i = (Integer) getProperty(TokenThreshold);
+        if (i != null) {
+            return i.intValue();
+        }
+        return Integer.MAX_VALUE;
+!!!10974466.java!!!	setPreservesUnknownTags(inout preservesTags : boolean) : void
+        preservesUnknownTags = preservesTags;
+!!!10974594.java!!!	getPreservesUnknownTags() : boolean
+        return preservesUnknownTags;
+!!!10974722.java!!!	processHTMLFrameHyperlinkEvent(inout e : HTMLFrameHyperlinkEvent) : void
+        String frameName = e.getTarget();
+        Element element = e.getSourceElement();
+        String urlStr = e.getURL().toString();
+
+        if (frameName.equals("_self")) {
+            /*
+              The source and destination elements
+              are the same.
+            */
+            updateFrame(element, urlStr);
+        } else if (frameName.equals("_parent")) {
+            /*
+              The destination is the parent of the frame.
+            */
+            updateFrameSet(element.getParentElement(), urlStr);
+        } else {
+            /*
+              locate a named frame
+            */
+            Element targetElement = findFrame(frameName);
+            if (targetElement != null) {
+                updateFrame(targetElement, urlStr);
+            }
+        }
+!!!10974850.java!!!	findFrame(inout frameName : String) : Element
+        ElementIterator it = new ElementIterator(this);
+        Element next;
+
+        while ((next = it.next()) != null) {
+            AttributeSet attr = next.getAttributes();
+            if (matchNameAttribute(attr, HTML.Tag.FRAME)) {
+                String frameTarget = (String)attr.getAttribute(HTML.Attribute.NAME);
+                if (frameTarget != null && frameTarget.equals(frameName)) {
+                    break;
+                }
+            }
+        }
+        return next;
+!!!10974978.java!!!	matchNameAttribute(inout attr : AttributeSet, inout tag : HTML::Tag) : boolean
+        Object o = attr.getAttribute(StyleConstants.NameAttribute);
+        if (o instanceof HTML.Tag) {
+            HTML.Tag name = (HTML.Tag) o;
+            if (name == tag) {
+                return true;
+            }
+        }
+        return false;
+!!!10975106.java!!!	updateFrameSet(inout element : Element, inout url : String) : void
+        try {
+            int startOffset = element.getStartOffset();
+            int endOffset = Math.min(getLength(), element.getEndOffset());
+            String html = "<frame";
+            if (url != null) {
+                html += " src=\"" + url + "\"";
+            }
+            html += ">";
+            installParserIfNecessary();
+            setOuterHTML(element, html);
+        } catch (BadLocationException e1) {
+            // Should handle this better
+        } catch (IOException ioe) {
+            // Should handle this better
+        }
+!!!10975234.java!!!	updateFrame(inout element : Element, inout url : String) : void
+
+        try {
+            writeLock();
+            DefaultDocumentEvent changes = new DefaultDocumentEvent(element.getStartOffset(),
+                                                                    1,
+                                                                    DocumentEvent.EventType.CHANGE);
+            AttributeSet sCopy = element.getAttributes().copyAttributes();
+            MutableAttributeSet attr = (MutableAttributeSet) element.getAttributes();
+            changes.addEdit(new AttributeUndoableEdit(element, sCopy, false));
+            attr.removeAttribute(HTML.Attribute.SRC);
+            attr.addAttribute(HTML.Attribute.SRC, url);
+            changes.end();
+            fireChangedUpdate(changes);
+            fireUndoableEditUpdate(new UndoableEditEvent(this, changes));
+        } finally {
+            writeUnlock();
+        }
+!!!10975362.java!!!	isFrameDocument() : boolean
+        return frameDocument;
+!!!10975490.java!!!	setFrameDocumentState(inout frameDoc : boolean) : void
+        this.frameDocument = frameDoc;
+!!!10975618.java!!!	addMap(inout map : Map) : void
+        String     name = map.getName();
+
+        if (name != null) {
+            Object     maps = getProperty(MAP_PROPERTY);
+
+            if (maps == null) {
+                maps = new Hashtable(11);
+                putProperty(MAP_PROPERTY, maps);
+            }
+            if (maps instanceof Hashtable) {
+                ((Hashtable)maps).put("#" + name, map);
+            }
+        }
+!!!10975746.java!!!	removeMap(inout map : Map) : void
+        String     name = map.getName();
+
+        if (name != null) {
+            Object     maps = getProperty(MAP_PROPERTY);
+
+            if (maps instanceof Hashtable) {
+                ((Hashtable)maps).remove("#" + name);
+            }
+        }
+!!!10975874.java!!!	getMap(inout name : String) : Map
+        if (name != null) {
+            Object     maps = getProperty(MAP_PROPERTY);
+
+            if (maps != null && (maps instanceof Hashtable)) {
+                return (Map)((Hashtable)maps).get(name);
+            }
+        }
+        return null;
+!!!10976002.java!!!	getMaps() : Enumeration
+        Object     maps = getProperty(MAP_PROPERTY);
+
+        if (maps instanceof Hashtable) {
+            return ((Hashtable)maps).elements();
+        }
+        return null;
+!!!10976130.java!!!	setDefaultStyleSheetType(inout contentType : String) : void
+        putProperty(StyleType, contentType);
+!!!10976258.java!!!	getDefaultStyleSheetType() : String
+        String retValue = (String)getProperty(StyleType);
+        if (retValue == null) {
+            return "text/css";
+        }
+        return retValue;
+!!!10976386.java!!!	setParser(inout parser : HTMLEditorKit::Parser) : void
+        this.parser = parser;
+        putProperty("__PARSER__", null);
+!!!10976514.java!!!	getParser() : HTMLEditorKit::Parser
+        Object p = getProperty("__PARSER__");
+
+        if (p instanceof HTMLEditorKit.Parser) {
+            return (HTMLEditorKit.Parser)p;
+        }
+        return parser;
+!!!10976642.java!!!	setInnerHTML(inout elem : Element, inout htmlText : String) : void
+        verifyParser();
+        if (elem != null && elem.isLeaf()) {
+            throw new IllegalArgumentException
+                ("Can not set inner HTML of a leaf");
+        }
+        if (elem != null && htmlText != null) {
+            int oldCount = elem.getElementCount();
+            int insertPosition = elem.getStartOffset();
+            insertHTML(elem, elem.getStartOffset(), htmlText, true);
+            if (elem.getElementCount() > oldCount) {
+                // Elements were inserted, do the cleanup.
+                removeElements(elem, elem.getElementCount() - oldCount,
+                               oldCount);
+            }
+        }
+!!!10976770.java!!!	setOuterHTML(inout elem : Element, inout htmlText : String) : void
+        verifyParser();
+        if (elem != null && elem.getParentElement() != null &&
+            htmlText != null) {
+            int start = elem.getStartOffset();
+            int end = elem.getEndOffset();
+            int startLength = getLength();
+            // We don't want a newline if elem is a leaf, and doesn't contain
+            // a newline.
+            boolean wantsNewline = !elem.isLeaf();
+            if (!wantsNewline && (end > startLength ||
+                                 getText(end - 1, 1).charAt(0) == NEWLINE[0])){
+                wantsNewline = true;
+            }
+            Element parent = elem.getParentElement();
+            int oldCount = parent.getElementCount();
+            insertHTML(parent, start, htmlText, wantsNewline);
+            // Remove old.
+            int newLength = getLength();
+            if (oldCount != parent.getElementCount()) {
+                int removeIndex = parent.getElementIndex(start + newLength -
+                                                         startLength);
+                removeElements(parent, removeIndex, 1);
+            }
+        }
+!!!10976898.java!!!	insertAfterStart(inout elem : Element, inout htmlText : String) : void
+        verifyParser();
+
+        if (elem == null || htmlText == null) {
+            return;
+        }
+
+        if (elem.isLeaf()) {
+            throw new IllegalArgumentException
+                ("Can not insert HTML after start of a leaf");
+        }
+        insertHTML(elem, elem.getStartOffset(), htmlText, false);
+!!!10977026.java!!!	insertBeforeEnd(inout elem : Element, inout htmlText : String) : void
+        verifyParser();
+        if (elem != null && elem.isLeaf()) {
+            throw new IllegalArgumentException
+                ("Can not set inner HTML before end of leaf");
+        }
+        if (elem != null) {
+            int offset = elem.getEndOffset();
+            if (elem.getElement(elem.getElementIndex(offset - 1)).isLeaf() &&
+                getText(offset - 1, 1).charAt(0) == NEWLINE[0]) {
+                offset--;
+            }
+            insertHTML(elem, offset, htmlText, false);
+        }
+!!!10977154.java!!!	insertBeforeStart(inout elem : Element, inout htmlText : String) : void
+        verifyParser();
+        if (elem != null) {
+            Element parent = elem.getParentElement();
+
+            if (parent != null) {
+                insertHTML(parent, elem.getStartOffset(), htmlText, false);
+            }
+        }
+!!!10977282.java!!!	insertAfterEnd(inout elem : Element, inout htmlText : String) : void
+        verifyParser();
+        if (elem != null) {
+            Element parent = elem.getParentElement();
+
+            if (parent != null) {
+                // If we are going to insert the string into the body
+                // section, it is necessary to set the corrsponding flag.
+                if (HTML.Tag.BODY.name.equals(parent.getName())) {
+                    insertInBody = true;
+                }
+                int offset = elem.getEndOffset();
+                if (offset > (getLength() + 1)) {
+                    offset--;
+                }
+                else if (elem.isLeaf() && getText(offset - 1, 1).
+                    charAt(0) == NEWLINE[0]) {
+                    offset--;
+                }
+                insertHTML(parent, offset, htmlText, false);
+                // Cleanup the flag, if any.
+                if (insertInBody) {
+                    insertInBody = false;
+                }
+            }
+        }
+!!!10977410.java!!!	getElement(inout id : String) : Element
+        if (id == null) {
+            return null;
+        }
+        return getElement(getDefaultRootElement(), HTML.Attribute.ID, id,
+                          true);
+!!!10977538.java!!!	getElement(inout e : Element, inout attribute : Object, inout value : Object) : Element
+        return getElement(e, attribute, value, true);
+!!!10977666.java!!!	getElement(inout e : Element, inout attribute : Object, inout value : Object, inout searchLeafAttributes : boolean) : Element
+        AttributeSet attr = e.getAttributes();
+
+        if (attr != null && attr.isDefined(attribute)) {
+            if (value.equals(attr.getAttribute(attribute))) {
+                return e;
+            }
+        }
+        if (!e.isLeaf()) {
+            for (int counter = 0, maxCounter = e.getElementCount();
+                 counter < maxCounter; counter++) {
+                Element retValue = getElement(e.getElement(counter), attribute,
+                                              value, searchLeafAttributes);
+
+                if (retValue != null) {
+                    return retValue;
+                }
+            }
+        }
+        else if (searchLeafAttributes && attr != null) {
+            // For some leaf elements we store the actual attributes inside
+            // the AttributeSet of the Element (such as anchors).
+            Enumeration names = attr.getAttributeNames();
+            if (names != null) {
+                while (names.hasMoreElements()) {
+                    Object name = names.nextElement();
+                    if ((name instanceof HTML.Tag) &&
+                        (attr.getAttribute(name) instanceof AttributeSet)) {
+
+                        AttributeSet check = (AttributeSet)attr.
+                                             getAttribute(name);
+                        if (check.isDefined(attribute) &&
+                            value.equals(check.getAttribute(attribute))) {
+                            return e;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+!!!10977794.java!!!	verifyParser() : void
+        if (getParser() == null) {
+            throw new IllegalStateException("No HTMLEditorKit.Parser");
+        }
+!!!10977922.java!!!	installParserIfNecessary() : void
+        if (getParser() == null) {
+            setParser(new HTMLEditorKit().getParser());
+        }
+!!!10978050.java!!!	insertHTML(inout parent : Element, in offset : int, inout html : String, inout wantsTrailingNewline : boolean) : void
+        if (parent != null && html != null) {
+            HTMLEditorKit.Parser parser = getParser();
+            if (parser != null) {
+                int lastOffset = Math.max(0, offset - 1);
+                Element charElement = getCharacterElement(lastOffset);
+                Element commonParent = parent;
+                int pop = 0;
+                int push = 0;
+
+                if (parent.getStartOffset() > lastOffset) {
+                    while (commonParent != null &&
+                           commonParent.getStartOffset() > lastOffset) {
+                        commonParent = commonParent.getParentElement();
+                        push++;
+                    }
+                    if (commonParent == null) {
+                        throw new BadLocationException("No common parent",
+                                                       offset);
+                    }
+                }
+                while (charElement != null && charElement != commonParent) {
+                    pop++;
+                    charElement = charElement.getParentElement();
+                }
+                if (charElement != null) {
+                    // Found it, do the insert.
+                    HTMLReader reader = new HTMLReader(offset, pop - 1, push,
+                                                       null, false, true,
+                                                       wantsTrailingNewline);
+
+                    parser.parse(new StringReader(html), reader, true);
+                    reader.flush();
+                }
+            }
+        }
+!!!10978178.java!!!	removeElements(inout e : Element, in index : int, in count : int) : void
+        writeLock();
+        try {
+            int start = e.getElement(index).getStartOffset();
+            int end = e.getElement(index + count - 1).getEndOffset();
+            if (end > getLength()) {
+                removeElementsAtEnd(e, index, count, start, end);
+            }
+            else {
+                removeElements(e, index, count, start, end);
+            }
+        } finally {
+            writeUnlock();
+        }
+!!!10978306.java!!!	removeElementsAtEnd(inout e : Element, in index : int, in count : int, in start : int, in end : int) : void
+        // index must be > 0 otherwise no insert would have happened.
+        boolean isLeaf = (e.getElement(index - 1).isLeaf());
+        DefaultDocumentEvent dde = new DefaultDocumentEvent(
+                       start - 1, end - start + 1, DocumentEvent.
+                       EventType.REMOVE);
+
+        if (isLeaf) {
+            Element endE = getCharacterElement(getLength());
+            // e.getElement(index - 1) should represent the newline.
+            index--;
+            if (endE.getParentElement() != e) {
+                // The hiearchies don't match, we'll have to manually
+                // recreate the leaf at e.getElement(index - 1)
+                replace(dde, e, index, ++count, start, end, true, true);
+            }
+            else {
+                // The hierarchies for the end Element and
+                // e.getElement(index - 1), match, we can safely remove
+                // the Elements and the end content will be aligned
+                // appropriately.
+                replace(dde, e, index, count, start, end, true, false);
+            }
+        }
+        else {
+            // Not a leaf, descend until we find the leaf representing
+            // start - 1 and remove it.
+            Element newLineE = e.getElement(index - 1);
+            while (!newLineE.isLeaf()) {
+                newLineE = newLineE.getElement(newLineE.getElementCount() - 1);
+            }
+            newLineE = newLineE.getParentElement();
+            replace(dde, e, index, count, start, end, false, false);
+            replace(dde, newLineE, newLineE.getElementCount() - 1, 1, start,
+                    end, true, true);
+        }
+        postRemoveUpdate(dde);
+        dde.end();
+        fireRemoveUpdate(dde);
+        fireUndoableEditUpdate(new UndoableEditEvent(this, dde));
+!!!10978434.java!!!	replace(inout dde : AbstractDocument::DefaultDocumentEvent, inout e : Element, in index : int, in count : int, in start : int, in end : int, inout remove : boolean, inout create : boolean) : void
+        Element[] added;
+        AttributeSet attrs = e.getElement(index).getAttributes();
+        Element[] removed = new Element[count];
+
+        for (int counter = 0; counter < count; counter++) {
+            removed[counter] = e.getElement(counter + index);
+        }
+        if (remove) {
+            UndoableEdit u = getContent().remove(start - 1, end - start);
+            if (u != null) {
+                dde.addEdit(u);
+            }
+        }
+        if (create) {
+            added = new Element[1];
+            added[0] = createLeafElement(e, attrs, start - 1, start);
+        }
+        else {
+            added = new Element[0];
+        }
+        dde.addEdit(new ElementEdit(e, index, removed, added));
+        ((AbstractDocument.BranchElement)e).replace(
+                                             index, removed.length, added);
+!!!10978562.java!!!	removeElements(inout e : Element, in index : int, in count : int, in start : int, in end : int) : void
+        Element[] removed = new Element[count];
+        Element[] added = new Element[0];
+        for (int counter = 0; counter < count; counter++) {
+            removed[counter] = e.getElement(counter + index);
+        }
+        DefaultDocumentEvent dde = new DefaultDocumentEvent
+                (start, end - start, DocumentEvent.EventType.REMOVE);
+        ((AbstractDocument.BranchElement)e).replace(index, removed.length,
+                                                    added);
+        dde.addEdit(new ElementEdit(e, index, removed, added));
+        UndoableEdit u = getContent().remove(start, end - start);
+        if (u != null) {
+            dde.addEdit(u);
+        }
+        postRemoveUpdate(dde);
+        dde.end();
+        fireRemoveUpdate(dde);
+        if (u != null) {
+            fireUndoableEditUpdate(new UndoableEditEvent(this, dde));
+        }
+!!!10978690.java!!!	obtainLock() : void
+        writeLock();
+!!!10978818.java!!!	releaseLock() : void
+        writeUnlock();
+!!!10978946.java!!!	fireChangedUpdate(inout e : DocumentEvent) : void
+        super.fireChangedUpdate(e);
+!!!10979074.java!!!	fireUndoableEditUpdate(inout e : UndoableEditEvent) : void
+        super.fireUndoableEditUpdate(e);
+!!!10979202.java!!!	hasBaseTag() : boolean
+        return hasBaseTag;
+!!!10979330.java!!!	getBaseTarget() : String
+        return baseTarget;

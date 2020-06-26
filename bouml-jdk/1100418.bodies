@@ -1,0 +1,938 @@
+class CompletableFuture
+!!!8995458.java!!!	internalComplete(inout r : Object) : boolean
+ // CAS from null to r
+        return UNSAFE.compareAndSwapObject(this, RESULT, null, r);
+!!!8995586.java!!!	casStack(inout cmp : CompletableFuture::Completion, inout val : CompletableFuture::Completion) : boolean
+        return UNSAFE.compareAndSwapObject(this, STACK, cmp, val);
+!!!8995714.java!!!	tryPushStack(inout c : CompletableFuture::Completion) : boolean
+        Completion h = stack;
+        lazySetNext(c, h);
+        return UNSAFE.compareAndSwapObject(this, STACK, h, c);
+!!!8995842.java!!!	pushStack(inout c : CompletableFuture::Completion) : void
+        do {} while (!tryPushStack(c));
+!!!8996098.java!!!	completeNull() : boolean
+        return UNSAFE.compareAndSwapObject(this, RESULT, null,
+                                           NIL);
+!!!8996226.java!!!	encodeValue(inout t : T) : Object
+        return (t == null) ? NIL : t;
+!!!8996354.java!!!	completeValue(inout t : T) : boolean
+        return UNSAFE.compareAndSwapObject(this, RESULT, null,
+                                           (t == null) ? NIL : t);
+!!!8996482.java!!!	encodeThrowable(inout x : Throwable) : CompletableFuture::AltResult
+        return new AltResult((x instanceof CompletionException) ? x :
+                             new CompletionException(x));
+!!!8996610.java!!!	completeThrowable(inout x : Throwable) : boolean
+        return UNSAFE.compareAndSwapObject(this, RESULT, null,
+                                           encodeThrowable(x));
+!!!8996738.java!!!	encodeThrowable(inout x : Throwable, inout r : Object) : Object
+        if (!(x instanceof CompletionException))
+            x = new CompletionException(x);
+        else if (r instanceof AltResult && x == ((AltResult)r).ex)
+            return r;
+        return new AltResult(x);
+!!!8996866.java!!!	completeThrowable(inout x : Throwable, inout r : Object) : boolean
+        return UNSAFE.compareAndSwapObject(this, RESULT, null,
+                                           encodeThrowable(x, r));
+!!!8996994.java!!!	encodeOutcome(inout t : T, inout x : Throwable) : Object
+        return (x == null) ? (t == null) ? NIL : t : encodeThrowable(x);
+!!!8997122.java!!!	encodeRelay(inout r : Object) : Object
+        Throwable x;
+        return (((r instanceof AltResult) &&
+                 (x = ((AltResult)r).ex) != null &&
+                 !(x instanceof CompletionException)) ?
+                new AltResult(new CompletionException(x)) : r);
+!!!8997250.java!!!	completeRelay(inout r : Object) : boolean
+        return UNSAFE.compareAndSwapObject(this, RESULT, null,
+                                           encodeRelay(r));
+!!!8997378.java!!!	reportGet(inout r : Object) : T
+        if (r == null) // by convention below, null means interrupted
+            throw new InterruptedException();
+        if (r instanceof AltResult) {
+            Throwable x, cause;
+            if ((x = ((AltResult)r).ex) == null)
+                return null;
+            if (x instanceof CancellationException)
+                throw (CancellationException)x;
+            if ((x instanceof CompletionException) &&
+                (cause = x.getCause()) != null)
+                x = cause;
+            throw new ExecutionException(x);
+        }
+        @SuppressWarnings("unchecked") T t = (T) r;
+        return t;
+!!!8997506.java!!!	reportJoin(inout r : Object) : T
+        if (r instanceof AltResult) {
+            Throwable x;
+            if ((x = ((AltResult)r).ex) == null)
+                return null;
+            if (x instanceof CancellationException)
+                throw (CancellationException)x;
+            if (x instanceof CompletionException)
+                throw (CompletionException)x;
+            throw new CompletionException(x);
+        }
+        @SuppressWarnings("unchecked") T t = (T) r;
+        return t;
+!!!8997762.java!!!	screenExecutor(inout e : Executor) : Executor
+        if (!useCommonPool && e == ForkJoinPool.commonPool())
+            return asyncPool;
+        if (e == null) throw new NullPointerException();
+        return e;
+!!!8998658.java!!!	lazySetNext(inout c : CompletableFuture::Completion, inout next : CompletableFuture::Completion) : void
+        UNSAFE.putOrderedObject(c, NEXT, next);
+!!!8998786.java!!!	postComplete() : void
+        /*
+         * On each step, variable f holds current dependents to pop
+         * and run.  It is extended along only one path at a time,
+         * pushing others to avoid unbounded recursion.
+         */
+        CompletableFuture<?> f = this; Completion h;
+        while ((h = f.stack) != null ||
+               (f != this && (h = (f = this).stack) != null)) {
+            CompletableFuture<?> d; Completion t;
+            if (f.casStack(h, t = h.next)) {
+                if (t != null) {
+                    if (f != this) {
+                        pushStack(h);
+                        continue;
+                    }
+                    h.next = null;    // detach
+                }
+                f = (d = h.tryFire(NESTED)) == null ? this : d;
+            }
+        }
+!!!8998914.java!!!	cleanStack() : void
+        for (Completion p = null, q = stack; q != null;) {
+            Completion s = q.next;
+            if (q.isLive()) {
+                p = q;
+                q = s;
+            }
+            else if (p == null) {
+                casStack(q, s);
+                q = stack;
+            }
+            else {
+                p.next = s;
+                if (p.isLive())
+                    q = s;
+                else {
+                    p = null;  // restart
+                    q = stack;
+                }
+            }
+        }
+!!!8999426.java!!!	push(inout c : CompletableFuture::UniCompletion) : void
+        if (c != null) {
+            while (result == null && !tryPushStack(c))
+                lazySetNext(c, null); // clear on failure
+        }
+!!!8999554.java!!!	postFire(inout a : CompletableFuture, in mode : int) : CompletableFuture
+        if (a != null && a.stack != null) {
+            if (mode < 0 || a.result == null)
+                a.cleanStack();
+            else
+                a.postComplete();
+        }
+        if (result != null && stack != null) {
+            if (mode < 0)
+                return this;
+            else
+                postComplete();
+        }
+        return null;
+!!!8999938.java!!!	uniApply(inout a : CompletableFuture, inout f : Function, inout c : CompletableFuture::UniApply) : boolean
+        Object r; Throwable x;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            if (r instanceof AltResult) {
+                if ((x = ((AltResult)r).ex) != null) {
+                    completeThrowable(x, r);
+                    break tryComplete;
+                }
+                r = null;
+            }
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                @SuppressWarnings("unchecked") S s = (S) r;
+                completeValue(f.apply(s));
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9000066.java!!!	uniApplyStage(inout e : Executor, inout f : Function) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<V> d =  new CompletableFuture<V>();
+        if (e != null || !d.uniApply(this, f, null)) {
+            UniApply<T,V> c = new UniApply<T,V>(e, d, this, f);
+            push(c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9000450.java!!!	uniAccept(inout a : CompletableFuture, inout f : Consumer, inout c : CompletableFuture::UniAccept) : boolean
+        Object r; Throwable x;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            if (r instanceof AltResult) {
+                if ((x = ((AltResult)r).ex) != null) {
+                    completeThrowable(x, r);
+                    break tryComplete;
+                }
+                r = null;
+            }
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                @SuppressWarnings("unchecked") S s = (S) r;
+                f.accept(s);
+                completeNull();
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9000578.java!!!	uniAcceptStage(inout e : Executor, inout f : Consumer) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (e != null || !d.uniAccept(this, f, null)) {
+            UniAccept<T> c = new UniAccept<T>(e, d, this, f);
+            push(c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9000962.java!!!	uniRun(inout a : CompletableFuture, inout f : Runnable, inout c : CompletableFuture::UniRun) : boolean
+        Object r; Throwable x;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        if (result == null) {
+            if (r instanceof AltResult && (x = ((AltResult)r).ex) != null)
+                completeThrowable(x, r);
+            else
+                try {
+                    if (c != null && !c.claim())
+                        return false;
+                    f.run();
+                    completeNull();
+                } catch (Throwable ex) {
+                    completeThrowable(ex);
+                }
+        }
+        return true;
+!!!9001090.java!!!	uniRunStage(inout e : Executor, inout f : Runnable) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (e != null || !d.uniRun(this, f, null)) {
+            UniRun<T> c = new UniRun<T>(e, d, this, f);
+            push(c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9001474.java!!!	uniWhenComplete(inout a : CompletableFuture, inout f : BiConsumer, inout c : CompletableFuture::UniWhenComplete) : boolean
+        Object r; T t; Throwable x = null;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        if (result == null) {
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                if (r instanceof AltResult) {
+                    x = ((AltResult)r).ex;
+                    t = null;
+                } else {
+                    @SuppressWarnings("unchecked") T tr = (T) r;
+                    t = tr;
+                }
+                f.accept(t, x);
+                if (x == null) {
+                    internalComplete(r);
+                    return true;
+                }
+            } catch (Throwable ex) {
+                if (x == null)
+                    x = ex;
+            }
+            completeThrowable(x, r);
+        }
+        return true;
+!!!9001602.java!!!	uniWhenCompleteStage(inout e : Executor, inout f : BiConsumer) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<T> d = new CompletableFuture<T>();
+        if (e != null || !d.uniWhenComplete(this, f, null)) {
+            UniWhenComplete<T> c = new UniWhenComplete<T>(e, d, this, f);
+            push(c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9001986.java!!!	uniHandle(inout a : CompletableFuture, inout f : BiFunction, inout c : CompletableFuture::UniHandle) : boolean
+        Object r; S s; Throwable x;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        if (result == null) {
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                if (r instanceof AltResult) {
+                    x = ((AltResult)r).ex;
+                    s = null;
+                } else {
+                    x = null;
+                    @SuppressWarnings("unchecked") S ss = (S) r;
+                    s = ss;
+                }
+                completeValue(f.apply(s, x));
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9002114.java!!!	uniHandleStage(inout e : Executor, inout f : BiFunction) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<V> d = new CompletableFuture<V>();
+        if (e != null || !d.uniHandle(this, f, null)) {
+            UniHandle<T,V> c = new UniHandle<T,V>(e, d, this, f);
+            push(c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9002498.java!!!	uniExceptionally(inout a : CompletableFuture, inout f : Function, inout c : CompletableFuture::UniExceptionally) : boolean
+        Object r; Throwable x;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        if (result == null) {
+            try {
+                if (r instanceof AltResult && (x = ((AltResult)r).ex) != null) {
+                    if (c != null && !c.claim())
+                        return false;
+                    completeValue(f.apply(x));
+                } else
+                    internalComplete(r);
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9002626.java!!!	uniExceptionallyStage(inout f : Function) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<T> d = new CompletableFuture<T>();
+        if (!d.uniExceptionally(this, f, null)) {
+            UniExceptionally<T> c = new UniExceptionally<T>(d, this, f);
+            push(c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9003010.java!!!	uniRelay(inout a : CompletableFuture) : boolean
+        Object r;
+        if (a == null || (r = a.result) == null)
+            return false;
+        if (result == null) // no need to claim
+            completeRelay(r);
+        return true;
+!!!9003394.java!!!	uniCompose(inout a : CompletableFuture, inout f : Function, inout c : CompletableFuture::UniCompose) : boolean
+        Object r; Throwable x;
+        if (a == null || (r = a.result) == null || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            if (r instanceof AltResult) {
+                if ((x = ((AltResult)r).ex) != null) {
+                    completeThrowable(x, r);
+                    break tryComplete;
+                }
+                r = null;
+            }
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                @SuppressWarnings("unchecked") S s = (S) r;
+                CompletableFuture<T> g = f.apply(s).toCompletableFuture();
+                if (g.result == null || !uniRelay(g)) {
+                    UniRelay<T> copy = new UniRelay<T>(this, g);
+                    g.push(copy);
+                    copy.tryFire(SYNC);
+                    if (result == null)
+                        return false;
+                }
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9003522.java!!!	uniComposeStage(inout e : Executor, inout f : Function) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        Object r; Throwable x;
+        if (e == null && (r = result) != null) {
+            // try to return function result directly
+            if (r instanceof AltResult) {
+                if ((x = ((AltResult)r).ex) != null) {
+                    return new CompletableFuture<V>(encodeThrowable(x, r));
+                }
+                r = null;
+            }
+            try {
+                @SuppressWarnings("unchecked") T t = (T) r;
+                CompletableFuture<V> g = f.apply(t).toCompletableFuture();
+                Object s = g.result;
+                if (s != null)
+                    return new CompletableFuture<V>(encodeRelay(s));
+                CompletableFuture<V> d = new CompletableFuture<V>();
+                UniRelay<V> copy = new UniRelay<V>(d, g);
+                g.push(copy);
+                copy.tryFire(SYNC);
+                return d;
+            } catch (Throwable ex) {
+                return new CompletableFuture<V>(encodeThrowable(ex));
+            }
+        }
+        CompletableFuture<V> d = new CompletableFuture<V>();
+        UniCompose<T,V> c = new UniCompose<T,V>(e, d, this, f);
+        push(c);
+        c.tryFire(SYNC);
+        return d;
+!!!9004162.java!!!	bipush(inout b : CompletableFuture, inout c : CompletableFuture::BiCompletion) : void
+        if (c != null) {
+            Object r;
+            while ((r = result) == null && !tryPushStack(c))
+                lazySetNext(c, null); // clear on failure
+            if (b != null && b != this && b.result == null) {
+                Completion q = (r != null) ? c : new CoCompletion(c);
+                while (b.result == null && !b.tryPushStack(q))
+                    lazySetNext(q, null); // clear on failure
+            }
+        }
+!!!9004290.java!!!	postFire(inout a : CompletableFuture, inout b : CompletableFuture, in mode : int) : CompletableFuture
+        if (b != null && b.stack != null) { // clean second source
+            if (mode < 0 || b.result == null)
+                b.cleanStack();
+            else
+                b.postComplete();
+        }
+        return postFire(a, mode);
+!!!9004674.java!!!	biApply(inout a : CompletableFuture, inout b : CompletableFuture, inout f : BiFunction, inout c : CompletableFuture::BiApply) : boolean
+        Object r, s; Throwable x;
+        if (a == null || (r = a.result) == null ||
+            b == null || (s = b.result) == null || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            if (r instanceof AltResult) {
+                if ((x = ((AltResult)r).ex) != null) {
+                    completeThrowable(x, r);
+                    break tryComplete;
+                }
+                r = null;
+            }
+            if (s instanceof AltResult) {
+                if ((x = ((AltResult)s).ex) != null) {
+                    completeThrowable(x, s);
+                    break tryComplete;
+                }
+                s = null;
+            }
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                @SuppressWarnings("unchecked") R rr = (R) r;
+                @SuppressWarnings("unchecked") S ss = (S) s;
+                completeValue(f.apply(rr, ss));
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9004802.java!!!	biApplyStage(inout e : Executor, inout o : CompletionStage, inout f : BiFunction) : CompletableFuture
+        CompletableFuture<U> b;
+        if (f == null || (b = o.toCompletableFuture()) == null)
+            throw new NullPointerException();
+        CompletableFuture<V> d = new CompletableFuture<V>();
+        if (e != null || !d.biApply(this, b, f, null)) {
+            BiApply<T,U,V> c = new BiApply<T,U,V>(e, d, this, b, f);
+            bipush(b, c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9005186.java!!!	biAccept(inout a : CompletableFuture, inout b : CompletableFuture, inout f : BiConsumer, inout c : CompletableFuture::BiAccept) : boolean
+        Object r, s; Throwable x;
+        if (a == null || (r = a.result) == null ||
+            b == null || (s = b.result) == null || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            if (r instanceof AltResult) {
+                if ((x = ((AltResult)r).ex) != null) {
+                    completeThrowable(x, r);
+                    break tryComplete;
+                }
+                r = null;
+            }
+            if (s instanceof AltResult) {
+                if ((x = ((AltResult)s).ex) != null) {
+                    completeThrowable(x, s);
+                    break tryComplete;
+                }
+                s = null;
+            }
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                @SuppressWarnings("unchecked") R rr = (R) r;
+                @SuppressWarnings("unchecked") S ss = (S) s;
+                f.accept(rr, ss);
+                completeNull();
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9005314.java!!!	biAcceptStage(inout e : Executor, inout o : CompletionStage, inout f : BiConsumer) : CompletableFuture
+        CompletableFuture<U> b;
+        if (f == null || (b = o.toCompletableFuture()) == null)
+            throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (e != null || !d.biAccept(this, b, f, null)) {
+            BiAccept<T,U> c = new BiAccept<T,U>(e, d, this, b, f);
+            bipush(b, c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9005698.java!!!	biRun(inout a : CompletableFuture, inout b : CompletableFuture, inout f : Runnable, inout c : CompletableFuture::BiRun) : boolean
+        Object r, s; Throwable x;
+        if (a == null || (r = a.result) == null ||
+            b == null || (s = b.result) == null || f == null)
+            return false;
+        if (result == null) {
+            if (r instanceof AltResult && (x = ((AltResult)r).ex) != null)
+                completeThrowable(x, r);
+            else if (s instanceof AltResult && (x = ((AltResult)s).ex) != null)
+                completeThrowable(x, s);
+            else
+                try {
+                    if (c != null && !c.claim())
+                        return false;
+                    f.run();
+                    completeNull();
+                } catch (Throwable ex) {
+                    completeThrowable(ex);
+                }
+        }
+        return true;
+!!!9005826.java!!!	biRunStage(inout e : Executor, inout o : CompletionStage, inout f : Runnable) : CompletableFuture
+        CompletableFuture<?> b;
+        if (f == null || (b = o.toCompletableFuture()) == null)
+            throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (e != null || !d.biRun(this, b, f, null)) {
+            BiRun<T,?> c = new BiRun<>(e, d, this, b, f);
+            bipush(b, c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9006210.java!!!	biRelay(inout a : CompletableFuture, inout b : CompletableFuture) : boolean
+        Object r, s; Throwable x;
+        if (a == null || (r = a.result) == null ||
+            b == null || (s = b.result) == null)
+            return false;
+        if (result == null) {
+            if (r instanceof AltResult && (x = ((AltResult)r).ex) != null)
+                completeThrowable(x, r);
+            else if (s instanceof AltResult && (x = ((AltResult)s).ex) != null)
+                completeThrowable(x, s);
+            else
+                completeNull();
+        }
+        return true;
+!!!9006338.java!!!	andTree(inout cfs : CompletableFuture [[]], in lo : int, in hi : int) : CompletableFuture
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (lo > hi) // empty
+            d.result = NIL;
+        else {
+            CompletableFuture<?> a, b;
+            int mid = (lo + hi) >>> 1;
+            if ((a = (lo == mid ? cfs[lo] :
+                      andTree(cfs, lo, mid))) == null ||
+                (b = (lo == hi ? a : (hi == mid+1) ? cfs[hi] :
+                      andTree(cfs, mid+1, hi)))  == null)
+                throw new NullPointerException();
+            if (!d.biRelay(a, b)) {
+                BiRelay<?,?> c = new BiRelay<>(d, a, b);
+                a.bipush(b, c);
+                c.tryFire(SYNC);
+            }
+        }
+        return d;
+!!!9006466.java!!!	orpush(inout b : CompletableFuture, inout c : CompletableFuture::BiCompletion) : void
+        if (c != null) {
+            while ((b == null || b.result == null) && result == null) {
+                if (tryPushStack(c)) {
+                    if (b != null && b != this && b.result == null) {
+                        Completion q = new CoCompletion(c);
+                        while (result == null && b.result == null &&
+                               !b.tryPushStack(q))
+                            lazySetNext(q, null); // clear on failure
+                    }
+                    break;
+                }
+                lazySetNext(c, null); // clear on failure
+            }
+        }
+!!!9006850.java!!!	orApply(inout a : CompletableFuture, inout b : CompletableFuture, inout f : Function, inout c : CompletableFuture::OrApply) : boolean
+        Object r; Throwable x;
+        if (a == null || b == null ||
+            ((r = a.result) == null && (r = b.result) == null) || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                if (r instanceof AltResult) {
+                    if ((x = ((AltResult)r).ex) != null) {
+                        completeThrowable(x, r);
+                        break tryComplete;
+                    }
+                    r = null;
+                }
+                @SuppressWarnings("unchecked") R rr = (R) r;
+                completeValue(f.apply(rr));
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9006978.java!!!	orApplyStage(inout e : Executor, inout o : CompletionStage, inout f : Function) : CompletableFuture
+        CompletableFuture<U> b;
+        if (f == null || (b = o.toCompletableFuture()) == null)
+            throw new NullPointerException();
+        CompletableFuture<V> d = new CompletableFuture<V>();
+        if (e != null || !d.orApply(this, b, f, null)) {
+            OrApply<T,U,V> c = new OrApply<T,U,V>(e, d, this, b, f);
+            orpush(b, c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9007362.java!!!	orAccept(inout a : CompletableFuture, inout b : CompletableFuture, inout f : Consumer, inout c : CompletableFuture::OrAccept) : boolean
+        Object r; Throwable x;
+        if (a == null || b == null ||
+            ((r = a.result) == null && (r = b.result) == null) || f == null)
+            return false;
+        tryComplete: if (result == null) {
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                if (r instanceof AltResult) {
+                    if ((x = ((AltResult)r).ex) != null) {
+                        completeThrowable(x, r);
+                        break tryComplete;
+                    }
+                    r = null;
+                }
+                @SuppressWarnings("unchecked") R rr = (R) r;
+                f.accept(rr);
+                completeNull();
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9007490.java!!!	orAcceptStage(inout e : Executor, inout o : CompletionStage, inout f : Consumer) : CompletableFuture
+        CompletableFuture<U> b;
+        if (f == null || (b = o.toCompletableFuture()) == null)
+            throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (e != null || !d.orAccept(this, b, f, null)) {
+            OrAccept<T,U> c = new OrAccept<T,U>(e, d, this, b, f);
+            orpush(b, c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9007874.java!!!	orRun(inout a : CompletableFuture, inout b : CompletableFuture, inout f : Runnable, inout c : CompletableFuture::OrRun) : boolean
+        Object r; Throwable x;
+        if (a == null || b == null ||
+            ((r = a.result) == null && (r = b.result) == null) || f == null)
+            return false;
+        if (result == null) {
+            try {
+                if (c != null && !c.claim())
+                    return false;
+                if (r instanceof AltResult && (x = ((AltResult)r).ex) != null)
+                    completeThrowable(x, r);
+                else {
+                    f.run();
+                    completeNull();
+                }
+            } catch (Throwable ex) {
+                completeThrowable(ex);
+            }
+        }
+        return true;
+!!!9008002.java!!!	orRunStage(inout e : Executor, inout o : CompletionStage, inout f : Runnable) : CompletableFuture
+        CompletableFuture<?> b;
+        if (f == null || (b = o.toCompletableFuture()) == null)
+            throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        if (e != null || !d.orRun(this, b, f, null)) {
+            OrRun<T,?> c = new OrRun<>(e, d, this, b, f);
+            orpush(b, c);
+            c.tryFire(SYNC);
+        }
+        return d;
+!!!9008386.java!!!	orRelay(inout a : CompletableFuture, inout b : CompletableFuture) : boolean
+        Object r;
+        if (a == null || b == null ||
+            ((r = a.result) == null && (r = b.result) == null))
+            return false;
+        if (result == null)
+            completeRelay(r);
+        return true;
+!!!9008514.java!!!	orTree(inout cfs : CompletableFuture [[]], in lo : int, in hi : int) : CompletableFuture
+        CompletableFuture<Object> d = new CompletableFuture<Object>();
+        if (lo <= hi) {
+            CompletableFuture<?> a, b;
+            int mid = (lo + hi) >>> 1;
+            if ((a = (lo == mid ? cfs[lo] :
+                      orTree(cfs, lo, mid))) == null ||
+                (b = (lo == hi ? a : (hi == mid+1) ? cfs[hi] :
+                      orTree(cfs, mid+1, hi)))  == null)
+                throw new NullPointerException();
+            if (!d.orRelay(a, b)) {
+                OrRelay<?,?> c = new OrRelay<>(d, a, b);
+                a.orpush(b, c);
+                c.tryFire(SYNC);
+            }
+        }
+        return d;
+!!!9009282.java!!!	asyncSupplyStage(inout e : Executor, inout f : Supplier) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<U> d = new CompletableFuture<U>();
+        e.execute(new AsyncSupply<U>(d, f));
+        return d;
+!!!9010050.java!!!	asyncRunStage(inout e : Executor, inout f : Runnable) : CompletableFuture
+        if (f == null) throw new NullPointerException();
+        CompletableFuture<Void> d = new CompletableFuture<Void>();
+        e.execute(new AsyncRun(d, f));
+        return d;
+!!!9023746.java!!!	waitingGet(inout interruptible : boolean) : Object
+        Signaller q = null;
+        boolean queued = false;
+        int spins = -1;
+        Object r;
+        while ((r = result) == null) {
+            if (spins < 0)
+                spins = (Runtime.getRuntime().availableProcessors() > 1) ?
+                    1 << 8 : 0; // Use brief spin-wait on multiprocessors
+            else if (spins > 0) {
+                if (ThreadLocalRandom.nextSecondarySeed() >= 0)
+                    --spins;
+            }
+            else if (q == null)
+                q = new Signaller(interruptible, 0L, 0L);
+            else if (!queued)
+                queued = tryPushStack(q);
+            else if (interruptible && q.interruptControl < 0) {
+                q.thread = null;
+                cleanStack();
+                return null;
+            }
+            else if (q.thread != null && result == null) {
+                try {
+                    ForkJoinPool.managedBlock(q);
+                } catch (InterruptedException ie) {
+                    q.interruptControl = -1;
+                }
+            }
+        }
+        if (q != null) {
+            q.thread = null;
+            if (q.interruptControl < 0) {
+                if (interruptible)
+                    r = null; // report interruption
+                else
+                    Thread.currentThread().interrupt();
+            }
+        }
+        postComplete();
+        return r;
+!!!9023874.java!!!	timedGet(in nanos : long) : Object
+        if (Thread.interrupted())
+            return null;
+        if (nanos <= 0L)
+            throw new TimeoutException();
+        long d = System.nanoTime() + nanos;
+        Signaller q = new Signaller(true, nanos, d == 0L ? 1L : d); // avoid 0
+        boolean queued = false;
+        Object r;
+        // We intentionally don't spin here (as waitingGet does) because
+        // the call to nanoTime() above acts much like a spin.
+        while ((r = result) == null) {
+            if (!queued)
+                queued = tryPushStack(q);
+            else if (q.interruptControl < 0 || q.nanos <= 0L) {
+                q.thread = null;
+                cleanStack();
+                if (q.interruptControl < 0)
+                    return null;
+                throw new TimeoutException();
+            }
+            else if (q.thread != null && result == null) {
+                try {
+                    ForkJoinPool.managedBlock(q);
+                } catch (InterruptedException ie) {
+                    q.interruptControl = -1;
+                }
+            }
+        }
+        if (q.interruptControl < 0)
+            r = null;
+        q.thread = null;
+        postComplete();
+        return r;
+!!!9024130.java!!!	CompletableFuture(inout r : Object)
+        this.result = r;
+!!!9024258.java!!!	supplyAsync(inout supplier : Supplier) : CompletableFuture
+        return asyncSupplyStage(asyncPool, supplier);
+!!!9024386.java!!!	supplyAsync(inout supplier : Supplier, inout executor : Executor) : CompletableFuture
+        return asyncSupplyStage(screenExecutor(executor), supplier);
+!!!9024514.java!!!	runAsync(inout runnable : Runnable) : CompletableFuture
+        return asyncRunStage(asyncPool, runnable);
+!!!9024642.java!!!	runAsync(inout runnable : Runnable, inout executor : Executor) : CompletableFuture
+        return asyncRunStage(screenExecutor(executor), runnable);
+!!!9024770.java!!!	completedFuture(inout value : U) : CompletableFuture
+        return new CompletableFuture<U>((value == null) ? NIL : value);
+!!!9024898.java!!!	isDone() : boolean
+        return result != null;
+!!!9025026.java!!!	get() : T
+        Object r;
+        return reportGet((r = result) == null ? waitingGet(true) : r);
+!!!9025154.java!!!	get(in timeout : long, inout unit : TimeUnit) : T
+        Object r;
+        long nanos = unit.toNanos(timeout);
+        return reportGet((r = result) == null ? timedGet(nanos) : r);
+!!!9025282.java!!!	join() : T
+        Object r;
+        return reportJoin((r = result) == null ? waitingGet(false) : r);
+!!!9025410.java!!!	getNow(inout valueIfAbsent : T) : T
+        Object r;
+        return ((r = result) == null) ? valueIfAbsent : reportJoin(r);
+!!!9025538.java!!!	complete(inout value : T) : boolean
+        boolean triggered = completeValue(value);
+        postComplete();
+        return triggered;
+!!!9025666.java!!!	completeExceptionally(inout ex : Throwable) : boolean
+        if (ex == null) throw new NullPointerException();
+        boolean triggered = internalComplete(new AltResult(ex));
+        postComplete();
+        return triggered;
+!!!9025794.java!!!	thenApply(inout fn : Function) : CompletableFuture
+        return uniApplyStage(null, fn);
+!!!9025922.java!!!	thenApplyAsync(inout fn : Function) : CompletableFuture
+        return uniApplyStage(asyncPool, fn);
+!!!9026050.java!!!	thenApplyAsync(inout fn : Function, inout executor : Executor) : CompletableFuture
+        return uniApplyStage(screenExecutor(executor), fn);
+!!!9026178.java!!!	thenAccept(inout action : Consumer) : CompletableFuture
+        return uniAcceptStage(null, action);
+!!!9026306.java!!!	thenAcceptAsync(inout action : Consumer) : CompletableFuture
+        return uniAcceptStage(asyncPool, action);
+!!!9026434.java!!!	thenAcceptAsync(inout action : Consumer, inout executor : Executor) : CompletableFuture
+        return uniAcceptStage(screenExecutor(executor), action);
+!!!9026562.java!!!	thenRun(inout action : Runnable) : CompletableFuture
+        return uniRunStage(null, action);
+!!!9026690.java!!!	thenRunAsync(inout action : Runnable) : CompletableFuture
+        return uniRunStage(asyncPool, action);
+!!!9026818.java!!!	thenRunAsync(inout action : Runnable, inout executor : Executor) : CompletableFuture
+        return uniRunStage(screenExecutor(executor), action);
+!!!9026946.java!!!	thenCombine(inout other : CompletionStage, inout fn : BiFunction) : CompletableFuture
+        return biApplyStage(null, other, fn);
+!!!9027074.java!!!	thenCombineAsync(inout other : CompletionStage, inout fn : BiFunction) : CompletableFuture
+        return biApplyStage(asyncPool, other, fn);
+!!!9027202.java!!!	thenCombineAsync(inout other : CompletionStage, inout fn : BiFunction, inout executor : Executor) : CompletableFuture
+        return biApplyStage(screenExecutor(executor), other, fn);
+!!!9027330.java!!!	thenAcceptBoth(inout other : CompletionStage, inout action : BiConsumer) : CompletableFuture
+        return biAcceptStage(null, other, action);
+!!!9027458.java!!!	thenAcceptBothAsync(inout other : CompletionStage, inout action : BiConsumer) : CompletableFuture
+        return biAcceptStage(asyncPool, other, action);
+!!!9027586.java!!!	thenAcceptBothAsync(inout other : CompletionStage, inout action : BiConsumer, inout executor : Executor) : CompletableFuture
+        return biAcceptStage(screenExecutor(executor), other, action);
+!!!9027714.java!!!	runAfterBoth(inout other : CompletionStage, inout action : Runnable) : CompletableFuture
+        return biRunStage(null, other, action);
+!!!9027842.java!!!	runAfterBothAsync(inout other : CompletionStage, inout action : Runnable) : CompletableFuture
+        return biRunStage(asyncPool, other, action);
+!!!9027970.java!!!	runAfterBothAsync(inout other : CompletionStage, inout action : Runnable, inout executor : Executor) : CompletableFuture
+        return biRunStage(screenExecutor(executor), other, action);
+!!!9028098.java!!!	applyToEither(inout other : CompletionStage, inout fn : Function) : CompletableFuture
+        return orApplyStage(null, other, fn);
+!!!9028226.java!!!	applyToEitherAsync(inout other : CompletionStage, inout fn : Function) : CompletableFuture
+        return orApplyStage(asyncPool, other, fn);
+!!!9028354.java!!!	applyToEitherAsync(inout other : CompletionStage, inout fn : Function, inout executor : Executor) : CompletableFuture
+        return orApplyStage(screenExecutor(executor), other, fn);
+!!!9028482.java!!!	acceptEither(inout other : CompletionStage, inout action : Consumer) : CompletableFuture
+        return orAcceptStage(null, other, action);
+!!!9028610.java!!!	acceptEitherAsync(inout other : CompletionStage, inout action : Consumer) : CompletableFuture
+        return orAcceptStage(asyncPool, other, action);
+!!!9028738.java!!!	acceptEitherAsync(inout other : CompletionStage, inout action : Consumer, inout executor : Executor) : CompletableFuture
+        return orAcceptStage(screenExecutor(executor), other, action);
+!!!9028866.java!!!	runAfterEither(inout other : CompletionStage, inout action : Runnable) : CompletableFuture
+        return orRunStage(null, other, action);
+!!!9028994.java!!!	runAfterEitherAsync(inout other : CompletionStage, inout action : Runnable) : CompletableFuture
+        return orRunStage(asyncPool, other, action);
+!!!9029122.java!!!	runAfterEitherAsync(inout other : CompletionStage, inout action : Runnable, inout executor : Executor) : CompletableFuture
+        return orRunStage(screenExecutor(executor), other, action);
+!!!9029250.java!!!	thenCompose(inout fn : Function) : CompletableFuture
+        return uniComposeStage(null, fn);
+!!!9029378.java!!!	thenComposeAsync(inout fn : Function) : CompletableFuture
+        return uniComposeStage(asyncPool, fn);
+!!!9029506.java!!!	thenComposeAsync(inout fn : Function, inout executor : Executor) : CompletableFuture
+        return uniComposeStage(screenExecutor(executor), fn);
+!!!9029634.java!!!	whenComplete(inout action : BiConsumer) : CompletableFuture
+        return uniWhenCompleteStage(null, action);
+!!!9029762.java!!!	whenCompleteAsync(inout action : BiConsumer) : CompletableFuture
+        return uniWhenCompleteStage(asyncPool, action);
+!!!9029890.java!!!	whenCompleteAsync(inout action : BiConsumer, inout executor : Executor) : CompletableFuture
+        return uniWhenCompleteStage(screenExecutor(executor), action);
+!!!9030018.java!!!	handle(inout fn : BiFunction) : CompletableFuture
+        return uniHandleStage(null, fn);
+!!!9030146.java!!!	handleAsync(inout fn : BiFunction) : CompletableFuture
+        return uniHandleStage(asyncPool, fn);
+!!!9030274.java!!!	handleAsync(inout fn : BiFunction, inout executor : Executor) : CompletableFuture
+        return uniHandleStage(screenExecutor(executor), fn);
+!!!9030402.java!!!	toCompletableFuture() : CompletableFuture
+        return this;
+!!!9030530.java!!!	exceptionally(inout fn : Function) : CompletableFuture
+        return uniExceptionallyStage(fn);
+!!!9030658.java!!!	allOf(inout cfs : CompletableFuture<?>...) : CompletableFuture
+        return andTree(cfs, 0, cfs.length - 1);
+!!!9030786.java!!!	anyOf(inout cfs : CompletableFuture<?>...) : CompletableFuture
+        return orTree(cfs, 0, cfs.length - 1);
+!!!9030914.java!!!	cancel(inout mayInterruptIfRunning : boolean) : boolean
+        boolean cancelled = (result == null) &&
+            internalComplete(new AltResult(new CancellationException()));
+        postComplete();
+        return cancelled || isCancelled();
+!!!9031042.java!!!	isCancelled() : boolean
+        Object r;
+        return ((r = result) instanceof AltResult) &&
+            (((AltResult)r).ex instanceof CancellationException);
+!!!9031170.java!!!	isCompletedExceptionally() : boolean
+        Object r;
+        return ((r = result) instanceof AltResult) && r != NIL;
+!!!9031298.java!!!	obtrudeValue(inout value : T) : void
+        result = (value == null) ? NIL : value;
+        postComplete();
+!!!9031426.java!!!	obtrudeException(inout ex : Throwable) : void
+        if (ex == null) throw new NullPointerException();
+        result = new AltResult(ex);
+        postComplete();
+!!!9031554.java!!!	getNumberOfDependents() : int
+        int count = 0;
+        for (Completion p = stack; p != null; p = p.next)
+            ++count;
+        return count;
+!!!9031682.java!!!	toString() : String
+        Object r = result;
+        int count;
+        return super.toString() +
+            ((r == null) ?
+             (((count = getNumberOfDependents()) == 0) ?
+              "[Not completed]" :
+              "[Not completed, " + count + " dependents]") :
+             (((r instanceof AltResult) && ((AltResult)r).ex != null) ?
+              "[Completed exceptionally]" :
+              "[Completed normally]"));

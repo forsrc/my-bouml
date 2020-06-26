@@ -1,0 +1,377 @@
+class XPointerHandler
+!!!5173250.java!!!	XPointerHandler()
+        super();
+
+        fXPointerParts = new Vector();
+        fSymbolTable = new SymbolTable();
+!!!5173378.java!!!	XPointerHandler(inout symbolTable : SymbolTable, inout errorHandler : XMLErrorHandler, inout errorReporter : XMLErrorReporter)
+        super();
+
+        fXPointerParts = new Vector();
+        fSymbolTable = symbolTable;
+        fErrorHandler = errorHandler;
+        fXPointerErrorReporter = errorReporter;
+        //fErrorReporter = errorReporter; // The XInclude ErrorReporter
+!!!5173506.java!!!	parseXPointer(inout xpointer : String) : void
+
+        // Initialize
+        init();
+
+        // tokens
+        final Tokens tokens = new Tokens(fSymbolTable);
+
+        // scanner
+        Scanner scanner = new Scanner(fSymbolTable) {
+            protected void addToken(Tokens tokens, int token)
+                    throws XNIException {
+                if (token == Tokens.XPTRTOKEN_OPEN_PAREN
+                        || token == Tokens.XPTRTOKEN_CLOSE_PAREN
+                        || token == Tokens.XPTRTOKEN_SCHEMENAME
+                        || token == Tokens.XPTRTOKEN_SCHEMEDATA
+                        || token == Tokens.XPTRTOKEN_SHORTHAND) {
+                    super.addToken(tokens, token);
+                    return;
+                }
+                reportError("InvalidXPointerToken", new Object[] { tokens
+                        .getTokenString(token) });
+            }
+        };
+
+        // scan the XPointer expression
+        int length = xpointer.length();
+        boolean success = scanner.scanExpr(fSymbolTable, tokens, xpointer, 0,
+                length);
+
+        if (!success)
+            reportError("InvalidXPointerExpression", new Object[] { xpointer });
+
+        while (tokens.hasMore()) {
+            int token = tokens.nextToken();
+
+            switch (token) {
+            case Tokens.XPTRTOKEN_SHORTHAND: {
+
+                // The shortHand name
+                token = tokens.nextToken();
+                String shortHandPointerName = tokens.getTokenString(token);
+
+                if (shortHandPointerName == null) {
+                    reportError("InvalidXPointerExpression",
+                            new Object[] { xpointer });
+                }
+
+                XPointerPart shortHandPointer = new ShortHandPointer(
+                        fSymbolTable);
+                shortHandPointer.setSchemeName(shortHandPointerName);
+                fXPointerParts.add(shortHandPointer);
+                break;
+            }
+            case Tokens.XPTRTOKEN_SCHEMENAME: {
+
+                // Retreive the local name and prefix to form the scheme name
+                token = tokens.nextToken();
+                String prefix = tokens.getTokenString(token);
+                token = tokens.nextToken();
+                String localName = tokens.getTokenString(token);
+
+                String schemeName = prefix + localName;
+
+                // The next character should be an open parenthesis
+                int openParenCount = 0;
+                int closeParenCount = 0;
+
+                token = tokens.nextToken();
+                String openParen = tokens.getTokenString(token);
+                if (openParen != "XPTRTOKEN_OPEN_PAREN") {
+
+                    // can not have more than one ShortHand Pointer
+                    if (token == Tokens.XPTRTOKEN_SHORTHAND) {
+                        reportError("MultipleShortHandPointers",
+                                new Object[] { xpointer });
+                    } else {
+                        reportError("InvalidXPointerExpression",
+                                new Object[] { xpointer });
+                    }
+                }
+                openParenCount++;
+
+                // followed by zero or more ( and  the schemeData
+                String schemeData = null;
+                while (tokens.hasMore()) {
+                    token = tokens.nextToken();
+                    schemeData = tokens.getTokenString(token);
+                    if (schemeData != "XPTRTOKEN_OPEN_PAREN") {
+                        break;
+                    }
+                    openParenCount++;
+                }
+                token = tokens.nextToken();
+                schemeData = tokens.getTokenString(token);
+
+                // followed by the same number of )
+                token = tokens.nextToken();
+                String closeParen = tokens.getTokenString(token);
+                if (closeParen != "XPTRTOKEN_CLOSE_PAREN") {
+                    reportError("SchemeDataNotFollowedByCloseParenthesis",
+                            new Object[] { xpointer });
+                }
+                closeParenCount++;
+
+                while (tokens.hasMore()) {
+                    if (tokens.getTokenString(tokens.peekToken()) != "XPTRTOKEN_OPEN_PAREN") {
+                        break;
+                    }
+                    closeParenCount++;
+                }
+
+                // check if the number of open parenthesis are equal to the number of close parenthesis
+                if (openParenCount != closeParenCount) {
+                    reportError("UnbalancedParenthesisInXPointerExpression",
+                            new Object[] { xpointer,
+                                    new Integer(openParenCount),
+                                    new Integer(closeParenCount) });
+                }
+
+                // Perform scheme specific parsing of the pointer part
+                if (schemeName.equals(ELEMENT_SCHEME_NAME)) {
+                    XPointerPart elementSchemePointer = new ElementSchemePointer(
+                            fSymbolTable, fErrorReporter);
+                    elementSchemePointer.setSchemeName(schemeName);
+                    elementSchemePointer.setSchemeData(schemeData);
+
+                    // If an exception occurs while parsing the element() scheme expression
+                    // ignore it and move on to the next pointer part
+                    try {
+                        elementSchemePointer.parseXPointer(schemeData);
+                        fXPointerParts.add(elementSchemePointer);
+                    } catch (XNIException e) {
+                        // Re-throw the XPointer element() scheme syntax error.
+                        throw new XNIException (e);
+                    }
+
+                } else {
+                    // ????
+                    reportWarning("SchemeUnsupported",
+                            new Object[] { schemeName });
+                }
+
+                break;
+            }
+            default:
+                reportError("InvalidXPointerExpression",
+                        new Object[] { xpointer });
+            }
+        }
+
+!!!5173634.java!!!	resolveXPointer(inout element : QName, inout attributes : XMLAttributes, inout augs : Augmentations, in event : int) : boolean
+        boolean resolved = false;
+
+        // The result of the first pointer part whose evaluation identifies
+        // one or more subresources is reported by the XPointer processor as the
+        // result of the pointer as a whole, and evaluation stops.
+        // In our implementation, typically the first xpointer scheme that
+        // matches an element is the document is considered.
+        // If the pointer part resolved then use it, else search for the fragment
+        // using next pointer part from lef-right.
+        if (!fFoundMatchingPtrPart) {
+
+            // for each element, attempt to resolve it against each pointer part
+            // in the XPointer expression until a matching element is found.
+            for (int i = 0; i < fXPointerParts.size(); i++) {
+
+                fXPointerPart = (XPointerPart) fXPointerParts.get(i);
+
+                if (fXPointerPart.resolveXPointer(element, attributes, augs,
+                        event)) {
+                    fFoundMatchingPtrPart = true;
+                    resolved = true;
+                }
+            }
+        } else {
+            if (fXPointerPart.resolveXPointer(element, attributes, augs, event)) {
+                resolved = true;
+            }
+        }
+
+        if (!fIsXPointerResolved) {
+            fIsXPointerResolved = resolved;
+        }
+
+        return resolved;
+!!!5173762.java!!!	isFragmentResolved() : boolean
+        boolean resolved = (fXPointerPart != null) ? fXPointerPart.isFragmentResolved()
+                : false;
+
+        if (!fIsXPointerResolved) {
+            fIsXPointerResolved = resolved;
+        }
+
+        return resolved;
+!!!5173890.java!!!	isChildFragmentResolved() : boolean
+        boolean resolved = (fXPointerPart != null) ? fXPointerPart
+                                .isChildFragmentResolved() : false;
+                return resolved;
+!!!5174018.java!!!	isXPointerResolved() : boolean
+        return fIsXPointerResolved;
+!!!5174146.java!!!	getXPointerPart() : XPointerPart
+        return fXPointerPart;
+!!!5174274.java!!!	reportError(inout key : String, inout arguments : Object [[]]) : void
+        /*
+        fXPointerErrorReporter.reportError(
+                XPointerMessageFormatter.XPOINTER_DOMAIN, key, arguments,
+                XMLErrorReporter.SEVERITY_ERROR);
+        */
+        throw new XNIException((fErrorReporter
+                                .getMessageFormatter(XPointerMessageFormatter.XPOINTER_DOMAIN))
+                                .formatMessage(fErrorReporter.getLocale(), key, arguments));
+!!!5174402.java!!!	reportWarning(inout key : String, inout arguments : Object [[]]) : void
+        fXPointerErrorReporter.reportError(
+                XPointerMessageFormatter.XPOINTER_DOMAIN, key, arguments,
+                XMLErrorReporter.SEVERITY_WARNING);
+!!!5174530.java!!!	initErrorReporter() : void
+        if (fXPointerErrorReporter == null) {
+            fXPointerErrorReporter = new XMLErrorReporter();
+        }
+        if (fErrorHandler == null) {
+            fErrorHandler = new XPointerErrorHandler();
+        }
+        /*
+         fXPointerErrorReporter.setProperty(Constants.XERCES_PROPERTY_PREFIX
+         + Constants.ERROR_HANDLER_PROPERTY, fErrorHandler);
+         */
+        fXPointerErrorReporter.putMessageFormatter(
+                XPointerMessageFormatter.XPOINTER_DOMAIN,
+                new XPointerMessageFormatter());
+!!!5174658.java!!!	init() : void
+        fXPointerParts.clear();
+        fXPointerPart = null;
+        fFoundMatchingPtrPart = false;
+        fIsXPointerResolved = false;
+        //fFixupBase = false;
+        //fFixupLang = false;
+
+        initErrorReporter();
+!!!5174786.java!!!	getPointerParts() : Vector
+        return fXPointerParts;
+!!!5176706.java!!!	comment(inout text : XMLString, inout augs : Augmentations) : void
+        if (!isChildFragmentResolved()) {
+            return;
+        }
+        super.comment(text, augs);
+!!!5176834.java!!!	processingInstruction(inout target : String, inout data : XMLString, inout augs : Augmentations) : void
+        if (!isChildFragmentResolved()) {
+            return;
+        }
+        super.processingInstruction(target, data, augs);
+!!!5176962.java!!!	startElement(inout element : QName, inout attributes : XMLAttributes, inout augs : Augmentations) : void
+        if (!resolveXPointer(element, attributes, augs,
+                XPointerPart.EVENT_ELEMENT_START)) {
+
+            // xml:base and xml:lang processing
+                if (fFixupBase) {
+                processXMLBaseAttributes(attributes);
+                }
+            if (fFixupLang) {
+                processXMLLangAttributes(attributes);
+            }
+
+            // set the context invalid if the element till an element from the result infoset is included
+            fNamespaceContext.setContextInvalid();
+
+            return;
+        }
+        super.startElement(element, attributes, augs);
+!!!5177090.java!!!	emptyElement(inout element : QName, inout attributes : XMLAttributes, inout augs : Augmentations) : void
+        if (!resolveXPointer(element, attributes, augs,
+                XPointerPart.EVENT_ELEMENT_EMPTY)) {
+            // xml:base and xml:lang processing
+                if (fFixupBase) {
+                processXMLBaseAttributes(attributes);
+                }
+            if (fFixupLang) {
+                processXMLLangAttributes(attributes);
+            }
+            // no need to restore restoreBaseURI() for xml:base and xml:lang processing
+
+            // set the context invalid if the element till an element from the result infoset is included
+            fNamespaceContext.setContextInvalid();
+            return;
+        }
+        super.emptyElement(element, attributes, augs);
+!!!5177218.java!!!	characters(inout text : XMLString, inout augs : Augmentations) : void
+        if (!isChildFragmentResolved()) {
+            return;
+        }
+        super.characters(text, augs);
+!!!5177346.java!!!	ignorableWhitespace(inout text : XMLString, inout augs : Augmentations) : void
+        if (!isChildFragmentResolved()) {
+            return;
+        }
+        super.ignorableWhitespace(text, augs);
+!!!5177474.java!!!	endElement(inout element : QName, inout augs : Augmentations) : void
+        if (!resolveXPointer(element, null, augs,
+                XPointerPart.EVENT_ELEMENT_END)) {
+
+            // no need to restore restoreBaseURI() for xml:base and xml:lang processing
+            return;
+        }
+        super.endElement(element, augs);
+!!!5177602.java!!!	startCDATA(inout augs : Augmentations) : void
+        if (!isChildFragmentResolved()) {
+            return;
+        }
+        super.startCDATA(augs);
+!!!5177730.java!!!	endCDATA(inout augs : Augmentations) : void
+        if (!isChildFragmentResolved()) {
+            return;
+        }
+        super.endCDATA(augs);
+!!!5177858.java!!!	setProperty(inout propertyId : String, inout value : Object) : void
+
+        // Error reporter
+        if (propertyId == Constants.XERCES_PROPERTY_PREFIX
+                + Constants.ERROR_REPORTER_PROPERTY) {
+            if (value != null) {
+                fXPointerErrorReporter = (XMLErrorReporter) value;
+            } else {
+                fXPointerErrorReporter = null;
+            }
+        }
+
+        // Error handler
+        if (propertyId == Constants.XERCES_PROPERTY_PREFIX
+                + Constants.ERROR_HANDLER_PROPERTY) {
+            if (value != null) {
+                fErrorHandler = (XMLErrorHandler) value;
+            } else {
+                fErrorHandler = null;
+            }
+        }
+
+        // xml:lang
+        if (propertyId == Constants.XERCES_FEATURE_PREFIX
+                + Constants.XINCLUDE_FIXUP_LANGUAGE_FEATURE) {
+            if (value != null) {
+                fFixupLang = ((Boolean)value).booleanValue();
+            } else {
+                fFixupLang = false;
+            }
+        }
+
+        // xml:base
+        if (propertyId == Constants.XERCES_FEATURE_PREFIX
+                + Constants.XINCLUDE_FIXUP_BASE_URIS_FEATURE) {
+            if (value != null) {
+                fFixupBase = ((Boolean)value).booleanValue();
+            } else {
+                fFixupBase = false;
+            }
+        }
+
+        //
+        if (propertyId == Constants.XERCES_PROPERTY_PREFIX
+                + Constants.NAMESPACE_CONTEXT_PROPERTY) {
+            fNamespaceContext = (XIncludeNamespaceSupport) value;
+        }
+
+        super.setProperty(propertyId, value);

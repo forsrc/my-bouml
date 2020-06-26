@@ -1,0 +1,71 @@
+class SimpleIntrospector
+!!!2959618.java!!!	getCachedMethods(inout clazz : Class) : List
+            // return cached methods if possible
+            SoftReference<List<Method>> ref = cache.get(clazz);
+            if (ref != null) {
+                List<Method> cached = ref.get();
+                if (cached != null)
+                    return cached;
+            }
+            return null;
+!!!2959746.java!!!	isReadMethod(inout method : Method) : boolean
+            // ignore static methods
+            int modifiers = method.getModifiers();
+            if (Modifier.isStatic(modifiers))
+                return false;
+
+            String name = method.getName();
+            Class<?>[] paramTypes = method.getParameterTypes();
+            int paramCount = paramTypes.length;
+
+            if (paramCount == 0 && name.length() > 2) {
+                // boolean isXXX()
+                if (name.startsWith(IS_METHOD_PREFIX))
+                    return (method.getReturnType() == boolean.class);
+                // getXXX()
+                if (name.length() > 3 && name.startsWith(GET_METHOD_PREFIX))
+                    return (method.getReturnType() != void.class);
+            }
+            return false;
+!!!2959874.java!!!	getReadMethods(inout clazz : Class) : List
+            // return cached result if available
+            List<Method> cachedResult = getCachedMethods(clazz);
+            if (cachedResult != null)
+                return cachedResult;
+
+            // get list of public methods, filtering out methods that have
+            // been overridden to return a more specific type.
+            List<Method> methods =
+                StandardMBeanIntrospector.getInstance().getMethods(clazz);
+            methods = MBeanAnalyzer.eliminateCovariantMethods(methods);
+
+            // filter out the non-getter methods
+            List<Method> result = new LinkedList<Method>();
+            for (Method m: methods) {
+                if (isReadMethod(m)) {
+                    // favor isXXX over getXXX
+                    if (m.getName().startsWith(IS_METHOD_PREFIX)) {
+                        result.add(0, m);
+                    } else {
+                        result.add(m);
+                    }
+                }
+            }
+
+            // add result to cache
+            cache.put(clazz, new SoftReference<List<Method>>(result));
+
+            return result;
+!!!2960002.java!!!	getReadMethod(inout clazz : Class, inout property : String) : Method
+            // first character in uppercase (compatibility with JavaBeans)
+            property = property.substring(0, 1).toUpperCase(Locale.ENGLISH) +
+                property.substring(1);
+            String getMethod = GET_METHOD_PREFIX + property;
+            String isMethod = IS_METHOD_PREFIX + property;
+            for (Method m: getReadMethods(clazz)) {
+                String name = m.getName();
+                if (name.equals(isMethod) || name.equals(getMethod)) {
+                    return m;
+                }
+            }
+            return null;

@@ -1,0 +1,645 @@
+class SnmpInformRequest
+!!!3212418.java!!!	SnmpInformRequest(inout session : SnmpSession, inout adp : SnmpAdaptorServer, inout addr : InetAddress, inout cs : String, in p : int, inout requestCB : SnmpInformHandler)
+
+        informSession = session;
+        adaptor = adp;
+        address = addr;
+        communityString = cs;
+        port = p;
+        callback = requestCB;
+        informSession.addInformRequest(this);  // add to adaptor queue.
+        setTimeout(adaptor.getTimeout()) ;
+!!!3212546.java!!!	getRequestId() : int
+        return requestId;
+!!!3212674.java!!!	getAddress() : InetAddress
+        return address;
+!!!3212802.java!!!	getRequestStatus() : int
+        return reqState ;
+!!!3212930.java!!!	isAborted() : boolean
+        return ((reqState & stAborted) == stAborted);
+!!!3213058.java!!!	inProgress() : boolean
+        return ((reqState & stInProgress) == stInProgress);
+!!!3213186.java!!!	isResultAvailable() : boolean
+        return (reqState == stResultsAvailable);
+!!!3213314.java!!!	getErrorStatus() : int
+        return errorStatus;
+!!!3213442.java!!!	getErrorIndex() : int
+        return errorIndex;
+!!!3213570.java!!!	getMaxTries() : int
+        return adaptor.getMaxTries();
+!!!3213698.java!!!	getNumTries() : int
+        return numTries ;
+!!!3213826.java!!!	setTimeout(in value : int) : void
+        timeout = value ;
+!!!3213954.java!!!	getAbsNextPollTime() : long
+        return nextPollTime ;
+!!!3214082.java!!!	getAbsMaxTimeToWait() : long
+        if (prevPollTime == 0) {
+            return System.currentTimeMillis() ;  // should never happen.
+        } else {
+            return waitTimeForResponse ;
+        }
+!!!3214210.java!!!	getResponseVarBindList() : SnmpVarBindList
+        if (inProgress())
+            return null;
+        return varBindList;
+!!!3214338.java!!!	waitForCompletion(in time : long) : boolean
+
+        if (! inProgress())     // check if request is in progress.
+            return true;
+
+        if (informSession.thisSessionContext()) {
+            // We can manipulate callback safely as we are in session thread.
+            //
+            SnmpInformHandler savedCallback = callback;
+            callback = null;
+            informSession.waitForResponse(this, time);
+            callback = savedCallback;
+        } else {
+            // This is being done from a different thread. So notifyClient will do the notification.
+            //
+            synchronized (this) {
+                SnmpInformHandler savedCallback = callback ;
+                try {
+                    callback = null ;
+                    this.wait(time) ;
+                } catch (InterruptedException e) {
+                }
+                callback = savedCallback ;
+            }
+        }
+
+        return (! inProgress()); // true if request completed.
+!!!3214466.java!!!	cancelRequest() : void
+        errorStatus = snmpReqAborted;
+        stopRequest();
+        deleteRequest();
+        notifyClient();
+!!!3214594.java!!!	notifyClient() : void
+        this.notifyAll();
+!!!3214722.java!!!	finalize() : void
+        callback = null;
+        varBindList = null;
+        internalVarBind = null;
+        adaptor = null;
+        informSession = null;
+        requestPdu = null;
+        responsePdu = null;
+!!!3214850.java!!!	snmpErrorToString(in errcode : int) : String
+        switch (errcode) {
+        case snmpRspNoError :
+            return "noError" ;
+        case snmpRspTooBig :
+            return "tooBig" ;
+        case snmpRspNoSuchName :
+            return "noSuchName" ;
+        case snmpRspBadValue :
+            return "badValue" ;
+        case snmpRspReadOnly :
+            return "readOnly" ;
+        case snmpRspGenErr :
+            return "genErr" ;
+        case snmpRspNoAccess :
+            return "noAccess" ;
+        case snmpRspWrongType :
+            return "wrongType" ;
+        case snmpRspWrongLength :
+            return "wrongLength" ;
+        case snmpRspWrongEncoding :
+            return "wrongEncoding" ;
+        case snmpRspWrongValue :
+            return "wrongValue" ;
+        case snmpRspNoCreation :
+            return "noCreation" ;
+        case snmpRspInconsistentValue :
+            return "inconsistentValue" ;
+        case snmpRspResourceUnavailable :
+            return "resourceUnavailable" ;
+        case snmpRspCommitFailed :
+            return "commitFailed" ;
+        case snmpRspUndoFailed :
+            return "undoFailed" ;
+        case snmpRspAuthorizationError :
+            return "authorizationError" ;
+        case snmpRspNotWritable :
+            return "notWritable" ;
+        case snmpRspInconsistentName :
+            return "inconsistentName" ;
+        case snmpReqTimeout :
+            return "reqTimeout" ;
+        case snmpReqAborted :
+            return "reqAborted" ;
+        case snmpRspDecodingError :
+            return "rspDecodingError" ;
+        case snmpReqEncodingError :
+            return "reqEncodingError" ;
+        case snmpReqPacketOverflow :
+            return "reqPacketOverflow" ;
+        case snmpRspEndOfTable :
+            return "rspEndOfTable" ;
+        case snmpReqRefireAfterVbFix :
+            return "reqRefireAfterVbFix" ;
+        case snmpReqHandleTooBig :
+            return "reqHandleTooBig" ;
+        case snmpReqTooBigImpossible :
+            return "reqTooBigImpossible" ;
+        case snmpReqInternalError :
+            return "reqInternalError" ;
+        case snmpReqSocketIOError :
+            return "reqSocketIOError" ;
+        case snmpReqUnknownError :
+            return "reqUnknownError" ;
+        case snmpWrongSnmpVersion :
+            return "wrongSnmpVersion" ;
+        case snmpUnknownPrincipal:
+            return "snmpUnknownPrincipal";
+        case snmpAuthNotSupported:
+            return "snmpAuthNotSupported";
+        case snmpPrivNotSupported:
+            return "snmpPrivNotSupported";
+        case snmpBadSecurityLevel:
+            return "snmpBadSecurityLevel";
+        case snmpUsmBadEngineId:
+            return "snmpUsmBadEngineId";
+        case snmpUsmInvalidTimeliness:
+            return "snmpUsmInvalidTimeliness";
+        }
+        return "Unknown Error = " + errcode;
+!!!3214978.java!!!	start(inout vblst : SnmpVarBindList) : void
+        if (inProgress())
+            throw  new SnmpStatusException("Inform request already in progress.");
+        setVarBindList(vblst);
+        initializeAndFire();
+!!!3215106.java!!!	initializeAndFire() : void
+        requestPdu = null;
+        responsePdu = null;
+        reason = null;
+        startRequest(System.currentTimeMillis());
+        setErrorStatusAndIndex(0, 0);
+!!!3215234.java!!!	startRequest(in starttime : long) : void
+        nextPollTime = starttime;
+        prevPollTime = 0;
+        schedulePoll();
+!!!3215362.java!!!	schedulePoll() : void
+        numTries = 0;
+        initNewRequest();
+        setRequestStatus(stWaitingToSend);
+        informSession.getSnmpQManager().addRequest(this);
+!!!3215490.java!!!	action() : void
+        if (inProgress() == false)
+            return;
+        while (true) {
+            try {
+                if (numTries == 0) {
+                    invokeOnReady();
+                } else if (numTries < getMaxTries()) {
+                    invokeOnRetry();
+                } else {
+                    invokeOnTimeout();
+                }
+                return ;
+            } catch (OutOfMemoryError omerr) {
+                // Consider it as a try !
+                //
+                numTries++;
+                if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                        "action", "Inform request hit out of memory situation...");
+                }
+                Thread.yield();
+            }
+        }
+!!!3215618.java!!!	invokeOnReady() : void
+        if (requestPdu == null) {
+            requestPdu = constructPduPacket();
+        }
+        if (requestPdu != null) {
+            if (sendPdu() == false)
+                queueResponse();
+        }
+!!!3215746.java!!!	invokeOnRetry() : void
+        invokeOnReady();
+!!!3215874.java!!!	invokeOnTimeout() : void
+        errorStatus = snmpReqTimeout;
+        queueResponse();
+!!!3216002.java!!!	queueResponse() : void
+        informSession.addResponse(this);
+!!!3216130.java!!!	constructPduPacket() : SnmpPdu
+        SnmpPduPacket reqpdu = null;
+        Exception excep = null;
+        try {
+            reqpdu = new SnmpPduRequest();
+            reqpdu.port = port;
+            reqpdu.type = pduInformRequestPdu;
+            reqpdu.version = snmpVersionTwo;
+            reqpdu.community = communityString.getBytes("8859_1");
+            reqpdu.requestId = getRequestId();
+            reqpdu.varBindList = internalVarBind;
+
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                    "constructPduPacket", "Packet built");
+            }
+
+        } catch (Exception e) {
+            excep = e;
+            errorStatus = snmpReqUnknownError;
+            reason = e.getMessage();
+        }
+        if (excep != null) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "constructPduPacket", "Got unexpected exception", excep);
+            }
+            reqpdu = null;
+            queueResponse();
+        }
+        return reqpdu;
+!!!3216258.java!!!	sendPdu() : boolean
+        try {
+            responsePdu = null;
+
+            SnmpPduFactory pduFactory = adaptor.getPduFactory();
+            SnmpMessage msg = (SnmpMessage)pduFactory.encodeSnmpPdu((SnmpPduPacket)requestPdu, adaptor.getBufferSize().intValue());
+
+            if (msg == null) {
+                if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                        "sendPdu", "pdu factory returned a null value");
+                }
+                throw new SnmpStatusException(snmpReqUnknownError);
+                // This exception will caught hereafter and reported as an snmpReqUnknownError
+                // FIXME: may be it's not the best behaviour ?
+            }
+
+            int maxPktSize = adaptor.getBufferSize().intValue();
+            byte[] encoding = new byte[maxPktSize];
+            int encodingLength = msg.encodeMessage(encoding);
+
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                    "sendPdu", "Dump : \n" + msg.printMessage());
+            }
+
+            sendPduPacket(encoding, encodingLength);
+            return true;
+        } catch (SnmpTooBigException ar) {
+
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "sendPdu", "Got unexpected exception", ar);
+            }
+
+            setErrorStatusAndIndex(snmpReqPacketOverflow, ar.getVarBindCount());
+            requestPdu = null;
+            reason = ar.getMessage();
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "sendPdu", "Packet Overflow while building inform request");
+            }
+        } catch (java.io.IOException ioe) {
+            setErrorStatusAndIndex(snmpReqSocketIOError, 0);
+            reason = ioe.getMessage();
+        } catch (Exception e) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "sendPdu", "Got unexpected exception", e);
+            }
+            setErrorStatusAndIndex(snmpReqUnknownError, 0);
+            reason = e.getMessage();
+        }
+        return false;
+!!!3216386.java!!!	sendPduPacket(inout buffer : byte [[]], in length : int) : void
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                "sendPduPacket", "Send to peer. Peer/Port : " + address.getHostName() +
+                 "/" + port + ". Length = " +  length + "\nDump : \n" +
+                 SnmpMessage.dumpHexBuffer(buffer,0, length));
+        }
+        SnmpSocket theSocket = informSession.getSocket();
+        synchronized (theSocket) {
+            theSocket.sendPacket(buffer, length, address, port);
+            setRequestSentTime(System.currentTimeMillis());
+        }
+!!!3216514.java!!!	processResponse() : void
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                "processResponse", "errstatus = " + errorStatus);
+        }
+
+        if (inProgress() == false) {  // check if this request is still alive.
+            responsePdu = null;
+            return;  // the request may have  cancelled.
+        }
+
+        if (errorStatus >= snmpReqInternalError) {
+            handleInternalError("Internal Error...");
+            return;
+        }
+
+        try {
+            parsePduPacket(responsePdu);
+            //responsePdu = null;
+
+            // At this point the errorIndex is rationalized to start with 0.
+            switch (errorStatus) {
+            case snmpRspNoError :
+                handleSuccess();
+                return;
+            case snmpReqTimeout :
+                handleTimeout();
+                return;
+            case snmpReqInternalError :
+                handleInternalError("Unknown internal error.  deal with it later!");
+                return;
+            case snmpReqHandleTooBig :
+                setErrorStatusAndIndex(snmpRspTooBig, 0);
+                handleError("Cannot handle too-big situation...");
+                return;
+            case snmpReqRefireAfterVbFix :
+                // Refire request after fixing varbindlist.
+                initializeAndFire();
+                return;
+            default :
+                handleError("Error status set in packet...!!");
+                return;
+            }
+        } catch (Exception e) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "processResponse", "Got unexpected exception", e);
+            }
+            reason = e.getMessage();
+        }
+        handleInternalError(reason);
+!!!3216642.java!!!	parsePduPacket(inout rpdu : SnmpPduRequestType) : void
+
+        if (rpdu == null)
+            return;
+
+        errorStatus = rpdu.getErrorStatus();
+        errorIndex = rpdu.getErrorIndex();
+
+        if (errorStatus == snmpRspNoError) {
+            updateInternalVarBindWithResult(((SnmpPdu)rpdu).varBindList);
+            return;
+        }
+
+        if (errorStatus != snmpRspNoError)
+            --errorIndex;  // rationalize for index to start with 0.
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                "parsePduPacket", "received inform response. ErrorStatus/ErrorIndex = "
+                + errorStatus + "/" + errorIndex);
+        }
+!!!3216770.java!!!	handleSuccess() : void
+
+        setRequestStatus(stResultsAvailable);
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                "handleSuccess", "Invoking user defined callback...");
+        }
+
+        deleteRequest();  // delete only non-poll request.
+        notifyClient();
+
+        requestPdu = null;
+        //responsePdu = null;
+        internalVarBind = null;
+
+        try {  // catch all user exception which may happen in callback.
+            if (callback != null)
+                callback.processSnmpPollData(this, errorStatus, errorIndex, getVarBindList());
+        } catch (Exception e) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleSuccess", "Exception generated by user callback", e);
+            }
+        } catch (OutOfMemoryError ome) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleSuccess", "OutOfMemory Error generated by user callback", ome);
+            }
+            Thread.yield();
+        }
+!!!3216898.java!!!	handleTimeout() : void
+
+        setRequestStatus(stTimeout);
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                "handleTimeout", "Snmp error/index = " + snmpErrorToString(errorStatus)
+                 + "/" + errorIndex + ". Invoking timeout user defined callback...");
+        }
+        deleteRequest();
+        notifyClient();
+
+        requestPdu = null;
+        responsePdu = null;
+        internalVarBind = null;
+
+        try {
+            if (callback != null)
+                callback.processSnmpPollTimeout(this);
+        } catch (Exception e) {  // catch any exception a user might not handle.
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleTimeout", "Exception generated by user callback", e);
+            }
+        } catch (OutOfMemoryError ome) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleTimeout", "OutOfMemory Error generated by user callback", ome);
+            }
+            Thread.yield();
+        }
+!!!3217026.java!!!	handleError(inout msg : String) : void
+
+        setRequestStatus(stResultsAvailable);
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                "handleError", "Snmp error/index = " + snmpErrorToString(errorStatus) + "/" +
+                  errorIndex + ". Invoking error user defined callback...\n" + getVarBindList());
+        }
+        deleteRequest();
+        notifyClient();
+
+        requestPdu = null;
+        responsePdu = null;
+        internalVarBind = null;
+
+        try {
+            if (callback != null)
+                callback.processSnmpPollData(this, getErrorStatus(), getErrorIndex(), getVarBindList());
+        } catch (Exception e) {  // catch any exception a user might not handle.
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleError", "Exception generated by user callback", e);
+            }
+        } catch (OutOfMemoryError ome) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleError", "OutOfMemory Error generated by user callback", ome);
+            }
+            Thread.yield();
+        }
+!!!3217154.java!!!	handleInternalError(inout msg : String) : void
+
+        setRequestStatus(stInternalError);
+        if (reason == null)
+            reason = msg;
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                "handleInternalError", "Snmp error/index = " + snmpErrorToString(errorStatus) +
+                 "/" + errorIndex + ". Invoking internal error user defined callback...\n" +
+                 getVarBindList());
+        }
+
+        deleteRequest();
+        notifyClient();
+
+        requestPdu = null;
+        responsePdu = null;
+        internalVarBind = null;
+
+        try {
+            if (callback != null)
+                callback.processSnmpInternalError(this, reason);
+        } catch (Exception e) {  // catch any exception a user might not handle.
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleInternalError", "Exception generated by user callback", e);
+            }
+        } catch (OutOfMemoryError ome) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpInformRequest.class.getName(),
+                    "handleInternalError", "OutOfMemory Error generated by user callback", ome);
+            }
+            Thread.yield();
+        }
+!!!3217282.java!!!	updateInternalVarBindWithResult(inout list : SnmpVarBind [[]]) : void
+
+        if ((list == null) || (list.length == 0))
+            return;
+
+        int idx = 0;
+
+        for(int i = 0; i < internalVarBind.length && idx < list.length; i++) {
+            SnmpVarBind avar = internalVarBind[i];
+            if (avar == null)
+                continue;
+
+            SnmpVarBind res = list[idx];
+            avar.setSnmpValue(res.getSnmpValue());
+            idx++;
+        }
+!!!3217410.java!!!	invokeOnResponse(inout resp : Object) : void
+        if (resp != null) {
+            if (resp instanceof SnmpPduRequestType)
+                responsePdu = (SnmpPduRequestType) resp;
+            else
+                return;
+        }
+        setRequestStatus(stReceivedReply);
+        queueResponse();
+!!!3217538.java!!!	stopRequest() : void
+
+        // Remove the clause synchronized of the stopRequest method.
+        // Synchronization is isolated as possible to avoid thread lock.
+        // Note: the method removeRequest from SendQ is synchronized.
+        // fix bug jaw.00392.B
+        //
+        synchronized(this) {
+            setRequestStatus(stAborted);
+        }
+        informSession.getSnmpQManager().removeRequest(this);
+        synchronized(this) {
+            requestId = 0;
+        }
+!!!3217666.java!!!	deleteRequest() : void
+        informSession.removeInformRequest(this);
+!!!3217794.java!!!	getVarBindList() : SnmpVarBindList
+        return varBindList;
+!!!3217922.java!!!	setVarBindList(inout newvblst : SnmpVarBindList) : void
+        varBindList = newvblst;
+        if (internalVarBind == null || internalVarBind.length != varBindList.size()) {
+            internalVarBind = new SnmpVarBind[varBindList.size()];
+        }
+        varBindList.copyInto(internalVarBind);
+!!!3218050.java!!!	setErrorStatusAndIndex(in stat : int, in idx : int) : void
+        errorStatus = stat;
+        errorIndex = idx;
+!!!3218178.java!!!	setPrevPollTime(in prev : long) : void
+        prevPollTime = prev;
+!!!3218306.java!!!	setRequestSentTime(in sendtime : long) : void
+        numTries++;
+        setPrevPollTime(sendtime);
+        waitTimeForResponse = prevPollTime + timeout*numTries;
+        setRequestStatus(stWaitingForReply);
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpInformRequest.class.getName(),
+                "setRequestSentTime", "Inform request Successfully sent");
+        }
+
+        informSession.getSnmpQManager().addWaiting(this);
+!!!3218434.java!!!	initNewRequest() : void
+        requestId = requestCounter.getNewId();
+!!!3218562.java!!!	timeRemainingForAction(in currtime : long) : long
+        switch (reqState) {
+        case stWaitingToSend :
+            return nextPollTime - currtime;
+        case stWaitingForReply :
+            return waitTimeForResponse - currtime;
+        default :
+            return -1;
+        }
+!!!3218690.java!!!	statusDescription(in state : int) : String
+        switch (state) {
+        case stWaitingToSend :
+            return "Waiting to send.";
+        case stWaitingForReply :
+            return "Waiting for reply.";
+        case stReceivedReply :
+            return "Response arrived.";
+        case stAborted  :
+            return "Aborted by user.";
+        case stTimeout :
+            return "Timeout Occured.";
+        case stInternalError :
+            return "Internal error.";
+        case stResultsAvailable :
+            return "Results available";
+        case stNeverUsed :
+            return "Inform request in createAndWait state";
+        }
+        return "Unknown inform request state.";
+!!!3218818.java!!!	setRequestStatus(in reqst : int) : void
+        reqState = reqst;
+!!!3218946.java!!!	toString() : String
+        StringBuffer s = new StringBuffer(300) ;
+        s.append(tostring()) ;
+        s.append("\nPeer/Port : " + address.getHostName() + "/" + port) ;
+
+        return s.toString() ;
+!!!3219074.java!!!	tostring() : String
+        StringBuffer s = new StringBuffer("InformRequestId = " + requestId);
+        s.append("   " + "Status = " + statusDescription(reqState));
+        s.append("  Timeout/MaxTries/NumTries = " + timeout*numTries + "/" +
+                 + getMaxTries() + "/" + numTries);
+
+        if (prevPollTime > 0) {
+            debugDate.setTime(prevPollTime);
+            s.append("\nPrevPolled = " + debugDate.toString());
+        } else
+            s.append("\nNeverPolled");
+        s.append(" / RemainingTime(millis) = " +
+                 timeRemainingForAction(System.currentTimeMillis()));
+
+        return s.toString();

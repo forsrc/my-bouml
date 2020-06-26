@@ -1,0 +1,221 @@
+class ZipFile
+!!!9336834.java!!!	ZipFile(inout name : String)
+        this(new File(name), OPEN_READ);
+!!!9336962.java!!!	ZipFile(inout file : File, in mode : int)
+        this(file, mode, StandardCharsets.UTF_8);
+!!!9337090.java!!!	ZipFile(inout file : File)
+        this(file, OPEN_READ);
+!!!9337218.java!!!	ZipFile(inout file : File, in mode : int, inout charset : Charset)
+        if (((mode & OPEN_READ) == 0) ||
+            ((mode & ~(OPEN_READ | OPEN_DELETE)) != 0)) {
+            throw new IllegalArgumentException("Illegal mode: 0x"+
+                                               Integer.toHexString(mode));
+        }
+        String name = file.getPath();
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            sm.checkRead(name);
+            if ((mode & OPEN_DELETE) != 0) {
+                sm.checkDelete(name);
+            }
+        }
+        if (charset == null)
+            throw new NullPointerException("charset is null");
+        this.zc = ZipCoder.get(charset);
+        long t0 = System.nanoTime();
+        jzfile = open(name, mode, file.lastModified(), usemmap);
+        sun.misc.PerfCounter.getZipFileOpenTime().addElapsedTimeFrom(t0);
+        sun.misc.PerfCounter.getZipFileCount().increment();
+        this.name = name;
+        this.total = getTotal(jzfile);
+        this.locsig = startsWithLOC(jzfile);
+!!!9337346.java!!!	ZipFile(inout name : String, inout charset : Charset)
+        this(new File(name), OPEN_READ, charset);
+!!!9337474.java!!!	ZipFile(inout file : File, inout charset : Charset)
+        this(file, OPEN_READ, charset);
+!!!9337602.java!!!	getComment() : String
+        synchronized (this) {
+            ensureOpen();
+            byte[] bcomm = getCommentBytes(jzfile);
+            if (bcomm == null)
+                return null;
+            return zc.toString(bcomm, bcomm.length);
+        }
+!!!9337730.java!!!	getEntry(inout name : String) : ZipEntry
+        if (name == null) {
+            throw new NullPointerException("name");
+        }
+        long jzentry = 0;
+        synchronized (this) {
+            ensureOpen();
+            jzentry = getEntry(jzfile, zc.getBytes(name), true);
+            if (jzentry != 0) {
+                // If no entry is found for the specified 'name' and
+                // the 'name' does not end with a forward slash '/',
+                // the implementation tries to find the entry with a
+                // slash '/' appended to the end of the 'name', before
+                // returning null. When such entry is found, the name
+                // that actually is found (with a slash '/' attached)
+                // is used
+                // (disabled if jdk.util.zip.ensureTrailingSlash=false)
+                ZipEntry ze = ensuretrailingslash ? getZipEntry(null, jzentry)
+                                                  : getZipEntry(name, jzentry);
+                freeEntry(jzfile, jzentry);
+                return ze;
+            }
+        }
+        return null;
+!!!9338114.java!!!	getInputStream(inout entry : ZipEntry) : InputStream
+        if (entry == null) {
+            throw new NullPointerException("entry");
+        }
+        long jzentry = 0;
+        ZipFileInputStream in = null;
+        synchronized (this) {
+            ensureOpen();
+            if (!zc.isUTF8() && (entry.flag & EFS) != 0) {
+                jzentry = getEntry(jzfile, zc.getBytesUTF8(entry.name), false);
+            } else {
+                jzentry = getEntry(jzfile, zc.getBytes(entry.name), false);
+            }
+            if (jzentry == 0) {
+                return null;
+            }
+            in = new ZipFileInputStream(jzentry);
+
+            switch (getEntryMethod(jzentry)) {
+            case STORED:
+                synchronized (streams) {
+                    streams.put(in, null);
+                }
+                return in;
+            case DEFLATED:
+                // MORE: Compute good size for inflater stream:
+                long size = getEntrySize(jzentry) + 2; // Inflater likes a bit of slack
+                if (size > 65536) size = 8192;
+                if (size <= 0) size = 4096;
+                Inflater inf = getInflater();
+                InputStream is =
+                    new ZipFileInflaterInputStream(in, inf, (int)size);
+                synchronized (streams) {
+                    streams.put(is, inf);
+                }
+                return is;
+            default:
+                throw new ZipException("invalid compression method");
+            }
+        }
+!!!9340546.java!!!	getInflater() : Inflater
+        Inflater inf;
+        synchronized (inflaterCache) {
+            while (null != (inf = inflaterCache.poll())) {
+                if (false == inf.ended()) {
+                    return inf;
+                }
+            }
+        }
+        return new Inflater(true);
+!!!9340674.java!!!	releaseInflater(inout inf : Inflater) : void
+        if (false == inf.ended()) {
+            inf.reset();
+            synchronized (inflaterCache) {
+                inflaterCache.add(inf);
+            }
+        }
+!!!9340802.java!!!	getName() : String
+        return name;
+!!!9341570.java!!!	entries() : Enumeration
+        return new ZipEntryIterator();
+!!!9341698.java!!!	stream() : Stream
+        return StreamSupport.stream(Spliterators.spliterator(
+                new ZipEntryIterator(), size(),
+                Spliterator.ORDERED | Spliterator.DISTINCT |
+                        Spliterator.IMMUTABLE | Spliterator.NONNULL), false);
+!!!9341826.java!!!	getZipEntry(inout name : String, in jzentry : long) : ZipEntry
+        ZipEntry e = new ZipEntry();
+        e.flag = getEntryFlag(jzentry);  // get the flag first
+        if (name != null) {
+            e.name = name;
+        } else {
+            byte[] bname = getEntryBytes(jzentry, JZENTRY_NAME);
+            if (bname == null) {
+                e.name = "";             // length 0 empty name
+            } else if (!zc.isUTF8() && (e.flag & EFS) != 0) {
+                e.name = zc.toStringUTF8(bname, bname.length);
+            } else {
+                e.name = zc.toString(bname, bname.length);
+            }
+        }
+        e.xdostime = getEntryTime(jzentry);
+        e.crc = getEntryCrc(jzentry);
+        e.size = getEntrySize(jzentry);
+        e.csize = getEntryCSize(jzentry);
+        e.method = getEntryMethod(jzentry);
+        e.setExtra0(getEntryBytes(jzentry, JZENTRY_EXTRA), false);
+        byte[] bcomm = getEntryBytes(jzentry, JZENTRY_COMMENT);
+        if (bcomm == null) {
+            e.comment = null;
+        } else {
+            if (!zc.isUTF8() && (e.flag & EFS) != 0) {
+                e.comment = zc.toStringUTF8(bcomm, bcomm.length);
+            } else {
+                e.comment = zc.toString(bcomm, bcomm.length);
+            }
+        }
+        return e;
+!!!9342082.java!!!	size() : int
+        ensureOpen();
+        return total;
+!!!9342210.java!!!	close() : void
+        if (closeRequested)
+            return;
+        closeRequested = true;
+
+        synchronized (this) {
+            // Close streams, release their inflaters
+            synchronized (streams) {
+                if (false == streams.isEmpty()) {
+                    Map<InputStream, Inflater> copy = new HashMap<>(streams);
+                    streams.clear();
+                    for (Map.Entry<InputStream, Inflater> e : copy.entrySet()) {
+                        e.getKey().close();
+                        Inflater inf = e.getValue();
+                        if (inf != null) {
+                            inf.end();
+                        }
+                    }
+                }
+            }
+
+            // Release cached inflaters
+            Inflater inf;
+            synchronized (inflaterCache) {
+                while (null != (inf = inflaterCache.poll())) {
+                    inf.end();
+                }
+            }
+
+            if (jzfile != 0) {
+                // Close the zip file
+                long zf = this.jzfile;
+                jzfile = 0;
+
+                close(zf);
+            }
+        }
+!!!9342338.java!!!	finalize() : void
+        close();
+!!!9342594.java!!!	ensureOpen() : void
+        if (closeRequested) {
+            throw new IllegalStateException("zip file closed");
+        }
+
+        if (jzfile == 0) {
+            throw new IllegalStateException("The object is not initialized.");
+        }
+!!!9342722.java!!!	ensureOpenOrZipException() : void
+        if (closeRequested) {
+            throw new ZipException("ZipFile closed");
+        }
+!!!9343874.java!!!	startsWithLocHeader() : boolean
+        return locsig;

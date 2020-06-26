@@ -1,0 +1,97 @@
+class BufferedWriter
+!!!6849282.java!!!	BufferedWriter(inout out : Writer)
+        this(out, defaultCharBufferSize);
+!!!6849410.java!!!	BufferedWriter(inout out : Writer, in sz : int)
+        super(out);
+        if (sz <= 0)
+            throw new IllegalArgumentException("Buffer size <= 0");
+        this.out = out;
+        cb = new char[sz];
+        nChars = sz;
+        nextChar = 0;
+
+        lineSeparator = java.security.AccessController.doPrivileged(
+            new sun.security.action.GetPropertyAction("line.separator"));
+!!!6849538.java!!!	ensureOpen() : void
+        if (out == null)
+            throw new IOException("Stream closed");
+!!!6849666.java!!!	flushBuffer() : void
+        synchronized (lock) {
+            ensureOpen();
+            if (nextChar == 0)
+                return;
+            out.write(cb, 0, nextChar);
+            nextChar = 0;
+        }
+!!!6849794.java!!!	write(in c : int) : void
+        synchronized (lock) {
+            ensureOpen();
+            if (nextChar >= nChars)
+                flushBuffer();
+            cb[nextChar++] = (char) c;
+        }
+!!!6849922.java!!!	min(in a : int, in b : int) : int
+        if (a < b) return a;
+        return b;
+!!!6850050.java!!!	write(inout cbuf : char [[]], in off : int, in len : int) : void
+        synchronized (lock) {
+            ensureOpen();
+            if ((off < 0) || (off > cbuf.length) || (len < 0) ||
+                ((off + len) > cbuf.length) || ((off + len) < 0)) {
+                throw new IndexOutOfBoundsException();
+            } else if (len == 0) {
+                return;
+            }
+
+            if (len >= nChars) {
+                /* If the request length exceeds the size of the output buffer,
+                   flush the buffer and then write the data directly.  In this
+                   way buffered streams will cascade harmlessly. */
+                flushBuffer();
+                out.write(cbuf, off, len);
+                return;
+            }
+
+            int b = off, t = off + len;
+            while (b < t) {
+                int d = min(nChars - nextChar, t - b);
+                System.arraycopy(cbuf, b, cb, nextChar, d);
+                b += d;
+                nextChar += d;
+                if (nextChar >= nChars)
+                    flushBuffer();
+            }
+        }
+!!!6850178.java!!!	write(inout s : String, in off : int, in len : int) : void
+        synchronized (lock) {
+            ensureOpen();
+
+            int b = off, t = off + len;
+            while (b < t) {
+                int d = min(nChars - nextChar, t - b);
+                s.getChars(b, b + d, cb, nextChar);
+                b += d;
+                nextChar += d;
+                if (nextChar >= nChars)
+                    flushBuffer();
+            }
+        }
+!!!6850306.java!!!	newLine() : void
+        write(lineSeparator);
+!!!6850434.java!!!	flush() : void
+        synchronized (lock) {
+            flushBuffer();
+            out.flush();
+        }
+!!!6850562.java!!!	close() : void
+        synchronized (lock) {
+            if (out == null) {
+                return;
+            }
+            try (Writer w = out) {
+                flushBuffer();
+            } finally {
+                out = null;
+                cb = null;
+            }
+        }

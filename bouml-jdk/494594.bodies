@@ -1,0 +1,150 @@
+class MBeanIntrospector
+!!!2975106.java!!!	getMethods(in mbeanType : Class) : List
+        ReflectUtil.checkPackageAccess(mbeanType);
+        return Arrays.asList(mbeanType.getMethods());
+!!!2975234.java!!!	getPerInterface(inout mbeanInterface : Class) : PerInterface
+        PerInterfaceMap<M> map = getPerInterfaceMap();
+        synchronized (map) {
+            WeakReference<PerInterface<M>> wr = map.get(mbeanInterface);
+            PerInterface<M> pi = (wr == null) ? null : wr.get();
+            if (pi == null) {
+                try {
+                    MBeanAnalyzer<M> analyzer = getAnalyzer(mbeanInterface);
+                    MBeanInfo mbeanInfo =
+                            makeInterfaceMBeanInfo(mbeanInterface, analyzer);
+                    pi = new PerInterface<M>(mbeanInterface, this, analyzer,
+                            mbeanInfo);
+                    wr = new WeakReference<PerInterface<M>>(pi);
+                    map.put(mbeanInterface, wr);
+                } catch (Exception x) {
+                    throw Introspector.throwException(mbeanInterface,x);
+                }
+            }
+            return pi;
+        }
+!!!2975362.java!!!	makeInterfaceMBeanInfo(inout mbeanInterface : Class, inout analyzer : MBeanAnalyzer) : MBeanInfo
+        final MBeanInfoMaker maker = new MBeanInfoMaker();
+        analyzer.visit(maker);
+        final String description =
+                "Information on the management interface of the MBean";
+        return maker.makeMBeanInfo(mbeanInterface, description);
+!!!2975490.java!!!	consistent(inout getter : M, inout setter : M) : boolean
+        return (getter == null || setter == null ||
+                getGenericReturnType(getter).equals(getGenericParameterTypes(setter)[0]));
+!!!2975618.java!!!	invokeM(inout m : M, inout target : Object, inout args : Object [[]], inout cookie : Object) : Object
+        try {
+            return invokeM2(m, target, args, cookie);
+        } catch (InvocationTargetException e) {
+            unwrapInvocationTargetException(e);
+            throw new RuntimeException(e); // not reached
+        } catch (IllegalAccessException e) {
+            throw new ReflectionException(e, e.toString());
+        }
+        /* We do not catch and wrap RuntimeException or Error,
+         * because we're in a DynamicMBean, so the logic for DynamicMBeans
+         * will do the wrapping.
+         */
+!!!2975746.java!!!	invokeSetter(inout name : String, inout setter : M, inout target : Object, inout arg : Object, inout cookie : Object) : void
+        try {
+            invokeM2(setter, target, new Object[] {arg}, cookie);
+        } catch (IllegalAccessException e) {
+            throw new ReflectionException(e, e.toString());
+        } catch (RuntimeException e) {
+            maybeInvalidParameter(name, setter, arg, cookie);
+            throw e;
+        } catch (InvocationTargetException e) {
+            maybeInvalidParameter(name, setter, arg, cookie);
+            unwrapInvocationTargetException(e);
+        }
+!!!2975874.java!!!	maybeInvalidParameter(inout name : String, inout setter : M, inout arg : Object, inout cookie : Object) : void
+        if (!validParameter(setter, arg, 0, cookie)) {
+            final String msg =
+                    "Invalid value for attribute " + name + ": " + arg;
+            throw new InvalidAttributeValueException(msg);
+        }
+!!!2976002.java!!!	isValidParameter(inout m : Method, inout value : Object, in paramNo : int) : boolean
+        Class<?> c = m.getParameterTypes()[paramNo];
+        try {
+            // Following is expensive but we only call this method to determine
+            // if an exception is due to an incompatible parameter type.
+            // Plain old c.isInstance doesn't work for primitive types.
+            Object a = Array.newInstance(c, 1);
+            Array.set(a, 0, value);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+!!!2976130.java!!!	unwrapInvocationTargetException(inout e : InvocationTargetException) : void
+        Throwable t = e.getCause();
+        if (t instanceof RuntimeException)
+            throw (RuntimeException) t;
+        else if (t instanceof Error)
+            throw (Error) t;
+        else
+            throw new MBeanException((Exception) t,
+                    (t == null ? null : t.toString()));
+!!!2976642.java!!!	getMBeanInfo(inout resource : Object, inout perInterface : PerInterface) : MBeanInfo
+        MBeanInfo mbi =
+                getClassMBeanInfo(resource.getClass(), perInterface);
+        MBeanNotificationInfo[] notifs = findNotifications(resource);
+        if (notifs == null || notifs.length == 0)
+            return mbi;
+        else {
+            return new MBeanInfo(mbi.getClassName(),
+                    mbi.getDescription(),
+                    mbi.getAttributes(),
+                    mbi.getConstructors(),
+                    mbi.getOperations(),
+                    notifs,
+                    mbi.getDescriptor());
+        }
+!!!2976770.java!!!	getClassMBeanInfo(inout resourceClass : Class, inout perInterface : PerInterface) : MBeanInfo
+        MBeanInfoMap map = getMBeanInfoMap();
+        synchronized (map) {
+            WeakHashMap<Class<?>, MBeanInfo> intfMap = map.get(resourceClass);
+            if (intfMap == null) {
+                intfMap = new WeakHashMap<Class<?>, MBeanInfo>();
+                map.put(resourceClass, intfMap);
+            }
+            Class<?> intfClass = perInterface.getMBeanInterface();
+            MBeanInfo mbi = intfMap.get(intfClass);
+            if (mbi == null) {
+                MBeanInfo imbi = perInterface.getMBeanInfo();
+                Descriptor descriptor =
+                        ImmutableDescriptor.union(imbi.getDescriptor(),
+                        getMBeanDescriptor(resourceClass));
+                mbi = new MBeanInfo(resourceClass.getName(),
+                        imbi.getDescription(),
+                        imbi.getAttributes(),
+                        findConstructors(resourceClass),
+                        imbi.getOperations(),
+                        (MBeanNotificationInfo[]) null,
+                        descriptor);
+                intfMap.put(intfClass, mbi);
+            }
+            return mbi;
+        }
+!!!2976898.java!!!	findNotifications(inout moi : Object) : MBeanNotificationInfo
+        if (!(moi instanceof NotificationBroadcaster))
+            return null;
+        MBeanNotificationInfo[] mbn =
+                ((NotificationBroadcaster) moi).getNotificationInfo();
+        if (mbn == null)
+            return null;
+        MBeanNotificationInfo[] result =
+                new MBeanNotificationInfo[mbn.length];
+        for (int i = 0; i < mbn.length; i++) {
+            MBeanNotificationInfo ni = mbn[i];
+            if (ni.getClass() != MBeanNotificationInfo.class)
+                ni = (MBeanNotificationInfo) ni.clone();
+            result[i] = ni;
+        }
+        return result;
+!!!2977026.java!!!	findConstructors(inout c : Class) : MBeanConstructorInfo
+        Constructor<?>[] cons = c.getConstructors();
+        MBeanConstructorInfo[] mbc = new MBeanConstructorInfo[cons.length];
+        for (int i = 0; i < cons.length; i++) {
+            final String descr = "Public constructor of the MBean";
+            mbc[i] = new MBeanConstructorInfo(descr, cons[i]);
+        }
+        return mbc;

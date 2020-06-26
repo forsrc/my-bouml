@@ -1,0 +1,112 @@
+class DOMResultAugmentor
+!!!4943874.java!!!	DOMResultAugmentor(inout helper : DOMValidatorHelper)
+        fDOMValidatorHelper = helper;
+!!!4944002.java!!!	setDOMResult(inout result : DOMResult) : void
+        fIgnoreChars = false;
+        if (result != null) {
+            final Node target = result.getNode();
+            fDocument = (target.getNodeType() == Node.DOCUMENT_NODE) ? (Document) target : target.getOwnerDocument();
+            fDocumentImpl = (fDocument instanceof CoreDocumentImpl) ? (CoreDocumentImpl) fDocument : null;
+            fStorePSVI = (fDocument instanceof PSVIDocumentImpl);
+            return;
+        }
+        fDocument = null;
+        fDocumentImpl = null;
+        fStorePSVI = false;
+!!!4944770.java!!!	setIgnoringCharacters(inout ignore : boolean) : void
+        fIgnoreChars = ignore;
+!!!4945538.java!!!	startElement(inout element : QName, inout attributes : XMLAttributes, inout augs : Augmentations) : void
+        final Element currentElement = (Element) fDOMValidatorHelper.getCurrentElement();
+        final NamedNodeMap attrMap = currentElement.getAttributes();
+
+        final int oldLength = attrMap.getLength();
+        // If it's a Xerces DOM store type information for attributes, set idness, etc..
+        if (fDocumentImpl != null) {
+            AttrImpl attr;
+            for (int i = 0; i < oldLength; ++i) {
+                attr = (AttrImpl) attrMap.item(i);
+
+                // write type information to this attribute
+                AttributePSVI attrPSVI = (AttributePSVI) attributes.getAugmentations(i).getItem (Constants.ATTRIBUTE_PSVI);
+                if (attrPSVI != null) {
+                    if (processAttributePSVI(attr, attrPSVI)) {
+                        ((ElementImpl) currentElement).setIdAttributeNode (attr, true);
+                    }
+                }
+            }
+        }
+
+        final int newLength = attributes.getLength();
+        // Add default/fixed attributes
+        if (newLength > oldLength) {
+            if (fDocumentImpl == null) {
+                for (int i = oldLength; i < newLength; ++i) {
+                    attributes.getName(i, fAttributeQName);
+                    currentElement.setAttributeNS(fAttributeQName.uri, fAttributeQName.rawname, attributes.getValue(i));
+                }
+            }
+            // If it's a Xerces DOM store type information for attributes, set idness, etc..
+            else {
+                for (int i = oldLength; i < newLength; ++i) {
+                    attributes.getName(i, fAttributeQName);
+                    AttrImpl attr = (AttrImpl) fDocumentImpl.createAttributeNS(fAttributeQName.uri,
+                            fAttributeQName.rawname, fAttributeQName.localpart);
+                    attr.setValue(attributes.getValue(i));
+
+                    // write type information to this attribute
+                    AttributePSVI attrPSVI = (AttributePSVI) attributes.getAugmentations(i).getItem (Constants.ATTRIBUTE_PSVI);
+                    if (attrPSVI != null) {
+                        if (processAttributePSVI(attr, attrPSVI)) {
+                            ((ElementImpl) currentElement).setIdAttributeNode (attr, true);
+                        }
+                    }
+                    attr.setSpecified(false);
+                    currentElement.setAttributeNode(attr);
+                }
+            }
+        }
+!!!4945666.java!!!	emptyElement(inout element : QName, inout attributes : XMLAttributes, inout augs : Augmentations) : void
+        startElement(element, attributes, augs);
+        endElement(element, augs);
+!!!4946178.java!!!	characters(inout text : XMLString, inout augs : Augmentations) : void
+        if (!fIgnoreChars) {
+            final Element currentElement = (Element) fDOMValidatorHelper.getCurrentElement();
+            currentElement.appendChild(fDocument.createTextNode(text.toString()));
+        }
+!!!4946306.java!!!	ignorableWhitespace(inout text : XMLString, inout augs : Augmentations) : void
+        characters(text, augs);
+!!!4946434.java!!!	endElement(inout element : QName, inout augs : Augmentations) : void
+        final Node currentElement = fDOMValidatorHelper.getCurrentElement();
+        // Write type information to this element
+        if (augs != null && fDocumentImpl != null) {
+            ElementPSVI elementPSVI = (ElementPSVI)augs.getItem(Constants.ELEMENT_PSVI);
+            if (elementPSVI != null) {
+                if (fStorePSVI) {
+                    ((PSVIElementNSImpl) currentElement).setPSVI(elementPSVI);
+                }
+                XSTypeDefinition type = elementPSVI.getMemberTypeDefinition();
+                if (type == null) {
+                    type = elementPSVI.getTypeDefinition();
+                }
+                ((ElementNSImpl) currentElement).setType(type);
+            }
+        }
+!!!4947074.java!!!	getDocumentSource() : XMLDocumentSource
+        return null;
+!!!4947202.java!!!	processAttributePSVI(inout attr : AttrImpl, inout attrPSVI : AttributePSVI) : boolean
+        if (fStorePSVI) {
+            ((PSVIAttrNSImpl) attr).setPSVI (attrPSVI);
+        }
+        Object type = attrPSVI.getMemberTypeDefinition ();
+        if (type == null) {
+            type = attrPSVI.getTypeDefinition ();
+            if (type != null) {
+                attr.setType(type);
+                return ((XSSimpleType) type).isIDType();
+            }
+        }
+        else {
+            attr.setType(type);
+            return ((XSSimpleType) type).isIDType();
+        }
+        return false;

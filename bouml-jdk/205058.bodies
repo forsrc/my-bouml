@@ -1,0 +1,162 @@
+class IIOPProfileImpl
+!!!667778.java!!!	equals(inout obj : Object) : boolean
+        if (!(obj instanceof IIOPProfileImpl))
+            return false ;
+
+        IIOPProfileImpl other = (IIOPProfileImpl)obj ;
+
+        return oid.equals( other.oid ) && proftemp.equals( other.proftemp ) &&
+            oktemp.equals( other.oktemp ) ;
+!!!667906.java!!!	hashCode() : int
+        return oid.hashCode() ^ proftemp.hashCode() ^ oktemp.hashCode() ;
+!!!668034.java!!!	getObjectId() : ObjectId
+        return oid ;
+!!!668162.java!!!	getTaggedProfileTemplate() : TaggedProfileTemplate
+        return proftemp ;
+!!!668290.java!!!	getObjectKeyTemplate() : ObjectKeyTemplate
+        return oktemp ;
+!!!668418.java!!!	IIOPProfileImpl(inout orb : ORB)
+        this.orb = orb ;
+        wrapper = IORSystemException.get( orb,
+            CORBALogDomains.OA_IOR ) ;
+!!!668546.java!!!	IIOPProfileImpl(inout orb : ORB, inout oktemp : ObjectKeyTemplate, inout oid : ObjectId, inout proftemp : IIOPProfileTemplate)
+        this( orb ) ;
+        this.oktemp = oktemp ;
+        this.oid = oid ;
+        this.proftemp = proftemp ;
+!!!668674.java!!!	IIOPProfileImpl(inout is : InputStream)
+        this( (ORB)(is.orb()) ) ;
+        init( is ) ;
+!!!668802.java!!!	IIOPProfileImpl(inout orb : ORB, inout profile : TaggedProfile)
+        this( orb ) ;
+
+        if (profile == null || profile.tag != TAG_INTERNET_IOP.value ||
+            profile.profile_data == null) {
+            throw wrapper.invalidTaggedProfile() ;
+        }
+
+        EncapsInputStream istr = EncapsInputStreamFactory.newEncapsInputStream((ORB)orb, profile.profile_data,
+                profile.profile_data.length);
+        istr.consumeEndian();
+        init( istr ) ;
+!!!668930.java!!!	init(inout istr : InputStream) : void
+        // First, read all of the IIOP IOR data
+        GIOPVersion version = new GIOPVersion() ;
+        version.read( istr ) ;
+        IIOPAddress primary = new IIOPAddressImpl( istr ) ;
+        byte[] key = EncapsulationUtility.readOctets( istr ) ;
+
+        ObjectKey okey = orb.getObjectKeyFactory().create( key ) ;
+        oktemp = okey.getTemplate() ;
+        oid = okey.getId() ;
+
+        proftemp = IIOPFactories.makeIIOPProfileTemplate( orb,
+            version, primary ) ;
+
+        // Handle any tagged components (if applicable)
+        if (version.getMinor() > 0)
+            EncapsulationUtility.readIdentifiableSequence( proftemp,
+                orb.getTaggedComponentFactoryFinder(), istr ) ;
+
+        // If there is no codebase in this IOR and there IS a
+        // java.rmi.server.codebase property set, we need to
+        // update the IOR with the local codebase.  Note that
+        // there is only one instance of the local codebase, but it
+        // can be safely shared in multiple IORs since it is immutable.
+        if (uncachedGetCodeBase() == null) {
+            JavaCodebaseComponent jcc = LocalCodeBaseSingletonHolder.comp ;
+
+            if (jcc != null) {
+                if (version.getMinor() > 0)
+                    proftemp.add( jcc ) ;
+
+                codebase = jcc.getURLs() ;
+            }
+
+            // Whether codebase is null or not, we have it,
+            // and so getCodebase ned never call uncachedGetCodebase.
+            cachedCodebase = true;
+        }
+!!!669058.java!!!	writeContents(inout os : OutputStream) : void
+        proftemp.write( oktemp, oid, os ) ;
+!!!669186.java!!!	getId() : int
+        return proftemp.getId() ;
+!!!669314.java!!!	isEquivalent(inout prof : TaggedProfile) : boolean
+        if (!(prof instanceof IIOPProfile))
+            return false ;
+
+        IIOPProfile other = (IIOPProfile)prof ;
+
+        return oid.equals( other.getObjectId() ) &&
+               proftemp.isEquivalent( other.getTaggedProfileTemplate() ) &&
+               oktemp.equals( other.getObjectKeyTemplate() ) ;
+!!!669442.java!!!	getObjectKey() : ObjectKey
+        ObjectKey result = IORFactories.makeObjectKey( oktemp, oid ) ;
+        return result ;
+!!!669570.java!!!	getIOPProfile() : TaggedProfile
+        EncapsOutputStream os =
+            sun.corba.OutputStreamFactory.newEncapsOutputStream(orb);
+        os.write_long( getId() ) ;
+        write( os ) ;
+        InputStream is = (InputStream)(os.create_input_stream()) ;
+        return org.omg.IOP.TaggedProfileHelper.read( is ) ;
+!!!669698.java!!!	uncachedGetCodeBase() : String
+        Iterator iter = proftemp.iteratorById( TAG_JAVA_CODEBASE.value ) ;
+
+        if (iter.hasNext()) {
+            JavaCodebaseComponent jcbc = (JavaCodebaseComponent)(iter.next()) ;
+            return jcbc.getURLs() ;
+        }
+
+        return null ;
+!!!669826.java!!!	getCodebase() : String
+        if (!cachedCodebase) {
+            cachedCodebase = true ;
+            codebase = uncachedGetCodeBase() ;
+        }
+
+        return codebase ;
+!!!669954.java!!!	getORBVersion() : ORBVersion
+        return oktemp.getORBVersion();
+!!!670082.java!!!	isLocal() : boolean
+        if (!checkedIsLocal) {
+            checkedIsLocal = true ;
+            String host = proftemp.getPrimaryAddress().getHost() ;
+
+            cachedIsLocal = orb.isLocalHost(host) &&
+                orb.isLocalServerId(oktemp.getSubcontractId(),
+                                           oktemp.getServerId()) &&
+                orb.getLegacyServerSocketManager()
+                    .legacyIsLocalServerPort(
+                        proftemp.getPrimaryAddress().getPort());
+        }
+
+        return cachedIsLocal ;
+!!!670210.java!!!	getServant() : Object
+        if (!isLocal())
+            return null ;
+
+        RequestDispatcherRegistry scr = orb.getRequestDispatcherRegistry() ;
+        ObjectAdapterFactory oaf = scr.getObjectAdapterFactory(
+            oktemp.getSubcontractId() ) ;
+
+        ObjectAdapterId oaid = oktemp.getObjectAdapterId() ;
+        ObjectAdapter oa = null ;
+
+        try {
+            oa = oaf.find( oaid ) ;
+        } catch (SystemException exc) {
+            // Could not find the OA, so just return null.
+            // This usually happens when POAs are being deleted,
+            // and the POA always return null for getLocalServant anyway.
+            wrapper.getLocalServantFailure( exc, oaid.toString() ) ;
+            return null ;
+        }
+
+        byte[] boid = oid.getId() ;
+        java.lang.Object servant = oa.getLocalServant( boid ) ;
+        return servant ;
+!!!670338.java!!!	getGIOPVersion() : GIOPVersion
+        return proftemp.getGIOPVersion() ;
+!!!670466.java!!!	makeImmutable() : void
+        proftemp.makeImmutable() ;

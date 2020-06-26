@@ -1,0 +1,218 @@
+class Area
+!!!6518274.java!!!	Area()
+        curves = EmptyCurves;
+!!!6518402.java!!!	Area(inout s : Shape)
+        if (s instanceof Area) {
+            curves = ((Area) s).curves;
+        } else {
+            curves = pathToCurves(s.getPathIterator(null));
+        }
+!!!6518530.java!!!	pathToCurves(inout pi : PathIterator) : Vector
+        Vector curves = new Vector();
+        int windingRule = pi.getWindingRule();
+        // coords array is big enough for holding:
+        //     coordinates returned from currentSegment (6)
+        //     OR
+        //         two subdivided quadratic curves (2+4+4=10)
+        //         AND
+        //             0-1 horizontal splitting parameters
+        //             OR
+        //             2 parametric equation derivative coefficients
+        //     OR
+        //         three subdivided cubic curves (2+6+6+6=20)
+        //         AND
+        //             0-2 horizontal splitting parameters
+        //             OR
+        //             3 parametric equation derivative coefficients
+        double coords[] = new double[23];
+        double movx = 0, movy = 0;
+        double curx = 0, cury = 0;
+        double newx, newy;
+        while (!pi.isDone()) {
+            switch (pi.currentSegment(coords)) {
+            case PathIterator.SEG_MOVETO:
+                Curve.insertLine(curves, curx, cury, movx, movy);
+                curx = movx = coords[0];
+                cury = movy = coords[1];
+                Curve.insertMove(curves, movx, movy);
+                break;
+            case PathIterator.SEG_LINETO:
+                newx = coords[0];
+                newy = coords[1];
+                Curve.insertLine(curves, curx, cury, newx, newy);
+                curx = newx;
+                cury = newy;
+                break;
+            case PathIterator.SEG_QUADTO:
+                newx = coords[2];
+                newy = coords[3];
+                Curve.insertQuad(curves, curx, cury, coords);
+                curx = newx;
+                cury = newy;
+                break;
+            case PathIterator.SEG_CUBICTO:
+                newx = coords[4];
+                newy = coords[5];
+                Curve.insertCubic(curves, curx, cury, coords);
+                curx = newx;
+                cury = newy;
+                break;
+            case PathIterator.SEG_CLOSE:
+                Curve.insertLine(curves, curx, cury, movx, movy);
+                curx = movx;
+                cury = movy;
+                break;
+            }
+            pi.next();
+        }
+        Curve.insertLine(curves, curx, cury, movx, movy);
+        AreaOp operator;
+        if (windingRule == PathIterator.WIND_EVEN_ODD) {
+            operator = new AreaOp.EOWindOp();
+        } else {
+            operator = new AreaOp.NZWindOp();
+        }
+        return operator.calculate(curves, EmptyCurves);
+!!!6518658.java!!!	add(inout rhs : Area) : void
+        curves = new AreaOp.AddOp().calculate(this.curves, rhs.curves);
+        invalidateBounds();
+!!!6518786.java!!!	subtract(inout rhs : Area) : void
+        curves = new AreaOp.SubOp().calculate(this.curves, rhs.curves);
+        invalidateBounds();
+!!!6518914.java!!!	intersect(inout rhs : Area) : void
+        curves = new AreaOp.IntOp().calculate(this.curves, rhs.curves);
+        invalidateBounds();
+!!!6519042.java!!!	exclusiveOr(inout rhs : Area) : void
+        curves = new AreaOp.XorOp().calculate(this.curves, rhs.curves);
+        invalidateBounds();
+!!!6519170.java!!!	reset() : void
+        curves = new Vector();
+        invalidateBounds();
+!!!6519298.java!!!	isEmpty() : boolean
+        return (curves.size() == 0);
+!!!6519426.java!!!	isPolygonal() : boolean
+        Enumeration enum_ = curves.elements();
+        while (enum_.hasMoreElements()) {
+            if (((Curve) enum_.nextElement()).getOrder() > 1) {
+                return false;
+            }
+        }
+        return true;
+!!!6519554.java!!!	isRectangular() : boolean
+        int size = curves.size();
+        if (size == 0) {
+            return true;
+        }
+        if (size > 3) {
+            return false;
+        }
+        Curve c1 = (Curve) curves.get(1);
+        Curve c2 = (Curve) curves.get(2);
+        if (c1.getOrder() != 1 || c2.getOrder() != 1) {
+            return false;
+        }
+        if (c1.getXTop() != c1.getXBot() || c2.getXTop() != c2.getXBot()) {
+            return false;
+        }
+        if (c1.getYTop() != c2.getYTop() || c1.getYBot() != c2.getYBot()) {
+            // One might be able to prove that this is impossible...
+            return false;
+        }
+        return true;
+!!!6519682.java!!!	isSingular() : boolean
+        if (curves.size() < 3) {
+            return true;
+        }
+        Enumeration enum_ = curves.elements();
+        enum_.nextElement(); // First Order0 "moveto"
+        while (enum_.hasMoreElements()) {
+            if (((Curve) enum_.nextElement()).getOrder() == 0) {
+                return false;
+            }
+        }
+        return true;
+!!!6519810.java!!!	invalidateBounds() : void
+        cachedBounds = null;
+!!!6519938.java!!!	getCachedBounds() : Rectangle2D
+        if (cachedBounds != null) {
+            return cachedBounds;
+        }
+        Rectangle2D r = new Rectangle2D.Double();
+        if (curves.size() > 0) {
+            Curve c = (Curve) curves.get(0);
+            // First point is always an order 0 curve (moveto)
+            r.setRect(c.getX0(), c.getY0(), 0, 0);
+            for (int i = 1; i < curves.size(); i++) {
+                ((Curve) curves.get(i)).enlarge(r);
+            }
+        }
+        return (cachedBounds = r);
+!!!6520066.java!!!	getBounds2D() : Rectangle2D
+        return getCachedBounds().getBounds2D();
+!!!6520194.java!!!	getBounds() : Rectangle
+        return getCachedBounds().getBounds();
+!!!6520322.java!!!	clone() : Object
+        return new Area(this);
+!!!6520450.java!!!	equals(inout other : Area) : boolean
+        // REMIND: A *much* simpler operation should be possible...
+        // Should be able to do a curve-wise comparison since all Areas
+        // should evaluate their curves in the same top-down order.
+        if (other == this) {
+            return true;
+        }
+        if (other == null) {
+            return false;
+        }
+        Vector c = new AreaOp.XorOp().calculate(this.curves, other.curves);
+        return c.isEmpty();
+!!!6520578.java!!!	transform(inout t : AffineTransform) : void
+        if (t == null) {
+            throw new NullPointerException("transform must not be null");
+        }
+        // REMIND: A simpler operation can be performed for some types
+        // of transform.
+        curves = pathToCurves(getPathIterator(t));
+        invalidateBounds();
+!!!6520706.java!!!	createTransformedArea(inout t : AffineTransform) : Area
+        Area a = new Area(this);
+        a.transform(t);
+        return a;
+!!!6520834.java!!!	contains(in x : double, in y : double) : boolean
+        if (!getCachedBounds().contains(x, y)) {
+            return false;
+        }
+        Enumeration enum_ = curves.elements();
+        int crossings = 0;
+        while (enum_.hasMoreElements()) {
+            Curve c = (Curve) enum_.nextElement();
+            crossings += c.crossingsFor(x, y);
+        }
+        return ((crossings & 1) == 1);
+!!!6520962.java!!!	contains(inout p : Point2D) : boolean
+        return contains(p.getX(), p.getY());
+!!!6521090.java!!!	contains(in x : double, in y : double, in w : double, in h : double) : boolean
+        if (w < 0 || h < 0) {
+            return false;
+        }
+        if (!getCachedBounds().contains(x, y, w, h)) {
+            return false;
+        }
+        Crossings c = Crossings.findCrossings(curves, x, y, x+w, y+h);
+        return (c != null && c.covers(y, y+h));
+!!!6521218.java!!!	contains(inout r : Rectangle2D) : boolean
+        return contains(r.getX(), r.getY(), r.getWidth(), r.getHeight());
+!!!6521346.java!!!	intersects(in x : double, in y : double, in w : double, in h : double) : boolean
+        if (w < 0 || h < 0) {
+            return false;
+        }
+        if (!getCachedBounds().intersects(x, y, w, h)) {
+            return false;
+        }
+        Crossings c = Crossings.findCrossings(curves, x, y, x+w, y+h);
+        return (c == null || !c.isEmpty());
+!!!6521474.java!!!	intersects(inout r : Rectangle2D) : boolean
+        return intersects(r.getX(), r.getY(), r.getWidth(), r.getHeight());
+!!!6521602.java!!!	getPathIterator(inout at : AffineTransform) : PathIterator
+        return new AreaIterator(curves, at);
+!!!6521730.java!!!	getPathIterator(inout at : AffineTransform, in flatness : double) : PathIterator
+        return new FlatteningPathIterator(getPathIterator(at), flatness);

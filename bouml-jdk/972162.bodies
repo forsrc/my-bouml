@@ -1,0 +1,449 @@
+class Parser
+!!!7554306.java!!!	Parser(inout s : String)
+            input = s;
+            string = s;
+!!!7554434.java!!!	fail(inout reason : String) : void
+            throw new URISyntaxException(input, reason);
+!!!7554562.java!!!	fail(inout reason : String, in p : int) : void
+            throw new URISyntaxException(input, reason, p);
+!!!7554690.java!!!	failExpecting(inout expected : String, in p : int) : void
+            fail("Expected " + expected, p);
+!!!7554818.java!!!	failExpecting(inout expected : String, inout prior : String, in p : int) : void
+            fail("Expected " + expected + " following " + prior, p);
+!!!7554946.java!!!	substring(in start : int, in end : int) : String
+            return input.substring(start, end);
+!!!7555074.java!!!	charAt(in p : int) : char
+            return input.charAt(p);
+!!!7555202.java!!!	at(in start : int, in end : int, in c : char) : boolean
+            return (start < end) && (charAt(start) == c);
+!!!7555330.java!!!	at(in start : int, in end : int, inout s : String) : boolean
+            int p = start;
+            int sn = s.length();
+            if (sn > end - p)
+                return false;
+            int i = 0;
+            while (i < sn) {
+                if (charAt(p++) != s.charAt(i)) {
+                    break;
+                }
+                i++;
+            }
+            return (i == sn);
+!!!7555458.java!!!	scan(in start : int, in end : int, in c : char) : int
+            if ((start < end) && (charAt(start) == c))
+                return start + 1;
+            return start;
+!!!7555586.java!!!	scan(in start : int, in end : int, inout err : String, inout stop : String) : int
+            int p = start;
+            while (p < end) {
+                char c = charAt(p);
+                if (err.indexOf(c) >= 0)
+                    return -1;
+                if (stop.indexOf(c) >= 0)
+                    break;
+                p++;
+            }
+            return p;
+!!!7555714.java!!!	scanEscape(in start : int, in n : int, in first : char) : int
+            int p = start;
+            char c = first;
+            if (c == '%') {
+                // Process escape pair
+                if ((p + 3 <= n)
+                    && match(charAt(p + 1), L_HEX, H_HEX)
+                    && match(charAt(p + 2), L_HEX, H_HEX)) {
+                    return p + 3;
+                }
+                fail("Malformed escape pair", p);
+            } else if ((c > 128)
+                       && !Character.isSpaceChar(c)
+                       && !Character.isISOControl(c)) {
+                // Allow unescaped but visible non-US-ASCII chars
+                return p + 1;
+            }
+            return p;
+!!!7555842.java!!!	scan(in start : int, in n : int, in lowMask : long, in highMask : long) : int
+            int p = start;
+            while (p < n) {
+                char c = charAt(p);
+                if (match(c, lowMask, highMask)) {
+                    p++;
+                    continue;
+                }
+                if ((lowMask & L_ESCAPED) != 0) {
+                    int q = scanEscape(p, n, c);
+                    if (q > p) {
+                        p = q;
+                        continue;
+                    }
+                }
+                break;
+            }
+            return p;
+!!!7555970.java!!!	checkChars(in start : int, in end : int, in lowMask : long, in highMask : long, inout what : String) : void
+            int p = scan(start, end, lowMask, highMask);
+            if (p < end)
+                fail("Illegal character in " + what, p);
+!!!7556098.java!!!	checkChar(in p : int, in lowMask : long, in highMask : long, inout what : String) : void
+            checkChars(p, p + 1, lowMask, highMask, what);
+!!!7556226.java!!!	parse(inout rsa : boolean) : void
+            requireServerAuthority = rsa;
+            int ssp;                    // Start of scheme-specific part
+            int n = input.length();
+            int p = scan(0, n, "/?#", ":");
+            if ((p >= 0) && at(p, n, ':')) {
+                if (p == 0)
+                    failExpecting("scheme name", 0);
+                checkChar(0, L_ALPHA, H_ALPHA, "scheme name");
+                checkChars(1, p, L_SCHEME, H_SCHEME, "scheme name");
+                scheme = substring(0, p);
+                p++;                    // Skip ':'
+                ssp = p;
+                if (at(p, n, '/')) {
+                    p = parseHierarchical(p, n);
+                } else {
+                    int q = scan(p, n, "", "#");
+                    if (q <= p)
+                        failExpecting("scheme-specific part", p);
+                    checkChars(p, q, L_URIC, H_URIC, "opaque part");
+                    p = q;
+                }
+            } else {
+                ssp = 0;
+                p = parseHierarchical(0, n);
+            }
+            schemeSpecificPart = substring(ssp, p);
+            if (at(p, n, '#')) {
+                checkChars(p + 1, n, L_URIC, H_URIC, "fragment");
+                fragment = substring(p + 1, n);
+                p = n;
+            }
+            if (p < n)
+                fail("end of URI", p);
+!!!7556354.java!!!	parseHierarchical(in start : int, in n : int) : int
+            int p = start;
+            if (at(p, n, '/') && at(p + 1, n, '/')) {
+                p += 2;
+                int q = scan(p, n, "", "/?#");
+                if (q > p) {
+                    p = parseAuthority(p, q);
+                } else if (q < n) {
+                    // DEVIATION: Allow empty authority prior to non-empty
+                    // path, query component or fragment identifier
+                } else
+                    failExpecting("authority", p);
+            }
+            int q = scan(p, n, "", "?#"); // DEVIATION: May be empty
+            checkChars(p, q, L_PATH, H_PATH, "path");
+            path = substring(p, q);
+            p = q;
+            if (at(p, n, '?')) {
+                p++;
+                q = scan(p, n, "", "#");
+                checkChars(p, q, L_URIC, H_URIC, "query");
+                query = substring(p, q);
+                p = q;
+            }
+            return p;
+!!!7556482.java!!!	parseAuthority(in start : int, in n : int) : int
+            int p = start;
+            int q = p;
+            URISyntaxException ex = null;
+
+            boolean serverChars;
+            boolean regChars;
+
+            if (scan(p, n, "", "]") > p) {
+                // contains a literal IPv6 address, therefore % is allowed
+                serverChars = (scan(p, n, L_SERVER_PERCENT, H_SERVER_PERCENT) == n);
+            } else {
+                serverChars = (scan(p, n, L_SERVER, H_SERVER) == n);
+            }
+            regChars = (scan(p, n, L_REG_NAME, H_REG_NAME) == n);
+
+            if (regChars && !serverChars) {
+                // Must be a registry-based authority
+                authority = substring(p, n);
+                return n;
+            }
+
+            if (serverChars) {
+                // Might be (probably is) a server-based authority, so attempt
+                // to parse it as such.  If the attempt fails, try to treat it
+                // as a registry-based authority.
+                try {
+                    q = parseServer(p, n);
+                    if (q < n)
+                        failExpecting("end of authority", q);
+                    authority = substring(p, n);
+                } catch (URISyntaxException x) {
+                    // Undo results of failed parse
+                    userInfo = null;
+                    host = null;
+                    port = -1;
+                    if (requireServerAuthority) {
+                        // If we're insisting upon a server-based authority,
+                        // then just re-throw the exception
+                        throw x;
+                    } else {
+                        // Save the exception in case it doesn't parse as a
+                        // registry either
+                        ex = x;
+                        q = p;
+                    }
+                }
+            }
+
+            if (q < n) {
+                if (regChars) {
+                    // Registry-based authority
+                    authority = substring(p, n);
+                } else if (ex != null) {
+                    // Re-throw exception; it was probably due to
+                    // a malformed IPv6 address
+                    throw ex;
+                } else {
+                    fail("Illegal character in authority", q);
+                }
+            }
+
+            return n;
+!!!7556610.java!!!	parseServer(in start : int, in n : int) : int
+            int p = start;
+            int q;
+
+            // userinfo
+            q = scan(p, n, "/?#", "@");
+            if ((q >= p) && at(q, n, '@')) {
+                checkChars(p, q, L_USERINFO, H_USERINFO, "user info");
+                userInfo = substring(p, q);
+                p = q + 1;              // Skip '@'
+            }
+
+            // hostname, IPv4 address, or IPv6 address
+            if (at(p, n, '[')) {
+                // DEVIATION from RFC2396: Support IPv6 addresses, per RFC2732
+                p++;
+                q = scan(p, n, "/?#", "]");
+                if ((q > p) && at(q, n, ']')) {
+                    // look for a "%" scope id
+                    int r = scan (p, q, "", "%");
+                    if (r > p) {
+                        parseIPv6Reference(p, r);
+                        if (r+1 == q) {
+                            fail ("scope id expected");
+                        }
+                        checkChars (r+1, q, L_ALPHANUM, H_ALPHANUM,
+                                                "scope id");
+                    } else {
+                        parseIPv6Reference(p, q);
+                    }
+                    host = substring(p-1, q+1);
+                    p = q + 1;
+                } else {
+                    failExpecting("closing bracket for IPv6 address", q);
+                }
+            } else {
+                q = parseIPv4Address(p, n);
+                if (q <= p)
+                    q = parseHostname(p, n);
+                p = q;
+            }
+
+            // port
+            if (at(p, n, ':')) {
+                p++;
+                q = scan(p, n, "", "/");
+                if (q > p) {
+                    checkChars(p, q, L_DIGIT, H_DIGIT, "port number");
+                    try {
+                        port = Integer.parseInt(substring(p, q));
+                    } catch (NumberFormatException x) {
+                        fail("Malformed port number", p);
+                    }
+                    p = q;
+                }
+            }
+            if (p < n)
+                failExpecting("port number", p);
+
+            return p;
+!!!7556738.java!!!	scanByte(in start : int, in n : int) : int
+            int p = start;
+            int q = scan(p, n, L_DIGIT, H_DIGIT);
+            if (q <= p) return q;
+            if (Integer.parseInt(substring(p, q)) > 255) return p;
+            return q;
+!!!7556866.java!!!	scanIPv4Address(in start : int, in n : int, inout strict : boolean) : int
+            int p = start;
+            int q;
+            int m = scan(p, n, L_DIGIT | L_DOT, H_DIGIT | H_DOT);
+            if ((m <= p) || (strict && (m != n)))
+                return -1;
+            for (;;) {
+                // Per RFC2732: At most three digits per byte
+                // Further constraint: Each element fits in a byte
+                if ((q = scanByte(p, m)) <= p) break;   p = q;
+                if ((q = scan(p, m, '.')) <= p) break;  p = q;
+                if ((q = scanByte(p, m)) <= p) break;   p = q;
+                if ((q = scan(p, m, '.')) <= p) break;  p = q;
+                if ((q = scanByte(p, m)) <= p) break;   p = q;
+                if ((q = scan(p, m, '.')) <= p) break;  p = q;
+                if ((q = scanByte(p, m)) <= p) break;   p = q;
+                if (q < m) break;
+                return q;
+            }
+            fail("Malformed IPv4 address", q);
+            return -1;
+!!!7556994.java!!!	takeIPv4Address(in start : int, in n : int, inout expected : String) : int
+            int p = scanIPv4Address(start, n, true);
+            if (p <= start)
+                failExpecting(expected, start);
+            return p;
+!!!7557122.java!!!	parseIPv4Address(in start : int, in n : int) : int
+            int p;
+
+            try {
+                p = scanIPv4Address(start, n, false);
+            } catch (URISyntaxException x) {
+                return -1;
+            } catch (NumberFormatException nfe) {
+                return -1;
+            }
+
+            if (p > start && p < n) {
+                // IPv4 address is followed by something - check that
+                // it's a ":" as this is the only valid character to
+                // follow an address.
+                if (charAt(p) != ':') {
+                    p = -1;
+                }
+            }
+
+            if (p > start)
+                host = substring(start, p);
+
+            return p;
+!!!7557250.java!!!	parseHostname(in start : int, in n : int) : int
+            int p = start;
+            int q;
+            int l = -1;                 // Start of last parsed label
+
+            do {
+                // domainlabel = alphanum [ *( alphanum | "-" ) alphanum ]
+                q = scan(p, n, L_ALPHANUM, H_ALPHANUM);
+                if (q <= p)
+                    break;
+                l = p;
+                if (q > p) {
+                    p = q;
+                    q = scan(p, n, L_ALPHANUM | L_DASH, H_ALPHANUM | H_DASH);
+                    if (q > p) {
+                        if (charAt(q - 1) == '-')
+                            fail("Illegal character in hostname", q - 1);
+                        p = q;
+                    }
+                }
+                q = scan(p, n, '.');
+                if (q <= p)
+                    break;
+                p = q;
+            } while (p < n);
+
+            if ((p < n) && !at(p, n, ':'))
+                fail("Illegal character in hostname", p);
+
+            if (l < 0)
+                failExpecting("hostname", start);
+
+            // for a fully qualified hostname check that the rightmost
+            // label starts with an alpha character.
+            if (l > start && !match(charAt(l), L_ALPHA, H_ALPHA)) {
+                fail("Illegal character in hostname", l);
+            }
+
+            host = substring(start, p);
+            return p;
+!!!7557378.java!!!	parseIPv6Reference(in start : int, in n : int) : int
+            int p = start;
+            int q;
+            boolean compressedZeros = false;
+
+            q = scanHexSeq(p, n);
+
+            if (q > p) {
+                p = q;
+                if (at(p, n, "::")) {
+                    compressedZeros = true;
+                    p = scanHexPost(p + 2, n);
+                } else if (at(p, n, ':')) {
+                    p = takeIPv4Address(p + 1,  n, "IPv4 address");
+                    ipv6byteCount += 4;
+                }
+            } else if (at(p, n, "::")) {
+                compressedZeros = true;
+                p = scanHexPost(p + 2, n);
+            }
+            if (p < n)
+                fail("Malformed IPv6 address", start);
+            if (ipv6byteCount > 16)
+                fail("IPv6 address too long", start);
+            if (!compressedZeros && ipv6byteCount < 16)
+                fail("IPv6 address too short", start);
+            if (compressedZeros && ipv6byteCount == 16)
+                fail("Malformed IPv6 address", start);
+
+            return p;
+!!!7557506.java!!!	scanHexPost(in start : int, in n : int) : int
+            int p = start;
+            int q;
+
+            if (p == n)
+                return p;
+
+            q = scanHexSeq(p, n);
+            if (q > p) {
+                p = q;
+                if (at(p, n, ':')) {
+                    p++;
+                    p = takeIPv4Address(p, n, "hex digits or IPv4 address");
+                    ipv6byteCount += 4;
+                }
+            } else {
+                p = takeIPv4Address(p, n, "hex digits or IPv4 address");
+                ipv6byteCount += 4;
+            }
+            return p;
+!!!7557634.java!!!	scanHexSeq(in start : int, in n : int) : int
+            int p = start;
+            int q;
+
+            q = scan(p, n, L_HEX, H_HEX);
+            if (q <= p)
+                return -1;
+            if (at(q, n, '.'))          // Beginning of IPv4 address
+                return -1;
+            if (q > p + 4)
+                fail("IPv6 hexadecimal digit sequence too long", p);
+            ipv6byteCount += 2;
+            p = q;
+            while (p < n) {
+                if (!at(p, n, ':'))
+                    break;
+                if (at(p + 1, n, ':'))
+                    break;              // "::"
+                p++;
+                q = scan(p, n, L_HEX, H_HEX);
+                if (q <= p)
+                    failExpecting("digits for an IPv6 address", p);
+                if (at(q, n, '.')) {    // Beginning of IPv4 address
+                    p--;
+                    break;
+                }
+                if (q > p + 4)
+                    fail("IPv6 hexadecimal digit sequence too long", p);
+                ipv6byteCount += 2;
+                p = q;
+            }
+
+            return p;

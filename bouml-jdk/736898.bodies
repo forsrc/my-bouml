@@ -1,0 +1,212 @@
+class XMLCatalogResolver
+!!!5107074.java!!!	XMLCatalogResolver()
+        this(null, true);
+!!!5107202.java!!!	XMLCatalogResolver(inout catalogs : String [[]])
+        this(catalogs, true);
+!!!5107330.java!!!	XMLCatalogResolver(inout catalogs : String [[]], inout preferPublic : boolean)
+        init(catalogs, preferPublic);
+!!!5107458.java!!!	getCatalogList() : String
+        return (fCatalogsList != null)
+            ? (String[]) fCatalogsList.clone() : null;
+!!!5107586.java!!!	setCatalogList(inout catalogs : String [[]]) : void
+        fCatalogsChanged = true;
+        fCatalogsList = (catalogs != null)
+            ? (String[]) catalogs.clone() : null;
+!!!5107714.java!!!	clear() : void
+        fCatalog = null;
+!!!5107842.java!!!	getPreferPublic() : boolean
+        return fPreferPublic;
+!!!5107970.java!!!	setPreferPublic(inout preferPublic : boolean) : void
+        fPreferPublic = preferPublic;
+        fResolverCatalogManager.setPreferPublic(preferPublic);
+!!!5108098.java!!!	getUseLiteralSystemId() : boolean
+        return fUseLiteralSystemId;
+!!!5108226.java!!!	setUseLiteralSystemId(inout useLiteralSystemId : boolean) : void
+        fUseLiteralSystemId = useLiteralSystemId;
+!!!5108354.java!!!	resolveEntity(inout publicId : String, inout systemId : String) : InputSource
+
+        String resolvedId = null;
+        if (publicId != null && systemId != null) {
+            resolvedId = resolvePublic(publicId, systemId);
+        }
+        else if (systemId != null) {
+            resolvedId = resolveSystem(systemId);
+        }
+
+        if (resolvedId != null) {
+            InputSource source = new InputSource(resolvedId);
+            source.setPublicId(publicId);
+            return source;
+        }
+        return null;
+!!!5108482.java!!!	resolveEntity(inout name : String, inout publicId : String, inout baseURI : String, inout systemId : String) : InputSource
+
+         String resolvedId = null;
+
+         if (!getUseLiteralSystemId() && baseURI != null) {
+             // Attempt to resolve the system identifier against the base URI.
+             try {
+                 URI uri = new URI(new URI(baseURI), systemId);
+                 systemId = uri.toString();
+             }
+             // Ignore the exception. Fallback to the literal system identifier.
+             catch (URI.MalformedURIException ex) {}
+         }
+
+         if (publicId != null && systemId != null) {
+             resolvedId = resolvePublic(publicId, systemId);
+         }
+         else if (systemId != null) {
+             resolvedId = resolveSystem(systemId);
+         }
+
+         if (resolvedId != null) {
+             InputSource source = new InputSource(resolvedId);
+             source.setPublicId(publicId);
+             return source;
+         }
+         return null;
+!!!5108610.java!!!	getExternalSubset(inout name : String, inout baseURI : String) : InputSource
+         return null;
+!!!5108738.java!!!	resolveResource(inout type : String, inout namespaceURI : String, inout publicId : String, inout systemId : String, inout baseURI : String) : LSInput
+
+        String resolvedId = null;
+
+        try {
+            // The namespace is useful for resolving namespace aware
+            // grammars such as XML schema. Let it take precedence over
+            // the external identifier if one exists.
+            if (namespaceURI != null) {
+                resolvedId = resolveURI(namespaceURI);
+            }
+
+            if (!getUseLiteralSystemId() && baseURI != null) {
+                // Attempt to resolve the system identifier against the base URI.
+                try {
+                    URI uri = new URI(new URI(baseURI), systemId);
+                    systemId = uri.toString();
+                }
+                // Ignore the exception. Fallback to the literal system identifier.
+                catch (URI.MalformedURIException ex) {}
+            }
+
+            // Resolve against an external identifier if one exists. This
+            // is useful for resolving DTD external subsets and other
+            // external entities. For XML schemas if there was no namespace
+            // mapping we might be able to resolve a system identifier
+            // specified as a location hint.
+            if (resolvedId == null) {
+                if (publicId != null && systemId != null) {
+                    resolvedId = resolvePublic(publicId, systemId);
+                }
+                else if (systemId != null) {
+                    resolvedId = resolveSystem(systemId);
+                }
+            }
+        }
+        // Ignore IOException. It cannot be thrown from this method.
+        catch (IOException ex) {}
+
+        if (resolvedId != null) {
+            return new DOMInputImpl(publicId, resolvedId, baseURI);
+        }
+        return null;
+!!!5108866.java!!!	resolveEntity(inout resourceIdentifier : XMLResourceIdentifier) : XMLInputSource
+
+        String resolvedId = resolveIdentifier(resourceIdentifier);
+        if (resolvedId != null) {
+            return new XMLInputSource(resourceIdentifier.getPublicId(),
+                                      resolvedId,
+                                      resourceIdentifier.getBaseSystemId());
+        }
+        return null;
+!!!5108994.java!!!	resolveIdentifier(inout resourceIdentifier : XMLResourceIdentifier) : String
+
+        String resolvedId = null;
+
+        // The namespace is useful for resolving namespace aware
+        // grammars such as XML schema. Let it take precedence over
+        // the external identifier if one exists.
+        String namespace = resourceIdentifier.getNamespace();
+        if (namespace != null) {
+            resolvedId = resolveURI(namespace);
+        }
+
+        // Resolve against an external identifier if one exists. This
+        // is useful for resolving DTD external subsets and other
+        // external entities. For XML schemas if there was no namespace
+        // mapping we might be able to resolve a system identifier
+        // specified as a location hint.
+        if (resolvedId == null) {
+            String publicId = resourceIdentifier.getPublicId();
+            String systemId = getUseLiteralSystemId()
+                ? resourceIdentifier.getLiteralSystemId()
+                : resourceIdentifier.getExpandedSystemId();
+            if (publicId != null && systemId != null) {
+                resolvedId = resolvePublic(publicId, systemId);
+            }
+            else if (systemId != null) {
+                resolvedId = resolveSystem(systemId);
+            }
+        }
+        return resolvedId;
+!!!5109122.java!!!	resolveSystem(inout systemId : String) : String
+
+        if (fCatalogsChanged) {
+            parseCatalogs();
+            fCatalogsChanged = false;
+        }
+        return (fCatalog != null)
+            ? fCatalog.resolveSystem(systemId) : null;
+!!!5109250.java!!!	resolvePublic(inout publicId : String, inout systemId : String) : String
+
+        if (fCatalogsChanged) {
+            parseCatalogs();
+            fCatalogsChanged = false;
+        }
+        return (fCatalog != null)
+            ? fCatalog.resolvePublic(publicId, systemId) : null;
+!!!5109378.java!!!	resolveURI(inout uri : String) : String
+
+        if (fCatalogsChanged) {
+            parseCatalogs();
+            fCatalogsChanged = false;
+        }
+        return (fCatalog != null)
+            ? fCatalog.resolveURI(uri) : null;
+!!!5109506.java!!!	init(inout catalogs : String [[]], inout preferPublic : boolean) : void
+        fCatalogsList = (catalogs != null) ? (String[]) catalogs.clone() : null;
+        fPreferPublic = preferPublic;
+        fResolverCatalogManager = new CatalogManager();
+        fResolverCatalogManager.setAllowOasisXMLCatalogPI(false);
+        fResolverCatalogManager.setCatalogClassName("com.sun.org.apache.xml.internal.resolver.Catalog");
+        fResolverCatalogManager.setCatalogFiles("");
+        fResolverCatalogManager.setIgnoreMissingProperties(true);
+        fResolverCatalogManager.setPreferPublic(fPreferPublic);
+        fResolverCatalogManager.setRelativeCatalogs(false);
+        fResolverCatalogManager.setUseStaticCatalog(false);
+        fResolverCatalogManager.setVerbosity(0);
+!!!5109634.java!!!	parseCatalogs() : void
+        if (fCatalogsList != null) {
+            fCatalog = new Catalog(fResolverCatalogManager);
+            attachReaderToCatalog(fCatalog);
+            for (int i = 0; i < fCatalogsList.length; ++i) {
+                String catalog = fCatalogsList[i];
+                if (catalog != null && catalog.length() > 0) {
+                    fCatalog.parseCatalog(catalog);
+                }
+            }
+        }
+        else {
+            fCatalog = null;
+        }
+!!!5109762.java!!!	attachReaderToCatalog(inout catalog : Catalog) : void
+
+        SAXParserFactory spf = new SAXParserFactoryImpl();
+        spf.setNamespaceAware(true);
+        spf.setValidating(false);
+
+        SAXCatalogReader saxReader = new SAXCatalogReader(spf);
+        saxReader.setCatalogParser(OASISXMLCatalogReader.namespaceName, "catalog",
+            "com.sun.org.apache.xml.internal.resolver.readers.OASISXMLCatalogReader");
+        catalog.addReader("application/xml", saxReader);

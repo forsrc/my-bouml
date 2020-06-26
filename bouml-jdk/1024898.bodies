@@ -1,0 +1,208 @@
+class Delegate
+!!!8008834.java!!!	Delegate(inout sigSpi : SignatureSpi, inout algorithm : String)
+            super(algorithm);
+            this.sigSpi = sigSpi;
+            this.lock = null; // no lock needed
+!!!8008962.java!!!	Delegate(inout service : Provider::Service, inout iterator : Iterator, inout algorithm : String)
+            super(algorithm);
+            this.firstService = service;
+            this.serviceIterator = iterator;
+            this.lock = new Object();
+!!!8009090.java!!!	clone() : Object
+            chooseFirstProvider();
+            if (sigSpi instanceof Cloneable) {
+                SignatureSpi sigSpiClone = (SignatureSpi)sigSpi.clone();
+                // Because 'algorithm' and 'provider' are private
+                // members of our supertype, we must perform a cast to
+                // access them.
+                Signature that =
+                    new Delegate(sigSpiClone, ((Signature)this).algorithm);
+                that.provider = ((Signature)this).provider;
+                return that;
+            } else {
+                throw new CloneNotSupportedException();
+            }
+!!!8009218.java!!!	newInstance(inout s : Provider::Service) : SignatureSpi
+            if (s.getType().equals("Cipher")) {
+                // must be NONEwithRSA
+                try {
+                    Cipher c = Cipher.getInstance(RSA_CIPHER, s.getProvider());
+                    return new CipherAdapter(c);
+                } catch (NoSuchPaddingException e) {
+                    throw new NoSuchAlgorithmException(e);
+                }
+            } else {
+                Object o = s.newInstance(null);
+                if (o instanceof SignatureSpi == false) {
+                    throw new NoSuchAlgorithmException
+                        ("Not a SignatureSpi: " + o.getClass().getName());
+                }
+                return (SignatureSpi)o;
+            }
+!!!8009346.java!!!	chooseFirstProvider() : void
+            if (sigSpi != null) {
+                return;
+            }
+            synchronized (lock) {
+                if (sigSpi != null) {
+                    return;
+                }
+                if (debug != null) {
+                    int w = --warnCount;
+                    if (w >= 0) {
+                        debug.println("Signature.init() not first method "
+                            + "called, disabling delayed provider selection");
+                        if (w == 0) {
+                            debug.println("Further warnings of this type will "
+                                + "be suppressed");
+                        }
+                        new Exception("Call trace").printStackTrace();
+                    }
+                }
+                Exception lastException = null;
+                while ((firstService != null) || serviceIterator.hasNext()) {
+                    Service s;
+                    if (firstService != null) {
+                        s = firstService;
+                        firstService = null;
+                    } else {
+                        s = serviceIterator.next();
+                    }
+                    if (isSpi(s) == false) {
+                        continue;
+                    }
+                    try {
+                        sigSpi = newInstance(s);
+                        provider = s.getProvider();
+                        // not needed any more
+                        firstService = null;
+                        serviceIterator = null;
+                        return;
+                    } catch (NoSuchAlgorithmException e) {
+                        lastException = e;
+                    }
+                }
+                ProviderException e = new ProviderException
+                        ("Could not construct SignatureSpi instance");
+                if (lastException != null) {
+                    e.initCause(lastException);
+                }
+                throw e;
+            }
+!!!8009474.java!!!	chooseProvider(in type : int, inout key : Key, inout random : SecureRandom) : void
+            synchronized (lock) {
+                if (sigSpi != null) {
+                    init(sigSpi, type, key, random);
+                    return;
+                }
+                Exception lastException = null;
+                while ((firstService != null) || serviceIterator.hasNext()) {
+                    Service s;
+                    if (firstService != null) {
+                        s = firstService;
+                        firstService = null;
+                    } else {
+                        s = serviceIterator.next();
+                    }
+                    // if provider says it does not support this key, ignore it
+                    if (s.supportsParameter(key) == false) {
+                        continue;
+                    }
+                    // if instance is not a SignatureSpi, ignore it
+                    if (isSpi(s) == false) {
+                        continue;
+                    }
+                    try {
+                        SignatureSpi spi = newInstance(s);
+                        init(spi, type, key, random);
+                        provider = s.getProvider();
+                        sigSpi = spi;
+                        firstService = null;
+                        serviceIterator = null;
+                        return;
+                    } catch (Exception e) {
+                        // NoSuchAlgorithmException from newInstance()
+                        // InvalidKeyException from init()
+                        // RuntimeException (ProviderException) from init()
+                        if (lastException == null) {
+                            lastException = e;
+                        }
+                    }
+                }
+                // no working provider found, fail
+                if (lastException instanceof InvalidKeyException) {
+                    throw (InvalidKeyException)lastException;
+                }
+                if (lastException instanceof RuntimeException) {
+                    throw (RuntimeException)lastException;
+                }
+                String k = (key != null) ? key.getClass().getName() : "(null)";
+                throw new InvalidKeyException
+                    ("No installed provider supports this key: "
+                    + k, lastException);
+            }
+!!!8009602.java!!!	init(inout spi : SignatureSpi, in type : int, inout key : Key, inout random : SecureRandom) : void
+            switch (type) {
+            case I_PUB:
+                spi.engineInitVerify((PublicKey)key);
+                break;
+            case I_PRIV:
+                spi.engineInitSign((PrivateKey)key);
+                break;
+            case I_PRIV_SR:
+                spi.engineInitSign((PrivateKey)key, random);
+                break;
+            default:
+                throw new AssertionError("Internal error: " + type);
+            }
+!!!8009730.java!!!	engineInitVerify(inout publicKey : PublicKey) : void
+            if (sigSpi != null) {
+                sigSpi.engineInitVerify(publicKey);
+            } else {
+                chooseProvider(I_PUB, publicKey, null);
+            }
+!!!8009858.java!!!	engineInitSign(inout privateKey : PrivateKey) : void
+            if (sigSpi != null) {
+                sigSpi.engineInitSign(privateKey);
+            } else {
+                chooseProvider(I_PRIV, privateKey, null);
+            }
+!!!8009986.java!!!	engineInitSign(inout privateKey : PrivateKey, inout sr : SecureRandom) : void
+            if (sigSpi != null) {
+                sigSpi.engineInitSign(privateKey, sr);
+            } else {
+                chooseProvider(I_PRIV_SR, privateKey, sr);
+            }
+!!!8010114.java!!!	engineUpdate(in b : byte) : void
+            chooseFirstProvider();
+            sigSpi.engineUpdate(b);
+!!!8010242.java!!!	engineUpdate(inout b : byte [[]], in off : int, in len : int) : void
+            chooseFirstProvider();
+            sigSpi.engineUpdate(b, off, len);
+!!!8010370.java!!!	engineUpdate(inout data : ByteBuffer) : void
+            chooseFirstProvider();
+            sigSpi.engineUpdate(data);
+!!!8010498.java!!!	engineSign() : byte
+            chooseFirstProvider();
+            return sigSpi.engineSign();
+!!!8010626.java!!!	engineSign(inout outbuf : byte [[]], in offset : int, in len : int) : int
+            chooseFirstProvider();
+            return sigSpi.engineSign(outbuf, offset, len);
+!!!8010754.java!!!	engineVerify(inout sigBytes : byte [[]]) : boolean
+            chooseFirstProvider();
+            return sigSpi.engineVerify(sigBytes);
+!!!8010882.java!!!	engineVerify(inout sigBytes : byte [[]], in offset : int, in length : int) : boolean
+            chooseFirstProvider();
+            return sigSpi.engineVerify(sigBytes, offset, length);
+!!!8011010.java!!!	engineSetParameter(inout param : String, inout value : Object) : void
+            chooseFirstProvider();
+            sigSpi.engineSetParameter(param, value);
+!!!8011138.java!!!	engineSetParameter(inout params : AlgorithmParameterSpec) : void
+            chooseFirstProvider();
+            sigSpi.engineSetParameter(params);
+!!!8011266.java!!!	engineGetParameter(inout param : String) : Object
+            chooseFirstProvider();
+            return sigSpi.engineGetParameter(param);
+!!!8011394.java!!!	engineGetParameters() : AlgorithmParameters
+            chooseFirstProvider();
+            return sigSpi.engineGetParameters();

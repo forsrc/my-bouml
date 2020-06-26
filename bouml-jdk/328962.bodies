@@ -1,0 +1,124 @@
+class JFIFExtensionMarkerSegment
+!!!1800706.java!!!	JFIFExtensionMarkerSegment(inout buffer : JPEGBuffer, inout reader : JPEGImageReader)
+
+            super(buffer);
+            buffer.bufPtr += ID_SIZE;  // skip the id, we already checked it
+
+            code = buffer.buf[buffer.bufPtr++] & 0xff;
+            buffer.bufAvail -= DATA_SIZE;
+            if (code == THUMB_JPEG) {
+                thumb = new JFIFThumbJPEG(buffer, length, reader);
+            } else {
+                buffer.loadBuf(2);
+                int thumbX = buffer.buf[buffer.bufPtr++] & 0xff;
+                int thumbY = buffer.buf[buffer.bufPtr++] & 0xff;
+                buffer.bufAvail -= 2;
+                // following constructors handle bufAvail
+                if (code == THUMB_PALETTE) {
+                    thumb = new JFIFThumbPalette(buffer, thumbX, thumbY);
+                } else {
+                    thumb = new JFIFThumbRGB(buffer, thumbX, thumbY);
+                }
+            }
+!!!1800834.java!!!	JFIFExtensionMarkerSegment(inout node : Node)
+            super(JPEG.APP0);
+            NamedNodeMap attrs = node.getAttributes();
+            if (attrs.getLength() > 0) {
+                code = getAttributeValue(node,
+                                         attrs,
+                                         "extensionCode",
+                                         THUMB_JPEG,
+                                         THUMB_RGB,
+                                         false);
+                if (code == THUMB_UNASSIGNED) {
+                throw new IIOInvalidTreeException
+                    ("invalid extensionCode attribute value", node);
+                }
+            } else {
+                code = THUMB_UNASSIGNED;
+            }
+            // Now the child
+            if (node.getChildNodes().getLength() != 1) {
+                throw new IIOInvalidTreeException
+                    ("app0JFXX node must have exactly 1 child", node);
+            }
+            Node child = node.getFirstChild();
+            String name = child.getNodeName();
+            if (name.equals("JFIFthumbJPEG")) {
+                if (code == THUMB_UNASSIGNED) {
+                    code = THUMB_JPEG;
+                }
+                thumb = new JFIFThumbJPEG(child);
+            } else if (name.equals("JFIFthumbPalette")) {
+                if (code == THUMB_UNASSIGNED) {
+                    code = THUMB_PALETTE;
+                }
+                thumb = new JFIFThumbPalette(child);
+            } else if (name.equals("JFIFthumbRGB")) {
+                if (code == THUMB_UNASSIGNED) {
+                    code = THUMB_RGB;
+                }
+                thumb = new JFIFThumbRGB(child);
+            } else {
+                throw new IIOInvalidTreeException
+                    ("unrecognized app0JFXX child node", node);
+            }
+!!!1800962.java!!!	JFIFExtensionMarkerSegment(inout thumbnail : BufferedImage)
+
+            super(JPEG.APP0);
+            ColorModel cm = thumbnail.getColorModel();
+            int csType = cm.getColorSpace().getType();
+            if (cm.hasAlpha()) {
+                throw new IllegalThumbException();
+            }
+            if (cm instanceof IndexColorModel) {
+                code = THUMB_PALETTE;
+                thumb = new JFIFThumbPalette(thumbnail);
+            } else if (csType == ColorSpace.TYPE_RGB) {
+                code = THUMB_RGB;
+                thumb = new JFIFThumbRGB(thumbnail);
+            } else if (csType == ColorSpace.TYPE_GRAY) {
+                code = THUMB_JPEG;
+                thumb = new JFIFThumbJPEG(thumbnail);
+            } else {
+                throw new IllegalThumbException();
+            }
+!!!1801090.java!!!	setThumbnail(inout thumbnail : BufferedImage) : void
+            try {
+                switch (code) {
+                case THUMB_PALETTE:
+                    thumb = new JFIFThumbPalette(thumbnail);
+                    break;
+                case THUMB_RGB:
+                    thumb = new JFIFThumbRGB(thumbnail);
+                    break;
+                case THUMB_JPEG:
+                    thumb = new JFIFThumbJPEG(thumbnail);
+                    break;
+                }
+            } catch (IllegalThumbException e) {
+                // Should never happen
+                throw new InternalError("Illegal thumb in setThumbnail!", e);
+            }
+!!!1801218.java!!!	clone() : Object
+            JFIFExtensionMarkerSegment newGuy =
+                (JFIFExtensionMarkerSegment) super.clone();
+            if (thumb != null) {
+                newGuy.thumb = (JFIFThumb) thumb.clone();
+            }
+            return newGuy;
+!!!1801346.java!!!	getNativeNode() : IIOMetadataNode
+            IIOMetadataNode node = new IIOMetadataNode("app0JFXX");
+            node.setAttribute("extensionCode", Integer.toString(code));
+            node.appendChild(thumb.getNativeNode());
+            return node;
+!!!1801474.java!!!	write(inout ios : ImageOutputStream, inout writer : JPEGImageWriter) : void
+            length = LENGTH_SIZE + DATA_SIZE + thumb.getLength();
+            writeTag(ios);
+            byte [] id = {0x4A, 0x46, 0x58, 0x58, 0x00};
+            ios.write(id);
+            ios.write(code);
+            thumb.write(ios, writer);
+!!!1801602.java!!!	print() : void
+            printTag("JFXX");
+            thumb.print();

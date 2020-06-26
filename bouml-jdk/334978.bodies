@@ -1,0 +1,767 @@
+class PNGImageWriter
+!!!1858050.java!!!	PNGImageWriter(inout originatingProvider : ImageWriterSpi)
+        super(originatingProvider);
+!!!1858178.java!!!	setOutput(inout output : Object) : void
+        super.setOutput(output);
+        if (output != null) {
+            if (!(output instanceof ImageOutputStream)) {
+                throw new IllegalArgumentException("output not an ImageOutputStream!");
+            }
+            this.stream = (ImageOutputStream)output;
+        } else {
+            this.stream = null;
+        }
+!!!1858306.java!!!	getDefaultWriteParam() : ImageWriteParam
+        return new PNGImageWriteParam(getLocale());
+!!!1858434.java!!!	getDefaultStreamMetadata(inout param : ImageWriteParam) : IIOMetadata
+        return null;
+!!!1858562.java!!!	getDefaultImageMetadata(inout imageType : ImageTypeSpecifier, inout param : ImageWriteParam) : IIOMetadata
+        PNGMetadata m = new PNGMetadata();
+        m.initialize(imageType, imageType.getSampleModel().getNumBands());
+        return m;
+!!!1858690.java!!!	convertStreamMetadata(inout inData : IIOMetadata, inout param : ImageWriteParam) : IIOMetadata
+        return null;
+!!!1858818.java!!!	convertImageMetadata(inout inData : IIOMetadata, inout imageType : ImageTypeSpecifier, inout param : ImageWriteParam) : IIOMetadata
+        // TODO - deal with imageType
+        if (inData instanceof PNGMetadata) {
+            return (PNGMetadata)((PNGMetadata)inData).clone();
+        } else {
+            return new PNGMetadata(inData);
+        }
+!!!1858946.java!!!	write_magic() : void
+        // Write signature
+        byte[] magic = { (byte)137, 80, 78, 71, 13, 10, 26, 10 };
+        stream.write(magic);
+!!!1859074.java!!!	write_IHDR() : void
+        // Write IHDR chunk
+        ChunkStream cs = new ChunkStream(PNGImageReader.IHDR_TYPE, stream);
+        cs.writeInt(metadata.IHDR_width);
+        cs.writeInt(metadata.IHDR_height);
+        cs.writeByte(metadata.IHDR_bitDepth);
+        cs.writeByte(metadata.IHDR_colorType);
+        if (metadata.IHDR_compressionMethod != 0) {
+            throw new IIOException(
+"Only compression method 0 is defined in PNG 1.1");
+        }
+        cs.writeByte(metadata.IHDR_compressionMethod);
+        if (metadata.IHDR_filterMethod != 0) {
+            throw new IIOException(
+"Only filter method 0 is defined in PNG 1.1");
+        }
+        cs.writeByte(metadata.IHDR_filterMethod);
+        if (metadata.IHDR_interlaceMethod < 0 ||
+            metadata.IHDR_interlaceMethod > 1) {
+            throw new IIOException(
+"Only interlace methods 0 (node) and 1 (adam7) are defined in PNG 1.1");
+        }
+        cs.writeByte(metadata.IHDR_interlaceMethod);
+        cs.finish();
+!!!1859202.java!!!	write_cHRM() : void
+        if (metadata.cHRM_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.cHRM_TYPE, stream);
+            cs.writeInt(metadata.cHRM_whitePointX);
+            cs.writeInt(metadata.cHRM_whitePointY);
+            cs.writeInt(metadata.cHRM_redX);
+            cs.writeInt(metadata.cHRM_redY);
+            cs.writeInt(metadata.cHRM_greenX);
+            cs.writeInt(metadata.cHRM_greenY);
+            cs.writeInt(metadata.cHRM_blueX);
+            cs.writeInt(metadata.cHRM_blueY);
+            cs.finish();
+        }
+!!!1859330.java!!!	write_gAMA() : void
+        if (metadata.gAMA_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.gAMA_TYPE, stream);
+            cs.writeInt(metadata.gAMA_gamma);
+            cs.finish();
+        }
+!!!1859458.java!!!	write_iCCP() : void
+        if (metadata.iCCP_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.iCCP_TYPE, stream);
+            cs.writeBytes(metadata.iCCP_profileName);
+            cs.writeByte(0); // null terminator
+
+            cs.writeByte(metadata.iCCP_compressionMethod);
+            cs.write(metadata.iCCP_compressedProfile);
+            cs.finish();
+        }
+!!!1859586.java!!!	write_sBIT() : void
+        if (metadata.sBIT_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.sBIT_TYPE, stream);
+            int colorType = metadata.IHDR_colorType;
+            if (metadata.sBIT_colorType != colorType) {
+                processWarningOccurred(0,
+"sBIT metadata has wrong color type.\n" +
+"The chunk will not be written.");
+                return;
+            }
+
+            if (colorType == PNGImageReader.PNG_COLOR_GRAY ||
+                colorType == PNGImageReader.PNG_COLOR_GRAY_ALPHA) {
+                cs.writeByte(metadata.sBIT_grayBits);
+            } else if (colorType == PNGImageReader.PNG_COLOR_RGB ||
+                       colorType == PNGImageReader.PNG_COLOR_PALETTE ||
+                       colorType == PNGImageReader.PNG_COLOR_RGB_ALPHA) {
+                cs.writeByte(metadata.sBIT_redBits);
+                cs.writeByte(metadata.sBIT_greenBits);
+                cs.writeByte(metadata.sBIT_blueBits);
+            }
+
+            if (colorType == PNGImageReader.PNG_COLOR_GRAY_ALPHA ||
+                colorType == PNGImageReader.PNG_COLOR_RGB_ALPHA) {
+                cs.writeByte(metadata.sBIT_alphaBits);
+            }
+            cs.finish();
+        }
+!!!1859714.java!!!	write_sRGB() : void
+        if (metadata.sRGB_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.sRGB_TYPE, stream);
+            cs.writeByte(metadata.sRGB_renderingIntent);
+            cs.finish();
+        }
+!!!1859842.java!!!	write_PLTE() : void
+        if (metadata.PLTE_present) {
+            if (metadata.IHDR_colorType == PNGImageReader.PNG_COLOR_GRAY ||
+              metadata.IHDR_colorType == PNGImageReader.PNG_COLOR_GRAY_ALPHA) {
+                // PLTE cannot occur in a gray image
+
+                processWarningOccurred(0,
+"A PLTE chunk may not appear in a gray or gray alpha image.\n" +
+"The chunk will not be written");
+                return;
+            }
+
+            ChunkStream cs = new ChunkStream(PNGImageReader.PLTE_TYPE, stream);
+
+            int numEntries = metadata.PLTE_red.length;
+            byte[] palette = new byte[numEntries*3];
+            int index = 0;
+            for (int i = 0; i < numEntries; i++) {
+                palette[index++] = metadata.PLTE_red[i];
+                palette[index++] = metadata.PLTE_green[i];
+                palette[index++] = metadata.PLTE_blue[i];
+            }
+
+            cs.write(palette);
+            cs.finish();
+        }
+!!!1859970.java!!!	write_hIST() : void
+        if (metadata.hIST_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.hIST_TYPE, stream);
+
+            if (!metadata.PLTE_present) {
+                throw new IIOException("hIST chunk without PLTE chunk!");
+            }
+
+            cs.writeChars(metadata.hIST_histogram,
+                          0, metadata.hIST_histogram.length);
+            cs.finish();
+        }
+!!!1860098.java!!!	write_tRNS() : void
+        if (metadata.tRNS_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.tRNS_TYPE, stream);
+            int colorType = metadata.IHDR_colorType;
+            int chunkType = metadata.tRNS_colorType;
+
+            // Special case: image is RGB and chunk is Gray
+            // Promote chunk contents to RGB
+            int chunkRed = metadata.tRNS_red;
+            int chunkGreen = metadata.tRNS_green;
+            int chunkBlue = metadata.tRNS_blue;
+            if (colorType == PNGImageReader.PNG_COLOR_RGB &&
+                chunkType == PNGImageReader.PNG_COLOR_GRAY) {
+                chunkType = colorType;
+                chunkRed = chunkGreen = chunkBlue =
+                    metadata.tRNS_gray;
+            }
+
+            if (chunkType != colorType) {
+                processWarningOccurred(0,
+"tRNS metadata has incompatible color type.\n" +
+"The chunk will not be written.");
+                return;
+            }
+
+            if (colorType == PNGImageReader.PNG_COLOR_PALETTE) {
+                if (!metadata.PLTE_present) {
+                    throw new IIOException("tRNS chunk without PLTE chunk!");
+                }
+                cs.write(metadata.tRNS_alpha);
+            } else if (colorType == PNGImageReader.PNG_COLOR_GRAY) {
+                cs.writeShort(metadata.tRNS_gray);
+            } else if (colorType == PNGImageReader.PNG_COLOR_RGB) {
+                cs.writeShort(chunkRed);
+                cs.writeShort(chunkGreen);
+                cs.writeShort(chunkBlue);
+            } else {
+                throw new IIOException("tRNS chunk for color type 4 or 6!");
+            }
+            cs.finish();
+        }
+!!!1860226.java!!!	write_bKGD() : void
+        if (metadata.bKGD_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.bKGD_TYPE, stream);
+            int colorType = metadata.IHDR_colorType & 0x3;
+            int chunkType = metadata.bKGD_colorType;
+
+            // Special case: image is RGB(A) and chunk is Gray
+            // Promote chunk contents to RGB
+            int chunkRed = metadata.bKGD_red;
+            int chunkGreen = metadata.bKGD_red;
+            int chunkBlue = metadata.bKGD_red;
+            if (colorType == PNGImageReader.PNG_COLOR_RGB &&
+                chunkType == PNGImageReader.PNG_COLOR_GRAY) {
+                // Make a gray bKGD chunk look like RGB
+                chunkType = colorType;
+                chunkRed = chunkGreen = chunkBlue =
+                    metadata.bKGD_gray;
+            }
+
+            // Ignore status of alpha in colorType
+            if (chunkType != colorType) {
+                processWarningOccurred(0,
+"bKGD metadata has incompatible color type.\n" +
+"The chunk will not be written.");
+                return;
+            }
+
+            if (colorType == PNGImageReader.PNG_COLOR_PALETTE) {
+                cs.writeByte(metadata.bKGD_index);
+            } else if (colorType == PNGImageReader.PNG_COLOR_GRAY ||
+                       colorType == PNGImageReader.PNG_COLOR_GRAY_ALPHA) {
+                cs.writeShort(metadata.bKGD_gray);
+            } else { // colorType == PNGImageReader.PNG_COLOR_RGB ||
+                     // colorType == PNGImageReader.PNG_COLOR_RGB_ALPHA
+                cs.writeShort(chunkRed);
+                cs.writeShort(chunkGreen);
+                cs.writeShort(chunkBlue);
+            }
+            cs.finish();
+        }
+!!!1860354.java!!!	write_pHYs() : void
+        if (metadata.pHYs_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.pHYs_TYPE, stream);
+            cs.writeInt(metadata.pHYs_pixelsPerUnitXAxis);
+            cs.writeInt(metadata.pHYs_pixelsPerUnitYAxis);
+            cs.writeByte(metadata.pHYs_unitSpecifier);
+            cs.finish();
+        }
+!!!1860482.java!!!	write_sPLT() : void
+        if (metadata.sPLT_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.sPLT_TYPE, stream);
+
+            cs.writeBytes(metadata.sPLT_paletteName);
+            cs.writeByte(0); // null terminator
+
+            cs.writeByte(metadata.sPLT_sampleDepth);
+            int numEntries = metadata.sPLT_red.length;
+
+            if (metadata.sPLT_sampleDepth == 8) {
+                for (int i = 0; i < numEntries; i++) {
+                    cs.writeByte(metadata.sPLT_red[i]);
+                    cs.writeByte(metadata.sPLT_green[i]);
+                    cs.writeByte(metadata.sPLT_blue[i]);
+                    cs.writeByte(metadata.sPLT_alpha[i]);
+                    cs.writeShort(metadata.sPLT_frequency[i]);
+                }
+            } else { // sampleDepth == 16
+                for (int i = 0; i < numEntries; i++) {
+                    cs.writeShort(metadata.sPLT_red[i]);
+                    cs.writeShort(metadata.sPLT_green[i]);
+                    cs.writeShort(metadata.sPLT_blue[i]);
+                    cs.writeShort(metadata.sPLT_alpha[i]);
+                    cs.writeShort(metadata.sPLT_frequency[i]);
+                }
+            }
+            cs.finish();
+        }
+!!!1860610.java!!!	write_tIME() : void
+        if (metadata.tIME_present) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.tIME_TYPE, stream);
+            cs.writeShort(metadata.tIME_year);
+            cs.writeByte(metadata.tIME_month);
+            cs.writeByte(metadata.tIME_day);
+            cs.writeByte(metadata.tIME_hour);
+            cs.writeByte(metadata.tIME_minute);
+            cs.writeByte(metadata.tIME_second);
+            cs.finish();
+        }
+!!!1860738.java!!!	write_tEXt() : void
+        Iterator keywordIter = metadata.tEXt_keyword.iterator();
+        Iterator textIter = metadata.tEXt_text.iterator();
+
+        while (keywordIter.hasNext()) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.tEXt_TYPE, stream);
+            String keyword = (String)keywordIter.next();
+            cs.writeBytes(keyword);
+            cs.writeByte(0);
+
+            String text = (String)textIter.next();
+            cs.writeBytes(text);
+            cs.finish();
+        }
+!!!1860866.java!!!	deflate(inout b : byte [[]]) : byte
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        DeflaterOutputStream dos = new DeflaterOutputStream(baos);
+        dos.write(b);
+        dos.close();
+        return baos.toByteArray();
+!!!1860994.java!!!	write_iTXt() : void
+        Iterator<String> keywordIter = metadata.iTXt_keyword.iterator();
+        Iterator<Boolean> flagIter = metadata.iTXt_compressionFlag.iterator();
+        Iterator<Integer> methodIter = metadata.iTXt_compressionMethod.iterator();
+        Iterator<String> languageIter = metadata.iTXt_languageTag.iterator();
+        Iterator<String> translatedKeywordIter =
+            metadata.iTXt_translatedKeyword.iterator();
+        Iterator<String> textIter = metadata.iTXt_text.iterator();
+
+        while (keywordIter.hasNext()) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.iTXt_TYPE, stream);
+
+            cs.writeBytes(keywordIter.next());
+            cs.writeByte(0);
+
+            Boolean compressed = flagIter.next();
+            cs.writeByte(compressed ? 1 : 0);
+
+            cs.writeByte(methodIter.next().intValue());
+
+            cs.writeBytes(languageIter.next());
+            cs.writeByte(0);
+
+
+            cs.write(translatedKeywordIter.next().getBytes("UTF8"));
+            cs.writeByte(0);
+
+            String text = textIter.next();
+            if (compressed) {
+                cs.write(deflate(text.getBytes("UTF8")));
+            } else {
+                cs.write(text.getBytes("UTF8"));
+            }
+            cs.finish();
+        }
+!!!1861122.java!!!	write_zTXt() : void
+        Iterator keywordIter = metadata.zTXt_keyword.iterator();
+        Iterator methodIter = metadata.zTXt_compressionMethod.iterator();
+        Iterator textIter = metadata.zTXt_text.iterator();
+
+        while (keywordIter.hasNext()) {
+            ChunkStream cs = new ChunkStream(PNGImageReader.zTXt_TYPE, stream);
+            String keyword = (String)keywordIter.next();
+            cs.writeBytes(keyword);
+            cs.writeByte(0);
+
+            int compressionMethod = ((Integer)methodIter.next()).intValue();
+            cs.writeByte(compressionMethod);
+
+            String text = (String)textIter.next();
+            cs.write(deflate(text.getBytes("ISO-8859-1")));
+            cs.finish();
+        }
+!!!1861250.java!!!	writeUnknownChunks() : void
+        Iterator typeIter = metadata.unknownChunkType.iterator();
+        Iterator dataIter = metadata.unknownChunkData.iterator();
+
+        while (typeIter.hasNext() && dataIter.hasNext()) {
+            String type = (String)typeIter.next();
+            ChunkStream cs = new ChunkStream(chunkType(type), stream);
+            byte[] data = (byte[])dataIter.next();
+            cs.write(data);
+            cs.finish();
+        }
+!!!1861378.java!!!	chunkType(inout typeString : String) : int
+        char c0 = typeString.charAt(0);
+        char c1 = typeString.charAt(1);
+        char c2 = typeString.charAt(2);
+        char c3 = typeString.charAt(3);
+
+        int type = (c0 << 24) | (c1 << 16) | (c2 << 8) | c3;
+        return type;
+!!!1861506.java!!!	encodePass(inout os : ImageOutputStream, inout image : RenderedImage, in xOffset : int, in yOffset : int, in xSkip : int, in ySkip : int) : void
+        int minX = sourceXOffset;
+        int minY = sourceYOffset;
+        int width = sourceWidth;
+        int height = sourceHeight;
+
+        // Adjust offsets and skips based on source subsampling factors
+        xOffset *= periodX;
+        xSkip *= periodX;
+        yOffset *= periodY;
+        ySkip *= periodY;
+
+        // Early exit if no data for this pass
+        int hpixels = (width - xOffset + xSkip - 1)/xSkip;
+        int vpixels = (height - yOffset + ySkip - 1)/ySkip;
+        if (hpixels == 0 || vpixels == 0) {
+            return;
+        }
+
+        // Convert X offset and skip from pixels to samples
+        xOffset *= numBands;
+        xSkip *= numBands;
+
+        // Create row buffers
+        int samplesPerByte = 8/metadata.IHDR_bitDepth;
+        int numSamples = width*numBands;
+        int[] samples = new int[numSamples];
+
+        int bytesPerRow = hpixels*numBands;
+        if (metadata.IHDR_bitDepth < 8) {
+            bytesPerRow = (bytesPerRow + samplesPerByte - 1)/samplesPerByte;
+        } else if (metadata.IHDR_bitDepth == 16) {
+            bytesPerRow *= 2;
+        }
+
+        IndexColorModel icm_gray_alpha = null;
+        if (metadata.IHDR_colorType == PNGImageReader.PNG_COLOR_GRAY_ALPHA &&
+            image.getColorModel() instanceof IndexColorModel)
+        {
+            // reserve space for alpha samples
+            bytesPerRow *= 2;
+
+            // will be used to calculate alpha value for the pixel
+            icm_gray_alpha = (IndexColorModel)image.getColorModel();
+        }
+
+        currRow = new byte[bytesPerRow + bpp];
+        prevRow = new byte[bytesPerRow + bpp];
+        filteredRows = new byte[5][bytesPerRow + bpp];
+
+        int bitDepth = metadata.IHDR_bitDepth;
+        for (int row = minY + yOffset; row < minY + height; row += ySkip) {
+            Rectangle rect = new Rectangle(minX, row, width, 1);
+            Raster ras = image.getData(rect);
+            if (sourceBands != null) {
+                ras = ras.createChild(minX, row, width, 1, minX, row,
+                                      sourceBands);
+            }
+
+            ras.getPixels(minX, row, width, 1, samples);
+
+            if (image.getColorModel().isAlphaPremultiplied()) {
+                WritableRaster wr = ras.createCompatibleWritableRaster();
+                wr.setPixels(wr.getMinX(), wr.getMinY(),
+                             wr.getWidth(), wr.getHeight(),
+                             samples);
+
+                image.getColorModel().coerceData(wr, false);
+                wr.getPixels(wr.getMinX(), wr.getMinY(),
+                             wr.getWidth(), wr.getHeight(),
+                             samples);
+            }
+
+            // Reorder palette data if necessary
+            int[] paletteOrder = metadata.PLTE_order;
+            if (paletteOrder != null) {
+                for (int i = 0; i < numSamples; i++) {
+                    samples[i] = paletteOrder[samples[i]];
+                }
+            }
+
+            int count = bpp; // leave first 'bpp' bytes zero
+            int pos = 0;
+            int tmp = 0;
+
+            switch (bitDepth) {
+            case 1: case 2: case 4:
+                // Image can only have a single band
+
+                int mask = samplesPerByte - 1;
+                for (int s = xOffset; s < numSamples; s += xSkip) {
+                    byte val = scale0[samples[s]];
+                    tmp = (tmp << bitDepth) | val;
+
+                    if ((pos++ & mask) == mask) {
+                        currRow[count++] = (byte)tmp;
+                        tmp = 0;
+                        pos = 0;
+                    }
+                }
+
+                // Left shift the last byte
+                if ((pos & mask) != 0) {
+                    tmp <<= ((8/bitDepth) - pos)*bitDepth;
+                    currRow[count++] = (byte)tmp;
+                }
+                break;
+
+            case 8:
+                if (numBands == 1) {
+                    for (int s = xOffset; s < numSamples; s += xSkip) {
+                        currRow[count++] = scale0[samples[s]];
+                        if (icm_gray_alpha != null) {
+                            currRow[count++] =
+                                scale0[icm_gray_alpha.getAlpha(0xff & samples[s])];
+                        }
+                    }
+                } else {
+                    for (int s = xOffset; s < numSamples; s += xSkip) {
+                        for (int b = 0; b < numBands; b++) {
+                            currRow[count++] = scale[b][samples[s + b]];
+                        }
+                    }
+                }
+                break;
+
+            case 16:
+                for (int s = xOffset; s < numSamples; s += xSkip) {
+                    for (int b = 0; b < numBands; b++) {
+                        currRow[count++] = scaleh[b][samples[s + b]];
+                        currRow[count++] = scalel[b][samples[s + b]];
+                    }
+                }
+                break;
+            }
+
+            // Perform filtering
+            int filterType = rowFilter.filterRow(metadata.IHDR_colorType,
+                                                 currRow, prevRow,
+                                                 filteredRows,
+                                                 bytesPerRow, bpp);
+
+            os.write(filterType);
+            os.write(filteredRows[filterType], bpp, bytesPerRow);
+
+            // Swap current and previous rows
+            byte[] swap = currRow;
+            currRow = prevRow;
+            prevRow = swap;
+
+            pixelsDone += hpixels;
+            processImageProgress(100.0F*pixelsDone/totalPixels);
+
+            // If write has been aborted, just return;
+            // processWriteAborted will be called later
+            if (abortRequested()) {
+                return;
+            }
+        }
+!!!1861634.java!!!	write_IDAT(inout image : RenderedImage) : void
+        IDATOutputStream ios = new IDATOutputStream(stream, 32768);
+        try {
+            if (metadata.IHDR_interlaceMethod == 1) {
+                for (int i = 0; i < 7; i++) {
+                    encodePass(ios, image,
+                               PNGImageReader.adam7XOffset[i],
+                               PNGImageReader.adam7YOffset[i],
+                               PNGImageReader.adam7XSubsampling[i],
+                               PNGImageReader.adam7YSubsampling[i]);
+                    if (abortRequested()) {
+                        break;
+                    }
+                }
+            } else {
+                encodePass(ios, image, 0, 0, 1, 1);
+            }
+        } finally {
+            ios.finish();
+        }
+!!!1861762.java!!!	writeIEND() : void
+        ChunkStream cs = new ChunkStream(PNGImageReader.IEND_TYPE, stream);
+        cs.finish();
+!!!1861890.java!!!	equals(inout s0 : int [[]], inout s1 : int [[]]) : boolean
+        if (s0 == null || s1 == null) {
+            return false;
+        }
+        if (s0.length != s1.length) {
+            return false;
+        }
+        for (int i = 0; i < s0.length; i++) {
+            if (s0[i] != s1[i]) {
+                return false;
+            }
+        }
+        return true;
+!!!1862018.java!!!	initializeScaleTables(inout sampleSize : int [[]]) : void
+        int bitDepth = metadata.IHDR_bitDepth;
+
+        // If the existing tables are still valid, just return
+        if (bitDepth == scalingBitDepth &&
+            equals(sampleSize, this.sampleSize)) {
+            return;
+        }
+
+        // Compute new tables
+        this.sampleSize = sampleSize;
+        this.scalingBitDepth = bitDepth;
+        int maxOutSample = (1 << bitDepth) - 1;
+        if (bitDepth <= 8) {
+            scale = new byte[numBands][];
+            for (int b = 0; b < numBands; b++) {
+                int maxInSample = (1 << sampleSize[b]) - 1;
+                int halfMaxInSample = maxInSample/2;
+                scale[b] = new byte[maxInSample + 1];
+                for (int s = 0; s <= maxInSample; s++) {
+                    scale[b][s] =
+                        (byte)((s*maxOutSample + halfMaxInSample)/maxInSample);
+                }
+            }
+            scale0 = scale[0];
+            scaleh = scalel = null;
+        } else { // bitDepth == 16
+            // Divide scaling table into high and low bytes
+            scaleh = new byte[numBands][];
+            scalel = new byte[numBands][];
+
+            for (int b = 0; b < numBands; b++) {
+                int maxInSample = (1 << sampleSize[b]) - 1;
+                int halfMaxInSample = maxInSample/2;
+                scaleh[b] = new byte[maxInSample + 1];
+                scalel[b] = new byte[maxInSample + 1];
+                for (int s = 0; s <= maxInSample; s++) {
+                    int val = (s*maxOutSample + halfMaxInSample)/maxInSample;
+                    scaleh[b][s] = (byte)(val >> 8);
+                    scalel[b][s] = (byte)(val & 0xff);
+                }
+            }
+            scale = null;
+            scale0 = null;
+        }
+!!!1862146.java!!!	write(inout streamMetadata : IIOMetadata, inout image : IIOImage, inout param : ImageWriteParam) : void
+        if (stream == null) {
+            throw new IllegalStateException("output == null!");
+        }
+        if (image == null) {
+            throw new IllegalArgumentException("image == null!");
+        }
+        if (image.hasRaster()) {
+            throw new UnsupportedOperationException("image has a Raster!");
+        }
+
+        RenderedImage im = image.getRenderedImage();
+        SampleModel sampleModel = im.getSampleModel();
+        this.numBands = sampleModel.getNumBands();
+
+        // Set source region and subsampling to default values
+        this.sourceXOffset = im.getMinX();
+        this.sourceYOffset = im.getMinY();
+        this.sourceWidth = im.getWidth();
+        this.sourceHeight = im.getHeight();
+        this.sourceBands = null;
+        this.periodX = 1;
+        this.periodY = 1;
+
+        if (param != null) {
+            // Get source region and subsampling factors
+            Rectangle sourceRegion = param.getSourceRegion();
+            if (sourceRegion != null) {
+                Rectangle imageBounds = new Rectangle(im.getMinX(),
+                                                      im.getMinY(),
+                                                      im.getWidth(),
+                                                      im.getHeight());
+                // Clip to actual image bounds
+                sourceRegion = sourceRegion.intersection(imageBounds);
+                sourceXOffset = sourceRegion.x;
+                sourceYOffset = sourceRegion.y;
+                sourceWidth = sourceRegion.width;
+                sourceHeight = sourceRegion.height;
+            }
+
+            // Adjust for subsampling offsets
+            int gridX = param.getSubsamplingXOffset();
+            int gridY = param.getSubsamplingYOffset();
+            sourceXOffset += gridX;
+            sourceYOffset += gridY;
+            sourceWidth -= gridX;
+            sourceHeight -= gridY;
+
+            // Get subsampling factors
+            periodX = param.getSourceXSubsampling();
+            periodY = param.getSourceYSubsampling();
+
+            int[] sBands = param.getSourceBands();
+            if (sBands != null) {
+                sourceBands = sBands;
+                numBands = sourceBands.length;
+            }
+        }
+
+        // Compute output dimensions
+        int destWidth = (sourceWidth + periodX - 1)/periodX;
+        int destHeight = (sourceHeight + periodY - 1)/periodY;
+        if (destWidth <= 0 || destHeight <= 0) {
+            throw new IllegalArgumentException("Empty source region!");
+        }
+
+        // Compute total number of pixels for progress notification
+        this.totalPixels = destWidth*destHeight;
+        this.pixelsDone = 0;
+
+        // Create metadata
+        IIOMetadata imd = image.getMetadata();
+        if (imd != null) {
+            metadata = (PNGMetadata)convertImageMetadata(imd,
+                               ImageTypeSpecifier.createFromRenderedImage(im),
+                                                         null);
+        } else {
+            metadata = new PNGMetadata();
+        }
+
+        if (param != null) {
+            // Use Adam7 interlacing if set in write param
+            switch (param.getProgressiveMode()) {
+            case ImageWriteParam.MODE_DEFAULT:
+                metadata.IHDR_interlaceMethod = 1;
+                break;
+            case ImageWriteParam.MODE_DISABLED:
+                metadata.IHDR_interlaceMethod = 0;
+                break;
+                // MODE_COPY_FROM_METADATA should alreay be taken care of
+                // MODE_EXPLICIT is not allowed
+            }
+        }
+
+        // Initialize bitDepth and colorType
+        metadata.initialize(new ImageTypeSpecifier(im), numBands);
+
+        // Overwrite IHDR width and height values with values from image
+        metadata.IHDR_width = destWidth;
+        metadata.IHDR_height = destHeight;
+
+        this.bpp = numBands*((metadata.IHDR_bitDepth == 16) ? 2 : 1);
+
+        // Initialize scaling tables for this image
+        initializeScaleTables(sampleModel.getSampleSize());
+
+        clearAbortRequest();
+
+        processImageStarted(0);
+
+        try {
+            write_magic();
+            write_IHDR();
+
+            write_cHRM();
+            write_gAMA();
+            write_iCCP();
+            write_sBIT();
+            write_sRGB();
+
+            write_PLTE();
+
+            write_hIST();
+            write_tRNS();
+            write_bKGD();
+
+            write_pHYs();
+            write_sPLT();
+            write_tIME();
+            write_tEXt();
+            write_iTXt();
+            write_zTXt();
+
+            writeUnknownChunks();
+
+            write_IDAT(im);
+
+            if (abortRequested()) {
+                processWriteAborted();
+            } else {
+                // Finish up and inform the listeners we are done
+                writeIEND();
+                processImageComplete();
+            }
+        } catch (IOException e) {
+            throw new IIOException("I/O error writing PNG file!", e);
+        }

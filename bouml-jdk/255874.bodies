@@ -1,0 +1,252 @@
+class ThreadPoolImpl
+!!!1292418.java!!!	ThreadPoolImpl(inout tg : ThreadGroup, inout threadpoolName : String)
+        inactivityTimeout = ORBConstants.DEFAULT_INACTIVITY_TIMEOUT;
+        maxWorkerThreads = Integer.MAX_VALUE;
+        workQueue = new WorkQueueImpl(this);
+        threadGroup = tg;
+        name = threadpoolName;
+        initializeMonitoring();
+!!!1292546.java!!!	ThreadPoolImpl(inout threadpoolName : String)
+        this( Thread.currentThread().getThreadGroup(), threadpoolName ) ;
+!!!1292674.java!!!	ThreadPoolImpl(in minSize : int, in maxSize : int, in timeout : long, inout threadpoolName : String)
+        minWorkerThreads = minSize;
+        maxWorkerThreads = maxSize;
+        inactivityTimeout = timeout;
+        boundedThreadPool = true;
+        workQueue = new WorkQueueImpl(this);
+        name = threadpoolName;
+        for (int i = 0; i < minWorkerThreads; i++) {
+            createWorkerThread();
+        }
+        initializeMonitoring();
+!!!1292802.java!!!	close() : void
+
+        // Copy to avoid concurrent modification problems.
+        List<WorkerThread> copy = null;
+        synchronized (workersLock) {
+            copy = new ArrayList<>(workers);
+        }
+
+        for (WorkerThread wt : copy) {
+            wt.close();
+            while (wt.getState() != Thread.State.TERMINATED) {
+                try {
+                    wt.join();
+                } catch (InterruptedException exc) {
+                    wrapper.interruptedJoinCallWhileClosingThreadPool(exc, wt, this);
+                }
+            }
+        }
+
+        threadGroup = null;
+!!!1292930.java!!!	initializeMonitoring() : void
+        // Get root monitored object
+        MonitoredObject root = MonitoringFactories.getMonitoringManagerFactory().
+                createMonitoringManager(MonitoringConstants.DEFAULT_MONITORING_ROOT, null).
+                getRootMonitoredObject();
+
+        // Create the threadpool monitoring root
+        MonitoredObject threadPoolMonitoringObjectRoot = root.getChild(
+                    MonitoringConstants.THREADPOOL_MONITORING_ROOT);
+        if (threadPoolMonitoringObjectRoot == null) {
+            threadPoolMonitoringObjectRoot =  MonitoringFactories.
+                    getMonitoredObjectFactory().createMonitoredObject(
+                    MonitoringConstants.THREADPOOL_MONITORING_ROOT,
+                    MonitoringConstants.THREADPOOL_MONITORING_ROOT_DESCRIPTION);
+            root.addChild(threadPoolMonitoringObjectRoot);
+        }
+        threadpoolMonitoredObject = MonitoringFactories.
+                    getMonitoredObjectFactory().
+                    createMonitoredObject(name,
+                    MonitoringConstants.THREADPOOL_MONITORING_DESCRIPTION);
+
+        threadPoolMonitoringObjectRoot.addChild(threadpoolMonitoredObject);
+
+        LongMonitoredAttributeBase b1 = new
+            LongMonitoredAttributeBase(MonitoringConstants.THREADPOOL_CURRENT_NUMBER_OF_THREADS,
+                    MonitoringConstants.THREADPOOL_CURRENT_NUMBER_OF_THREADS_DESCRIPTION) {
+                public Object getValue() {
+                    return new Long(ThreadPoolImpl.this.currentNumberOfThreads());
+                }
+            };
+        threadpoolMonitoredObject.addAttribute(b1);
+        LongMonitoredAttributeBase b2 = new
+            LongMonitoredAttributeBase(MonitoringConstants.THREADPOOL_NUMBER_OF_AVAILABLE_THREADS,
+                    MonitoringConstants.THREADPOOL_CURRENT_NUMBER_OF_THREADS_DESCRIPTION) {
+                public Object getValue() {
+                    return new Long(ThreadPoolImpl.this.numberOfAvailableThreads());
+                }
+            };
+        threadpoolMonitoredObject.addAttribute(b2);
+        LongMonitoredAttributeBase b3 = new
+            LongMonitoredAttributeBase(MonitoringConstants.THREADPOOL_NUMBER_OF_BUSY_THREADS,
+                    MonitoringConstants.THREADPOOL_NUMBER_OF_BUSY_THREADS_DESCRIPTION) {
+                public Object getValue() {
+                    return new Long(ThreadPoolImpl.this.numberOfBusyThreads());
+                }
+            };
+        threadpoolMonitoredObject.addAttribute(b3);
+        LongMonitoredAttributeBase b4 = new
+            LongMonitoredAttributeBase(MonitoringConstants.THREADPOOL_AVERAGE_WORK_COMPLETION_TIME,
+                    MonitoringConstants.THREADPOOL_AVERAGE_WORK_COMPLETION_TIME_DESCRIPTION) {
+                public Object getValue() {
+                    return new Long(ThreadPoolImpl.this.averageWorkCompletionTime());
+                }
+            };
+        threadpoolMonitoredObject.addAttribute(b4);
+        LongMonitoredAttributeBase b5 = new
+            LongMonitoredAttributeBase(MonitoringConstants.THREADPOOL_CURRENT_PROCESSED_COUNT,
+                    MonitoringConstants.THREADPOOL_CURRENT_PROCESSED_COUNT_DESCRIPTION) {
+                public Object getValue() {
+                    return new Long(ThreadPoolImpl.this.currentProcessedCount());
+                }
+            };
+        threadpoolMonitoredObject.addAttribute(b5);
+
+        // Add the monitored object for the WorkQueue
+
+        threadpoolMonitoredObject.addChild(
+                ((WorkQueueImpl)workQueue).getMonitoredObject());
+!!!1293058.java!!!	getMonitoredObject() : MonitoredObject
+        return threadpoolMonitoredObject;
+!!!1293186.java!!!	getAnyWorkQueue() : WorkQueue
+        return workQueue;
+!!!1293314.java!!!	getWorkQueue(in queueId : int) : WorkQueue
+        if (queueId != 0)
+            throw new NoSuchWorkQueueException();
+        return workQueue;
+!!!1293442.java!!!	notifyForAvailableWork(inout aWorkQueue : WorkQueue) : void
+        synchronized (aWorkQueue) {
+            if (availableWorkerThreads < aWorkQueue.workItemsInQueue()) {
+                createWorkerThread();
+            } else {
+                aWorkQueue.notify();
+            }
+        }
+!!!1293570.java!!!	createWorkerThreadHelper(inout name : String) : Thread
+        // Thread creation needs to be in a doPrivileged block
+        // if there is a non-null security manager for two reasons:
+        // 1. The creation of a thread in a specific ThreadGroup
+        //    is a privileged operation.  Lack of a doPrivileged
+        //    block here causes an AccessControlException
+        //    (see bug 6268145).
+        // 2. We want to make sure that the permissions associated
+        //    with this thread do NOT include the permissions of
+        //    the current thread that is calling this method.
+        //    This leads to problems in the app server where
+        //    some threads in the ThreadPool randomly get
+        //    bad permissions, leading to unpredictable
+        //    permission errors (see bug 6021011).
+        //
+        //    A Java thread contains a stack of call frames,
+        //    one for each method called that has not yet returned.
+        //    Each method comes from a particular class.  The class
+        //    was loaded by a ClassLoader which has an associated
+        //    CodeSource, and this determines the Permissions
+        //    for all methods in that class.  The current
+        //    Permissions for the thread are the intersection of
+        //    all Permissions for the methods on the stack.
+        //    This is part of the Security Context of the thread.
+        //
+        //    When a thread creates a new thread, the new thread
+        //    inherits the security context of the old thread.
+        //    This is bad in a ThreadPool, because different
+        //    creators of threads may have different security contexts.
+        //    This leads to occasional unpredictable errors when
+        //    a thread is re-used in a different security context.
+        //
+        //    Avoiding this problem is simple: just do the thread
+        //    creation in a doPrivileged block.  This sets the
+        //    inherited security context to that of the code source
+        //    for the ORB code itself, which contains all permissions
+        //    in either Java SE or Java EE.
+        WorkerThread thread = new WorkerThread(threadGroup, name);
+        synchronized (workersLock) {
+            workers.add(thread);
+        }
+
+        // The thread must be set to a daemon thread so the
+        // VM can exit if the only threads left are PooledThreads
+        // or other daemons.  We don't want to rely on the
+        // calling thread always being a daemon.
+        // Note that no exception is possible here since we
+        // are inside the doPrivileged block.
+        thread.setDaemon(true);
+
+        wrapper.workerThreadCreated(thread, thread.getContextClassLoader());
+
+        thread.start();
+        return null;
+!!!1293698.java!!!	createWorkerThread() : void
+        final String name = getName();
+        synchronized (workQueue) {
+            try {
+                if (System.getSecurityManager() == null) {
+                    createWorkerThreadHelper(name);
+                } else {
+                    // If we get here, we need to create a thread.
+                    AccessController.doPrivileged(
+                            new PrivilegedAction() {
+                        public Object run() {
+                            return createWorkerThreadHelper(name);
+                        }
+                    }
+                    );
+                }
+            } catch (Throwable t) {
+                // Decrementing the count of current worker threads.
+                // But, it will be increased in the finally block.
+                decrementCurrentNumberOfThreads();
+                wrapper.workerThreadCreationFailure(t);
+            } finally {
+                incrementCurrentNumberOfThreads();
+            }
+        }
+!!!1293826.java!!!	minimumNumberOfThreads() : int
+        return minWorkerThreads;
+!!!1293954.java!!!	maximumNumberOfThreads() : int
+        return maxWorkerThreads;
+!!!1294082.java!!!	idleTimeoutForThreads() : long
+        return inactivityTimeout;
+!!!1294210.java!!!	currentNumberOfThreads() : int
+        synchronized (workQueue) {
+            return currentThreadCount;
+        }
+!!!1294338.java!!!	decrementCurrentNumberOfThreads() : void
+        synchronized (workQueue) {
+            currentThreadCount--;
+        }
+!!!1294466.java!!!	incrementCurrentNumberOfThreads() : void
+        synchronized (workQueue) {
+            currentThreadCount++;
+        }
+!!!1294594.java!!!	numberOfAvailableThreads() : int
+        synchronized (workQueue) {
+            return availableWorkerThreads;
+        }
+!!!1294722.java!!!	numberOfBusyThreads() : int
+        synchronized (workQueue) {
+            return (currentThreadCount - availableWorkerThreads);
+        }
+!!!1294850.java!!!	averageWorkCompletionTime() : long
+        synchronized (workQueue) {
+            return (totalTimeTaken.get() / processedCount.get());
+        }
+!!!1294978.java!!!	currentProcessedCount() : long
+        synchronized (workQueue) {
+            return processedCount.get();
+        }
+!!!1295106.java!!!	getName() : String
+        return name;
+!!!1295234.java!!!	numberOfWorkQueues() : int
+        return 1;
+!!!1295362.java!!!	getUniqueThreadId() : int
+        return ThreadPoolImpl.threadCounter.incrementAndGet();
+!!!1295490.java!!!	decrementNumberOfAvailableThreads() : void
+        synchronized (workQueue) {
+            availableWorkerThreads--;
+        }
+!!!1295618.java!!!	incrementNumberOfAvailableThreads() : void
+        synchronized (workQueue) {
+            availableWorkerThreads++;
+        }

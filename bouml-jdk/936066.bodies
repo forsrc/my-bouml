@@ -1,0 +1,157 @@
+class ProcessBuilder
+!!!7060994.java!!!	ProcessBuilder(inout command : List)
+        if (command == null)
+            throw new NullPointerException();
+        this.command = command;
+!!!7061122.java!!!	ProcessBuilder(inout  : String...command)
+        this.command = new ArrayList<>(command.length);
+        for (String arg : command)
+            this.command.add(arg);
+!!!7061250.java!!!	command(inout command : List) : ProcessBuilder
+        if (command == null)
+            throw new NullPointerException();
+        this.command = command;
+        return this;
+!!!7061378.java!!!	command(inout  : String...command) : ProcessBuilder
+        this.command = new ArrayList<>(command.length);
+        for (String arg : command)
+            this.command.add(arg);
+        return this;
+!!!7061506.java!!!	command() : List
+        return command;
+!!!7061634.java!!!	environment() : Map
+        SecurityManager security = System.getSecurityManager();
+        if (security != null)
+            security.checkPermission(new RuntimePermission("getenv.*"));
+
+        if (environment == null)
+            environment = ProcessEnvironment.environment();
+
+        assert environment != null;
+
+        return environment;
+!!!7061762.java!!!	environment(inout envp : String [[]]) : ProcessBuilder
+        assert environment == null;
+        if (envp != null) {
+            environment = ProcessEnvironment.emptyEnvironment(envp.length);
+            assert environment != null;
+
+            for (String envstring : envp) {
+                // Before 1.5, we blindly passed invalid envstrings
+                // to the child process.
+                // We would like to throw an exception, but do not,
+                // for compatibility with old broken code.
+
+                // Silently discard any trailing junk.
+                if (envstring.indexOf((int) '\u0000') != -1)
+                    envstring = envstring.replaceFirst("\u0000.*", "");
+
+                int eqlsign =
+                    envstring.indexOf('=', ProcessEnvironment.MIN_NAME_LENGTH);
+                // Silently ignore envstrings lacking the required `='.
+                if (eqlsign != -1)
+                    environment.put(envstring.substring(0,eqlsign),
+                                    envstring.substring(eqlsign+1));
+            }
+        }
+        return this;
+!!!7061890.java!!!	directory() : File
+        return directory;
+!!!7062018.java!!!	directory(inout directory : File) : ProcessBuilder
+        this.directory = directory;
+        return this;
+!!!7063938.java!!!	redirects() : ProcessBuilder::Redirect
+        if (redirects == null)
+            redirects = new Redirect[] {
+                Redirect.PIPE, Redirect.PIPE, Redirect.PIPE
+            };
+        return redirects;
+!!!7064066.java!!!	redirectInput(inout source : ProcessBuilder::Redirect) : ProcessBuilder
+        if (source.type() == Redirect.Type.WRITE ||
+            source.type() == Redirect.Type.APPEND)
+            throw new IllegalArgumentException(
+                "Redirect invalid for reading: " + source);
+        redirects()[0] = source;
+        return this;
+!!!7064194.java!!!	redirectOutput(inout destination : ProcessBuilder::Redirect) : ProcessBuilder
+        if (destination.type() == Redirect.Type.READ)
+            throw new IllegalArgumentException(
+                "Redirect invalid for writing: " + destination);
+        redirects()[1] = destination;
+        return this;
+!!!7064322.java!!!	redirectError(inout destination : ProcessBuilder::Redirect) : ProcessBuilder
+        if (destination.type() == Redirect.Type.READ)
+            throw new IllegalArgumentException(
+                "Redirect invalid for writing: " + destination);
+        redirects()[2] = destination;
+        return this;
+!!!7064450.java!!!	redirectInput(inout file : File) : ProcessBuilder
+        return redirectInput(Redirect.from(file));
+!!!7064578.java!!!	redirectOutput(inout file : File) : ProcessBuilder
+        return redirectOutput(Redirect.to(file));
+!!!7064706.java!!!	redirectError(inout file : File) : ProcessBuilder
+        return redirectError(Redirect.to(file));
+!!!7064834.java!!!	redirectInput() : ProcessBuilder::Redirect
+        return (redirects == null) ? Redirect.PIPE : redirects[0];
+!!!7064962.java!!!	redirectOutput() : ProcessBuilder::Redirect
+        return (redirects == null) ? Redirect.PIPE : redirects[1];
+!!!7065090.java!!!	redirectError() : ProcessBuilder::Redirect
+        return (redirects == null) ? Redirect.PIPE : redirects[2];
+!!!7065218.java!!!	inheritIO() : ProcessBuilder
+        Arrays.fill(redirects(), Redirect.INHERIT);
+        return this;
+!!!7065346.java!!!	redirectErrorStream() : boolean
+        return redirectErrorStream;
+!!!7065474.java!!!	redirectErrorStream(inout redirectErrorStream : boolean) : ProcessBuilder
+        this.redirectErrorStream = redirectErrorStream;
+        return this;
+!!!7065602.java!!!	start() : Process
+        // Must convert to array first -- a malicious user-supplied
+        // list might try to circumvent the security check.
+        String[] cmdarray = command.toArray(new String[command.size()]);
+        cmdarray = cmdarray.clone();
+
+        for (String arg : cmdarray)
+            if (arg == null)
+                throw new NullPointerException();
+        // Throws IndexOutOfBoundsException if command is empty
+        String prog = cmdarray[0];
+
+        SecurityManager security = System.getSecurityManager();
+        if (security != null)
+            security.checkExec(prog);
+
+        String dir = directory == null ? null : directory.toString();
+
+        for (int i = 1; i < cmdarray.length; i++) {
+            if (cmdarray[i].indexOf('\u0000') >= 0) {
+                throw new IOException("invalid null character in command");
+            }
+        }
+
+        try {
+            return ProcessImpl.start(cmdarray,
+                                     environment,
+                                     dir,
+                                     redirects,
+                                     redirectErrorStream);
+        } catch (IOException | IllegalArgumentException e) {
+            String exceptionInfo = ": " + e.getMessage();
+            Throwable cause = e;
+            if ((e instanceof IOException) && security != null) {
+                // Can not disclose the fail reason for read-protected files.
+                try {
+                    security.checkRead(prog);
+                } catch (SecurityException se) {
+                    exceptionInfo = "";
+                    cause = se;
+                }
+            }
+            // It's much easier for us to create a high-quality error
+            // message than the low-level C code which found the problem.
+            throw new IOException(
+                "Cannot run program \"" + prog + "\""
+                + (dir == null ? "" : " (in directory \"" + dir + "\")")
+                + exceptionInfo,
+                cause);
+        }

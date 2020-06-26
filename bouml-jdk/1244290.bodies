@@ -1,0 +1,120 @@
+class KeyImpl
+!!!10232578.java!!!	KeyImpl(inout keyBytes : byte [[]], in keyType : int)
+        this.keyBytes = keyBytes.clone();
+        this.keyType = keyType;
+!!!10232706.java!!!	KeyImpl(inout principal : KerberosPrincipal, inout password : char [[]], inout algorithm : String)
+
+        try {
+            PrincipalName princ = new PrincipalName(principal.getName());
+            EncryptionKey key =
+                new EncryptionKey(password, princ.getSalt(), algorithm);
+            this.keyBytes = key.getBytes();
+            this.keyType = key.getEType();
+        } catch (KrbException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+!!!10232834.java!!!	getKeyType() : int
+        if (destroyed)
+            throw new IllegalStateException("This key is no longer valid");
+        return keyType;
+!!!10232962.java!!!	getAlgorithm() : String
+        return getAlgorithmName(keyType);
+!!!10233090.java!!!	getAlgorithmName(in eType : int) : String
+        if (destroyed)
+            throw new IllegalStateException("This key is no longer valid");
+
+        switch (eType) {
+        case EncryptedData.ETYPE_DES_CBC_CRC:
+        case EncryptedData.ETYPE_DES_CBC_MD5:
+            return "DES";
+
+        case EncryptedData.ETYPE_DES3_CBC_HMAC_SHA1_KD:
+            return "DESede";
+
+        case EncryptedData.ETYPE_ARCFOUR_HMAC:
+            return "ArcFourHmac";
+
+        case EncryptedData.ETYPE_AES128_CTS_HMAC_SHA1_96:
+            return "AES128";
+
+        case EncryptedData.ETYPE_AES256_CTS_HMAC_SHA1_96:
+            return "AES256";
+
+        case EncryptedData.ETYPE_NULL:
+            return "NULL";
+
+        default:
+            throw new IllegalArgumentException(
+                "Unsupported encryption type: " + eType);
+        }
+!!!10233218.java!!!	getFormat() : String
+        if (destroyed)
+            throw new IllegalStateException("This key is no longer valid");
+        return "RAW";
+!!!10233346.java!!!	getEncoded() : byte
+        if (destroyed)
+            throw new IllegalStateException("This key is no longer valid");
+        return keyBytes.clone();
+!!!10233474.java!!!	destroy() : void
+        if (!destroyed) {
+            destroyed = true;
+            Arrays.fill(keyBytes, (byte) 0);
+        }
+!!!10233602.java!!!	isDestroyed() : boolean
+        return destroyed;
+!!!10233730.java!!!	writeObject(inout ois : ObjectOutputStream) : void
+        if (destroyed) {
+           throw new IOException("This key is no longer valid");
+        }
+
+        try {
+           ois.writeObject((new EncryptionKey(keyType, keyBytes)).asn1Encode());
+        } catch (Asn1Exception ae) {
+           throw new IOException(ae.getMessage());
+        }
+!!!10233858.java!!!	readObject(inout ois : ObjectInputStream) : void
+        try {
+            EncryptionKey encKey = new EncryptionKey(new
+                                     DerValue((byte[])ois.readObject()));
+            keyType = encKey.getEType();
+            keyBytes = encKey.getBytes();
+        } catch (Asn1Exception ae) {
+            throw new IOException(ae.getMessage());
+        }
+!!!10233986.java!!!	toString() : String
+        HexDumpEncoder hd = new HexDumpEncoder();
+        return "EncryptionKey: keyType=" + keyType
+                          + " keyBytes (hex dump)="
+                          + (keyBytes == null || keyBytes.length == 0 ?
+                             " Empty Key" :
+                             '\n' + hd.encodeBuffer(keyBytes)
+                          + '\n');
+
+
+!!!10234114.java!!!	hashCode() : int
+        int result = 17;
+        if(isDestroyed()) {
+            return result;
+        }
+        result = 37 * result + Arrays.hashCode(keyBytes);
+        return 37 * result + keyType;
+!!!10234242.java!!!	equals(inout other : Object) : boolean
+
+        if (other == this)
+            return true;
+
+        if (! (other instanceof KeyImpl)) {
+            return false;
+        }
+
+        KeyImpl otherKey = ((KeyImpl) other);
+        if (isDestroyed() || otherKey.isDestroyed()) {
+            return false;
+        }
+
+        if(keyType != otherKey.getKeyType() ||
+                !Arrays.equals(keyBytes, otherKey.getEncoded())) {
+            return false;
+        }
+
+        return true;

@@ -1,0 +1,1139 @@
+class ForkJoinPool
+!!!9010178.java!!!	checkPermission() : void
+        SecurityManager security = System.getSecurityManager();
+        if (security != null)
+            security.checkPermission(modifyThreadPermission);
+!!!9013762.java!!!	nextPoolId() : int
+        return ++poolNumberSequence;
+!!!9013890.java!!!	lockRunState() : int
+        int rs;
+        return ((((rs = runState) & RSLOCK) != 0 ||
+                 !U.compareAndSwapInt(this, RUNSTATE, rs, rs |= RSLOCK)) ?
+                awaitRunStateLock() : rs);
+!!!9014018.java!!!	awaitRunStateLock() : int
+        Object lock;
+        boolean wasInterrupted = false;
+        for (int spins = SPINS, r = 0, rs, ns;;) {
+            if (((rs = runState) & RSLOCK) == 0) {
+                if (U.compareAndSwapInt(this, RUNSTATE, rs, ns = rs | RSLOCK)) {
+                    if (wasInterrupted) {
+                        try {
+                            Thread.currentThread().interrupt();
+                        } catch (SecurityException ignore) {
+                        }
+                    }
+                    return ns;
+                }
+            }
+            else if (r == 0)
+                r = ThreadLocalRandom.nextSecondarySeed();
+            else if (spins > 0) {
+                r ^= r << 6; r ^= r >>> 21; r ^= r << 7; // xorshift
+                if (r >= 0)
+                    --spins;
+            }
+            else if ((rs & STARTED) == 0 || (lock = stealCounter) == null)
+                Thread.yield();   // initialization race
+            else if (U.compareAndSwapInt(this, RUNSTATE, rs, rs | RSIGNAL)) {
+                synchronized (lock) {
+                    if ((runState & RSIGNAL) != 0) {
+                        try {
+                            lock.wait();
+                        } catch (InterruptedException ie) {
+                            if (!(Thread.currentThread() instanceof
+                                  ForkJoinWorkerThread))
+                                wasInterrupted = true;
+                        }
+                    }
+                    else
+                        lock.notifyAll();
+                }
+            }
+        }
+!!!9014146.java!!!	unlockRunState(in oldRunState : int, in newRunState : int) : void
+        if (!U.compareAndSwapInt(this, RUNSTATE, oldRunState, newRunState)) {
+            Object lock = stealCounter;
+            runState = newRunState;              // clears RSIGNAL bit
+            if (lock != null)
+                synchronized (lock) { lock.notifyAll(); }
+        }
+!!!9014274.java!!!	createWorker() : boolean
+        ForkJoinWorkerThreadFactory fac = factory;
+        Throwable ex = null;
+        ForkJoinWorkerThread wt = null;
+        try {
+            if (fac != null && (wt = fac.newThread(this)) != null) {
+                wt.start();
+                return true;
+            }
+        } catch (Throwable rex) {
+            ex = rex;
+        }
+        deregisterWorker(wt, ex);
+        return false;
+!!!9014402.java!!!	tryAddWorker(in c : long) : void
+        boolean add = false;
+        do {
+            long nc = ((AC_MASK & (c + AC_UNIT)) |
+                       (TC_MASK & (c + TC_UNIT)));
+            if (ctl == c) {
+                int rs, stop;                 // check if terminating
+                if ((stop = (rs = lockRunState()) & STOP) == 0)
+                    add = U.compareAndSwapLong(this, CTL, c, nc);
+                unlockRunState(rs, rs & ~RSLOCK);
+                if (stop != 0)
+                    break;
+                if (add) {
+                    createWorker();
+                    break;
+                }
+            }
+        } while (((c = ctl) & ADD_WORKER) != 0L && (int)c == 0);
+!!!9014530.java!!!	registerWorker(inout wt : ForkJoinWorkerThread) : ForkJoinPool::WorkQueue
+        UncaughtExceptionHandler handler;
+        wt.setDaemon(true);                           // configure thread
+        if ((handler = ueh) != null)
+            wt.setUncaughtExceptionHandler(handler);
+        WorkQueue w = new WorkQueue(this, wt);
+        int i = 0;                                    // assign a pool index
+        int mode = config & MODE_MASK;
+        int rs = lockRunState();
+        try {
+            WorkQueue[] ws; int n;                    // skip if no array
+            if ((ws = workQueues) != null && (n = ws.length) > 0) {
+                int s = indexSeed += SEED_INCREMENT;  // unlikely to collide
+                int m = n - 1;
+                i = ((s << 1) | 1) & m;               // odd-numbered indices
+                if (ws[i] != null) {                  // collision
+                    int probes = 0;                   // step by approx half n
+                    int step = (n <= 4) ? 2 : ((n >>> 1) & EVENMASK) + 2;
+                    while (ws[i = (i + step) & m] != null) {
+                        if (++probes >= n) {
+                            workQueues = ws = Arrays.copyOf(ws, n <<= 1);
+                            m = n - 1;
+                            probes = 0;
+                        }
+                    }
+                }
+                w.hint = s;                           // use as random seed
+                w.config = i | mode;
+                w.scanState = i;                      // publication fence
+                ws[i] = w;
+            }
+        } finally {
+            unlockRunState(rs, rs & ~RSLOCK);
+        }
+        wt.setName(workerNamePrefix.concat(Integer.toString(i >>> 1)));
+        return w;
+!!!9014658.java!!!	deregisterWorker(inout wt : ForkJoinWorkerThread, inout ex : Throwable) : void
+        WorkQueue w = null;
+        if (wt != null && (w = wt.workQueue) != null) {
+            WorkQueue[] ws;                           // remove index from array
+            int idx = w.config & SMASK;
+            int rs = lockRunState();
+            if ((ws = workQueues) != null && ws.length > idx && ws[idx] == w)
+                ws[idx] = null;
+            unlockRunState(rs, rs & ~RSLOCK);
+        }
+        long c;                                       // decrement counts
+        do {} while (!U.compareAndSwapLong
+                     (this, CTL, c = ctl, ((AC_MASK & (c - AC_UNIT)) |
+                                           (TC_MASK & (c - TC_UNIT)) |
+                                           (SP_MASK & c))));
+        if (w != null) {
+            w.qlock = -1;                             // ensure set
+            w.transferStealCount(this);
+            w.cancelAll();                            // cancel remaining tasks
+        }
+        for (;;) {                                    // possibly replace
+            WorkQueue[] ws; int m, sp;
+            if (tryTerminate(false, false) || w == null || w.array == null ||
+                (runState & STOP) != 0 || (ws = workQueues) == null ||
+                (m = ws.length - 1) < 0)              // already terminating
+                break;
+            if ((sp = (int)(c = ctl)) != 0) {         // wake up replacement
+                if (tryRelease(c, ws[sp & m], AC_UNIT))
+                    break;
+            }
+            else if (ex != null && (c & ADD_WORKER) != 0L) {
+                tryAddWorker(c);                      // create replacement
+                break;
+            }
+            else                                      // don't need replacement
+                break;
+        }
+        if (ex == null)                               // help clean on way out
+            ForkJoinTask.helpExpungeStaleExceptions();
+        else                                          // rethrow
+            ForkJoinTask.rethrow(ex);
+!!!9014786.java!!!	signalWork(inout ws : ForkJoinPool::WorkQueue [[]], inout q : ForkJoinPool::WorkQueue) : void
+        long c; int sp, i; WorkQueue v; Thread p;
+        while ((c = ctl) < 0L) {                       // too few active
+            if ((sp = (int)c) == 0) {                  // no idle workers
+                if ((c & ADD_WORKER) != 0L)            // too few workers
+                    tryAddWorker(c);
+                break;
+            }
+            if (ws == null)                            // unstarted/terminated
+                break;
+            if (ws.length <= (i = sp & SMASK))         // terminated
+                break;
+            if ((v = ws[i]) == null)                   // terminating
+                break;
+            int vs = (sp + SS_SEQ) & ~INACTIVE;        // next scanState
+            int d = sp - v.scanState;                  // screen CAS
+            long nc = (UC_MASK & (c + AC_UNIT)) | (SP_MASK & v.stackPred);
+            if (d == 0 && U.compareAndSwapLong(this, CTL, c, nc)) {
+                v.scanState = vs;                      // activate v
+                if ((p = v.parker) != null)
+                    U.unpark(p);
+                break;
+            }
+            if (q != null && q.base == q.top)          // no more work
+                break;
+        }
+!!!9014914.java!!!	tryRelease(in c : long, inout v : ForkJoinPool::WorkQueue, in inc : long) : boolean
+        int sp = (int)c, vs = (sp + SS_SEQ) & ~INACTIVE; Thread p;
+        if (v != null && v.scanState == sp) {          // v is at top of stack
+            long nc = (UC_MASK & (c + inc)) | (SP_MASK & v.stackPred);
+            if (U.compareAndSwapLong(this, CTL, c, nc)) {
+                v.scanState = vs;
+                if ((p = v.parker) != null)
+                    U.unpark(p);
+                return true;
+            }
+        }
+        return false;
+!!!9015042.java!!!	runWorker(inout w : ForkJoinPool::WorkQueue) : void
+        w.growArray();                   // allocate queue
+        int seed = w.hint;               // initially holds randomization hint
+        int r = (seed == 0) ? 1 : seed;  // avoid 0 for xorShift
+        for (ForkJoinTask<?> t;;) {
+            if ((t = scan(w, r)) != null)
+                w.runTask(t);
+            else if (!awaitWork(w, r))
+                break;
+            r ^= r << 13; r ^= r >>> 17; r ^= r << 5; // xorshift
+        }
+!!!9015170.java!!!	scan(inout w : ForkJoinPool::WorkQueue, in r : int) : ForkJoinTask
+        WorkQueue[] ws; int m;
+        if ((ws = workQueues) != null && (m = ws.length - 1) > 0 && w != null) {
+            int ss = w.scanState;                     // initially non-negative
+            for (int origin = r & m, k = origin, oldSum = 0, checkSum = 0;;) {
+                WorkQueue q; ForkJoinTask<?>[] a; ForkJoinTask<?> t;
+                int b, n; long c;
+                if ((q = ws[k]) != null) {
+                    if ((n = (b = q.base) - q.top) < 0 &&
+                        (a = q.array) != null) {      // non-empty
+                        long i = (((a.length - 1) & b) << ASHIFT) + ABASE;
+                        if ((t = ((ForkJoinTask<?>)
+                                  U.getObjectVolatile(a, i))) != null &&
+                            q.base == b) {
+                            if (ss >= 0) {
+                                if (U.compareAndSwapObject(a, i, t, null)) {
+                                    q.base = b + 1;
+                                    if (n < -1)       // signal others
+                                        signalWork(ws, q);
+                                    return t;
+                                }
+                            }
+                            else if (oldSum == 0 &&   // try to activate
+                                     w.scanState < 0)
+                                tryRelease(c = ctl, ws[m & (int)c], AC_UNIT);
+                        }
+                        if (ss < 0)                   // refresh
+                            ss = w.scanState;
+                        r ^= r << 1; r ^= r >>> 3; r ^= r << 10;
+                        origin = k = r & m;           // move and rescan
+                        oldSum = checkSum = 0;
+                        continue;
+                    }
+                    checkSum += b;
+                }
+                if ((k = (k + 1) & m) == origin) {    // continue until stable
+                    if ((ss >= 0 || (ss == (ss = w.scanState))) &&
+                        oldSum == (oldSum = checkSum)) {
+                        if (ss < 0 || w.qlock < 0)    // already inactive
+                            break;
+                        int ns = ss | INACTIVE;       // try to inactivate
+                        long nc = ((SP_MASK & ns) |
+                                   (UC_MASK & ((c = ctl) - AC_UNIT)));
+                        w.stackPred = (int)c;         // hold prev stack top
+                        U.putInt(w, QSCANSTATE, ns);
+                        if (U.compareAndSwapLong(this, CTL, c, nc))
+                            ss = ns;
+                        else
+                            w.scanState = ss;         // back out
+                    }
+                    checkSum = 0;
+                }
+            }
+        }
+        return null;
+!!!9015298.java!!!	awaitWork(inout w : ForkJoinPool::WorkQueue, in r : int) : boolean
+        if (w == null || w.qlock < 0)                 // w is terminating
+            return false;
+        for (int pred = w.stackPred, spins = SPINS, ss;;) {
+            if ((ss = w.scanState) >= 0)
+                break;
+            else if (spins > 0) {
+                r ^= r << 6; r ^= r >>> 21; r ^= r << 7;
+                if (r >= 0 && --spins == 0) {         // randomize spins
+                    WorkQueue v; WorkQueue[] ws; int s, j; AtomicLong sc;
+                    if (pred != 0 && (ws = workQueues) != null &&
+                        (j = pred & SMASK) < ws.length &&
+                        (v = ws[j]) != null &&        // see if pred parking
+                        (v.parker == null || v.scanState >= 0))
+                        spins = SPINS;                // continue spinning
+                }
+            }
+            else if (w.qlock < 0)                     // recheck after spins
+                return false;
+            else if (!Thread.interrupted()) {
+                long c, prevctl, parkTime, deadline;
+                int ac = (int)((c = ctl) >> AC_SHIFT) + (config & SMASK);
+                if ((ac <= 0 && tryTerminate(false, false)) ||
+                    (runState & STOP) != 0)           // pool terminating
+                    return false;
+                if (ac <= 0 && ss == (int)c) {        // is last waiter
+                    prevctl = (UC_MASK & (c + AC_UNIT)) | (SP_MASK & pred);
+                    int t = (short)(c >>> TC_SHIFT);  // shrink excess spares
+                    if (t > 2 && U.compareAndSwapLong(this, CTL, c, prevctl))
+                        return false;                 // else use timed wait
+                    parkTime = IDLE_TIMEOUT * ((t >= 0) ? 1 : 1 - t);
+                    deadline = System.nanoTime() + parkTime - TIMEOUT_SLOP;
+                }
+                else
+                    prevctl = parkTime = deadline = 0L;
+                Thread wt = Thread.currentThread();
+                U.putObject(wt, PARKBLOCKER, this);   // emulate LockSupport
+                w.parker = wt;
+                if (w.scanState < 0 && ctl == c)      // recheck before park
+                    U.park(false, parkTime);
+                U.putOrderedObject(w, QPARKER, null);
+                U.putObject(wt, PARKBLOCKER, null);
+                if (w.scanState >= 0)
+                    break;
+                if (parkTime != 0L && ctl == c &&
+                    deadline - System.nanoTime() <= 0L &&
+                    U.compareAndSwapLong(this, CTL, c, prevctl))
+                    return false;                     // shrink pool
+            }
+        }
+        return true;
+!!!9015426.java!!!	helpComplete(inout w : ForkJoinPool::WorkQueue, inout task : CountedCompleter, in maxTasks : int) : int
+        WorkQueue[] ws; int s = 0, m;
+        if ((ws = workQueues) != null && (m = ws.length - 1) >= 0 &&
+            task != null && w != null) {
+            int mode = w.config;                 // for popCC
+            int r = w.hint ^ w.top;              // arbitrary seed for origin
+            int origin = r & m;                  // first queue to scan
+            int h = 1;                           // 1:ran, >1:contended, <0:hash
+            for (int k = origin, oldSum = 0, checkSum = 0;;) {
+                CountedCompleter<?> p; WorkQueue q;
+                if ((s = task.status) < 0)
+                    break;
+                if (h == 1 && (p = w.popCC(task, mode)) != null) {
+                    p.doExec();                  // run local task
+                    if (maxTasks != 0 && --maxTasks == 0)
+                        break;
+                    origin = k;                  // reset
+                    oldSum = checkSum = 0;
+                }
+                else {                           // poll other queues
+                    if ((q = ws[k]) == null)
+                        h = 0;
+                    else if ((h = q.pollAndExecCC(task)) < 0)
+                        checkSum += h;
+                    if (h > 0) {
+                        if (h == 1 && maxTasks != 0 && --maxTasks == 0)
+                            break;
+                        r ^= r << 13; r ^= r >>> 17; r ^= r << 5; // xorshift
+                        origin = k = r & m;      // move and restart
+                        oldSum = checkSum = 0;
+                    }
+                    else if ((k = (k + 1) & m) == origin) {
+                        if (oldSum == (oldSum = checkSum))
+                            break;
+                        checkSum = 0;
+                    }
+                }
+            }
+        }
+        return s;
+!!!9015554.java!!!	helpStealer(inout w : ForkJoinPool::WorkQueue, inout task : ForkJoinTask) : void
+        WorkQueue[] ws = workQueues;
+        int oldSum = 0, checkSum, m;
+        if (ws != null && (m = ws.length - 1) >= 0 && w != null &&
+            task != null) {
+            do {                                       // restart point
+                checkSum = 0;                          // for stability check
+                ForkJoinTask<?> subtask;
+                WorkQueue j = w, v;                    // v is subtask stealer
+                descent: for (subtask = task; subtask.status >= 0; ) {
+                    for (int h = j.hint | 1, k = 0, i; ; k += 2) {
+                        if (k > m)                     // can't find stealer
+                            break descent;
+                        if ((v = ws[i = (h + k) & m]) != null) {
+                            if (v.currentSteal == subtask) {
+                                j.hint = i;
+                                break;
+                            }
+                            checkSum += v.base;
+                        }
+                    }
+                    for (;;) {                         // help v or descend
+                        ForkJoinTask<?>[] a; int b;
+                        checkSum += (b = v.base);
+                        ForkJoinTask<?> next = v.currentJoin;
+                        if (subtask.status < 0 || j.currentJoin != subtask ||
+                            v.currentSteal != subtask) // stale
+                            break descent;
+                        if (b - v.top >= 0 || (a = v.array) == null) {
+                            if ((subtask = next) == null)
+                                break descent;
+                            j = v;
+                            break;
+                        }
+                        int i = (((a.length - 1) & b) << ASHIFT) + ABASE;
+                        ForkJoinTask<?> t = ((ForkJoinTask<?>)
+                                             U.getObjectVolatile(a, i));
+                        if (v.base == b) {
+                            if (t == null)             // stale
+                                break descent;
+                            if (U.compareAndSwapObject(a, i, t, null)) {
+                                v.base = b + 1;
+                                ForkJoinTask<?> ps = w.currentSteal;
+                                int top = w.top;
+                                do {
+                                    U.putOrderedObject(w, QCURRENTSTEAL, t);
+                                    t.doExec();        // clear local tasks too
+                                } while (task.status >= 0 &&
+                                         w.top != top &&
+                                         (t = w.pop()) != null);
+                                U.putOrderedObject(w, QCURRENTSTEAL, ps);
+                                if (w.base != w.top)
+                                    return;            // can't further help
+                            }
+                        }
+                    }
+                }
+            } while (task.status >= 0 && oldSum != (oldSum = checkSum));
+        }
+!!!9015682.java!!!	tryCompensate(inout w : ForkJoinPool::WorkQueue) : boolean
+        boolean canBlock;
+        WorkQueue[] ws; long c; int m, pc, sp;
+        if (w == null || w.qlock < 0 ||           // caller terminating
+            (ws = workQueues) == null || (m = ws.length - 1) <= 0 ||
+            (pc = config & SMASK) == 0)           // parallelism disabled
+            canBlock = false;
+        else if ((sp = (int)(c = ctl)) != 0)      // release idle worker
+            canBlock = tryRelease(c, ws[sp & m], 0L);
+        else {
+            int ac = (int)(c >> AC_SHIFT) + pc;
+            int tc = (short)(c >> TC_SHIFT) + pc;
+            int nbusy = 0;                        // validate saturation
+            for (int i = 0; i <= m; ++i) {        // two passes of odd indices
+                WorkQueue v;
+                if ((v = ws[((i << 1) | 1) & m]) != null) {
+                    if ((v.scanState & SCANNING) != 0)
+                        break;
+                    ++nbusy;
+                }
+            }
+            if (nbusy != (tc << 1) || ctl != c)
+                canBlock = false;                 // unstable or stale
+            else if (tc >= pc && ac > 1 && w.isEmpty()) {
+                long nc = ((AC_MASK & (c - AC_UNIT)) |
+                           (~AC_MASK & c));       // uncompensated
+                canBlock = U.compareAndSwapLong(this, CTL, c, nc);
+            }
+            else if (tc >= MAX_CAP ||
+                     (this == common && tc >= pc + commonMaxSpares))
+                throw new RejectedExecutionException(
+                    "Thread limit exceeded replacing blocked worker");
+            else {                                // similar to tryAddWorker
+                boolean add = false; int rs;      // CAS within lock
+                long nc = ((AC_MASK & c) |
+                           (TC_MASK & (c + TC_UNIT)));
+                if (((rs = lockRunState()) & STOP) == 0)
+                    add = U.compareAndSwapLong(this, CTL, c, nc);
+                unlockRunState(rs, rs & ~RSLOCK);
+                canBlock = add && createWorker(); // throws on exception
+            }
+        }
+        return canBlock;
+!!!9015810.java!!!	awaitJoin(inout w : ForkJoinPool::WorkQueue, inout task : ForkJoinTask, in deadline : long) : int
+        int s = 0;
+        if (task != null && w != null) {
+            ForkJoinTask<?> prevJoin = w.currentJoin;
+            U.putOrderedObject(w, QCURRENTJOIN, task);
+            CountedCompleter<?> cc = (task instanceof CountedCompleter) ?
+                (CountedCompleter<?>)task : null;
+            for (;;) {
+                if ((s = task.status) < 0)
+                    break;
+                if (cc != null)
+                    helpComplete(w, cc, 0);
+                else if (w.base == w.top || w.tryRemoveAndExec(task))
+                    helpStealer(w, task);
+                if ((s = task.status) < 0)
+                    break;
+                long ms, ns;
+                if (deadline == 0L)
+                    ms = 0L;
+                else if ((ns = deadline - System.nanoTime()) <= 0L)
+                    break;
+                else if ((ms = TimeUnit.NANOSECONDS.toMillis(ns)) <= 0L)
+                    ms = 1L;
+                if (tryCompensate(w)) {
+                    task.internalWait(ms);
+                    U.getAndAddLong(this, CTL, AC_UNIT);
+                }
+            }
+            U.putOrderedObject(w, QCURRENTJOIN, prevJoin);
+        }
+        return s;
+!!!9015938.java!!!	findNonEmptyStealQueue() : ForkJoinPool::WorkQueue
+        WorkQueue[] ws; int m;  // one-shot version of scan loop
+        int r = ThreadLocalRandom.nextSecondarySeed();
+        if ((ws = workQueues) != null && (m = ws.length - 1) >= 0) {
+            for (int origin = r & m, k = origin, oldSum = 0, checkSum = 0;;) {
+                WorkQueue q; int b;
+                if ((q = ws[k]) != null) {
+                    if ((b = q.base) - q.top < 0)
+                        return q;
+                    checkSum += b;
+                }
+                if ((k = (k + 1) & m) == origin) {
+                    if (oldSum == (oldSum = checkSum))
+                        break;
+                    checkSum = 0;
+                }
+            }
+        }
+        return null;
+!!!9016066.java!!!	helpQuiescePool(inout w : ForkJoinPool::WorkQueue) : void
+        ForkJoinTask<?> ps = w.currentSteal; // save context
+        for (boolean active = true;;) {
+            long c; WorkQueue q; ForkJoinTask<?> t; int b;
+            w.execLocalTasks();     // run locals before each scan
+            if ((q = findNonEmptyStealQueue()) != null) {
+                if (!active) {      // re-establish active count
+                    active = true;
+                    U.getAndAddLong(this, CTL, AC_UNIT);
+                }
+                if ((b = q.base) - q.top < 0 && (t = q.pollAt(b)) != null) {
+                    U.putOrderedObject(w, QCURRENTSTEAL, t);
+                    t.doExec();
+                    if (++w.nsteals < 0)
+                        w.transferStealCount(this);
+                }
+            }
+            else if (active) {      // decrement active count without queuing
+                long nc = (AC_MASK & ((c = ctl) - AC_UNIT)) | (~AC_MASK & c);
+                if ((int)(nc >> AC_SHIFT) + (config & SMASK) <= 0)
+                    break;          // bypass decrement-then-increment
+                if (U.compareAndSwapLong(this, CTL, c, nc))
+                    active = false;
+            }
+            else if ((int)((c = ctl) >> AC_SHIFT) + (config & SMASK) <= 0 &&
+                     U.compareAndSwapLong(this, CTL, c, c + AC_UNIT))
+                break;
+        }
+        U.putOrderedObject(w, QCURRENTSTEAL, ps);
+!!!9016194.java!!!	nextTaskFor(inout w : ForkJoinPool::WorkQueue) : ForkJoinTask
+        for (ForkJoinTask<?> t;;) {
+            WorkQueue q; int b;
+            if ((t = w.nextLocalTask()) != null)
+                return t;
+            if ((q = findNonEmptyStealQueue()) == null)
+                return null;
+            if ((b = q.base) - q.top < 0 && (t = q.pollAt(b)) != null)
+                return t;
+        }
+!!!9016322.java!!!	getSurplusQueuedTaskCount() : int
+        Thread t; ForkJoinWorkerThread wt; ForkJoinPool pool; WorkQueue q;
+        if (((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)) {
+            int p = (pool = (wt = (ForkJoinWorkerThread)t).pool).
+                config & SMASK;
+            int n = (q = wt.workQueue).top - q.base;
+            int a = (int)(pool.ctl >> AC_SHIFT) + p;
+            return n - (a > (p >>>= 1) ? 0 :
+                        a > (p >>>= 1) ? 1 :
+                        a > (p >>>= 1) ? 2 :
+                        a > (p >>>= 1) ? 4 :
+                        8);
+        }
+        return 0;
+!!!9016450.java!!!	tryTerminate(inout now : boolean, inout enable : boolean) : boolean
+        int rs;
+        if (this == common)                       // cannot shut down
+            return false;
+        if ((rs = runState) >= 0) {
+            if (!enable)
+                return false;
+            rs = lockRunState();                  // enter SHUTDOWN phase
+            unlockRunState(rs, (rs & ~RSLOCK) | SHUTDOWN);
+        }
+
+        if ((rs & STOP) == 0) {
+            if (!now) {                           // check quiescence
+                for (long oldSum = 0L;;) {        // repeat until stable
+                    WorkQueue[] ws; WorkQueue w; int m, b; long c;
+                    long checkSum = ctl;
+                    if ((int)(checkSum >> AC_SHIFT) + (config & SMASK) > 0)
+                        return false;             // still active workers
+                    if ((ws = workQueues) == null || (m = ws.length - 1) <= 0)
+                        break;                    // check queues
+                    for (int i = 0; i <= m; ++i) {
+                        if ((w = ws[i]) != null) {
+                            if ((b = w.base) != w.top || w.scanState >= 0 ||
+                                w.currentSteal != null) {
+                                tryRelease(c = ctl, ws[m & (int)c], AC_UNIT);
+                                return false;     // arrange for recheck
+                            }
+                            checkSum += b;
+                            if ((i & 1) == 0)
+                                w.qlock = -1;     // try to disable external
+                        }
+                    }
+                    if (oldSum == (oldSum = checkSum))
+                        break;
+                }
+            }
+            if ((runState & STOP) == 0) {
+                rs = lockRunState();              // enter STOP phase
+                unlockRunState(rs, (rs & ~RSLOCK) | STOP);
+            }
+        }
+
+        int pass = 0;                             // 3 passes to help terminate
+        for (long oldSum = 0L;;) {                // or until done or stable
+            WorkQueue[] ws; WorkQueue w; ForkJoinWorkerThread wt; int m;
+            long checkSum = ctl;
+            if ((short)(checkSum >>> TC_SHIFT) + (config & SMASK) <= 0 ||
+                (ws = workQueues) == null || (m = ws.length - 1) <= 0) {
+                if ((runState & TERMINATED) == 0) {
+                    rs = lockRunState();          // done
+                    unlockRunState(rs, (rs & ~RSLOCK) | TERMINATED);
+                    synchronized (this) { notifyAll(); } // for awaitTermination
+                }
+                break;
+            }
+            for (int i = 0; i <= m; ++i) {
+                if ((w = ws[i]) != null) {
+                    checkSum += w.base;
+                    w.qlock = -1;                 // try to disable
+                    if (pass > 0) {
+                        w.cancelAll();            // clear queue
+                        if (pass > 1 && (wt = w.owner) != null) {
+                            if (!wt.isInterrupted()) {
+                                try {             // unblock join
+                                    wt.interrupt();
+                                } catch (Throwable ignore) {
+                                }
+                            }
+                            if (w.scanState < 0)
+                                U.unpark(wt);     // wake up
+                        }
+                    }
+                }
+            }
+            if (checkSum != oldSum) {             // unstable
+                oldSum = checkSum;
+                pass = 0;
+            }
+            else if (pass > 3 && pass > m)        // can't further help
+                break;
+            else if (++pass > 1) {                // try to dequeue
+                long c; int j = 0, sp;            // bound attempts
+                while (j++ <= m && (sp = (int)(c = ctl)) != 0)
+                    tryRelease(c, ws[sp & m], AC_UNIT);
+            }
+        }
+        return true;
+!!!9016578.java!!!	externalSubmit(inout task : ForkJoinTask) : void
+        int r;                                    // initialize caller's probe
+        if ((r = ThreadLocalRandom.getProbe()) == 0) {
+            ThreadLocalRandom.localInit();
+            r = ThreadLocalRandom.getProbe();
+        }
+        for (;;) {
+            WorkQueue[] ws; WorkQueue q; int rs, m, k;
+            boolean move = false;
+            if ((rs = runState) < 0) {
+                tryTerminate(false, false);     // help terminate
+                throw new RejectedExecutionException();
+            }
+            else if ((rs & STARTED) == 0 ||     // initialize
+                     ((ws = workQueues) == null || (m = ws.length - 1) < 0)) {
+                int ns = 0;
+                rs = lockRunState();
+                try {
+                    if ((rs & STARTED) == 0) {
+                        U.compareAndSwapObject(this, STEALCOUNTER, null,
+                                               new AtomicLong());
+                        // create workQueues array with size a power of two
+                        int p = config & SMASK; // ensure at least 2 slots
+                        int n = (p > 1) ? p - 1 : 1;
+                        n |= n >>> 1; n |= n >>> 2;  n |= n >>> 4;
+                        n |= n >>> 8; n |= n >>> 16; n = (n + 1) << 1;
+                        workQueues = new WorkQueue[n];
+                        ns = STARTED;
+                    }
+                } finally {
+                    unlockRunState(rs, (rs & ~RSLOCK) | ns);
+                }
+            }
+            else if ((q = ws[k = r & m & SQMASK]) != null) {
+                if (q.qlock == 0 && U.compareAndSwapInt(q, QLOCK, 0, 1)) {
+                    ForkJoinTask<?>[] a = q.array;
+                    int s = q.top;
+                    boolean submitted = false; // initial submission or resizing
+                    try {                      // locked version of push
+                        if ((a != null && a.length > s + 1 - q.base) ||
+                            (a = q.growArray()) != null) {
+                            int j = (((a.length - 1) & s) << ASHIFT) + ABASE;
+                            U.putOrderedObject(a, j, task);
+                            U.putOrderedInt(q, QTOP, s + 1);
+                            submitted = true;
+                        }
+                    } finally {
+                        U.compareAndSwapInt(q, QLOCK, 1, 0);
+                    }
+                    if (submitted) {
+                        signalWork(ws, q);
+                        return;
+                    }
+                }
+                move = true;                   // move on failure
+            }
+            else if (((rs = runState) & RSLOCK) == 0) { // create new queue
+                q = new WorkQueue(this, null);
+                q.hint = r;
+                q.config = k | SHARED_QUEUE;
+                q.scanState = INACTIVE;
+                rs = lockRunState();           // publish index
+                if (rs > 0 &&  (ws = workQueues) != null &&
+                    k < ws.length && ws[k] == null)
+                    ws[k] = q;                 // else terminated
+                unlockRunState(rs, rs & ~RSLOCK);
+            }
+            else
+                move = true;                   // move if busy
+            if (move)
+                r = ThreadLocalRandom.advanceProbe(r);
+        }
+!!!9016706.java!!!	externalPush(inout task : ForkJoinTask) : void
+        WorkQueue[] ws; WorkQueue q; int m;
+        int r = ThreadLocalRandom.getProbe();
+        int rs = runState;
+        if ((ws = workQueues) != null && (m = (ws.length - 1)) >= 0 &&
+            (q = ws[m & r & SQMASK]) != null && r != 0 && rs > 0 &&
+            U.compareAndSwapInt(q, QLOCK, 0, 1)) {
+            ForkJoinTask<?>[] a; int am, n, s;
+            if ((a = q.array) != null &&
+                (am = a.length - 1) > (n = (s = q.top) - q.base)) {
+                int j = ((am & s) << ASHIFT) + ABASE;
+                U.putOrderedObject(a, j, task);
+                U.putOrderedInt(q, QTOP, s + 1);
+                U.putIntVolatile(q, QLOCK, 0);
+                if (n <= 1)
+                    signalWork(ws, q);
+                return;
+            }
+            U.compareAndSwapInt(q, QLOCK, 1, 0);
+        }
+        externalSubmit(task);
+!!!9016834.java!!!	commonSubmitterQueue() : ForkJoinPool::WorkQueue
+        ForkJoinPool p = common;
+        int r = ThreadLocalRandom.getProbe();
+        WorkQueue[] ws; int m;
+        return (p != null && (ws = p.workQueues) != null &&
+                (m = ws.length - 1) >= 0) ?
+            ws[m & r & SQMASK] : null;
+!!!9016962.java!!!	tryExternalUnpush(inout task : ForkJoinTask) : boolean
+        WorkQueue[] ws; WorkQueue w; ForkJoinTask<?>[] a; int m, s;
+        int r = ThreadLocalRandom.getProbe();
+        if ((ws = workQueues) != null && (m = ws.length - 1) >= 0 &&
+            (w = ws[m & r & SQMASK]) != null &&
+            (a = w.array) != null && (s = w.top) != w.base) {
+            long j = (((a.length - 1) & (s - 1)) << ASHIFT) + ABASE;
+            if (U.compareAndSwapInt(w, QLOCK, 0, 1)) {
+                if (w.top == s && w.array == a &&
+                    U.getObject(a, j) == task &&
+                    U.compareAndSwapObject(a, j, task, null)) {
+                    U.putOrderedInt(w, QTOP, s - 1);
+                    U.putOrderedInt(w, QLOCK, 0);
+                    return true;
+                }
+                U.compareAndSwapInt(w, QLOCK, 1, 0);
+            }
+        }
+        return false;
+!!!9017090.java!!!	externalHelpComplete(inout task : CountedCompleter, in maxTasks : int) : int
+        WorkQueue[] ws; int n;
+        int r = ThreadLocalRandom.getProbe();
+        return ((ws = workQueues) == null || (n = ws.length) == 0) ? 0 :
+            helpComplete(ws[(n - 1) & r & SQMASK], task, maxTasks);
+!!!9017218.java!!!	ForkJoinPool()
+        this(Math.min(MAX_CAP, Runtime.getRuntime().availableProcessors()),
+             defaultForkJoinWorkerThreadFactory, null, false);
+!!!9017346.java!!!	ForkJoinPool(in parallelism : int)
+        this(parallelism, defaultForkJoinWorkerThreadFactory, null, false);
+!!!9017474.java!!!	ForkJoinPool(in parallelism : int, inout factory : ForkJoinPool::ForkJoinWorkerThreadFactory, inout handler : Thread::UncaughtExceptionHandler, inout asyncMode : boolean)
+        this(checkParallelism(parallelism),
+             checkFactory(factory),
+             handler,
+             asyncMode ? FIFO_QUEUE : LIFO_QUEUE,
+             "ForkJoinPool-" + nextPoolId() + "-worker-");
+        checkPermission();
+!!!9017602.java!!!	checkParallelism(in parallelism : int) : int
+        if (parallelism <= 0 || parallelism > MAX_CAP)
+            throw new IllegalArgumentException();
+        return parallelism;
+!!!9017730.java!!!	checkFactory(inout factory : ForkJoinPool::ForkJoinWorkerThreadFactory) : ForkJoinPool::ForkJoinWorkerThreadFactory
+        if (factory == null)
+            throw new NullPointerException();
+        return factory;
+!!!9017858.java!!!	ForkJoinPool(in parallelism : int, inout factory : ForkJoinPool::ForkJoinWorkerThreadFactory, inout handler : Thread::UncaughtExceptionHandler, in mode : int, inout workerNamePrefix : String)
+        this.workerNamePrefix = workerNamePrefix;
+        this.factory = factory;
+        this.ueh = handler;
+        this.config = (parallelism & SMASK) | mode;
+        long np = (long)(-parallelism); // offset ctl counts
+        this.ctl = ((np << AC_SHIFT) & AC_MASK) | ((np << TC_SHIFT) & TC_MASK);
+!!!9017986.java!!!	commonPool() : ForkJoinPool
+        // assert common != null : "static init error";
+        return common;
+!!!9018114.java!!!	invoke(inout task : ForkJoinTask) : T
+        if (task == null)
+            throw new NullPointerException();
+        externalPush(task);
+        return task.join();
+!!!9018242.java!!!	execute(inout task : ForkJoinTask) : void
+        if (task == null)
+            throw new NullPointerException();
+        externalPush(task);
+!!!9018370.java!!!	execute(inout task : Runnable) : void
+        if (task == null)
+            throw new NullPointerException();
+        ForkJoinTask<?> job;
+        if (task instanceof ForkJoinTask<?>) // avoid re-wrap
+            job = (ForkJoinTask<?>) task;
+        else
+            job = new ForkJoinTask.RunnableExecuteAction(task);
+        externalPush(job);
+!!!9018498.java!!!	submit(inout task : ForkJoinTask) : ForkJoinTask
+        if (task == null)
+            throw new NullPointerException();
+        externalPush(task);
+        return task;
+!!!9018626.java!!!	submit(inout task : Callable) : ForkJoinTask
+        ForkJoinTask<T> job = new ForkJoinTask.AdaptedCallable<T>(task);
+        externalPush(job);
+        return job;
+!!!9018754.java!!!	submit(inout task : Runnable, inout result : T) : ForkJoinTask
+        ForkJoinTask<T> job = new ForkJoinTask.AdaptedRunnable<T>(task, result);
+        externalPush(job);
+        return job;
+!!!9018882.java!!!	submit(inout task : Runnable) : ForkJoinTask
+        if (task == null)
+            throw new NullPointerException();
+        ForkJoinTask<?> job;
+        if (task instanceof ForkJoinTask<?>) // avoid re-wrap
+            job = (ForkJoinTask<?>) task;
+        else
+            job = new ForkJoinTask.AdaptedRunnableAction(task);
+        externalPush(job);
+        return job;
+!!!9019010.java!!!	invokeAll(inout tasks : Collection) : List
+        // In previous versions of this class, this method constructed
+        // a task to run ForkJoinTask.invokeAll, but now external
+        // invocation of multiple tasks is at least as efficient.
+        ArrayList<Future<T>> futures = new ArrayList<>(tasks.size());
+
+        boolean done = false;
+        try {
+            for (Callable<T> t : tasks) {
+                ForkJoinTask<T> f = new ForkJoinTask.AdaptedCallable<T>(t);
+                futures.add(f);
+                externalPush(f);
+            }
+            for (int i = 0, size = futures.size(); i < size; i++)
+                ((ForkJoinTask<?>)futures.get(i)).quietlyJoin();
+            done = true;
+            return futures;
+        } finally {
+            if (!done)
+                for (int i = 0, size = futures.size(); i < size; i++)
+                    futures.get(i).cancel(false);
+        }
+!!!9019138.java!!!	getFactory() : ForkJoinPool::ForkJoinWorkerThreadFactory
+        return factory;
+!!!9019266.java!!!	getUncaughtExceptionHandler() : Thread::UncaughtExceptionHandler
+        return ueh;
+!!!9019394.java!!!	getParallelism() : int
+        int par;
+        return ((par = config & SMASK) > 0) ? par : 1;
+!!!9019522.java!!!	getCommonPoolParallelism() : int
+        return commonParallelism;
+!!!9019650.java!!!	getPoolSize() : int
+        return (config & SMASK) + (short)(ctl >>> TC_SHIFT);
+!!!9019778.java!!!	getAsyncMode() : boolean
+        return (config & FIFO_QUEUE) != 0;
+!!!9019906.java!!!	getRunningThreadCount() : int
+        int rc = 0;
+        WorkQueue[] ws; WorkQueue w;
+        if ((ws = workQueues) != null) {
+            for (int i = 1; i < ws.length; i += 2) {
+                if ((w = ws[i]) != null && w.isApparentlyUnblocked())
+                    ++rc;
+            }
+        }
+        return rc;
+!!!9020034.java!!!	getActiveThreadCount() : int
+        int r = (config & SMASK) + (int)(ctl >> AC_SHIFT);
+        return (r <= 0) ? 0 : r; // suppress momentarily negative values
+!!!9020162.java!!!	isQuiescent() : boolean
+        return (config & SMASK) + (int)(ctl >> AC_SHIFT) <= 0;
+!!!9020290.java!!!	getStealCount() : long
+        AtomicLong sc = stealCounter;
+        long count = (sc == null) ? 0L : sc.get();
+        WorkQueue[] ws; WorkQueue w;
+        if ((ws = workQueues) != null) {
+            for (int i = 1; i < ws.length; i += 2) {
+                if ((w = ws[i]) != null)
+                    count += w.nsteals;
+            }
+        }
+        return count;
+!!!9020418.java!!!	getQueuedTaskCount() : long
+        long count = 0;
+        WorkQueue[] ws; WorkQueue w;
+        if ((ws = workQueues) != null) {
+            for (int i = 1; i < ws.length; i += 2) {
+                if ((w = ws[i]) != null)
+                    count += w.queueSize();
+            }
+        }
+        return count;
+!!!9020546.java!!!	getQueuedSubmissionCount() : int
+        int count = 0;
+        WorkQueue[] ws; WorkQueue w;
+        if ((ws = workQueues) != null) {
+            for (int i = 0; i < ws.length; i += 2) {
+                if ((w = ws[i]) != null)
+                    count += w.queueSize();
+            }
+        }
+        return count;
+!!!9020674.java!!!	hasQueuedSubmissions() : boolean
+        WorkQueue[] ws; WorkQueue w;
+        if ((ws = workQueues) != null) {
+            for (int i = 0; i < ws.length; i += 2) {
+                if ((w = ws[i]) != null && !w.isEmpty())
+                    return true;
+            }
+        }
+        return false;
+!!!9020802.java!!!	pollSubmission() : ForkJoinTask
+        WorkQueue[] ws; WorkQueue w; ForkJoinTask<?> t;
+        if ((ws = workQueues) != null) {
+            for (int i = 0; i < ws.length; i += 2) {
+                if ((w = ws[i]) != null && (t = w.poll()) != null)
+                    return t;
+            }
+        }
+        return null;
+!!!9020930.java!!!	drainTasksTo(inout c : Collection) : int
+        int count = 0;
+        WorkQueue[] ws; WorkQueue w; ForkJoinTask<?> t;
+        if ((ws = workQueues) != null) {
+            for (int i = 0; i < ws.length; ++i) {
+                if ((w = ws[i]) != null) {
+                    while ((t = w.poll()) != null) {
+                        c.add(t);
+                        ++count;
+                    }
+                }
+            }
+        }
+        return count;
+!!!9021058.java!!!	toString() : String
+        // Use a single pass through workQueues to collect counts
+        long qt = 0L, qs = 0L; int rc = 0;
+        AtomicLong sc = stealCounter;
+        long st = (sc == null) ? 0L : sc.get();
+        long c = ctl;
+        WorkQueue[] ws; WorkQueue w;
+        if ((ws = workQueues) != null) {
+            for (int i = 0; i < ws.length; ++i) {
+                if ((w = ws[i]) != null) {
+                    int size = w.queueSize();
+                    if ((i & 1) == 0)
+                        qs += size;
+                    else {
+                        qt += size;
+                        st += w.nsteals;
+                        if (w.isApparentlyUnblocked())
+                            ++rc;
+                    }
+                }
+            }
+        }
+        int pc = (config & SMASK);
+        int tc = pc + (short)(c >>> TC_SHIFT);
+        int ac = pc + (int)(c >> AC_SHIFT);
+        if (ac < 0) // ignore transient negative
+            ac = 0;
+        int rs = runState;
+        String level = ((rs & TERMINATED) != 0 ? "Terminated" :
+                        (rs & STOP)       != 0 ? "Terminating" :
+                        (rs & SHUTDOWN)   != 0 ? "Shutting down" :
+                        "Running");
+        return super.toString() +
+            "[" + level +
+            ", parallelism = " + pc +
+            ", size = " + tc +
+            ", active = " + ac +
+            ", running = " + rc +
+            ", steals = " + st +
+            ", tasks = " + qt +
+            ", submissions = " + qs +
+            "]";
+!!!9021186.java!!!	shutdown() : void
+        checkPermission();
+        tryTerminate(false, true);
+!!!9021314.java!!!	shutdownNow() : List
+        checkPermission();
+        tryTerminate(true, true);
+        return Collections.emptyList();
+!!!9021442.java!!!	isTerminated() : boolean
+        return (runState & TERMINATED) != 0;
+!!!9021570.java!!!	isTerminating() : boolean
+        int rs = runState;
+        return (rs & STOP) != 0 && (rs & TERMINATED) == 0;
+!!!9021698.java!!!	isShutdown() : boolean
+        return (runState & SHUTDOWN) != 0;
+!!!9021826.java!!!	awaitTermination(in timeout : long, inout unit : TimeUnit) : boolean
+        if (Thread.interrupted())
+            throw new InterruptedException();
+        if (this == common) {
+            awaitQuiescence(timeout, unit);
+            return false;
+        }
+        long nanos = unit.toNanos(timeout);
+        if (isTerminated())
+            return true;
+        if (nanos <= 0L)
+            return false;
+        long deadline = System.nanoTime() + nanos;
+        synchronized (this) {
+            for (;;) {
+                if (isTerminated())
+                    return true;
+                if (nanos <= 0L)
+                    return false;
+                long millis = TimeUnit.NANOSECONDS.toMillis(nanos);
+                wait(millis > 0L ? millis : 1L);
+                nanos = deadline - System.nanoTime();
+            }
+        }
+!!!9021954.java!!!	awaitQuiescence(in timeout : long, inout unit : TimeUnit) : boolean
+        long nanos = unit.toNanos(timeout);
+        ForkJoinWorkerThread wt;
+        Thread thread = Thread.currentThread();
+        if ((thread instanceof ForkJoinWorkerThread) &&
+            (wt = (ForkJoinWorkerThread)thread).pool == this) {
+            helpQuiescePool(wt.workQueue);
+            return true;
+        }
+        long startTime = System.nanoTime();
+        WorkQueue[] ws;
+        int r = 0, m;
+        boolean found = true;
+        while (!isQuiescent() && (ws = workQueues) != null &&
+               (m = ws.length - 1) >= 0) {
+            if (!found) {
+                if ((System.nanoTime() - startTime) > nanos)
+                    return false;
+                Thread.yield(); // cannot block
+            }
+            found = false;
+            for (int j = (m + 1) << 2; j >= 0; --j) {
+                ForkJoinTask<?> t; WorkQueue q; int b, k;
+                if ((k = r++ & m) <= m && k >= 0 && (q = ws[k]) != null &&
+                    (b = q.base) - q.top < 0) {
+                    found = true;
+                    if ((t = q.pollAt(b)) != null)
+                        t.doExec();
+                    break;
+                }
+            }
+        }
+        return true;
+!!!9022082.java!!!	quiesceCommonPool() : void
+        common.awaitQuiescence(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+!!!9022466.java!!!	managedBlock(inout blocker : ForkJoinPool::ManagedBlocker) : void
+        ForkJoinPool p;
+        ForkJoinWorkerThread wt;
+        Thread t = Thread.currentThread();
+        if ((t instanceof ForkJoinWorkerThread) &&
+            (p = (wt = (ForkJoinWorkerThread)t).pool) != null) {
+            WorkQueue w = wt.workQueue;
+            while (!blocker.isReleasable()) {
+                if (p.tryCompensate(w)) {
+                    try {
+                        do {} while (!blocker.isReleasable() &&
+                                     !blocker.block());
+                    } finally {
+                        U.getAndAddLong(p, CTL, AC_UNIT);
+                    }
+                    break;
+                }
+            }
+        }
+        else {
+            do {} while (!blocker.isReleasable() &&
+                         !blocker.block());
+        }
+!!!9022594.java!!!	newTaskFor(inout runnable : Runnable, inout value : T) : RunnableFuture
+        return new ForkJoinTask.AdaptedRunnable<T>(runnable, value);
+!!!9022722.java!!!	newTaskFor(inout callable : Callable) : RunnableFuture
+        return new ForkJoinTask.AdaptedCallable<T>(callable);
+!!!9022850.java!!!	makeCommonPool() : ForkJoinPool
+        int parallelism = -1;
+        ForkJoinWorkerThreadFactory factory = null;
+        UncaughtExceptionHandler handler = null;
+        try {  // ignore exceptions in accessing/parsing properties
+            String pp = System.getProperty
+                ("java.util.concurrent.ForkJoinPool.common.parallelism");
+            String fp = System.getProperty
+                ("java.util.concurrent.ForkJoinPool.common.threadFactory");
+            String hp = System.getProperty
+                ("java.util.concurrent.ForkJoinPool.common.exceptionHandler");
+            if (pp != null)
+                parallelism = Integer.parseInt(pp);
+            if (fp != null)
+                factory = ((ForkJoinWorkerThreadFactory)ClassLoader.
+                           getSystemClassLoader().loadClass(fp).newInstance());
+            if (hp != null)
+                handler = ((UncaughtExceptionHandler)ClassLoader.
+                           getSystemClassLoader().loadClass(hp).newInstance());
+        } catch (Exception ignore) {
+        }
+        if (factory == null) {
+            if (System.getSecurityManager() == null)
+                factory = defaultForkJoinWorkerThreadFactory;
+            else // use security-managed default
+                factory = new InnocuousForkJoinWorkerThreadFactory();
+        }
+        if (parallelism < 0 && // default 1 less than #cores
+            (parallelism = Runtime.getRuntime().availableProcessors() - 1) <= 0)
+            parallelism = 1;
+        if (parallelism > MAX_CAP)
+            parallelism = MAX_CAP;
+        return new ForkJoinPool(parallelism, factory, handler, LIFO_QUEUE,
+                                "ForkJoinPool.commonPool-worker-");

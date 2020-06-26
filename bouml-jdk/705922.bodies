@@ -1,0 +1,288 @@
+class ValueStoreBase
+!!!4679938.java!!!	ValueStoreBase(inout identityConstraint : IdentityConstraint)
+            fIdentityConstraint = identityConstraint;
+            fFieldCount = fIdentityConstraint.getFieldCount();
+            fFields = new Field[fFieldCount];
+            fLocalValues = new Object[fFieldCount];
+            fLocalValueTypes = new short[fFieldCount];
+            fLocalItemValueTypes = new ShortList[fFieldCount];
+            for (int i = 0; i < fFieldCount; i++) {
+                fFields[i] = fIdentityConstraint.getFieldAt(i);
+            }
+!!!4680066.java!!!	clear() : void
+            fValuesCount = 0;
+            fUseValueTypeVector = false;
+            fValueTypesLength = 0;
+            fValueType = 0;
+            fUseItemValueTypeVector = false;
+            fItemValueTypesLength = 0;
+            fItemValueType = null;
+            fValues.setSize(0);
+            if (fValueTypes != null) {
+                fValueTypes.clear();
+            }
+            if (fItemValueTypes != null) {
+                fItemValueTypes.setSize(0);
+            }
+!!!4680194.java!!!	append(inout newVal : XMLSchemaValidator::ValueStoreBase) : void
+            for (int i = 0; i < newVal.fValues.size(); i++) {
+                fValues.addElement(newVal.fValues.elementAt(i));
+            }
+!!!4680322.java!!!	startValueScope() : void
+            fValuesCount = 0;
+            for (int i = 0; i < fFieldCount; i++) {
+                fLocalValues[i] = null;
+                fLocalValueTypes[i] = 0;
+                fLocalItemValueTypes[i] = null;
+            }
+!!!4680450.java!!!	endValueScope() : void
+
+            if (fValuesCount == 0) {
+                if (fIdentityConstraint.getCategory() == IdentityConstraint.IC_KEY) {
+                    String code = "AbsentKeyValue";
+                    String eName = fIdentityConstraint.getElementName();
+                    String cName = fIdentityConstraint.getIdentityConstraintName();
+                    reportSchemaError(code, new Object[] { eName, cName });
+                }
+                return;
+            }
+
+            // Validation Rule: Identity-constraint Satisfied
+            // 4.2 If the {identity-constraint category} is key, then all of the following must be true:
+            // 4.2.1 The target node set and the qualified node set are equal, that is, every member of the
+            // target node set is also a member of the qualified node set and vice versa.
+            //
+            // If the IDC is a key check whether we have all the fields.
+            if (fValuesCount != fFieldCount) {
+                if (fIdentityConstraint.getCategory() == IdentityConstraint.IC_KEY) {
+                    String code = "KeyNotEnoughValues";
+                    UniqueOrKey key = (UniqueOrKey) fIdentityConstraint;
+                    String eName = fIdentityConstraint.getElementName();
+                    String cName = key.getIdentityConstraintName();
+                    reportSchemaError(code, new Object[] { eName, cName });
+                }
+                return;
+            }
+
+!!!4680834.java!!!	reportError(inout key : String, inout args : Object [[]]) : void
+            reportSchemaError(key, args);
+!!!4680962.java!!!	addValue(inout field : Field, inout actualValue : Object, in valueType : short, inout itemValueType : ShortList) : void
+            int i;
+            for (i = fFieldCount - 1; i > -1; i--) {
+                if (fFields[i] == field) {
+                    break;
+                }
+            }
+            // do we even know this field?
+            if (i == -1) {
+                String code = "UnknownField";
+                String eName = fIdentityConstraint.getElementName();
+                String cName = fIdentityConstraint.getIdentityConstraintName();
+                reportSchemaError(code, new Object[] { field.toString(), eName, cName });
+                return;
+            }
+            if (Boolean.TRUE != mayMatch(field)) {
+                String code = "FieldMultipleMatch";
+                String cName = fIdentityConstraint.getIdentityConstraintName();
+                reportSchemaError(code, new Object[] { field.toString(), cName });
+            } else {
+                fValuesCount++;
+            }
+            fLocalValues[i] = actualValue;
+            fLocalValueTypes[i] = valueType;
+            fLocalItemValueTypes[i] = itemValueType;
+            if (fValuesCount == fFieldCount) {
+                checkDuplicateValues();
+                // store values
+                for (i = 0; i < fFieldCount; i++) {
+                    fValues.addElement(fLocalValues[i]);
+                    addValueType(fLocalValueTypes[i]);
+                    addItemValueType(fLocalItemValueTypes[i]);
+                }
+            }
+!!!4681090.java!!!	contains() : boolean
+            // REVISIT: we can improve performance by using hash codes, instead of
+            // traversing global vector that could be quite large.
+            int next = 0;
+            final int size = fValues.size();
+            LOOP : for (int i = 0; i < size; i = next) {
+                next = i + fFieldCount;
+                for (int j = 0; j < fFieldCount; j++) {
+                    Object value1 = fLocalValues[j];
+                    Object value2 = fValues.elementAt(i);
+                    short valueType1 = fLocalValueTypes[j];
+                    short valueType2 = getValueTypeAt(i);
+                    if (value1 == null || value2 == null || valueType1 != valueType2 || !(value1.equals(value2))) {
+                        continue LOOP;
+                    }
+                    else if(valueType1 == XSConstants.LIST_DT || valueType1 == XSConstants.LISTOFUNION_DT) {
+                        ShortList list1 = fLocalItemValueTypes[j];
+                        ShortList list2 = getItemValueTypeAt(i);
+                        if(list1 == null || list2 == null || !list1.equals(list2))
+                            continue LOOP;
+                    }
+                    i++;
+                }
+                // found it
+                return true;
+            }
+            // didn't find it
+            return false;
+!!!4681218.java!!!	contains(inout vsb : XMLSchemaValidator::ValueStoreBase) : int
+
+            final Vector values = vsb.fValues;
+            final int size1 = values.size();
+            if (fFieldCount <= 1) {
+                for (int i = 0; i < size1; ++i) {
+                    short val = vsb.getValueTypeAt(i);
+                    if (!valueTypeContains(val) || !fValues.contains(values.elementAt(i))) {
+                        return i;
+                    }
+                    else if(val == XSConstants.LIST_DT || val == XSConstants.LISTOFUNION_DT) {
+                        ShortList list1 = vsb.getItemValueTypeAt(i);
+                        if (!itemValueTypeContains(list1)) {
+                            return i;
+                        }
+                    }
+                }
+            }
+            /** Handle n-tuples. **/
+            else {
+                final int size2 = fValues.size();
+                /** Iterate over each set of fields. **/
+                OUTER: for (int i = 0; i < size1; i += fFieldCount) {
+                    /** Check whether this set is contained in the value store. **/
+                    INNER: for (int j = 0; j < size2; j += fFieldCount) {
+                        for (int k = 0; k < fFieldCount; ++k) {
+                            final Object value1 = values.elementAt(i+k);
+                            final Object value2 = fValues.elementAt(j+k);
+                            final short valueType1 = vsb.getValueTypeAt(i+k);
+                            final short valueType2 = getValueTypeAt(j+k);
+                            if (value1 != value2 && (valueType1 != valueType2 || value1 == null || !value1.equals(value2))) {
+                                continue INNER;
+                            }
+                            else if(valueType1 == XSConstants.LIST_DT || valueType1 == XSConstants.LISTOFUNION_DT) {
+                                ShortList list1 = vsb.getItemValueTypeAt(i+k);
+                                ShortList list2 = getItemValueTypeAt(j+k);
+                                if (list1 == null || list2 == null || !list1.equals(list2)) {
+                                    continue INNER;
+                                }
+                            }
+                        }
+                        continue OUTER;
+                    }
+                    return i;
+                }
+            }
+            return -1;
+
+!!!4681346.java!!!	checkDuplicateValues() : void
+            // no-op
+!!!4681474.java!!!	toString(inout values : Object [[]]) : String
+
+            // no values
+            int size = values.length;
+            if (size == 0) {
+                return "";
+            }
+
+            fTempBuffer.setLength(0);
+
+            // construct value string
+            for (int i = 0; i < size; i++) {
+                if (i > 0) {
+                    fTempBuffer.append(',');
+                }
+                fTempBuffer.append(values[i]);
+            }
+            return fTempBuffer.toString();
+
+!!!4681602.java!!!	toString(inout values : Vector, in start : int, in length : int) : String
+
+            // no values
+            if (length == 0) {
+                return "";
+            }
+
+            // one value
+            if (length == 1) {
+                return String.valueOf(values.elementAt(start));
+            }
+
+            // construct value string
+            StringBuffer str = new StringBuffer();
+            for (int i = 0; i < length; i++) {
+                if (i > 0) {
+                    str.append(',');
+                }
+                str.append(values.elementAt(start + i));
+            }
+            return str.toString();
+
+!!!4681730.java!!!	toString() : String
+            String s = super.toString();
+            int index1 = s.lastIndexOf('$');
+            if (index1 != -1) {
+                s = s.substring(index1 + 1);
+            }
+            int index2 = s.lastIndexOf('.');
+            if (index2 != -1) {
+                s = s.substring(index2 + 1);
+            }
+            return s + '[' + fIdentityConstraint + ']';
+!!!4681858.java!!!	addValueType(in type : short) : void
+            if (fUseValueTypeVector) {
+                fValueTypes.add(type);
+            }
+            else if (fValueTypesLength++ == 0) {
+                fValueType = type;
+            }
+            else if (fValueType != type) {
+                fUseValueTypeVector = true;
+                if (fValueTypes == null) {
+                    fValueTypes = new ShortVector(fValueTypesLength * 2);
+                }
+                for (int i = 1; i < fValueTypesLength; ++i) {
+                    fValueTypes.add(fValueType);
+                }
+                fValueTypes.add(type);
+            }
+!!!4681986.java!!!	getValueTypeAt(in index : int) : short
+            if (fUseValueTypeVector) {
+                return fValueTypes.valueAt(index);
+            }
+            return fValueType;
+!!!4682114.java!!!	valueTypeContains(in value : short) : boolean
+            if (fUseValueTypeVector) {
+                return fValueTypes.contains(value);
+            }
+            return fValueType == value;
+!!!4682242.java!!!	addItemValueType(inout itemValueType : ShortList) : void
+            if (fUseItemValueTypeVector) {
+                fItemValueTypes.add(itemValueType);
+            }
+            else if (fItemValueTypesLength++ == 0) {
+                fItemValueType = itemValueType;
+            }
+            else if (!(fItemValueType == itemValueType ||
+                    (fItemValueType != null && fItemValueType.equals(itemValueType)))) {
+                fUseItemValueTypeVector = true;
+                if (fItemValueTypes == null) {
+                    fItemValueTypes = new Vector(fItemValueTypesLength * 2);
+                }
+                for (int i = 1; i < fItemValueTypesLength; ++i) {
+                    fItemValueTypes.add(fItemValueType);
+                }
+                fItemValueTypes.add(itemValueType);
+            }
+!!!4682370.java!!!	getItemValueTypeAt(in index : int) : ShortList
+            if (fUseItemValueTypeVector) {
+                return (ShortList) fItemValueTypes.elementAt(index);
+            }
+            return fItemValueType;
+!!!4682498.java!!!	itemValueTypeContains(inout value : ShortList) : boolean
+            if (fUseItemValueTypeVector) {
+                return fItemValueTypes.contains(value);
+            }
+            return fItemValueType == value ||
+                (fItemValueType != null && fItemValueType.equals(value));

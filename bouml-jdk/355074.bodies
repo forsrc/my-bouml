@@ -1,0 +1,205 @@
+class DropHandler
+!!!1980930.java!!!	updateAutoscrollRegion(inout c : JComponent) : void
+            // compute the outer
+            Rectangle visible = c.getVisibleRect();
+            outer.setBounds(visible.x, visible.y, visible.width, visible.height);
+
+            // compute the insets
+            Insets i = new Insets(0, 0, 0, 0);
+            if (c instanceof Scrollable) {
+                int minSize = 2 * AUTOSCROLL_INSET;
+
+                if (visible.width >= minSize) {
+                    i.left = i.right = AUTOSCROLL_INSET;
+                }
+
+                if (visible.height >= minSize) {
+                    i.top = i.bottom = AUTOSCROLL_INSET;
+                }
+            }
+
+            // set the inner from the insets
+            inner.setBounds(visible.x + i.left,
+                          visible.y + i.top,
+                          visible.width - (i.left + i.right),
+                          visible.height - (i.top  + i.bottom));
+!!!1981058.java!!!	autoscroll(inout c : JComponent, inout pos : Point) : void
+            if (c instanceof Scrollable) {
+                Scrollable s = (Scrollable) c;
+                if (pos.y < inner.y) {
+                    // scroll upward
+                    int dy = s.getScrollableUnitIncrement(outer, SwingConstants.VERTICAL, -1);
+                    Rectangle r = new Rectangle(inner.x, outer.y - dy, inner.width, dy);
+                    c.scrollRectToVisible(r);
+                } else if (pos.y > (inner.y + inner.height)) {
+                    // scroll downard
+                    int dy = s.getScrollableUnitIncrement(outer, SwingConstants.VERTICAL, 1);
+                    Rectangle r = new Rectangle(inner.x, outer.y + outer.height, inner.width, dy);
+                    c.scrollRectToVisible(r);
+                }
+
+                if (pos.x < inner.x) {
+                    // scroll left
+                    int dx = s.getScrollableUnitIncrement(outer, SwingConstants.HORIZONTAL, -1);
+                    Rectangle r = new Rectangle(outer.x - dx, inner.y, dx, inner.height);
+                    c.scrollRectToVisible(r);
+                } else if (pos.x > (inner.x + inner.width)) {
+                    // scroll right
+                    int dx = s.getScrollableUnitIncrement(outer, SwingConstants.HORIZONTAL, 1);
+                    Rectangle r = new Rectangle(outer.x + outer.width, inner.y, dx, inner.height);
+                    c.scrollRectToVisible(r);
+                }
+            }
+!!!1981186.java!!!	initPropertiesIfNecessary() : void
+            if (timer == null) {
+                Toolkit t = Toolkit.getDefaultToolkit();
+                Integer prop;
+
+                prop = (Integer)
+                    t.getDesktopProperty("DnD.Autoscroll.interval");
+
+                timer = new Timer(prop == null ? 100 : prop.intValue(), this);
+
+                prop = (Integer)
+                    t.getDesktopProperty("DnD.Autoscroll.initialDelay");
+
+                timer.setInitialDelay(prop == null ? 100 : prop.intValue());
+
+                prop = (Integer)
+                    t.getDesktopProperty("DnD.Autoscroll.cursorHysteresis");
+
+                if (prop != null) {
+                    hysteresis = prop.intValue();
+                }
+            }
+!!!1981314.java!!!	actionPerformed(inout e : ActionEvent) : void
+            updateAutoscrollRegion((JComponent)component);
+            if (outer.contains(lastPosition) && !inner.contains(lastPosition)) {
+                autoscroll((JComponent)component, lastPosition);
+            }
+!!!1981442.java!!!	setComponentDropLocation(inout support : TransferHandler::TransferSupport, inout forDrop : boolean) : void
+
+            DropLocation dropLocation = (support == null)
+                                        ? null
+                                        : support.getDropLocation();
+
+            if (SunToolkit.isInstanceOf(component, "javax.swing.text.JTextComponent")) {
+                state = SwingAccessor.getJTextComponentAccessor().
+                            setDropLocation((JTextComponent)component, dropLocation, state, forDrop);
+            } else if (component instanceof JComponent) {
+                state = ((JComponent)component).setDropLocation(dropLocation, state, forDrop);
+            }
+!!!1981570.java!!!	handleDrag(inout e : DropTargetDragEvent) : void
+            TransferHandler importer =
+                ((HasGetTransferHandler)component).getTransferHandler();
+
+            if (importer == null) {
+                e.rejectDrag();
+                setComponentDropLocation(null, false);
+                return;
+            }
+
+            support.setDNDVariables(component, e);
+            boolean canImport = importer.canImport(support);
+
+            if (canImport) {
+                e.acceptDrag(support.getDropAction());
+            } else {
+                e.rejectDrag();
+            }
+
+            boolean showLocation = support.showDropLocationIsSet ?
+                                   support.showDropLocation :
+                                   canImport;
+
+            setComponentDropLocation(showLocation ? support : null, false);
+!!!1981698.java!!!	dragEnter(inout e : DropTargetDragEvent) : void
+            state = null;
+            component = e.getDropTargetContext().getComponent();
+
+            handleDrag(e);
+
+            if (component instanceof JComponent) {
+                lastPosition = e.getLocation();
+                updateAutoscrollRegion((JComponent)component);
+                initPropertiesIfNecessary();
+            }
+!!!1981826.java!!!	dragOver(inout e : DropTargetDragEvent) : void
+            handleDrag(e);
+
+            if (!(component instanceof JComponent)) {
+                return;
+            }
+
+            Point p = e.getLocation();
+
+            if (Math.abs(p.x - lastPosition.x) > hysteresis
+                    || Math.abs(p.y - lastPosition.y) > hysteresis) {
+                // no autoscroll
+                if (timer.isRunning()) timer.stop();
+            } else {
+                if (!timer.isRunning()) timer.start();
+            }
+
+            lastPosition = p;
+!!!1981954.java!!!	dragExit(inout e : DropTargetEvent) : void
+            cleanup(false);
+!!!1982082.java!!!	drop(inout e : DropTargetDropEvent) : void
+            TransferHandler importer =
+                ((HasGetTransferHandler)component).getTransferHandler();
+
+            if (importer == null) {
+                e.rejectDrop();
+                cleanup(false);
+                return;
+            }
+
+            support.setDNDVariables(component, e);
+            boolean canImport = importer.canImport(support);
+
+            if (canImport) {
+                e.acceptDrop(support.getDropAction());
+
+                boolean showLocation = support.showDropLocationIsSet ?
+                                       support.showDropLocation :
+                                       canImport;
+
+                setComponentDropLocation(showLocation ? support : null, false);
+
+                boolean success;
+
+                try {
+                    success = importer.importData(support);
+                } catch (RuntimeException re) {
+                    success = false;
+                }
+
+                e.dropComplete(success);
+                cleanup(success);
+            } else {
+                e.rejectDrop();
+                cleanup(false);
+            }
+!!!1982210.java!!!	dropActionChanged(inout e : DropTargetDragEvent) : void
+            /*
+             * Work-around for Linux bug where dropActionChanged
+             * is called before dragEnter.
+             */
+            if (component == null) {
+                return;
+            }
+
+            handleDrag(e);
+!!!1982338.java!!!	cleanup(inout forDrop : boolean) : void
+            setComponentDropLocation(null, forDrop);
+            if (component instanceof JComponent) {
+                ((JComponent)component).dndDone();
+            }
+
+            if (timer != null) {
+                timer.stop();
+            }
+
+            state = null;
+            component = null;
+            lastPosition = null;

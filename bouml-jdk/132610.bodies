@@ -1,0 +1,282 @@
+class RepositoryImpl
+!!!149122.java!!!	RepositoryImpl(inout orb : ORB, inout dbDir : File, inout debug : boolean)
+        this.debug = debug ;
+        this.orb = orb;
+        wrapper = ActivationSystemException.get( orb, CORBALogDomains.ORBD_REPOSITORY ) ;
+
+        // if databse does not exist, create it otherwise read it in
+        File dbFile = new File(dbDir, "servers.db");
+        if (!dbFile.exists()) {
+            db = new RepositoryDB(dbFile);
+            db.flush();
+        } else {
+            try {
+                FileInputStream fis = new FileInputStream(dbFile);
+                ObjectInputStream ois = new ObjectInputStream(fis);
+                db = (RepositoryDB) ois.readObject();
+                ois.close();
+            } catch (Exception e) {
+                throw wrapper.cannotReadRepositoryDb( e ) ;
+            }
+        }
+
+        // export the repository
+        orb.connect(this);
+!!!149250.java!!!	printServerDef(inout sd : ServerDef) : String
+        return "ServerDef[applicationName=" + sd.applicationName +
+            " serverName=" + sd.serverName +
+            " serverClassPath=" + sd.serverClassPath +
+            " serverArgs=" + sd. serverArgs +
+            " serverVmArgs=" + sd.serverVmArgs +
+            "]" ;
+!!!149378.java!!!	registerServer(inout serverDef : ServerDef, in theServerId : int) : int
+        int         serverId;
+        DBServerDef server = null;
+
+        synchronized (db) {
+
+            // check if server already registered
+            Enumeration enumeration = db.serverTable.elements();
+            while (enumeration.hasMoreElements()) {
+                server = (DBServerDef) enumeration.nextElement();
+                if (serverDef.applicationName.equals(server.applicationName)) {
+                    if (debug)
+                        System.out.println(
+                            "RepositoryImpl: registerServer called " +
+                            "to register ServerDef " +
+                            printServerDef( serverDef ) +
+                            " with " + ((theServerId==illegalServerId) ?
+                        "a new server Id" : ("server Id " + theServerId)) +
+                                           " FAILED because it is already registered." ) ;
+
+                    throw (new ServerAlreadyRegistered(server.id));
+                }
+            }
+
+            // generate a new server id
+            if (theServerId == illegalServerId)
+                serverId = db.incrementServerIdCounter();
+            else
+                serverId = theServerId;
+
+            // add server def to the database
+            server = new DBServerDef(serverDef, serverId);
+            db.serverTable.put(new Integer(serverId), server);
+            db.flush();
+
+            if (debug)
+                if (theServerId==illegalServerId)
+                    System.out.println( "RepositoryImpl: registerServer called " +
+                                        "to register ServerDef " + printServerDef( serverDef ) +
+                                        " with new serverId " + serverId ) ;
+                else
+                    System.out.println( "RepositoryImpl: registerServer called " +
+                                        "to register ServerDef " + printServerDef( serverDef ) +
+                                        " with assigned serverId " + serverId ) ;
+
+            return serverId;
+        }
+!!!149506.java!!!	registerServer(inout serverDef : ServerDef) : int
+        // verify that the entry is valid
+        LegacyServerSocketEndPointInfo endpoint =
+            orb.getLegacyServerSocketManager()
+                .legacyGetEndpoint(LegacyServerSocketEndPointInfo.BOOT_NAMING);
+        int initSvcPort = ((SocketOrChannelAcceptor)endpoint)
+            .getServerSocket().getLocalPort();
+        ServerTableEntry entry = new ServerTableEntry( wrapper,
+            illegalServerId, serverDef, (int) initSvcPort, "", true, debug );
+
+        switch (entry.verify()) {
+        case ServerMain.OK:
+            break;
+        case ServerMain.MAIN_CLASS_NOT_FOUND:
+            throw new BadServerDefinition("main class not found.");
+        case ServerMain.NO_MAIN_METHOD:
+            throw new BadServerDefinition("no main method found.");
+        case ServerMain.APPLICATION_ERROR:
+            throw new BadServerDefinition("server application error.");
+        default:
+            throw new BadServerDefinition("unknown Exception.");
+        }
+
+        return registerServer(serverDef, illegalServerId);
+!!!149634.java!!!	unregisterServer(in serverId : int) : void
+
+        DBServerDef server = null;
+        Integer id = new Integer(serverId);
+
+        synchronized (db) {
+
+            // check to see if the server is registered
+            server = (DBServerDef) db.serverTable.get(id);
+            if (server == null)  {
+                if (debug)
+                    System.out.println(
+                                       "RepositoryImpl: unregisterServer for serverId " +
+                                       serverId + " called: server not registered" ) ;
+
+                throw (new ServerNotRegistered());
+            }
+
+            // remove server from the database
+            db.serverTable.remove(id);
+            db.flush();
+        }
+
+        if (debug)
+            System.out.println(
+                               "RepositoryImpl: unregisterServer for serverId " + serverId +
+                               " called" ) ;
+!!!149762.java!!!	getDBServerDef(in serverId : int) : RepositoryImpl::DBServerDef
+        Integer id = new Integer(serverId);
+        DBServerDef server = (DBServerDef) db.serverTable.get(id);
+
+        if (server == null)
+            throw new ServerNotRegistered( serverId );
+
+        return server ;
+!!!149890.java!!!	getServer(in serverId : int) : ServerDef
+        DBServerDef server = getDBServerDef( serverId ) ;
+
+        ServerDef serverDef = new ServerDef(server.applicationName, server.name,
+                                            server.classPath, server.args, server.vmArgs);
+
+        if (debug)
+            System.out.println(
+                               "RepositoryImpl: getServer for serverId " + serverId +
+                               " returns " + printServerDef( serverDef ) ) ;
+
+        return serverDef;
+!!!150018.java!!!	isInstalled(in serverId : int) : boolean
+        DBServerDef server = getDBServerDef( serverId ) ;
+        return server.isInstalled ;
+!!!150146.java!!!	install(in serverId : int) : void
+        DBServerDef server = getDBServerDef( serverId ) ;
+
+        if (server.isInstalled)
+            throw new ServerAlreadyInstalled( serverId ) ;
+        else {
+            server.isInstalled = true ;
+            db.flush() ;
+        }
+!!!150274.java!!!	uninstall(in serverId : int) : void
+        DBServerDef server = getDBServerDef( serverId ) ;
+
+        if (!server.isInstalled)
+            throw new ServerAlreadyUninstalled( serverId ) ;
+        else {
+            server.isInstalled = false ;
+            db.flush() ;
+        }
+!!!150402.java!!!	listRegisteredServers() : int
+        synchronized (db) {
+            int i=0;
+
+            int servers[] = new int[db.serverTable.size()];
+
+            Enumeration enumeration = db.serverTable.elements();
+
+            while (enumeration.hasMoreElements()) {
+                DBServerDef server = (DBServerDef) enumeration.nextElement();
+                servers[i++] = server.id;
+            }
+
+            if (debug) {
+                StringBuffer sb = new StringBuffer() ;
+                for (int ctr=0; ctr<servers.length; ctr++) {
+                    sb.append( ' ' ) ;
+                    sb.append( servers[ctr] ) ;
+                }
+
+                System.out.println(
+                                   "RepositoryImpl: listRegisteredServers returns" +
+                                   sb.toString() ) ;
+            }
+
+            return servers;
+        }
+!!!150530.java!!!	getServerID(inout applicationName : String) : int
+        synchronized (db) {
+            int result = -1 ;
+
+            for (Enumeration serverIds = db.serverTable.keys();
+                 serverIds.hasMoreElements();)
+                {
+                    Integer nextServerId = (Integer) serverIds.nextElement();
+                    DBServerDef dbServerDef =
+                        (DBServerDef) db.serverTable.get(nextServerId);
+
+                    if (dbServerDef.applicationName.equals(applicationName)) {
+                        result = nextServerId.intValue();
+                        break ;
+                    }
+                }
+
+            if (debug)
+                System.out.println("RepositoryImpl: getServerID for " +
+                                   applicationName + " is " + result ) ;
+
+            if (result == -1) {
+                throw (new ServerNotRegistered());
+            } else {
+                return result ;
+            }
+        }
+!!!150658.java!!!	getApplicationNames() : String
+        synchronized (db) {
+            Vector v = new Vector();
+            for (Enumeration serverIds = db.serverTable.keys();
+                 serverIds.hasMoreElements();)
+                {
+                    Integer nextServerId = (Integer) serverIds.nextElement();
+
+                    DBServerDef dbServerDef = (DBServerDef)db.serverTable.get(
+                                                                              nextServerId);
+
+                    if (!dbServerDef.applicationName.equals(""))
+                        v.addElement( dbServerDef.applicationName ) ;
+                }
+
+            String[] apps = new String[v.size()];
+            for (int i = 0; i < v.size(); i++) {
+                apps[i] = (String)v.elementAt(i);
+            }
+
+            if (debug) {
+                StringBuffer sb = new StringBuffer() ;
+                for (int ctr=0; ctr<apps.length; ctr++) {
+                    sb.append( ' ' ) ;
+                    sb.append( apps[ctr] ) ;
+                }
+
+                System.out.println( "RepositoryImpl: getApplicationNames returns " +
+                                    sb.toString() ) ;
+            }
+
+            return apps;
+        }
+!!!150786.java!!!	main(inout args : String [[]]) : void
+        boolean debug = false ;
+        for (int ctr=0; ctr<args.length; ctr++)
+            if (args[ctr].equals("-debug"))
+                debug = true ;
+
+        try {
+            // See Bug 4396928 for more information about why we are
+            // initializing the ORBClass to PIORB (now ORBImpl, but see the bug).
+            Properties props = new Properties();
+            props.put("org.omg.CORBA.ORBClass",
+                "com.sun.corba.se.impl.orb.ORBImpl");
+            ORB orb = (ORB) ORB.init(args, props);
+
+            // create the repository object
+            String db = System.getProperty( ORBConstants.DB_PROPERTY,
+                    ORBConstants.DEFAULT_DB_NAME );
+            RepositoryImpl repository = new RepositoryImpl(orb, new File(db),
+                                                           debug);
+
+            // wait for shutdown
+            orb.run();
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }

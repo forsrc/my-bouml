@@ -1,0 +1,166 @@
+class IndentPrinter
+!!!5534466.java!!!	IndentPrinter(inout writer : Writer, inout format : OutputFormat)
+        super( writer, format );
+        // Initialize everything for a first/second run.
+        _line = new StringBuffer( 80 );
+        _text = new StringBuffer( 20 );
+        _spaces = 0;
+        _thisIndent = _nextIndent = 0;
+!!!5534594.java!!!	enterDTD() : void
+        // Can only enter DTD state once. Once we're out of DTD
+        // state, can no longer re-enter it.
+        if ( _dtdWriter == null ) {
+            _line.append( _text );
+            _text = new StringBuffer( 20 );
+            flushLine( false );
+            _dtdWriter = new StringWriter();
+            _docWriter = _writer;
+            _writer = _dtdWriter;
+        }
+!!!5534722.java!!!	leaveDTD() : String
+        // Only works if we're going out of DTD mode.
+        if ( _writer == _dtdWriter ) {
+            _line.append( _text );
+            _text = new StringBuffer( 20 );
+            flushLine( false );
+            _writer = _docWriter;
+            return _dtdWriter.toString();
+        } else
+            return null;
+!!!5534850.java!!!	printText(inout text : String) : void
+        _text.append( text );
+!!!5534978.java!!!	printText(inout text : StringBuffer) : void
+        _text.append( text.toString() );
+!!!5535106.java!!!	printText(in ch : char) : void
+        _text.append( ch );
+!!!5535234.java!!!	printText(inout chars : char [[]], in start : int, in length : int) : void
+        _text.append( chars, start, length );
+!!!5535362.java!!!	printSpace() : void
+        // The line consists of the text accumulated in _line,
+        // followed by one or more spaces as counted by _spaces,
+        // followed by more space accumulated in _text:
+        // -  Text is printed and accumulated into _text.
+        // -  A space is printed, so _text is added to _line and
+        //    a space is counted.
+        // -  More text is printed and accumulated into _text.
+        // -  A space is printed, the previous spaces are added
+        //    to _line, the _text is added to _line, and a new
+        //    space is counted.
+
+        // If text was accumulated with printText(), then the space
+        // means we have to move that text into the line and
+        // start accumulating new text with printText().
+        if ( _text.length() > 0 ) {
+            // If the text breaks a line bounary, wrap to the next line.
+            // The printed line size consists of the indentation we're going
+            // to use next, the accumulated line so far, some spaces and the
+            // accumulated text so far.
+            if ( _format.getLineWidth() > 0 &&
+                 _thisIndent + _line.length() + _spaces + _text.length() > _format.getLineWidth() ) {
+                flushLine( false );
+                try {
+                    // Print line and new line, then zero the line contents.
+                    _writer.write( _format.getLineSeparator() );
+                } catch ( IOException except ) {
+                    // We don't throw an exception, but hold it
+                    // until the end of the document.
+                    if ( _exception == null )
+                        _exception = except;
+                }
+            }
+
+            // Add as many spaces as we accumulaed before.
+            // At the end of this loop, _spaces is zero.
+            while ( _spaces > 0 ) {
+                _line.append( ' ' );
+                --_spaces;
+            }
+            _line.append( _text );
+            _text = new StringBuffer( 20 );
+        }
+        // Starting a new word: accumulate the text between the line
+        // and this new word; not a new word: just add another space.
+        ++_spaces;
+!!!5535490.java!!!	breakLine() : void
+        breakLine( false );
+!!!5535618.java!!!	breakLine(inout preserveSpace : boolean) : void
+        // Equivalent to calling printSpace and forcing a flushLine.
+        if ( _text.length() > 0 ) {
+            while ( _spaces > 0 ) {
+                _line.append( ' ' );
+                --_spaces;
+            }
+            _line.append( _text );
+            _text = new StringBuffer( 20 );
+        }
+        flushLine( preserveSpace );
+        try {
+            // Print line and new line, then zero the line contents.
+            _writer.write( _format.getLineSeparator() );
+        } catch ( IOException except ) {
+            // We don't throw an exception, but hold it
+            // until the end of the document.
+            if ( _exception == null )
+                _exception = except;
+        }
+!!!5535746.java!!!	flushLine(inout preserveSpace : boolean) : void
+        int     indent;
+
+        if ( _line.length() > 0 ) {
+            try {
+
+                if ( _format.getIndenting() && ! preserveSpace ) {
+                    // Make sure the indentation does not blow us away.
+                    indent = _thisIndent;
+                    if ( ( 2 * indent ) > _format.getLineWidth() && _format.getLineWidth() > 0 )
+                        indent = _format.getLineWidth() / 2;
+                    // Print the indentation as spaces and set the current
+                    // indentation to the next expected indentation.
+                    while ( indent > 0 ) {
+                        _writer.write( ' ' );
+                        --indent;
+                    }
+                }
+                _thisIndent = _nextIndent;
+
+                // There is no need to print the spaces at the end of the line,
+                // they are simply stripped and replaced with a single line
+                // separator.
+                _spaces = 0;
+                _writer.write( _line.toString() );
+
+                _line = new StringBuffer( 40 );
+            } catch ( IOException except ) {
+                // We don't throw an exception, but hold it
+                // until the end of the document.
+                if ( _exception == null )
+                    _exception = except;
+            }
+        }
+!!!5535874.java!!!	flush() : void
+        if ( _line.length() > 0 || _text.length() > 0 )
+            breakLine();
+        try {
+            _writer.flush();
+        } catch ( IOException except ) {
+            // We don't throw an exception, but hold it
+            // until the end of the document.
+            if ( _exception == null )
+                _exception = except;
+        }
+!!!5536002.java!!!	indent() : void
+        _nextIndent += _format.getIndent();
+!!!5536130.java!!!	unindent() : void
+        _nextIndent -= _format.getIndent();
+        if ( _nextIndent < 0 )
+            _nextIndent = 0;
+        // If there is no current line and we're de-identing then
+        // this indentation level is actually the next level.
+        if ( ( _line.length() + _spaces + _text.length() ) == 0 )
+            _thisIndent = _nextIndent;
+!!!5536258.java!!!	getNextIndent() : int
+        return _nextIndent;
+!!!5536386.java!!!	setNextIndent(in indent : int) : void
+        _nextIndent = indent;
+!!!5536514.java!!!	setThisIndent(in indent : int) : void
+        _thisIndent = indent;

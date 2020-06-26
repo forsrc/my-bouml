@@ -1,0 +1,308 @@
+class FilePermission
+!!!6875394.java!!!	init(in mask : int) : void
+        if ((mask & ALL) != mask)
+                throw new IllegalArgumentException("invalid actions mask");
+
+        if (mask == NONE)
+                throw new IllegalArgumentException("invalid actions mask");
+
+        if ((cpath = getName()) == null)
+                throw new NullPointerException("name can't be null");
+
+        this.mask = mask;
+
+        if (cpath.equals("<<ALL FILES>>")) {
+            directory = true;
+            recursive = true;
+            cpath = "";
+            return;
+        }
+
+        // store only the canonical cpath if possible
+        cpath = AccessController.doPrivileged(new PrivilegedAction<String>() {
+            public String run() {
+                try {
+                    String path = cpath;
+                    if (cpath.endsWith("*")) {
+                        // call getCanonicalPath with a path with wildcard character
+                        // replaced to avoid calling it with paths that are
+                        // intended to match all entries in a directory
+                        path = path.substring(0, path.length()-1) + "-";
+                        path = new File(path).getCanonicalPath();
+                        return path.substring(0, path.length()-1) + "*";
+                    } else {
+                        return new File(path).getCanonicalPath();
+                    }
+                } catch (IOException ioe) {
+                    return cpath;
+                }
+            }
+        });
+
+        int len = cpath.length();
+        char last = ((len > 0) ? cpath.charAt(len - 1) : 0);
+
+        if (last == RECURSIVE_CHAR &&
+            cpath.charAt(len - 2) == File.separatorChar) {
+            directory = true;
+            recursive = true;
+            cpath = cpath.substring(0, --len);
+        } else if (last == WILD_CHAR &&
+            cpath.charAt(len - 2) == File.separatorChar) {
+            directory = true;
+            //recursive = false;
+            cpath = cpath.substring(0, --len);
+        } else {
+            // overkill since they are initialized to false, but
+            // commented out here to remind us...
+            //directory = false;
+            //recursive = false;
+        }
+
+        // XXX: at this point the path should be absolute. die if it isn't?
+!!!6875522.java!!!	FilePermission(inout path : String, inout actions : String)
+        super(path);
+        init(getMask(actions));
+!!!6875650.java!!!	FilePermission(inout path : String, in mask : int)
+        super(path);
+        init(mask);
+!!!6875778.java!!!	implies(inout p : Permission) : boolean
+        if (!(p instanceof FilePermission))
+            return false;
+
+        FilePermission that = (FilePermission) p;
+
+        // we get the effective mask. i.e., the "and" of this and that.
+        // They must be equal to that.mask for implies to return true.
+
+        return ((this.mask & that.mask) == that.mask) && impliesIgnoreMask(that);
+!!!6875906.java!!!	impliesIgnoreMask(inout that : FilePermission) : boolean
+        if (this.directory) {
+            if (this.recursive) {
+                // make sure that.path is longer then path so
+                // something like /foo/- does not imply /foo
+                if (that.directory) {
+                    return (that.cpath.length() >= this.cpath.length()) &&
+                            that.cpath.startsWith(this.cpath);
+                }  else {
+                    return ((that.cpath.length() > this.cpath.length()) &&
+                        that.cpath.startsWith(this.cpath));
+                }
+            } else {
+                if (that.directory) {
+                    // if the permission passed in is a directory
+                    // specification, make sure that a non-recursive
+                    // permission (i.e., this object) can't imply a recursive
+                    // permission.
+                    if (that.recursive)
+                        return false;
+                    else
+                        return (this.cpath.equals(that.cpath));
+                } else {
+                    int last = that.cpath.lastIndexOf(File.separatorChar);
+                    if (last == -1)
+                        return false;
+                    else {
+                        // this.cpath.equals(that.cpath.substring(0, last+1));
+                        // Use regionMatches to avoid creating new string
+                        return (this.cpath.length() == (last + 1)) &&
+                            this.cpath.regionMatches(0, that.cpath, 0, last+1);
+                    }
+                }
+            }
+        } else if (that.directory) {
+            // if this is NOT recursive/wildcarded,
+            // do not let it imply a recursive/wildcarded permission
+            return false;
+        } else {
+            return (this.cpath.equals(that.cpath));
+        }
+!!!6876034.java!!!	equals(inout obj : Object) : boolean
+        if (obj == this)
+            return true;
+
+        if (! (obj instanceof FilePermission))
+            return false;
+
+        FilePermission that = (FilePermission) obj;
+
+        return (this.mask == that.mask) &&
+            this.cpath.equals(that.cpath) &&
+            (this.directory == that.directory) &&
+            (this.recursive == that.recursive);
+!!!6876162.java!!!	hashCode() : int
+        return 0;
+!!!6876290.java!!!	getMask(inout actions : String) : int
+        int mask = NONE;
+
+        // Null action valid?
+        if (actions == null) {
+            return mask;
+        }
+
+        // Use object identity comparison against known-interned strings for
+        // performance benefit (these values are used heavily within the JDK).
+        if (actions == SecurityConstants.FILE_READ_ACTION) {
+            return READ;
+        } else if (actions == SecurityConstants.FILE_WRITE_ACTION) {
+            return WRITE;
+        } else if (actions == SecurityConstants.FILE_EXECUTE_ACTION) {
+            return EXECUTE;
+        } else if (actions == SecurityConstants.FILE_DELETE_ACTION) {
+            return DELETE;
+        } else if (actions == SecurityConstants.FILE_READLINK_ACTION) {
+            return READLINK;
+        }
+
+        char[] a = actions.toCharArray();
+
+        int i = a.length - 1;
+        if (i < 0)
+            return mask;
+
+        while (i != -1) {
+            char c;
+
+            // skip whitespace
+            while ((i!=-1) && ((c = a[i]) == ' ' ||
+                               c == '\r' ||
+                               c == '\n' ||
+                               c == '\f' ||
+                               c == '\t'))
+                i--;
+
+            // check for the known strings
+            int matchlen;
+
+            if (i >= 3 && (a[i-3] == 'r' || a[i-3] == 'R') &&
+                          (a[i-2] == 'e' || a[i-2] == 'E') &&
+                          (a[i-1] == 'a' || a[i-1] == 'A') &&
+                          (a[i] == 'd' || a[i] == 'D'))
+            {
+                matchlen = 4;
+                mask |= READ;
+
+            } else if (i >= 4 && (a[i-4] == 'w' || a[i-4] == 'W') &&
+                                 (a[i-3] == 'r' || a[i-3] == 'R') &&
+                                 (a[i-2] == 'i' || a[i-2] == 'I') &&
+                                 (a[i-1] == 't' || a[i-1] == 'T') &&
+                                 (a[i] == 'e' || a[i] == 'E'))
+            {
+                matchlen = 5;
+                mask |= WRITE;
+
+            } else if (i >= 6 && (a[i-6] == 'e' || a[i-6] == 'E') &&
+                                 (a[i-5] == 'x' || a[i-5] == 'X') &&
+                                 (a[i-4] == 'e' || a[i-4] == 'E') &&
+                                 (a[i-3] == 'c' || a[i-3] == 'C') &&
+                                 (a[i-2] == 'u' || a[i-2] == 'U') &&
+                                 (a[i-1] == 't' || a[i-1] == 'T') &&
+                                 (a[i] == 'e' || a[i] == 'E'))
+            {
+                matchlen = 7;
+                mask |= EXECUTE;
+
+            } else if (i >= 5 && (a[i-5] == 'd' || a[i-5] == 'D') &&
+                                 (a[i-4] == 'e' || a[i-4] == 'E') &&
+                                 (a[i-3] == 'l' || a[i-3] == 'L') &&
+                                 (a[i-2] == 'e' || a[i-2] == 'E') &&
+                                 (a[i-1] == 't' || a[i-1] == 'T') &&
+                                 (a[i] == 'e' || a[i] == 'E'))
+            {
+                matchlen = 6;
+                mask |= DELETE;
+
+            } else if (i >= 7 && (a[i-7] == 'r' || a[i-7] == 'R') &&
+                                 (a[i-6] == 'e' || a[i-6] == 'E') &&
+                                 (a[i-5] == 'a' || a[i-5] == 'A') &&
+                                 (a[i-4] == 'd' || a[i-4] == 'D') &&
+                                 (a[i-3] == 'l' || a[i-3] == 'L') &&
+                                 (a[i-2] == 'i' || a[i-2] == 'I') &&
+                                 (a[i-1] == 'n' || a[i-1] == 'N') &&
+                                 (a[i] == 'k' || a[i] == 'K'))
+            {
+                matchlen = 8;
+                mask |= READLINK;
+
+            } else {
+                // parse error
+                throw new IllegalArgumentException(
+                        "invalid permission: " + actions);
+            }
+
+            // make sure we didn't just match the tail of a word
+            // like "ackbarfaccept".  Also, skip to the comma.
+            boolean seencomma = false;
+            while (i >= matchlen && !seencomma) {
+                switch(a[i-matchlen]) {
+                case ',':
+                    seencomma = true;
+                    break;
+                case ' ': case '\r': case '\n':
+                case '\f': case '\t':
+                    break;
+                default:
+                    throw new IllegalArgumentException(
+                            "invalid permission: " + actions);
+                }
+                i--;
+            }
+
+            // point i at the location of the comma minus one (or -1).
+            i -= matchlen;
+        }
+
+        return mask;
+!!!6876418.java!!!	getMask() : int
+        return mask;
+!!!6876546.java!!!	getActions(in mask : int) : String
+        StringBuilder sb = new StringBuilder();
+        boolean comma = false;
+
+        if ((mask & READ) == READ) {
+            comma = true;
+            sb.append("read");
+        }
+
+        if ((mask & WRITE) == WRITE) {
+            if (comma) sb.append(',');
+            else comma = true;
+            sb.append("write");
+        }
+
+        if ((mask & EXECUTE) == EXECUTE) {
+            if (comma) sb.append(',');
+            else comma = true;
+            sb.append("execute");
+        }
+
+        if ((mask & DELETE) == DELETE) {
+            if (comma) sb.append(',');
+            else comma = true;
+            sb.append("delete");
+        }
+
+        if ((mask & READLINK) == READLINK) {
+            if (comma) sb.append(',');
+            else comma = true;
+            sb.append("readlink");
+        }
+
+        return sb.toString();
+!!!6876674.java!!!	getActions() : String
+        if (actions == null)
+            actions = getActions(this.mask);
+
+        return actions;
+!!!6876802.java!!!	newPermissionCollection() : PermissionCollection
+        return new FilePermissionCollection();
+!!!6876930.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        // Write out the actions. The superclass takes care of the name
+        // call getActions to make sure actions field is initialized
+        if (actions == null)
+            getActions();
+        s.defaultWriteObject();
+!!!6877058.java!!!	readObject(inout s : ObjectInputStream) : void
+        // Read in the actions, then restore everything else by calling init.
+        s.defaultReadObject();
+        init(getMask(actions));

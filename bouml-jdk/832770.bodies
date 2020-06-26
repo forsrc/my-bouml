@@ -1,0 +1,615 @@
+class KeyStoreLoginModule
+!!!5977730.java!!!	initialize(inout subject : Subject, inout callbackHandler : CallbackHandler, inout sharedState : Map, inout options : Map) : void
+        this.subject = subject;
+        this.callbackHandler = callbackHandler;
+        this.sharedState = (Map<String, Object>)sharedState;
+        this.options = options;
+
+        processOptions();
+        status = INITIALIZED;
+!!!5977858.java!!!	processOptions() : void
+        keyStoreURL = (String) options.get("keyStoreURL");
+        if (keyStoreURL == null) {
+            keyStoreURL =
+                "file:" +
+                System.getProperty("user.home").replace(
+                    File.separatorChar, '/') +
+                '/' + ".keystore";
+        } else if (NONE.equals(keyStoreURL)) {
+            nullStream = true;
+        }
+        keyStoreType = (String) options.get("keyStoreType");
+        if (keyStoreType == null) {
+            keyStoreType = KeyStore.getDefaultType();
+        }
+        if (P11KEYSTORE.equalsIgnoreCase(keyStoreType)) {
+            token = true;
+        }
+
+        keyStoreProvider = (String) options.get("keyStoreProvider");
+
+        keyStoreAlias = (String) options.get("keyStoreAlias");
+
+        keyStorePasswordURL = (String) options.get("keyStorePasswordURL");
+
+        privateKeyPasswordURL = (String) options.get("privateKeyPasswordURL");
+
+        protectedPath = "true".equalsIgnoreCase((String)options.get
+                                        ("protected"));
+
+        debug = "true".equalsIgnoreCase((String) options.get("debug"));
+        if (debug) {
+            debugPrint(null);
+            debugPrint("keyStoreURL=" + keyStoreURL);
+            debugPrint("keyStoreType=" + keyStoreType);
+            debugPrint("keyStoreProvider=" + keyStoreProvider);
+            debugPrint("keyStoreAlias=" + keyStoreAlias);
+            debugPrint("keyStorePasswordURL=" + keyStorePasswordURL);
+            debugPrint("privateKeyPasswordURL=" + privateKeyPasswordURL);
+            debugPrint("protectedPath=" + protectedPath);
+            debugPrint(null);
+        }
+!!!5977986.java!!!	login() : boolean
+        switch (status) {
+        case UNINITIALIZED:
+        default:
+            throw new LoginException("The login module is not initialized");
+        case INITIALIZED:
+        case AUTHENTICATED:
+
+            if (token && !nullStream) {
+                throw new LoginException
+                        ("if keyStoreType is " + P11KEYSTORE +
+                        " then keyStoreURL must be " + NONE);
+            }
+
+            if (token && privateKeyPasswordURL != null) {
+                throw new LoginException
+                        ("if keyStoreType is " + P11KEYSTORE +
+                        " then privateKeyPasswordURL must not be specified");
+            }
+
+            if (protectedPath &&
+                (keyStorePasswordURL != null ||
+                        privateKeyPasswordURL != null)) {
+                throw new LoginException
+                        ("if protected is true then keyStorePasswordURL and " +
+                        "privateKeyPasswordURL must not be specified");
+            }
+
+            // get relevant alias and password info
+
+            if (protectedPath) {
+                getAliasAndPasswords(PROTECTED_PATH);
+            } else if (token) {
+                getAliasAndPasswords(TOKEN);
+            } else {
+                getAliasAndPasswords(NORMAL);
+            }
+
+            // log into KeyStore to retrieve data,
+            // then clear passwords
+
+            try {
+                getKeyStoreInfo();
+            } finally {
+                if (privateKeyPassword != null &&
+                    privateKeyPassword != keyStorePassword) {
+                    Arrays.fill(privateKeyPassword, '\0');
+                    privateKeyPassword = null;
+                }
+                if (keyStorePassword != null) {
+                    Arrays.fill(keyStorePassword, '\0');
+                    keyStorePassword = null;
+                }
+            }
+            status = AUTHENTICATED;
+            return true;
+        case LOGGED_IN:
+            return true;
+        }
+!!!5978114.java!!!	getAliasAndPasswords(in env : int) : void
+        if (callbackHandler == null) {
+
+            // No callback handler - check for alias and password options
+
+            switch (env) {
+            case PROTECTED_PATH:
+                checkAlias();
+                break;
+            case TOKEN:
+                checkAlias();
+                checkStorePass();
+                break;
+            case NORMAL:
+                checkAlias();
+                checkStorePass();
+                checkKeyPass();
+                break;
+            }
+
+        } else {
+
+            // Callback handler available - prompt for alias and passwords
+
+            NameCallback aliasCallback;
+            if (keyStoreAlias == null || keyStoreAlias.length() == 0) {
+                aliasCallback = new NameCallback(
+                                        rb.getString("Keystore.alias."));
+            } else {
+                aliasCallback =
+                    new NameCallback(rb.getString("Keystore.alias."),
+                                     keyStoreAlias);
+            }
+
+            PasswordCallback storePassCallback = null;
+            PasswordCallback keyPassCallback = null;
+
+            switch (env) {
+            case PROTECTED_PATH:
+                break;
+            case NORMAL:
+                keyPassCallback = new PasswordCallback
+                    (rb.getString("Private.key.password.optional."), false);
+                // fall thru
+            case TOKEN:
+                storePassCallback = new PasswordCallback
+                    (rb.getString("Keystore.password."), false);
+                break;
+            }
+            prompt(aliasCallback, storePassCallback, keyPassCallback);
+        }
+
+        if (debug) {
+            debugPrint("alias=" + keyStoreAlias);
+        }
+!!!5978242.java!!!	checkAlias() : void
+        if (keyStoreAlias == null) {
+            throw new LoginException
+                ("Need to specify an alias option to use " +
+                "KeyStoreLoginModule non-interactively.");
+        }
+!!!5978370.java!!!	checkStorePass() : void
+        if (keyStorePasswordURL == null) {
+            throw new LoginException
+                ("Need to specify keyStorePasswordURL option to use " +
+                "KeyStoreLoginModule non-interactively.");
+        }
+        InputStream in = null;
+        try {
+            in = new URL(keyStorePasswordURL).openStream();
+            keyStorePassword = Password.readPassword(in);
+        } catch (IOException e) {
+            LoginException le = new LoginException
+                ("Problem accessing keystore password \"" +
+                keyStorePasswordURL + "\"");
+            le.initCause(e);
+            throw le;
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException ioe) {
+                    LoginException le = new LoginException(
+                        "Problem closing the keystore password stream");
+                    le.initCause(ioe);
+                    throw le;
+                }
+            }
+        }
+!!!5978498.java!!!	checkKeyPass() : void
+        if (privateKeyPasswordURL == null) {
+            privateKeyPassword = keyStorePassword;
+        } else {
+            InputStream in = null;
+            try {
+                in = new URL(privateKeyPasswordURL).openStream();
+                privateKeyPassword = Password.readPassword(in);
+            } catch (IOException e) {
+                LoginException le = new LoginException
+                        ("Problem accessing private key password \"" +
+                        privateKeyPasswordURL + "\"");
+                le.initCause(e);
+                throw le;
+            } finally {
+                if (in != null) {
+                    try {
+                        in.close();
+                    } catch (IOException ioe) {
+                        LoginException le = new LoginException(
+                            "Problem closing the private key password stream");
+                        le.initCause(ioe);
+                        throw le;
+                    }
+                }
+            }
+        }
+!!!5978626.java!!!	prompt(inout aliasCallback : NameCallback, inout storePassCallback : PasswordCallback, inout keyPassCallback : PasswordCallback) : void
+
+        if (storePassCallback == null) {
+
+            // only prompt for alias
+
+            try {
+                callbackHandler.handle(
+                    new Callback[] {
+                        bannerCallback, aliasCallback, confirmationCallback
+                    });
+            } catch (IOException e) {
+                LoginException le = new LoginException
+                        ("Problem retrieving keystore alias");
+                le.initCause(e);
+                throw le;
+            } catch (UnsupportedCallbackException e) {
+                throw new LoginException(
+                    "Error: " + e.getCallback().toString() +
+                    " is not available to retrieve authentication " +
+                    " information from the user");
+            }
+
+            int confirmationResult = confirmationCallback.getSelectedIndex();
+
+            if (confirmationResult == ConfirmationCallback.CANCEL) {
+                throw new LoginException("Login cancelled");
+            }
+
+            saveAlias(aliasCallback);
+
+        } else if (keyPassCallback == null) {
+
+            // prompt for alias and key store password
+
+            try {
+                callbackHandler.handle(
+                    new Callback[] {
+                        bannerCallback, aliasCallback,
+                        storePassCallback, confirmationCallback
+                    });
+            } catch (IOException e) {
+                LoginException le = new LoginException
+                        ("Problem retrieving keystore alias and password");
+                le.initCause(e);
+                throw le;
+            } catch (UnsupportedCallbackException e) {
+                throw new LoginException(
+                    "Error: " + e.getCallback().toString() +
+                    " is not available to retrieve authentication " +
+                    " information from the user");
+            }
+
+            int confirmationResult = confirmationCallback.getSelectedIndex();
+
+            if (confirmationResult == ConfirmationCallback.CANCEL) {
+                throw new LoginException("Login cancelled");
+            }
+
+            saveAlias(aliasCallback);
+            saveStorePass(storePassCallback);
+
+        } else {
+
+            // prompt for alias, key store password, and key password
+
+            try {
+                callbackHandler.handle(
+                    new Callback[] {
+                        bannerCallback, aliasCallback,
+                        storePassCallback, keyPassCallback,
+                        confirmationCallback
+                    });
+            } catch (IOException e) {
+                LoginException le = new LoginException
+                        ("Problem retrieving keystore alias and passwords");
+                le.initCause(e);
+                throw le;
+            } catch (UnsupportedCallbackException e) {
+                throw new LoginException(
+                    "Error: " + e.getCallback().toString() +
+                    " is not available to retrieve authentication " +
+                    " information from the user");
+            }
+
+            int confirmationResult = confirmationCallback.getSelectedIndex();
+
+            if (confirmationResult == ConfirmationCallback.CANCEL) {
+                throw new LoginException("Login cancelled");
+            }
+
+            saveAlias(aliasCallback);
+            saveStorePass(storePassCallback);
+            saveKeyPass(keyPassCallback);
+        }
+!!!5978754.java!!!	saveAlias(inout cb : NameCallback) : void
+        keyStoreAlias = cb.getName();
+!!!5978882.java!!!	saveStorePass(inout c : PasswordCallback) : void
+        keyStorePassword = c.getPassword();
+        if (keyStorePassword == null) {
+            /* Treat a NULL password as an empty password */
+            keyStorePassword = new char[0];
+        }
+        c.clearPassword();
+!!!5979010.java!!!	saveKeyPass(inout c : PasswordCallback) : void
+        privateKeyPassword = c.getPassword();
+        if (privateKeyPassword == null || privateKeyPassword.length == 0) {
+            /*
+             * Use keystore password if no private key password is
+             * specified.
+             */
+            privateKeyPassword = keyStorePassword;
+        }
+        c.clearPassword();
+!!!5979138.java!!!	getKeyStoreInfo() : void
+
+        /* Get KeyStore instance */
+        try {
+            if (keyStoreProvider == null) {
+                keyStore = KeyStore.getInstance(keyStoreType);
+            } else {
+                keyStore =
+                    KeyStore.getInstance(keyStoreType, keyStoreProvider);
+            }
+        } catch (KeyStoreException e) {
+            LoginException le = new LoginException
+                ("The specified keystore type was not available");
+            le.initCause(e);
+            throw le;
+        } catch (NoSuchProviderException e) {
+            LoginException le = new LoginException
+                ("The specified keystore provider was not available");
+            le.initCause(e);
+            throw le;
+        }
+
+        /* Load KeyStore contents from file */
+        InputStream in = null;
+        try {
+            if (nullStream) {
+                // if using protected auth path, keyStorePassword will be null
+                keyStore.load(null, keyStorePassword);
+            } else {
+                in = new URL(keyStoreURL).openStream();
+                keyStore.load(in, keyStorePassword);
+            }
+        } catch (MalformedURLException e) {
+            LoginException le = new LoginException
+                                ("Incorrect keyStoreURL option");
+            le.initCause(e);
+            throw le;
+        } catch (GeneralSecurityException e) {
+            LoginException le = new LoginException
+                                ("Error initializing keystore");
+            le.initCause(e);
+            throw le;
+        } catch (IOException e) {
+            LoginException le = new LoginException
+                                ("Error initializing keystore");
+            le.initCause(e);
+            throw le;
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException ioe) {
+                    LoginException le = new LoginException
+                                ("Error initializing keystore");
+                    le.initCause(ioe);
+                    throw le;
+                }
+            }
+        }
+
+        /* Get certificate chain and create a certificate path */
+        try {
+            fromKeyStore =
+                keyStore.getCertificateChain(keyStoreAlias);
+            if (fromKeyStore == null
+                || fromKeyStore.length == 0
+                || !(fromKeyStore[0] instanceof X509Certificate))
+            {
+                throw new FailedLoginException(
+                    "Unable to find X.509 certificate chain in keystore");
+            } else {
+                LinkedList<Certificate> certList = new LinkedList<>();
+                for (int i=0; i < fromKeyStore.length; i++) {
+                    certList.add(fromKeyStore[i]);
+                }
+                CertificateFactory certF=
+                    CertificateFactory.getInstance("X.509");
+                certP =
+                    certF.generateCertPath(certList);
+            }
+        } catch (KeyStoreException e) {
+            LoginException le = new LoginException("Error using keystore");
+            le.initCause(e);
+            throw le;
+        } catch (CertificateException ce) {
+            LoginException le = new LoginException
+                ("Error: X.509 Certificate type unavailable");
+            le.initCause(ce);
+            throw le;
+        }
+
+        /* Get principal and keys */
+        try {
+            X509Certificate certificate = (X509Certificate)fromKeyStore[0];
+            principal = new javax.security.auth.x500.X500Principal
+                (certificate.getSubjectDN().getName());
+
+            // if token, privateKeyPassword will be null
+            Key privateKey = keyStore.getKey(keyStoreAlias, privateKeyPassword);
+            if (privateKey == null
+                || !(privateKey instanceof PrivateKey))
+            {
+                throw new FailedLoginException(
+                    "Unable to recover key from keystore");
+            }
+
+            privateCredential = new X500PrivateCredential(
+                certificate, (PrivateKey) privateKey, keyStoreAlias);
+        } catch (KeyStoreException e) {
+            LoginException le = new LoginException("Error using keystore");
+            le.initCause(e);
+            throw le;
+        } catch (NoSuchAlgorithmException e) {
+            LoginException le = new LoginException("Error using keystore");
+            le.initCause(e);
+            throw le;
+        } catch (UnrecoverableKeyException e) {
+            FailedLoginException fle = new FailedLoginException
+                                ("Unable to recover key from keystore");
+            fle.initCause(e);
+            throw fle;
+        }
+        if (debug) {
+            debugPrint("principal=" + principal +
+                       "\n certificate="
+                       + privateCredential.getCertificate() +
+                       "\n alias =" + privateCredential.getAlias());
+        }
+!!!5979266.java!!!	commit() : boolean
+        switch (status) {
+        case UNINITIALIZED:
+        default:
+            throw new LoginException("The login module is not initialized");
+        case INITIALIZED:
+            logoutInternal();
+            throw new LoginException("Authentication failed");
+        case AUTHENTICATED:
+            if (commitInternal()) {
+                return true;
+            } else {
+                logoutInternal();
+                throw new LoginException("Unable to retrieve certificates");
+            }
+        case LOGGED_IN:
+            return true;
+        }
+!!!5979394.java!!!	commitInternal() : boolean
+        /* If the subject is not readonly add to the principal and credentials
+         * set; otherwise just return true
+         */
+        if (subject.isReadOnly()) {
+            throw new LoginException ("Subject is set readonly");
+        } else {
+            subject.getPrincipals().add(principal);
+            subject.getPublicCredentials().add(certP);
+            subject.getPrivateCredentials().add(privateCredential);
+            status = LOGGED_IN;
+            return true;
+        }
+!!!5979522.java!!!	abort() : boolean
+        switch (status) {
+        case UNINITIALIZED:
+        default:
+            return false;
+        case INITIALIZED:
+            return false;
+        case AUTHENTICATED:
+            logoutInternal();
+            return true;
+        case LOGGED_IN:
+            logoutInternal();
+            return true;
+        }
+!!!5979650.java!!!	logout() : boolean
+        if (debug)
+            debugPrint("Entering logout " + status);
+        switch (status) {
+        case UNINITIALIZED:
+            throw new LoginException
+                ("The login module is not initialized");
+        case INITIALIZED:
+        case AUTHENTICATED:
+        default:
+           // impossible for LoginModule to be in AUTHENTICATED
+           // state
+           // assert status != AUTHENTICATED;
+            return false;
+        case LOGGED_IN:
+            logoutInternal();
+            return true;
+        }
+!!!5979778.java!!!	logoutInternal() : void
+        if (debug) {
+            debugPrint("Entering logoutInternal");
+        }
+
+        // assumption is that KeyStore.load did a login -
+        // perform explicit logout if possible
+        LoginException logoutException = null;
+        Provider provider = keyStore.getProvider();
+        if (provider instanceof AuthProvider) {
+            AuthProvider ap = (AuthProvider)provider;
+            try {
+                ap.logout();
+                if (debug) {
+                    debugPrint("logged out of KeyStore AuthProvider");
+                }
+            } catch (LoginException le) {
+                // save but continue below
+                logoutException = le;
+            }
+        }
+
+        if (subject.isReadOnly()) {
+            // attempt to destroy the private credential
+            // even if the Subject is read-only
+            principal = null;
+            certP = null;
+            status = INITIALIZED;
+            // destroy the private credential
+            Iterator<Object> it = subject.getPrivateCredentials().iterator();
+            while (it.hasNext()) {
+                Object obj = it.next();
+                if (privateCredential.equals(obj)) {
+                    privateCredential = null;
+                    try {
+                        ((Destroyable)obj).destroy();
+                        if (debug)
+                            debugPrint("Destroyed private credential, " +
+                                       obj.getClass().getName());
+                        break;
+                    } catch (DestroyFailedException dfe) {
+                        LoginException le = new LoginException
+                            ("Unable to destroy private credential, "
+                             + obj.getClass().getName());
+                        le.initCause(dfe);
+                        throw le;
+                    }
+                }
+            }
+
+            // throw an exception because we can not remove
+            // the principal and public credential from this
+            // read-only Subject
+            throw new LoginException
+                ("Unable to remove Principal ("
+                 + "X500Principal "
+                 + ") and public credential (certificatepath) "
+                 + "from read-only Subject");
+        }
+        if (principal != null) {
+            subject.getPrincipals().remove(principal);
+            principal = null;
+        }
+        if (certP != null) {
+            subject.getPublicCredentials().remove(certP);
+            certP = null;
+        }
+        if (privateCredential != null) {
+            subject.getPrivateCredentials().remove(privateCredential);
+            privateCredential = null;
+        }
+
+        // throw pending logout exception if there is one
+        if (logoutException != null) {
+            throw logoutException;
+        }
+        status = INITIALIZED;
+!!!5979906.java!!!	debugPrint(inout message : String) : void
+        // we should switch to logging API
+        if (message == null) {
+            System.err.println();
+        } else {
+            System.err.println("Debug KeyStoreLoginModule: " + message);
+        }

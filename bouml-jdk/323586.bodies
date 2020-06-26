@@ -1,0 +1,99 @@
+class ReaderUtil
+!!!1749762.java!!!	computeUpdatedPixels(in sourceOffset : int, in sourceExtent : int, in destinationOffset : int, in dstMin : int, in dstMax : int, in sourceSubsampling : int, in passStart : int, in passExtent : int, in passPeriod : int, inout vals : int [[]], in offset : int) : void
+        // We need to satisfy the congruences:
+        // dst = destinationOffset + (src - sourceOffset)/sourceSubsampling
+        //
+        // src - passStart == 0 (mod passPeriod)
+        // src - sourceOffset == 0 (mod sourceSubsampling)
+        //
+        // subject to the inequalities:
+        //
+        // src >= passStart
+        // src < passStart + passExtent
+        // src >= sourceOffset
+        // src < sourceOffset + sourceExtent
+        // dst >= dstMin
+        // dst <= dstmax
+        //
+        // where
+        //
+        // dst = destinationOffset + (src - sourceOffset)/sourceSubsampling
+        //
+        // For now we use a brute-force approach although we could
+        // attempt to analyze the congruences.  If passPeriod and
+        // sourceSubsamling are relatively prime, the period will be
+        // their product.  If they share a common factor, either the
+        // period will be equal to the larger value, or the sequences
+        // will be completely disjoint, depending on the relationship
+        // between passStart and sourceOffset.  Since we only have to do this
+        // twice per image (once each for X and Y), it seems cheap enough
+        // to do it the straightforward way.
+
+        boolean gotPixel = false;
+        int firstDst = -1;
+        int secondDst = -1;
+        int lastDst = -1;
+
+        for (int i = 0; i < passExtent; i++) {
+            int src = passStart + i*passPeriod;
+            if (src < sourceOffset) {
+                continue;
+            }
+            if ((src - sourceOffset) % sourceSubsampling != 0) {
+                continue;
+            }
+            if (src >= sourceOffset + sourceExtent) {
+                break;
+            }
+
+            int dst = destinationOffset +
+                (src - sourceOffset)/sourceSubsampling;
+            if (dst < dstMin) {
+                continue;
+            }
+            if (dst > dstMax) {
+                break;
+            }
+
+            if (!gotPixel) {
+                firstDst = dst; // Record smallest valid pixel
+                gotPixel = true;
+            } else if (secondDst == -1) {
+                secondDst = dst; // Record second smallest valid pixel
+            }
+            lastDst = dst; // Record largest valid pixel
+        }
+
+        vals[offset] = firstDst;
+
+        // If we never saw a valid pixel, set width to 0
+        if (!gotPixel) {
+            vals[offset + 2] = 0;
+        } else {
+            vals[offset + 2] = lastDst - firstDst + 1;
+        }
+
+        // The period is given by the difference of any two adjacent pixels
+        vals[offset + 4] = Math.max(secondDst - firstDst, 1);
+!!!1749890.java!!!	computeUpdatedPixels(inout sourceRegion : Rectangle, inout destinationOffset : Point, in dstMinX : int, in dstMinY : int, in dstMaxX : int, in dstMaxY : int, in sourceXSubsampling : int, in sourceYSubsampling : int, in passXStart : int, in passYStart : int, in passWidth : int, in passHeight : int, in passPeriodX : int, in passPeriodY : int) : int
+        int[] vals = new int[6];
+        computeUpdatedPixels(sourceRegion.x, sourceRegion.width,
+                             destinationOffset.x,
+                             dstMinX, dstMaxX, sourceXSubsampling,
+                             passXStart, passWidth, passPeriodX,
+                             vals, 0);
+        computeUpdatedPixels(sourceRegion.y, sourceRegion.height,
+                             destinationOffset.y,
+                             dstMinY, dstMaxY, sourceYSubsampling,
+                             passYStart, passHeight, passPeriodY,
+                             vals, 1);
+        return vals;
+!!!1750018.java!!!	readMultiByteInteger(inout iis : ImageInputStream) : int
+        int value = iis.readByte();
+        int result = value & 0x7f;
+        while((value & 0x80) == 0x80) {
+            result <<= 7;
+            value = iis.readByte();
+            result |= (value & 0x7f);
+        }
+        return result;

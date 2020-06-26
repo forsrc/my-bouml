@@ -1,0 +1,214 @@
+class Template
+!!!3796610.java!!!	hasParams() : boolean
+        return _parameters.size() > 0;
+!!!3796738.java!!!	isSimplified() : boolean
+        return(_simplified);
+!!!3796866.java!!!	setSimplified() : void
+        _simplified = true;
+!!!3796994.java!!!	isSimpleNamedTemplate() : boolean
+        return _isSimpleNamedTemplate;
+!!!3797122.java!!!	addParameter(inout param : Param) : void
+        _parameters.addElement(param);
+!!!3797250.java!!!	getParameters() : Vector
+        return _parameters;
+!!!3797378.java!!!	disable() : void
+        _disabled = true;
+!!!3797506.java!!!	disabled() : boolean
+        return(_disabled);
+!!!3797634.java!!!	getPriority() : double
+        return _priority;
+!!!3797762.java!!!	getPosition() : int
+        return(_position);
+!!!3797890.java!!!	isNamed() : boolean
+        return _name != null;
+!!!3798018.java!!!	getPattern() : Pattern
+        return _pattern;
+!!!3798146.java!!!	getName() : QName
+        return _name;
+!!!3798274.java!!!	setName(inout qname : QName) : void
+        if (_name == null) _name = qname;
+!!!3798402.java!!!	getModeName() : QName
+        return _mode;
+!!!3798530.java!!!	compareTo(inout template : Object) : int
+        Template other = (Template)template;
+        if (_priority > other._priority)
+            return 1;
+        else if (_priority < other._priority)
+            return -1;
+        else if (_position > other._position)
+            return 1;
+        else if (_position < other._position)
+            return -1;
+        else
+            return 0;
+!!!3798658.java!!!	display(in indent : int) : void
+        Util.println('\n');
+        indent(indent);
+        if (_name != null) {
+            indent(indent);
+            Util.println("name = " + _name);
+        }
+        else if (_pattern != null) {
+            indent(indent);
+            Util.println("match = " + _pattern.toString());
+        }
+        if (_mode != null) {
+            indent(indent);
+            Util.println("mode = " + _mode);
+        }
+        displayContents(indent + IndentIncrement);
+!!!3798786.java!!!	resolveNamedTemplates(inout other : Template, inout parser : Parser) : boolean
+
+        if (other == null) return true;
+
+        SymbolTable stable = parser.getSymbolTable();
+
+        final int us = this.getImportPrecedence();
+        final int them = other.getImportPrecedence();
+
+        if (us > them) {
+            other.disable();
+            return true;
+        }
+        else if (us < them) {
+            stable.addTemplate(other);
+            this.disable();
+            return true;
+        }
+        else {
+            return false;
+        }
+!!!3798914.java!!!	getStylesheet() : Stylesheet
+        return _stylesheet;
+!!!3799042.java!!!	parseContents(inout parser : Parser) : void
+
+        final String name     = getAttribute("name");
+        final String mode     = getAttribute("mode");
+        final String match    = getAttribute("match");
+        final String priority = getAttribute("priority");
+
+        _stylesheet = super.getStylesheet();
+
+        if (name.length() > 0) {
+            if (!XML11Char.isXML11ValidQName(name)) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.INVALID_QNAME_ERR, name, this);
+                parser.reportError(Constants.ERROR, err);
+            }
+            _name = parser.getQNameIgnoreDefaultNs(name);
+        }
+
+        if (mode.length() > 0) {
+            if (!XML11Char.isXML11ValidQName(mode)) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.INVALID_QNAME_ERR, mode, this);
+                parser.reportError(Constants.ERROR, err);
+            }
+            _mode = parser.getQNameIgnoreDefaultNs(mode);
+        }
+
+        if (match.length() > 0) {
+            _pattern = parser.parsePattern(this, "match", null);
+        }
+
+        if (priority.length() > 0) {
+            _priority = Double.parseDouble(priority);
+        }
+        else {
+            if (_pattern != null)
+                _priority = _pattern.getPriority();
+            else
+                _priority = Double.NaN;
+        }
+
+        _position = parser.getTemplateIndex();
+
+        // Add the (named) template to the symbol table
+        if (_name != null) {
+            Template other = parser.getSymbolTable().addTemplate(this);
+            if (!resolveNamedTemplates(other, parser)) {
+                ErrorMsg err =
+                    new ErrorMsg(ErrorMsg.TEMPLATE_REDEF_ERR, _name, this);
+                parser.reportError(Constants.ERROR, err);
+            }
+            // Is this a simple named template?
+            if (_pattern == null && _mode == null) {
+                _isSimpleNamedTemplate = true;
+            }
+        }
+
+        if (_parent instanceof Stylesheet) {
+            ((Stylesheet)_parent).addTemplate(this);
+        }
+
+        parser.setTemplate(this);       // set current template
+        parseChildren(parser);
+        parser.setTemplate(null);       // clear template
+!!!3799170.java!!!	parseSimplified(inout stylesheet : Stylesheet, inout parser : Parser) : void
+
+        _stylesheet = stylesheet;
+        setParent(stylesheet);
+
+        _name = null;
+        _mode = null;
+        _priority = Double.NaN;
+        _pattern = parser.parsePattern(this, "/");
+
+        final List<SyntaxTreeNode> contents = _stylesheet.getContents();
+        final SyntaxTreeNode root = contents.get(0);
+
+        if (root instanceof LiteralElement) {
+            addElement(root);
+            root.setParent(this);
+            contents.set(0, this);
+            parser.setTemplate(this);
+            root.parseContents(parser);
+            parser.setTemplate(null);
+        }
+!!!3799298.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        if (_pattern != null) {
+            _pattern.typeCheck(stable);
+        }
+
+        return typeCheckContents(stable);
+!!!3799426.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+
+        if (_disabled) return;
+        // bug fix #4433133, add a call to named template from applyTemplates
+        String className = classGen.getClassName();
+
+        if (_compiled && isNamed()){
+            String methodName = Util.escape(_name.toString());
+            il.append(classGen.loadTranslet());
+            il.append(methodGen.loadDOM());
+            il.append(methodGen.loadIterator());
+            il.append(methodGen.loadHandler());
+            il.append(methodGen.loadCurrentNode());
+            il.append(new INVOKEVIRTUAL(cpg.addMethodref(className,
+                                                         methodName,
+                                                         "("
+                                                         + DOM_INTF_SIG
+                                                         + NODE_ITERATOR_SIG
+                                                         + TRANSLET_OUTPUT_SIG
+                                                         + "I)V")));
+            return;
+        }
+
+        if (_compiled) return;
+        _compiled = true;
+
+        // %OPT% Special handling for simple named templates.
+        if (_isSimpleNamedTemplate && methodGen instanceof NamedMethodGenerator) {
+            int numParams = _parameters.size();
+            NamedMethodGenerator namedMethodGen = (NamedMethodGenerator)methodGen;
+
+            // Update load/store instructions to access Params from the stack
+            for (int i = 0; i < numParams; i++) {
+                Param param = (Param)_parameters.elementAt(i);
+                param.setLoadInstruction(namedMethodGen.loadParameter(i));
+                param.setStoreInstruction(namedMethodGen.storeParameter(i));
+            }
+        }
+
+        translateContents(classGen, methodGen);
+        il.setPositions(true);

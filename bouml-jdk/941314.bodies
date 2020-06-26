@@ -1,0 +1,91 @@
+class DeferredCloseProcessPipeInputStream
+!!!7144706.java!!!	DeferredCloseProcessPipeInputStream(in fd : int)
+            super(new FileInputStream(newFileDescriptor(fd)));
+!!!7144834.java!!!	drainInputStream(inout in : InputStream) : InputStream
+            int n = 0;
+            int j;
+            byte[] a = null;
+            synchronized (closeLock) {
+                if (buf == null) // asynchronous close()?
+                    return null; // discard
+                j = in.available();
+            }
+            while (j > 0) {
+                a = (a == null) ? new byte[j] : Arrays.copyOf(a, n + j);
+                synchronized (closeLock) {
+                    if (buf == null) // asynchronous close()?
+                        return null; // discard
+                    n += in.read(a, n, j);
+                    j = in.available();
+                }
+            }
+            return (a == null) ?
+                    ProcessBuilder.NullInputStream.INSTANCE :
+                    new ByteArrayInputStream(n == a.length ? a : Arrays.copyOf(a, n));
+!!!7144962.java!!!	processExited() : void
+            try {
+                InputStream in = this.in;
+                if (in != null) {
+                    InputStream stragglers = drainInputStream(in);
+                    in.close();
+                    this.in = stragglers;
+                }
+            } catch (IOException ignored) { }
+!!!7145090.java!!!	raise() : void
+            synchronized (closeLock) {
+                useCount++;
+            }
+!!!7145218.java!!!	lower() : void
+            synchronized (closeLock) {
+                useCount--;
+                if (useCount == 0 && closePending) {
+                    closePending = false;
+                    super.close();
+                }
+            }
+!!!7145346.java!!!	read() : int
+            raise();
+            try {
+                return super.read();
+            } finally {
+                lower();
+            }
+!!!7145474.java!!!	read(inout b : byte [[]]) : int
+            raise();
+            try {
+                return super.read(b);
+            } finally {
+                lower();
+            }
+!!!7145602.java!!!	read(inout b : byte [[]], in off : int, in len : int) : int
+            raise();
+            try {
+                return super.read(b, off, len);
+            } finally {
+                lower();
+            }
+!!!7145730.java!!!	skip(in n : long) : long
+            raise();
+            try {
+                return super.skip(n);
+            } finally {
+                lower();
+            }
+!!!7145858.java!!!	available() : int
+            raise();
+            try {
+                return super.available();
+            } finally {
+                lower();
+            }
+!!!7145986.java!!!	close() : void
+            // BufferedInputStream#close() is not synchronized unlike most other
+            // methods. Synchronizing helps avoid racing with drainInputStream().
+            synchronized (closeLock) {
+                if (useCount == 0) {
+                    super.close();
+                }
+                else {
+                    closePending = true;
+                }
+            }

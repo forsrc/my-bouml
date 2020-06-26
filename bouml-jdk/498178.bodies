@@ -1,0 +1,226 @@
+class MXBeanIntrospector
+!!!2984962.java!!!	getInstance() : MXBeanIntrospector
+        return instance;
+!!!2985090.java!!!	getPerInterfaceMap() : MBeanIntrospector::PerInterfaceMap
+        return perInterfaceMap;
+!!!2985218.java!!!	getMBeanInfoMap() : MBeanIntrospector::MBeanInfoMap
+        return mbeanInfoMap;
+!!!2985346.java!!!	getAnalyzer(inout mbeanInterface : Class) : MBeanAnalyzer
+        return MBeanAnalyzer.analyzer(mbeanInterface, this);
+!!!2985474.java!!!	isMXBean() : boolean
+        return true;
+!!!2985602.java!!!	mFrom(inout m : Method) : ConvertingMethod
+        return ConvertingMethod.from(m);
+!!!2985730.java!!!	getName(inout m : ConvertingMethod) : String
+        return m.getName();
+!!!2985858.java!!!	getGenericReturnType(inout m : ConvertingMethod) : Type
+        return m.getGenericReturnType();
+!!!2985986.java!!!	getGenericParameterTypes(inout m : ConvertingMethod) : Type
+        return m.getGenericParameterTypes();
+!!!2986114.java!!!	getSignature(inout m : ConvertingMethod) : String
+        return m.getOpenSignature();
+!!!2986242.java!!!	checkMethod(inout m : ConvertingMethod) : void
+        m.checkCallFromOpen();
+!!!2986370.java!!!	invokeM2(inout m : ConvertingMethod, inout target : Object, inout args : Object [[]], inout cookie : Object) : Object
+        return m.invokeWithOpenReturn((MXBeanLookup) cookie, target, args);
+!!!2986498.java!!!	validParameter(inout m : ConvertingMethod, inout value : Object, in paramNo : int, inout cookie : Object) : boolean
+        if (value == null) {
+            // Null is a valid value for all OpenTypes, even though
+            // OpenType.isValue(null) will return false.  It can always be
+            // matched to the corresponding Java type, except when that
+            // type is primitive.
+            Type t = m.getGenericParameterTypes()[paramNo];
+            return (!(t instanceof Class<?>) || !((Class<?>) t).isPrimitive());
+        } else {
+            Object v;
+            try {
+                v = m.fromOpenParameter((MXBeanLookup) cookie, value, paramNo);
+            } catch (Exception e) {
+                // Ignore the exception and let MBeanIntrospector.invokeSetter()
+                // throw the initial exception.
+                return true;
+            }
+            return isValidParameter(m.getMethod(), v, paramNo);
+        }
+!!!2986626.java!!!	getMBeanAttributeInfo(inout attributeName : String, inout getter : ConvertingMethod, inout setter : ConvertingMethod) : MBeanAttributeInfo
+
+        final boolean isReadable = (getter != null);
+        final boolean isWritable = (setter != null);
+        final boolean isIs = isReadable && getName(getter).startsWith("is");
+
+        final String description = attributeName;
+
+        final OpenType<?> openType;
+        final Type originalType;
+        if (isReadable) {
+            openType = getter.getOpenReturnType();
+            originalType = getter.getGenericReturnType();
+        } else {
+            openType = setter.getOpenParameterTypes()[0];
+            originalType = setter.getGenericParameterTypes()[0];
+        }
+        Descriptor descriptor = typeDescriptor(openType, originalType);
+        if (isReadable) {
+            descriptor = ImmutableDescriptor.union(descriptor,
+                    getter.getDescriptor());
+        }
+        if (isWritable) {
+            descriptor = ImmutableDescriptor.union(descriptor,
+                    setter.getDescriptor());
+        }
+
+        final MBeanAttributeInfo ai;
+        if (canUseOpenInfo(originalType)) {
+            ai = new OpenMBeanAttributeInfoSupport(attributeName,
+                                                   description,
+                                                   openType,
+                                                   isReadable,
+                                                   isWritable,
+                                                   isIs,
+                                                   descriptor);
+        } else {
+            ai = new MBeanAttributeInfo(attributeName,
+                                        originalTypeString(originalType),
+                                        description,
+                                        isReadable,
+                                        isWritable,
+                                        isIs,
+                                        descriptor);
+        }
+        // could also consult annotations for defaultValue,
+        // minValue, maxValue, legalValues
+
+        return ai;
+!!!2986754.java!!!	getMBeanOperationInfo(inout operationName : String, inout operation : ConvertingMethod) : MBeanOperationInfo
+        final Method method = operation.getMethod();
+        final String description = operationName;
+        /* Ideally this would be an empty string, but
+           OMBOperationInfo constructor forbids that.  Also, we
+           could consult an annotation to get a useful
+           description.  */
+
+        final int impact = MBeanOperationInfo.UNKNOWN;
+
+        final OpenType<?> returnType = operation.getOpenReturnType();
+        final Type originalReturnType = operation.getGenericReturnType();
+        final OpenType<?>[] paramTypes = operation.getOpenParameterTypes();
+        final Type[] originalParamTypes = operation.getGenericParameterTypes();
+        final MBeanParameterInfo[] params =
+            new MBeanParameterInfo[paramTypes.length];
+        boolean openReturnType = canUseOpenInfo(originalReturnType);
+        boolean openParameterTypes = true;
+        Annotation[][] annots = method.getParameterAnnotations();
+        for (int i = 0; i < paramTypes.length; i++) {
+            final String paramName = "p" + i;
+            final String paramDescription = paramName;
+            final OpenType<?> openType = paramTypes[i];
+            final Type originalType = originalParamTypes[i];
+            Descriptor descriptor =
+                typeDescriptor(openType, originalType);
+            descriptor = ImmutableDescriptor.union(descriptor,
+                    Introspector.descriptorForAnnotations(annots[i]));
+            final MBeanParameterInfo pi;
+            if (canUseOpenInfo(originalType)) {
+                pi = new OpenMBeanParameterInfoSupport(paramName,
+                                                       paramDescription,
+                                                       openType,
+                                                       descriptor);
+            } else {
+                openParameterTypes = false;
+                pi = new MBeanParameterInfo(
+                    paramName,
+                    originalTypeString(originalType),
+                    paramDescription,
+                    descriptor);
+            }
+            params[i] = pi;
+        }
+
+        Descriptor descriptor =
+            typeDescriptor(returnType, originalReturnType);
+        descriptor = ImmutableDescriptor.union(descriptor,
+                Introspector.descriptorForElement(method));
+        final MBeanOperationInfo oi;
+        if (openReturnType && openParameterTypes) {
+            /* If the return value and all the parameters can be faithfully
+             * represented as OpenType then we return an OpenMBeanOperationInfo.
+             * If any of them is a primitive type, we can't.  Compatibility
+             * with JSR 174 means that we must return an MBean*Info where
+             * the getType() is the primitive type, not its wrapped type as
+             * we would get with an OpenMBean*Info.  The OpenType is available
+             * in the Descriptor in either case.
+             */
+            final OpenMBeanParameterInfo[] oparams =
+                new OpenMBeanParameterInfo[params.length];
+            System.arraycopy(params, 0, oparams, 0, params.length);
+            oi = new OpenMBeanOperationInfoSupport(operationName,
+                                                   description,
+                                                   oparams,
+                                                   returnType,
+                                                   impact,
+                                                   descriptor);
+        } else {
+            oi = new MBeanOperationInfo(operationName,
+                                        description,
+                                        params,
+                                        openReturnType ?
+                                        returnType.getClassName() :
+                                        originalTypeString(originalReturnType),
+                                        impact,
+                                        descriptor);
+        }
+
+        return oi;
+!!!2986882.java!!!	getBasicMBeanDescriptor() : Descriptor
+        return new ImmutableDescriptor("mxbean=true",
+                                       "immutableInfo=true");
+!!!2987010.java!!!	getMBeanDescriptor(inout resourceClass : Class) : Descriptor
+        /* We already have immutableInfo=true in the Descriptor
+         * included in the MBeanInfo for the MXBean interface.  This
+         * method is being called for the MXBean *class* to add any
+         * new items beyond those in the interface Descriptor, which
+         * currently it does not.
+         */
+        return ImmutableDescriptor.EMPTY_DESCRIPTOR;
+!!!2987138.java!!!	typeDescriptor(inout openType : OpenType, inout originalType : Type) : Descriptor
+        return new ImmutableDescriptor(
+            new String[] {"openType",
+                          "originalType"},
+            new Object[] {openType,
+                          originalTypeString(originalType)});
+!!!2987266.java!!!	canUseOpenInfo(inout type : Type) : boolean
+        if (type instanceof GenericArrayType) {
+            return canUseOpenInfo(
+                ((GenericArrayType) type).getGenericComponentType());
+        } else if (type instanceof Class<?> && ((Class<?>) type).isArray()) {
+            return canUseOpenInfo(
+                ((Class<?>) type).getComponentType());
+        }
+        return (!(type instanceof Class<?> && ((Class<?>) type).isPrimitive()));
+!!!2987394.java!!!	originalTypeString(inout type : Type) : String
+        if (type instanceof Class<?>)
+            return ((Class<?>) type).getName();
+        else
+            return typeName(type);
+!!!2987522.java!!!	typeName(inout type : Type) : String
+        if (type instanceof Class<?>) {
+            Class<?> c = (Class<?>) type;
+            if (c.isArray())
+                return typeName(c.getComponentType()) + "[]";
+            else
+                return c.getName();
+        } else if (type instanceof GenericArrayType) {
+            GenericArrayType gat = (GenericArrayType) type;
+            return typeName(gat.getGenericComponentType()) + "[]";
+        } else if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            StringBuilder sb = new StringBuilder();
+            sb.append(typeName(pt.getRawType())).append("<");
+            String sep = "";
+            for (Type t : pt.getActualTypeArguments()) {
+                sb.append(sep).append(typeName(t));
+                sep = ", ";
+            }
+            return sb.append(">").toString();
+        } else
+            return "???";

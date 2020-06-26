@@ -1,0 +1,26 @@
+class NotifForwarderBufferFilter
+!!!3021186.java!!!	apply(inout targetedNotifs : List, inout source : ObjectName, inout notif : Notification) : void
+            // We proceed in two stages here, to avoid holding the listenerMap
+            // lock while invoking the filters (which are user code).
+            final IdAndFilter[] candidates;
+            synchronized (listenerMap) {
+                final Set<IdAndFilter> set = listenerMap.get(source);
+                if (set == null) {
+                    logger.debug("bufferFilter", "no listeners for this name");
+                    return;
+                }
+                candidates = new IdAndFilter[set.size()];
+                set.toArray(candidates);
+            }
+            // We don't synchronize on targetedNotifs, because it is a local
+            // variable of our caller and no other thread can see it.
+            for (IdAndFilter idaf : candidates) {
+                final NotificationFilter nf = idaf.getFilter();
+                if (nf == null || nf.isNotificationEnabled(notif)) {
+                    logger.debug("bufferFilter", "filter matches");
+                    final TargetedNotification tn =
+                            new TargetedNotification(notif, idaf.getId());
+                    if (allowNotificationEmission(source, tn))
+                        targetedNotifs.add(tn);
+                }
+            }

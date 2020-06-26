@@ -1,0 +1,191 @@
+class SymbolTable
+!!!5076738.java!!!	SymbolTable(in initialCapacity : int, in loadFactor : float)
+
+        if (initialCapacity < 0) {
+            throw new IllegalArgumentException("Illegal Capacity: " + initialCapacity);
+        }
+
+        if (loadFactor <= 0 || Float.isNaN(loadFactor)) {
+            throw new IllegalArgumentException("Illegal Load: " + loadFactor);
+        }
+
+        if (initialCapacity == 0) {
+            initialCapacity = 1;
+        }
+
+        fLoadFactor = loadFactor;
+        fTableSize = initialCapacity;
+        fBuckets = new Entry[fTableSize];
+        fThreshold = (int)(fTableSize * loadFactor);
+        fCollisionThreshold = (int)(MAX_HASH_COLLISIONS * loadFactor);
+        fCount = 0;
+!!!5076866.java!!!	SymbolTable(in initialCapacity : int)
+        this(initialCapacity, 0.75f);
+!!!5076994.java!!!	SymbolTable()
+        this(TABLE_SIZE, 0.75f);
+!!!5077122.java!!!	addSymbol(inout symbol : String) : String
+
+        // search for identical symbol
+        int collisionCount = 0;
+        int bucket = hash(symbol) % fTableSize;
+        for (Entry entry = fBuckets[bucket]; entry != null; entry = entry.next) {
+            if (entry.symbol.equals(symbol)) {
+                return entry.symbol;
+            }
+            ++collisionCount;
+        }
+        return addSymbol0(symbol, bucket, collisionCount);
+
+!!!5077250.java!!!	addSymbol0(inout symbol : String, in bucket : int, in collisionCount : int) : String
+
+        if (fCount >= fThreshold) {
+            // Rehash the table if the threshold is exceeded
+            rehash();
+            bucket = hash(symbol) % fTableSize;
+        }
+        else if (collisionCount >= fCollisionThreshold) {
+            // Select a new hash function and rehash the table if
+            // the collision threshold is exceeded.
+            rebalance();
+            bucket = hash(symbol) % fTableSize;
+        }
+
+        // create new entry
+        Entry entry = new Entry(symbol, fBuckets[bucket]);
+        fBuckets[bucket] = entry;
+        ++fCount;
+        return entry.symbol;
+
+!!!5077378.java!!!	addSymbol(inout buffer : char [[]], in offset : int, in length : int) : String
+
+        // search for identical symbol
+        int collisionCount = 0;
+        int bucket = hash(buffer, offset, length) % fTableSize;
+        OUTER: for (Entry entry = fBuckets[bucket]; entry != null; entry = entry.next) {
+            if (length == entry.characters.length) {
+                for (int i = 0; i < length; i++) {
+                    if (buffer[offset + i] != entry.characters[i]) {
+                        ++collisionCount;
+                        continue OUTER;
+                    }
+                }
+                return entry.symbol;
+            }
+            ++collisionCount;
+        }
+        return addSymbol0(buffer, offset, length, bucket, collisionCount);
+
+!!!5077506.java!!!	addSymbol0(inout buffer : char [[]], in offset : int, in length : int, in bucket : int, in collisionCount : int) : String
+
+        if (fCount >= fThreshold) {
+            // Rehash the table if the threshold is exceeded
+            rehash();
+            bucket = hash(buffer, offset, length) % fTableSize;
+        }
+        else if (collisionCount >= fCollisionThreshold) {
+            // Select a new hash function and rehash the table if
+            // the collision threshold is exceeded.
+            rebalance();
+            bucket = hash(buffer, offset, length) % fTableSize;
+        }
+
+        // add new entry
+        Entry entry = new Entry(buffer, offset, length, fBuckets[bucket]);
+        fBuckets[bucket] = entry;
+        ++fCount;
+        return entry.symbol;
+
+!!!5077634.java!!!	hash(inout symbol : String) : int
+        if (fHashMultipliers == null) {
+            return symbol.hashCode() & 0x7FFFFFFF;
+        }
+        return hash0(symbol);
+!!!5077762.java!!!	hash0(inout symbol : String) : int
+        int code = 0;
+        final int length = symbol.length();
+        final int[] multipliers = fHashMultipliers;
+        for (int i = 0; i < length; ++i) {
+            code = code * multipliers[i & MULTIPLIERS_MASK] + symbol.charAt(i);
+        }
+        return code & 0x7FFFFFFF;
+!!!5077890.java!!!	hash(inout buffer : char [[]], in offset : int, in length : int) : int
+        if (fHashMultipliers == null) {
+            int code = 0;
+            for (int i = 0; i < length; ++i) {
+                code = code * 31 + buffer[offset + i];
+            }
+            return code & 0x7FFFFFFF;
+        }
+        return hash0(buffer, offset, length);
+
+!!!5078018.java!!!	hash0(inout buffer : char [[]], in offset : int, in length : int) : int
+        int code = 0;
+        final int[] multipliers = fHashMultipliers;
+        for (int i = 0; i < length; ++i) {
+            code = code * multipliers[i & MULTIPLIERS_MASK] + buffer[offset + i];
+        }
+        return code & 0x7FFFFFFF;
+!!!5078146.java!!!	rehash() : void
+        rehashCommon(fBuckets.length * 2 + 1);
+!!!5078274.java!!!	rebalance() : void
+        if (fHashMultipliers == null) {
+            fHashMultipliers = new int[MULTIPLIERS_SIZE];
+        }
+        PrimeNumberSequenceGenerator.generateSequence(fHashMultipliers);
+        rehashCommon(fBuckets.length);
+!!!5078402.java!!!	rehashCommon(in newCapacity : int) : void
+
+        int oldCapacity = fBuckets.length;
+        Entry[] oldTable = fBuckets;
+
+        Entry[] newTable = new Entry[newCapacity];
+
+        fThreshold = (int)(newCapacity * fLoadFactor);
+        fBuckets = newTable;
+        fTableSize = fBuckets.length;
+
+        for (int i = oldCapacity ; i-- > 0 ;) {
+            for (Entry old = oldTable[i] ; old != null ; ) {
+                Entry e = old;
+                old = old.next;
+
+                int index = hash(e.symbol) % newCapacity;
+                e.next = newTable[index];
+                newTable[index] = e;
+            }
+        }
+!!!5078530.java!!!	containsSymbol(inout symbol : String) : boolean
+
+        // search for identical symbol
+        int bucket = hash(symbol) % fTableSize;
+        int length = symbol.length();
+        OUTER: for (Entry entry = fBuckets[bucket]; entry != null; entry = entry.next) {
+            if (length == entry.characters.length) {
+                for (int i = 0; i < length; i++) {
+                    if (symbol.charAt(i) != entry.characters[i]) {
+                        continue OUTER;
+                    }
+                }
+                return true;
+            }
+        }
+
+        return false;
+
+!!!5078658.java!!!	containsSymbol(inout buffer : char [[]], in offset : int, in length : int) : boolean
+
+        // search for identical symbol
+        int bucket = hash(buffer, offset, length) % fTableSize;
+        OUTER: for (Entry entry = fBuckets[bucket]; entry != null; entry = entry.next) {
+            if (length == entry.characters.length) {
+                for (int i = 0; i < length; i++) {
+                    if (buffer[offset + i] != entry.characters[i]) {
+                        continue OUTER;
+                    }
+                }
+                return true;
+            }
+        }
+
+        return false;
+

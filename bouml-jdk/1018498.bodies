@@ -1,0 +1,129 @@
+class Delegate
+!!!7958914.java!!!	Delegate(inout spi : KeyPairGeneratorSpi, inout algorithm : String)
+            super(algorithm);
+            this.spi = spi;
+!!!7959042.java!!!	Delegate(inout instance : Instance, inout serviceIterator : Iterator, inout algorithm : String)
+            super(algorithm);
+            spi = (KeyPairGeneratorSpi)instance.impl;
+            provider = instance.provider;
+            this.serviceIterator = serviceIterator;
+            initType = I_NONE;
+
+            if (!skipDebug && pdebug != null) {
+                pdebug.println("KeyPairGenerator." + algorithm +
+                    " algorithm from: " + provider.getName());
+            }
+!!!7959170.java!!!	nextSpi(inout oldSpi : KeyPairGeneratorSpi, inout reinit : boolean) : KeyPairGeneratorSpi
+            synchronized (lock) {
+                // somebody else did a failover concurrently
+                // try that spi now
+                if ((oldSpi != null) && (oldSpi != spi)) {
+                    return spi;
+                }
+                if (serviceIterator == null) {
+                    return null;
+                }
+                while (serviceIterator.hasNext()) {
+                    Service s = serviceIterator.next();
+                    try {
+                        Object inst = s.newInstance(null);
+                        // ignore non-spis
+                        if (inst instanceof KeyPairGeneratorSpi == false) {
+                            continue;
+                        }
+                        if (inst instanceof KeyPairGenerator) {
+                            continue;
+                        }
+                        KeyPairGeneratorSpi spi = (KeyPairGeneratorSpi)inst;
+                        if (reinit) {
+                            if (initType == I_SIZE) {
+                                spi.initialize(initKeySize, initRandom);
+                            } else if (initType == I_PARAMS) {
+                                spi.initialize(initParams, initRandom);
+                            } else if (initType != I_NONE) {
+                                throw new AssertionError
+                                    ("KeyPairGenerator initType: " + initType);
+                            }
+                        }
+                        provider = s.getProvider();
+                        this.spi = spi;
+                        return spi;
+                    } catch (Exception e) {
+                        // ignore
+                    }
+                }
+                disableFailover();
+                return null;
+            }
+!!!7959298.java!!!	disableFailover() : void
+            serviceIterator = null;
+            initType = 0;
+            initParams = null;
+            initRandom = null;
+!!!7959426.java!!!	initialize(in keysize : int, inout random : SecureRandom) : void
+            if (serviceIterator == null) {
+                spi.initialize(keysize, random);
+                return;
+            }
+            RuntimeException failure = null;
+            KeyPairGeneratorSpi mySpi = spi;
+            do {
+                try {
+                    mySpi.initialize(keysize, random);
+                    initType = I_SIZE;
+                    initKeySize = keysize;
+                    initParams = null;
+                    initRandom = random;
+                    return;
+                } catch (RuntimeException e) {
+                    if (failure == null) {
+                        failure = e;
+                    }
+                    mySpi = nextSpi(mySpi, false);
+                }
+            } while (mySpi != null);
+            throw failure;
+!!!7959554.java!!!	initialize(inout params : AlgorithmParameterSpec, inout random : SecureRandom) : void
+            if (serviceIterator == null) {
+                spi.initialize(params, random);
+                return;
+            }
+            Exception failure = null;
+            KeyPairGeneratorSpi mySpi = spi;
+            do {
+                try {
+                    mySpi.initialize(params, random);
+                    initType = I_PARAMS;
+                    initKeySize = 0;
+                    initParams = params;
+                    initRandom = random;
+                    return;
+                } catch (Exception e) {
+                    if (failure == null) {
+                        failure = e;
+                    }
+                    mySpi = nextSpi(mySpi, false);
+                }
+            } while (mySpi != null);
+            if (failure instanceof RuntimeException) {
+                throw (RuntimeException)failure;
+            }
+            // must be an InvalidAlgorithmParameterException
+            throw (InvalidAlgorithmParameterException)failure;
+!!!7959682.java!!!	generateKeyPair() : KeyPair
+            if (serviceIterator == null) {
+                return spi.generateKeyPair();
+            }
+            RuntimeException failure = null;
+            KeyPairGeneratorSpi mySpi = spi;
+            do {
+                try {
+                    return mySpi.generateKeyPair();
+                } catch (RuntimeException e) {
+                    if (failure == null) {
+                        failure = e;
+                    }
+                    mySpi = nextSpi(mySpi, true);
+                }
+            } while (mySpi != null);
+            throw failure;

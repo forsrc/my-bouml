@@ -1,0 +1,140 @@
+class RowFilter
+!!!1867906.java!!!	abs(in x : int) : int
+        return (x < 0) ? -x : x;
+!!!1868034.java!!!	subFilter(inout currRow : byte [[]], inout subFilteredRow : byte [[]], in bytesPerPixel : int, in bytesPerRow : int) : int
+        int badness = 0;
+        for (int i = bytesPerPixel; i < bytesPerRow + bytesPerPixel; i++) {
+            int curr = currRow[i] & 0xff;
+            int left = currRow[i - bytesPerPixel] & 0xff;
+            int difference = curr - left;
+            subFilteredRow[i] = (byte)difference;
+
+            badness += abs(difference);
+        }
+
+        return badness;
+!!!1868162.java!!!	upFilter(inout currRow : byte [[]], inout prevRow : byte [[]], inout upFilteredRow : byte [[]], in bytesPerPixel : int, in bytesPerRow : int) : int
+        int badness = 0;
+        for (int i = bytesPerPixel; i < bytesPerRow + bytesPerPixel; i++) {
+            int curr = currRow[i] & 0xff;
+            int up = prevRow[i] & 0xff;
+            int difference = curr - up;
+            upFilteredRow[i] = (byte)difference;
+
+            badness += abs(difference);
+        }
+
+        return badness;
+!!!1868290.java!!!	paethPredictor(in a : int, in b : int, in c : int) : int
+        int p = a + b - c;
+        int pa = abs(p - a);
+        int pb = abs(p - b);
+        int pc = abs(p - c);
+
+        if ((pa <= pb) && (pa <= pc)) {
+            return a;
+        } else if (pb <= pc) {
+            return b;
+        } else {
+            return c;
+        }
+!!!1868418.java!!!	filterRow(in colorType : int, inout currRow : byte [[]], inout prevRow : byte [[]], inout scratchRows : byte [[][]], in bytesPerRow : int, in bytesPerPixel : int) : int
+
+        // Use type 0 for palette images
+        if (colorType != PNGImageReader.PNG_COLOR_PALETTE) {
+            System.arraycopy(currRow, bytesPerPixel,
+                             scratchRows[0], bytesPerPixel,
+                             bytesPerRow);
+            return 0;
+        }
+
+        int[] filterBadness = new int[5];
+        for (int i = 0; i < 5; i++) {
+            filterBadness[i] = Integer.MAX_VALUE;
+        }
+
+        {
+            int badness = 0;
+
+            for (int i = bytesPerPixel; i < bytesPerRow + bytesPerPixel; i++) {
+                int curr = currRow[i] & 0xff;
+                badness += curr;
+            }
+
+            filterBadness[0] = badness;
+        }
+
+        {
+            byte[] subFilteredRow = scratchRows[1];
+            int badness = subFilter(currRow,
+                                    subFilteredRow,
+                                    bytesPerPixel,
+                                    bytesPerRow);
+
+            filterBadness[1] = badness;
+        }
+
+        {
+            byte[] upFilteredRow = scratchRows[2];
+            int badness = upFilter(currRow,
+                                   prevRow,
+                                   upFilteredRow,
+                                   bytesPerPixel,
+                                   bytesPerRow);
+
+            filterBadness[2] = badness;
+        }
+
+        {
+            byte[] averageFilteredRow = scratchRows[3];
+            int badness = 0;
+
+            for (int i = bytesPerPixel; i < bytesPerRow + bytesPerPixel; i++) {
+                int curr = currRow[i] & 0xff;
+                int left = currRow[i - bytesPerPixel] & 0xff;
+                int up = prevRow[i] & 0xff;
+                int difference = curr - (left + up)/2;;
+                averageFilteredRow[i] = (byte)difference;
+
+                badness += abs(difference);
+            }
+
+            filterBadness[3] = badness;
+        }
+
+        {
+            byte[] paethFilteredRow = scratchRows[4];
+            int badness = 0;
+
+            for (int i = bytesPerPixel; i < bytesPerRow + bytesPerPixel; i++) {
+                int curr = currRow[i] & 0xff;
+                int left = currRow[i - bytesPerPixel] & 0xff;
+                int up = prevRow[i] & 0xff;
+                int upleft = prevRow[i - bytesPerPixel] & 0xff;
+                int predictor = paethPredictor(left, up, upleft);
+                int difference = curr - predictor;
+                paethFilteredRow[i] = (byte)difference;
+
+                badness += abs(difference);
+            }
+
+            filterBadness[4] = badness;
+        }
+
+        int minBadness = filterBadness[0];
+        int filterType = 0;
+
+        for (int i = 1; i < 5; i++) {
+            if (filterBadness[i] < minBadness) {
+                minBadness = filterBadness[i];
+                filterType = i;
+            }
+        }
+
+        if (filterType == 0) {
+            System.arraycopy(currRow, bytesPerPixel,
+                             scratchRows[0], bytesPerPixel,
+                             bytesPerRow);
+        }
+
+        return filterType;

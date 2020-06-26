@@ -1,0 +1,157 @@
+class ScheduledThreadPoolExecutor
+!!!9223170.java!!!	now() : long
+        return System.nanoTime();
+!!!9224450.java!!!	canRunInCurrentRunState(inout periodic : boolean) : boolean
+        return isRunningOrShutdown(periodic ?
+                                   continueExistingPeriodicTasksAfterShutdown :
+                                   executeExistingDelayedTasksAfterShutdown);
+!!!9224578.java!!!	delayedExecute(inout task : RunnableScheduledFuture) : void
+        if (isShutdown())
+            reject(task);
+        else {
+            super.getQueue().add(task);
+            if (isShutdown() &&
+                !canRunInCurrentRunState(task.isPeriodic()) &&
+                remove(task))
+                task.cancel(false);
+            else
+                ensurePrestart();
+        }
+!!!9224706.java!!!	reExecutePeriodic(inout task : RunnableScheduledFuture) : void
+        if (canRunInCurrentRunState(true)) {
+            super.getQueue().add(task);
+            if (!canRunInCurrentRunState(true) && remove(task))
+                task.cancel(false);
+            else
+                ensurePrestart();
+        }
+!!!9224834.java!!!	onShutdown() : void
+        BlockingQueue<Runnable> q = super.getQueue();
+        boolean keepDelayed =
+            getExecuteExistingDelayedTasksAfterShutdownPolicy();
+        boolean keepPeriodic =
+            getContinueExistingPeriodicTasksAfterShutdownPolicy();
+        if (!keepDelayed && !keepPeriodic) {
+            for (Object e : q.toArray())
+                if (e instanceof RunnableScheduledFuture<?>)
+                    ((RunnableScheduledFuture<?>) e).cancel(false);
+            q.clear();
+        }
+        else {
+            // Traverse snapshot to avoid iterator exceptions
+            for (Object e : q.toArray()) {
+                if (e instanceof RunnableScheduledFuture) {
+                    RunnableScheduledFuture<?> t =
+                        (RunnableScheduledFuture<?>)e;
+                    if ((t.isPeriodic() ? !keepPeriodic : !keepDelayed) ||
+                        t.isCancelled()) { // also remove if already cancelled
+                        if (q.remove(t))
+                            t.cancel(false);
+                    }
+                }
+            }
+        }
+        tryTerminate();
+!!!9224962.java!!!	decorateTask(inout runnable : Runnable, inout task : RunnableScheduledFuture) : RunnableScheduledFuture
+        return task;
+!!!9225090.java!!!	decorateTask(inout callable : Callable, inout task : RunnableScheduledFuture) : RunnableScheduledFuture
+        return task;
+!!!9225218.java!!!	ScheduledThreadPoolExecutor(in corePoolSize : int)
+        super(corePoolSize, Integer.MAX_VALUE, 0, NANOSECONDS,
+              new DelayedWorkQueue());
+!!!9225346.java!!!	ScheduledThreadPoolExecutor(in corePoolSize : int, inout threadFactory : ThreadFactory)
+        super(corePoolSize, Integer.MAX_VALUE, 0, NANOSECONDS,
+              new DelayedWorkQueue(), threadFactory);
+!!!9225474.java!!!	ScheduledThreadPoolExecutor(in corePoolSize : int, inout handler : RejectedExecutionHandler)
+        super(corePoolSize, Integer.MAX_VALUE, 0, NANOSECONDS,
+              new DelayedWorkQueue(), handler);
+!!!9225602.java!!!	ScheduledThreadPoolExecutor(in corePoolSize : int, inout threadFactory : ThreadFactory, inout handler : RejectedExecutionHandler)
+        super(corePoolSize, Integer.MAX_VALUE, 0, NANOSECONDS,
+              new DelayedWorkQueue(), threadFactory, handler);
+!!!9225730.java!!!	triggerTime(in delay : long, inout unit : TimeUnit) : long
+        return triggerTime(unit.toNanos((delay < 0) ? 0 : delay));
+!!!9225858.java!!!	triggerTime(in delay : long) : long
+        return now() +
+            ((delay < (Long.MAX_VALUE >> 1)) ? delay : overflowFree(delay));
+!!!9225986.java!!!	overflowFree(in delay : long) : long
+        Delayed head = (Delayed) super.getQueue().peek();
+        if (head != null) {
+            long headDelay = head.getDelay(NANOSECONDS);
+            if (headDelay < 0 && (delay - headDelay < 0))
+                delay = Long.MAX_VALUE + headDelay;
+        }
+        return delay;
+!!!9226114.java!!!	schedule(inout command : Runnable, in delay : long, inout unit : TimeUnit) : ScheduledFuture
+        if (command == null || unit == null)
+            throw new NullPointerException();
+        RunnableScheduledFuture<?> t = decorateTask(command,
+            new ScheduledFutureTask<Void>(command, null,
+                                          triggerTime(delay, unit)));
+        delayedExecute(t);
+        return t;
+!!!9226242.java!!!	schedule(inout callable : Callable, in delay : long, inout unit : TimeUnit) : ScheduledFuture
+        if (callable == null || unit == null)
+            throw new NullPointerException();
+        RunnableScheduledFuture<V> t = decorateTask(callable,
+            new ScheduledFutureTask<V>(callable,
+                                       triggerTime(delay, unit)));
+        delayedExecute(t);
+        return t;
+!!!9226370.java!!!	scheduleAtFixedRate(inout command : Runnable, in initialDelay : long, in period : long, inout unit : TimeUnit) : ScheduledFuture
+        if (command == null || unit == null)
+            throw new NullPointerException();
+        if (period <= 0)
+            throw new IllegalArgumentException();
+        ScheduledFutureTask<Void> sft =
+            new ScheduledFutureTask<Void>(command,
+                                          null,
+                                          triggerTime(initialDelay, unit),
+                                          unit.toNanos(period));
+        RunnableScheduledFuture<Void> t = decorateTask(command, sft);
+        sft.outerTask = t;
+        delayedExecute(t);
+        return t;
+!!!9226498.java!!!	scheduleWithFixedDelay(inout command : Runnable, in initialDelay : long, in delay : long, inout unit : TimeUnit) : ScheduledFuture
+        if (command == null || unit == null)
+            throw new NullPointerException();
+        if (delay <= 0)
+            throw new IllegalArgumentException();
+        ScheduledFutureTask<Void> sft =
+            new ScheduledFutureTask<Void>(command,
+                                          null,
+                                          triggerTime(initialDelay, unit),
+                                          unit.toNanos(-delay));
+        RunnableScheduledFuture<Void> t = decorateTask(command, sft);
+        sft.outerTask = t;
+        delayedExecute(t);
+        return t;
+!!!9226626.java!!!	execute(inout command : Runnable) : void
+        schedule(command, 0, NANOSECONDS);
+!!!9226754.java!!!	submit(inout task : Runnable) : Future
+        return schedule(task, 0, NANOSECONDS);
+!!!9226882.java!!!	submit(inout task : Runnable, inout result : T) : Future
+        return schedule(Executors.callable(task, result), 0, NANOSECONDS);
+!!!9227010.java!!!	submit(inout task : Callable) : Future
+        return schedule(task, 0, NANOSECONDS);
+!!!9227138.java!!!	setContinueExistingPeriodicTasksAfterShutdownPolicy(inout value : boolean) : void
+        continueExistingPeriodicTasksAfterShutdown = value;
+        if (!value && isShutdown())
+            onShutdown();
+!!!9227266.java!!!	getContinueExistingPeriodicTasksAfterShutdownPolicy() : boolean
+        return continueExistingPeriodicTasksAfterShutdown;
+!!!9227394.java!!!	setExecuteExistingDelayedTasksAfterShutdownPolicy(inout value : boolean) : void
+        executeExistingDelayedTasksAfterShutdown = value;
+        if (!value && isShutdown())
+            onShutdown();
+!!!9227522.java!!!	getExecuteExistingDelayedTasksAfterShutdownPolicy() : boolean
+        return executeExistingDelayedTasksAfterShutdown;
+!!!9227650.java!!!	setRemoveOnCancelPolicy(inout value : boolean) : void
+        removeOnCancel = value;
+!!!9227778.java!!!	getRemoveOnCancelPolicy() : boolean
+        return removeOnCancel;
+!!!9227906.java!!!	shutdown() : void
+        super.shutdown();
+!!!9228034.java!!!	shutdownNow() : List
+        return super.shutdownNow();
+!!!9228162.java!!!	getQueue() : BlockingQueue
+        return super.getQueue();

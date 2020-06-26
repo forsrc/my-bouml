@@ -1,0 +1,192 @@
+class TemplatesImpl
+!!!4127618.java!!!	TemplatesImpl(inout bytecodes : byte [[][]], inout transletName : String, inout outputProperties : Properties, in indentNumber : int, inout tfactory : TransformerFactoryImpl)
+        _bytecodes = bytecodes;
+        init(transletName, outputProperties, indentNumber, tfactory);
+!!!4127746.java!!!	TemplatesImpl(inout transletClasses : Class [[]], inout transletName : String, inout outputProperties : Properties, in indentNumber : int, inout tfactory : TransformerFactoryImpl)
+        _class     = transletClasses;
+        _transletIndex = 0;
+        init(transletName, outputProperties, indentNumber, tfactory);
+!!!4127874.java!!!	init(inout transletName : String, inout outputProperties : Properties, in indentNumber : int, inout tfactory : TransformerFactoryImpl) : void
+        _name      = transletName;
+        _outputProperties = outputProperties;
+        _indentNumber = indentNumber;
+        _tfactory = tfactory;
+        _useServicesMechanism = tfactory.useServicesMechnism();
+        _accessExternalStylesheet = (String) tfactory.getAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET);
+!!!4128130.java!!!	readObject(inout is : ObjectInputStream) : void
+        SecurityManager security = System.getSecurityManager();
+        if (security != null){
+            String temp = SecuritySupport.getSystemProperty(DESERIALIZE_TRANSLET);
+            if (temp == null || !(temp.length()==0 || temp.equalsIgnoreCase("true"))) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.DESERIALIZE_TRANSLET_ERR);
+                throw new UnsupportedOperationException(err.toString());
+            }
+        }
+
+        // We have to read serialized fields first.
+        ObjectInputStream.GetField gf = is.readFields();
+        _name = (String)gf.get("_name", null);
+        _bytecodes = (byte[][])gf.get("_bytecodes", null);
+        _class = (Class[])gf.get("_class", null);
+        _transletIndex = gf.get("_transletIndex", -1);
+
+        _outputProperties = (Properties)gf.get("_outputProperties", null);
+        _indentNumber = gf.get("_indentNumber", 0);
+
+        if (is.readBoolean()) {
+            _uriResolver = (URIResolver) is.readObject();
+        }
+
+        _tfactory = new TransformerFactoryImpl();
+!!!4128258.java!!!	writeObject(inout os : ObjectOutputStream) : void
+        if (_auxClasses != null) {
+            //throw with the same message as when Hashtable was used for compatibility.
+            throw new NotSerializableException(
+                    "com.sun.org.apache.xalan.internal.xsltc.runtime.Hashtable");
+        }
+
+        // Write serialized fields
+        ObjectOutputStream.PutField pf = os.putFields();
+        pf.put("_name", _name);
+        pf.put("_bytecodes", _bytecodes);
+        pf.put("_class", _class);
+        pf.put("_transletIndex", _transletIndex);
+        pf.put("_outputProperties", _outputProperties);
+        pf.put("_indentNumber", _indentNumber);
+        os.writeFields();
+
+        if (_uriResolver instanceof Serializable) {
+            os.writeBoolean(true);
+            os.writeObject((Serializable) _uriResolver);
+        }
+        else {
+            os.writeBoolean(false);
+        }
+!!!4128386.java!!!	useServicesMechnism() : boolean
+        return _useServicesMechanism;
+!!!4128514.java!!!	setURIResolver(inout resolver : URIResolver) : void
+        _uriResolver = resolver;
+!!!4128642.java!!!	setTransletBytecodes(inout bytecodes : byte [[][]]) : void
+        _bytecodes = bytecodes;
+!!!4128770.java!!!	getTransletBytecodes() : byte
+        return _bytecodes;
+!!!4128898.java!!!	getTransletClasses() : Class
+        try {
+            if (_class == null) defineTransletClasses();
+        }
+        catch (TransformerConfigurationException e) {
+            // Falls through
+        }
+        return _class;
+!!!4129026.java!!!	getTransletIndex() : int
+        try {
+            if (_class == null) defineTransletClasses();
+        }
+        catch (TransformerConfigurationException e) {
+            // Falls through
+        }
+        return _transletIndex;
+!!!4129154.java!!!	setTransletName(inout name : String) : void
+        _name = name;
+!!!4129282.java!!!	getTransletName() : String
+        return _name;
+!!!4129410.java!!!	defineTransletClasses() : void
+
+        if (_bytecodes == null) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.NO_TRANSLET_CLASS_ERR);
+            throw new TransformerConfigurationException(err.toString());
+        }
+
+        TransletClassLoader loader = (TransletClassLoader)
+            AccessController.doPrivileged(new PrivilegedAction() {
+                public Object run() {
+                    return new TransletClassLoader(ObjectFactory.findClassLoader(),_tfactory.getExternalExtensionsMap());
+                }
+            });
+
+        try {
+            final int classCount = _bytecodes.length;
+            _class = new Class[classCount];
+
+            if (classCount > 1) {
+                _auxClasses = new HashMap<>();
+            }
+
+            for (int i = 0; i < classCount; i++) {
+                _class[i] = loader.defineClass(_bytecodes[i]);
+                final Class superClass = _class[i].getSuperclass();
+
+                // Check if this is the main class
+                if (superClass.getName().equals(ABSTRACT_TRANSLET)) {
+                    _transletIndex = i;
+                }
+                else {
+                    _auxClasses.put(_class[i].getName(), _class[i]);
+                }
+            }
+
+            if (_transletIndex < 0) {
+                ErrorMsg err= new ErrorMsg(ErrorMsg.NO_MAIN_TRANSLET_ERR, _name);
+                throw new TransformerConfigurationException(err.toString());
+            }
+        }
+        catch (ClassFormatError e) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.TRANSLET_CLASS_ERR, _name);
+            throw new TransformerConfigurationException(err.toString());
+        }
+        catch (LinkageError e) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.TRANSLET_OBJECT_ERR, _name);
+            throw new TransformerConfigurationException(err.toString());
+        }
+!!!4129538.java!!!	getTransletInstance() : Translet
+        try {
+            if (_name == null) return null;
+
+            if (_class == null) defineTransletClasses();
+
+            // The translet needs to keep a reference to all its auxiliary
+            // class to prevent the GC from collecting them
+            AbstractTranslet translet = (AbstractTranslet) _class[_transletIndex].newInstance();
+            translet.postInitialization();
+            translet.setTemplates(this);
+            translet.setServicesMechnism(_useServicesMechanism);
+            translet.setAllowedProtocols(_accessExternalStylesheet);
+            if (_auxClasses != null) {
+                translet.setAuxiliaryClasses(_auxClasses);
+            }
+
+            return translet;
+        }
+        catch (InstantiationException e) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.TRANSLET_OBJECT_ERR, _name);
+            throw new TransformerConfigurationException(err.toString());
+        }
+        catch (IllegalAccessException e) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.TRANSLET_OBJECT_ERR, _name);
+            throw new TransformerConfigurationException(err.toString());
+        }
+!!!4129666.java!!!	newTransformer() : Transformer
+        TransformerImpl transformer;
+
+        transformer = new TransformerImpl(getTransletInstance(), _outputProperties,
+            _indentNumber, _tfactory);
+
+        if (_uriResolver != null) {
+            transformer.setURIResolver(_uriResolver);
+        }
+
+        if (_tfactory.getFeature(XMLConstants.FEATURE_SECURE_PROCESSING)) {
+            transformer.setSecureProcessing(true);
+        }
+        return transformer;
+!!!4129794.java!!!	getOutputProperties() : Properties
+        try {
+            return newTransformer().getOutputProperties();
+        }
+        catch (TransformerConfigurationException e) {
+            return null;
+        }
+!!!4129922.java!!!	getStylesheetDOM() : DOM
+        return (DOM)_sdom.get();
+!!!4130050.java!!!	setStylesheetDOM(inout sdom : DOM) : void
+        _sdom.set(sdom);

@@ -1,0 +1,254 @@
+class PixelGrabber
+!!!6683266.java!!!	PixelGrabber(inout img : Image, in x : int, in y : int, in w : int, in h : int, inout pix : int [[]], in off : int, in scansize : int)
+        this(img.getSource(), x, y, w, h, pix, off, scansize);
+!!!6683394.java!!!	PixelGrabber(inout ip : ImageProducer, in x : int, in y : int, in w : int, in h : int, inout pix : int [[]], in off : int, in scansize : int)
+        producer = ip;
+        dstX = x;
+        dstY = y;
+        dstW = w;
+        dstH = h;
+        dstOff = off;
+        dstScan = scansize;
+        intPixels = pix;
+        imageModel = ColorModel.getRGBdefault();
+!!!6683522.java!!!	PixelGrabber(inout img : Image, in x : int, in y : int, in w : int, in h : int, inout forceRGB : boolean)
+        producer = img.getSource();
+        dstX = x;
+        dstY = y;
+        dstW = w;
+        dstH = h;
+        if (forceRGB) {
+            imageModel = ColorModel.getRGBdefault();
+        }
+!!!6683650.java!!!	startGrabbing() : void
+        if ((flags & DONEBITS) != 0) {
+            return;
+        }
+        if (!grabbing) {
+            grabbing = true;
+            flags &= ~(ImageObserver.ABORT);
+            producer.startProduction(this);
+        }
+!!!6683778.java!!!	abortGrabbing() : void
+        imageComplete(IMAGEABORTED);
+!!!6683906.java!!!	grabPixels() : boolean
+        return grabPixels(0);
+!!!6684034.java!!!	grabPixels(in ms : long) : boolean
+        if ((flags & DONEBITS) != 0) {
+            return (flags & GRABBEDBITS) != 0;
+        }
+        long end = ms + System.currentTimeMillis();
+        if (!grabbing) {
+            grabbing = true;
+            flags &= ~(ImageObserver.ABORT);
+            producer.startProduction(this);
+        }
+        while (grabbing) {
+            long timeout;
+            if (ms == 0) {
+                timeout = 0;
+            } else {
+                timeout = end - System.currentTimeMillis();
+                if (timeout <= 0) {
+                    break;
+                }
+            }
+            wait(timeout);
+        }
+        return (flags & GRABBEDBITS) != 0;
+!!!6684162.java!!!	getStatus() : int
+        return flags;
+!!!6684290.java!!!	getWidth() : int
+        return (dstW < 0) ? -1 : dstW;
+!!!6684418.java!!!	getHeight() : int
+        return (dstH < 0) ? -1 : dstH;
+!!!6684546.java!!!	getPixels() : Object
+        return (bytePixels == null)
+            ? ((Object) intPixels)
+            : ((Object) bytePixels);
+!!!6684674.java!!!	getColorModel() : ColorModel
+        return imageModel;
+!!!6684802.java!!!	setDimensions(in width : int, in height : int) : void
+        if (dstW < 0) {
+            dstW = width - dstX;
+        }
+        if (dstH < 0) {
+            dstH = height - dstY;
+        }
+        if (dstW <= 0 || dstH <= 0) {
+            imageComplete(STATICIMAGEDONE);
+        } else if (intPixels == null &&
+                   imageModel == ColorModel.getRGBdefault()) {
+            intPixels = new int[dstW * dstH];
+            dstScan = dstW;
+            dstOff = 0;
+        }
+        flags |= (ImageObserver.WIDTH | ImageObserver.HEIGHT);
+!!!6684930.java!!!	setHints(in hints : int) : void
+        return;
+!!!6685058.java!!!	setProperties(inout props : Hashtable) : void
+        return;
+!!!6685186.java!!!	setColorModel(inout model : ColorModel) : void
+        return;
+!!!6685314.java!!!	convertToRGB() : void
+        int size = dstW * dstH;
+        int newpixels[] = new int[size];
+        if (bytePixels != null) {
+            for (int i = 0; i < size; i++) {
+                newpixels[i] = imageModel.getRGB(bytePixels[i] & 0xff);
+            }
+        } else if (intPixels != null) {
+            for (int i = 0; i < size; i++) {
+                newpixels[i] = imageModel.getRGB(intPixels[i]);
+            }
+        }
+        bytePixels = null;
+        intPixels = newpixels;
+        dstScan = dstW;
+        dstOff = 0;
+        imageModel = ColorModel.getRGBdefault();
+!!!6685442.java!!!	setPixels(in srcX : int, in srcY : int, in srcW : int, in srcH : int, inout model : ColorModel, inout pixels : byte [[]], in srcOff : int, in srcScan : int) : void
+        if (srcY < dstY) {
+            int diff = dstY - srcY;
+            if (diff >= srcH) {
+                return;
+            }
+            srcOff += srcScan * diff;
+            srcY += diff;
+            srcH -= diff;
+        }
+        if (srcY + srcH > dstY + dstH) {
+            srcH = (dstY + dstH) - srcY;
+            if (srcH <= 0) {
+                return;
+            }
+        }
+        if (srcX < dstX) {
+            int diff = dstX - srcX;
+            if (diff >= srcW) {
+                return;
+            }
+            srcOff += diff;
+            srcX += diff;
+            srcW -= diff;
+        }
+        if (srcX + srcW > dstX + dstW) {
+            srcW = (dstX + dstW) - srcX;
+            if (srcW <= 0) {
+                return;
+            }
+        }
+        int dstPtr = dstOff + (srcY - dstY) * dstScan + (srcX - dstX);
+        if (intPixels == null) {
+            if (bytePixels == null) {
+                bytePixels = new byte[dstW * dstH];
+                dstScan = dstW;
+                dstOff = 0;
+                imageModel = model;
+            } else if (imageModel != model) {
+                convertToRGB();
+            }
+            if (bytePixels != null) {
+                for (int h = srcH; h > 0; h--) {
+                    System.arraycopy(pixels, srcOff, bytePixels, dstPtr, srcW);
+                    srcOff += srcScan;
+                    dstPtr += dstScan;
+                }
+            }
+        }
+        if (intPixels != null) {
+            int dstRem = dstScan - srcW;
+            int srcRem = srcScan - srcW;
+            for (int h = srcH; h > 0; h--) {
+                for (int w = srcW; w > 0; w--) {
+                    intPixels[dstPtr++] = model.getRGB(pixels[srcOff++]&0xff);
+                }
+                srcOff += srcRem;
+                dstPtr += dstRem;
+            }
+        }
+        flags |= ImageObserver.SOMEBITS;
+!!!6685570.java!!!	setPixels(in srcX : int, in srcY : int, in srcW : int, in srcH : int, inout model : ColorModel, inout pixels : int [[]], in srcOff : int, in srcScan : int) : void
+        if (srcY < dstY) {
+            int diff = dstY - srcY;
+            if (diff >= srcH) {
+                return;
+            }
+            srcOff += srcScan * diff;
+            srcY += diff;
+            srcH -= diff;
+        }
+        if (srcY + srcH > dstY + dstH) {
+            srcH = (dstY + dstH) - srcY;
+            if (srcH <= 0) {
+                return;
+            }
+        }
+        if (srcX < dstX) {
+            int diff = dstX - srcX;
+            if (diff >= srcW) {
+                return;
+            }
+            srcOff += diff;
+            srcX += diff;
+            srcW -= diff;
+        }
+        if (srcX + srcW > dstX + dstW) {
+            srcW = (dstX + dstW) - srcX;
+            if (srcW <= 0) {
+                return;
+            }
+        }
+        if (intPixels == null) {
+            if (bytePixels == null) {
+                intPixels = new int[dstW * dstH];
+                dstScan = dstW;
+                dstOff = 0;
+                imageModel = model;
+            } else {
+                convertToRGB();
+            }
+        }
+        int dstPtr = dstOff + (srcY - dstY) * dstScan + (srcX - dstX);
+        if (imageModel == model) {
+            for (int h = srcH; h > 0; h--) {
+                System.arraycopy(pixels, srcOff, intPixels, dstPtr, srcW);
+                srcOff += srcScan;
+                dstPtr += dstScan;
+            }
+        } else {
+            if (imageModel != ColorModel.getRGBdefault()) {
+                convertToRGB();
+            }
+            int dstRem = dstScan - srcW;
+            int srcRem = srcScan - srcW;
+            for (int h = srcH; h > 0; h--) {
+                for (int w = srcW; w > 0; w--) {
+                    intPixels[dstPtr++] = model.getRGB(pixels[srcOff++]);
+                }
+                srcOff += srcRem;
+                dstPtr += dstRem;
+            }
+        }
+        flags |= ImageObserver.SOMEBITS;
+!!!6685698.java!!!	imageComplete(in status : int) : void
+        grabbing = false;
+        switch (status) {
+        default:
+        case IMAGEERROR:
+            flags |= ImageObserver.ERROR | ImageObserver.ABORT;
+            break;
+        case IMAGEABORTED:
+            flags |= ImageObserver.ABORT;
+            break;
+        case STATICIMAGEDONE:
+            flags |= ImageObserver.ALLBITS;
+            break;
+        case SINGLEFRAMEDONE:
+            flags |= ImageObserver.FRAMEBITS;
+            break;
+        }
+        producer.removeConsumer(this);
+        notifyAll();
+!!!6685826.java!!!	status() : int
+        return flags;

@@ -1,0 +1,586 @@
+class InetAddress
+!!!7479810.java!!!	holder() : InetAddress::InetAddressHolder
+        return holder;
+!!!7479938.java!!!	InetAddress()
+        holder = new InetAddressHolder();
+!!!7480066.java!!!	readResolve() : Object
+        // will replace the deserialized 'this' object
+        return new Inet4Address(holder().getHostName(), holder().getAddress());
+!!!7480194.java!!!	isMulticastAddress() : boolean
+        return false;
+!!!7480322.java!!!	isAnyLocalAddress() : boolean
+        return false;
+!!!7480450.java!!!	isLoopbackAddress() : boolean
+        return false;
+!!!7480578.java!!!	isLinkLocalAddress() : boolean
+        return false;
+!!!7480706.java!!!	isSiteLocalAddress() : boolean
+        return false;
+!!!7480834.java!!!	isMCGlobal() : boolean
+        return false;
+!!!7480962.java!!!	isMCNodeLocal() : boolean
+        return false;
+!!!7481090.java!!!	isMCLinkLocal() : boolean
+        return false;
+!!!7481218.java!!!	isMCSiteLocal() : boolean
+        return false;
+!!!7481346.java!!!	isMCOrgLocal() : boolean
+        return false;
+!!!7481474.java!!!	isReachable(in timeout : int) : boolean
+        return isReachable(null, 0 , timeout);
+!!!7481602.java!!!	isReachable(inout netif : NetworkInterface, in ttl : int, in timeout : int) : boolean
+        if (ttl < 0)
+            throw new IllegalArgumentException("ttl can't be negative");
+        if (timeout < 0)
+            throw new IllegalArgumentException("timeout can't be negative");
+
+        return impl.isReachable(this, timeout, netif, ttl);
+!!!7481730.java!!!	getHostName() : String
+        return getHostName(true);
+!!!7481858.java!!!	getHostName(inout check : boolean) : String
+        if (holder().getHostName() == null) {
+            holder().hostName = InetAddress.getHostFromNameService(this, check);
+        }
+        return holder().getHostName();
+!!!7481986.java!!!	getCanonicalHostName() : String
+        if (canonicalHostName == null) {
+            canonicalHostName =
+                InetAddress.getHostFromNameService(this, true);
+        }
+        return canonicalHostName;
+!!!7482114.java!!!	getHostFromNameService(inout addr : InetAddress, inout check : boolean) : String
+        String host = null;
+        for (NameService nameService : nameServices) {
+            try {
+                // first lookup the hostname
+                host = nameService.getHostByAddr(addr.getAddress());
+
+                /* check to see if calling code is allowed to know
+                 * the hostname for this IP address, ie, connect to the host
+                 */
+                if (check) {
+                    SecurityManager sec = System.getSecurityManager();
+                    if (sec != null) {
+                        sec.checkConnect(host, -1);
+                    }
+                }
+
+                /* now get all the IP addresses for this hostname,
+                 * and make sure one of them matches the original IP
+                 * address. We do this to try and prevent spoofing.
+                 */
+
+                InetAddress[] arr = InetAddress.getAllByName0(host, check);
+                boolean ok = false;
+
+                if(arr != null) {
+                    for(int i = 0; !ok && i < arr.length; i++) {
+                        ok = addr.equals(arr[i]);
+                    }
+                }
+
+                //XXX: if it looks a spoof just return the address?
+                if (!ok) {
+                    host = addr.getHostAddress();
+                    return host;
+                }
+
+                break;
+
+            } catch (SecurityException e) {
+                host = addr.getHostAddress();
+                break;
+            } catch (UnknownHostException e) {
+                host = addr.getHostAddress();
+                // let next provider resolve the hostname
+            }
+        }
+
+        return host;
+!!!7482242.java!!!	getAddress() : byte
+        return null;
+!!!7482370.java!!!	getHostAddress() : String
+        return null;
+!!!7482498.java!!!	hashCode() : int
+        return -1;
+!!!7482626.java!!!	equals(inout obj : Object) : boolean
+        return false;
+!!!7482754.java!!!	toString() : String
+        String hostName = holder().getHostName();
+        return ((hostName != null) ? hostName : "")
+            + "/" + getHostAddress();
+!!!7483522.java!!!	cacheInitIfNeeded() : void
+        assert Thread.holdsLock(addressCache);
+        if (addressCacheInit) {
+            return;
+        }
+        unknown_array = new InetAddress[1];
+        unknown_array[0] = impl.anyLocalAddress();
+
+        addressCache.put(impl.anyLocalAddress().getHostName(),
+                         unknown_array);
+
+        addressCacheInit = true;
+!!!7483650.java!!!	cacheAddresses(inout hostname : String, inout addresses : InetAddress [[]], inout success : boolean) : void
+        hostname = hostname.toLowerCase();
+        synchronized (addressCache) {
+            cacheInitIfNeeded();
+            if (success) {
+                addressCache.put(hostname, addresses);
+            } else {
+                negativeCache.put(hostname, addresses);
+            }
+        }
+!!!7483778.java!!!	getCachedAddresses(inout hostname : String) : InetAddress
+        hostname = hostname.toLowerCase();
+
+        // search both positive & negative caches
+
+        synchronized (addressCache) {
+            cacheInitIfNeeded();
+
+            CacheEntry entry = addressCache.get(hostname);
+            if (entry == null) {
+                entry = negativeCache.get(hostname);
+            }
+
+            if (entry != null) {
+                return entry.addresses;
+            }
+        }
+
+        // not found
+        return null;
+!!!7483906.java!!!	createNSProvider(inout provider : String) : NameService
+        if (provider == null)
+            return null;
+
+        NameService nameService = null;
+        if (provider.equals("default")) {
+            // initialize the default name service
+            nameService = new NameService() {
+                public InetAddress[] lookupAllHostAddr(String host)
+                    throws UnknownHostException {
+                    return impl.lookupAllHostAddr(host);
+                }
+                public String getHostByAddr(byte[] addr)
+                    throws UnknownHostException {
+                    return impl.getHostByAddr(addr);
+                }
+            };
+        } else {
+            final String providerName = provider;
+            try {
+                nameService = java.security.AccessController.doPrivileged(
+                    new java.security.PrivilegedExceptionAction<NameService>() {
+                        public NameService run() {
+                            Iterator<NameServiceDescriptor> itr =
+                                ServiceLoader.load(NameServiceDescriptor.class)
+                                    .iterator();
+                            while (itr.hasNext()) {
+                                NameServiceDescriptor nsd = itr.next();
+                                if (providerName.
+                                    equalsIgnoreCase(nsd.getType()+","
+                                        +nsd.getProviderName())) {
+                                    try {
+                                        return nsd.createNameService();
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                        System.err.println(
+                                            "Cannot create name service:"
+                                             +providerName+": " + e);
+                                    }
+                                }
+                            }
+
+                            return null;
+                        }
+                    }
+                );
+            } catch (java.security.PrivilegedActionException e) {
+            }
+        }
+
+        return nameService;
+!!!7484034.java!!!	getByAddress(inout host : String, inout addr : byte [[]]) : InetAddress
+        if (host != null && host.length() > 0 && host.charAt(0) == '[') {
+            if (host.charAt(host.length()-1) == ']') {
+                host = host.substring(1, host.length() -1);
+            }
+        }
+        if (addr != null) {
+            if (addr.length == Inet4Address.INADDRSZ) {
+                return new Inet4Address(host, addr);
+            } else if (addr.length == Inet6Address.INADDRSZ) {
+                byte[] newAddr
+                    = IPAddressUtil.convertFromIPv4MappedAddress(addr);
+                if (newAddr != null) {
+                    return new Inet4Address(host, newAddr);
+                } else {
+                    return new Inet6Address(host, addr);
+                }
+            }
+        }
+        throw new UnknownHostException("addr is of illegal length");
+!!!7484162.java!!!	getByName(inout host : String) : InetAddress
+        return InetAddress.getAllByName(host)[0];
+!!!7484290.java!!!	getByName(inout host : String, inout reqAddr : InetAddress) : InetAddress
+        return InetAddress.getAllByName(host, reqAddr)[0];
+!!!7484418.java!!!	getAllByName(inout host : String) : InetAddress
+        return getAllByName(host, null);
+!!!7484546.java!!!	getAllByName(inout host : String, inout reqAddr : InetAddress) : InetAddress
+
+        if (host == null || host.length() == 0) {
+            InetAddress[] ret = new InetAddress[1];
+            ret[0] = impl.loopbackAddress();
+            return ret;
+        }
+
+        boolean ipv6Expected = false;
+        if (host.charAt(0) == '[') {
+            // This is supposed to be an IPv6 literal
+            if (host.length() > 2 && host.charAt(host.length()-1) == ']') {
+                host = host.substring(1, host.length() -1);
+                ipv6Expected = true;
+            } else {
+                // This was supposed to be a IPv6 address, but it's not!
+                throw new UnknownHostException(host + ": invalid IPv6 address");
+            }
+        }
+
+        // if host is an IP address, we won't do further lookup
+        if (Character.digit(host.charAt(0), 16) != -1
+            || (host.charAt(0) == ':')) {
+            byte[] addr = null;
+            int numericZone = -1;
+            String ifname = null;
+            // see if it is IPv4 address
+            addr = IPAddressUtil.textToNumericFormatV4(host);
+            if (addr == null) {
+                // This is supposed to be an IPv6 literal
+                // Check if a numeric or string zone id is present
+                int pos;
+                if ((pos=host.indexOf ("%")) != -1) {
+                    numericZone = checkNumericZone (host);
+                    if (numericZone == -1) { /* remainder of string must be an ifname */
+                        ifname = host.substring (pos+1);
+                    }
+                }
+                if ((addr = IPAddressUtil.textToNumericFormatV6(host)) == null && host.contains(":")) {
+                    throw new UnknownHostException(host + ": invalid IPv6 address");
+                }
+            } else if (ipv6Expected) {
+                // Means an IPv4 litteral between brackets!
+                throw new UnknownHostException("["+host+"]");
+            }
+            InetAddress[] ret = new InetAddress[1];
+            if(addr != null) {
+                if (addr.length == Inet4Address.INADDRSZ) {
+                    ret[0] = new Inet4Address(null, addr);
+                } else {
+                    if (ifname != null) {
+                        ret[0] = new Inet6Address(null, addr, ifname);
+                    } else {
+                        ret[0] = new Inet6Address(null, addr, numericZone);
+                    }
+                }
+                return ret;
+            }
+        } else if (ipv6Expected) {
+            // We were expecting an IPv6 Litteral, but got something else
+            throw new UnknownHostException("["+host+"]");
+        }
+        return getAllByName0(host, reqAddr, true);
+!!!7484674.java!!!	getLoopbackAddress() : InetAddress
+        return impl.loopbackAddress();
+!!!7484802.java!!!	checkNumericZone(inout s : String) : int
+        int percent = s.indexOf ('%');
+        int slen = s.length();
+        int digit, zone=0;
+        if (percent == -1) {
+            return -1;
+        }
+        for (int i=percent+1; i<slen; i++) {
+            char c = s.charAt(i);
+            if (c == ']') {
+                if (i == percent+1) {
+                    /* empty per-cent field */
+                    return -1;
+                }
+                break;
+            }
+            if ((digit = Character.digit (c, 10)) < 0) {
+                return -1;
+            }
+            zone = (zone * 10) + digit;
+        }
+        return zone;
+!!!7484930.java!!!	getAllByName0(inout host : String) : InetAddress
+        return getAllByName0(host, true);
+!!!7485058.java!!!	getAllByName0(inout host : String, inout check : boolean) : InetAddress
+        return getAllByName0 (host, null, check);
+!!!7485186.java!!!	getAllByName0(inout host : String, inout reqAddr : InetAddress, inout check : boolean) : InetAddress
+
+        /* If it gets here it is presumed to be a hostname */
+        /* Cache.get can return: null, unknownAddress, or InetAddress[] */
+
+        /* make sure the connection to the host is allowed, before we
+         * give out a hostname
+         */
+        if (check) {
+            SecurityManager security = System.getSecurityManager();
+            if (security != null) {
+                security.checkConnect(host, -1);
+            }
+        }
+
+        InetAddress[] addresses = getCachedAddresses(host);
+
+        /* If no entry in cache, then do the host lookup */
+        if (addresses == null) {
+            addresses = getAddressesFromNameService(host, reqAddr);
+        }
+
+        if (addresses == unknown_array)
+            throw new UnknownHostException(host);
+
+        return addresses.clone();
+!!!7485314.java!!!	getAddressesFromNameService(inout host : String, inout reqAddr : InetAddress) : InetAddress
+        InetAddress[] addresses = null;
+        boolean success = false;
+        UnknownHostException ex = null;
+
+        // Check whether the host is in the lookupTable.
+        // 1) If the host isn't in the lookupTable when
+        //    checkLookupTable() is called, checkLookupTable()
+        //    would add the host in the lookupTable and
+        //    return null. So we will do the lookup.
+        // 2) If the host is in the lookupTable when
+        //    checkLookupTable() is called, the current thread
+        //    would be blocked until the host is removed
+        //    from the lookupTable. Then this thread
+        //    should try to look up the addressCache.
+        //     i) if it found the addresses in the
+        //        addressCache, checkLookupTable()  would
+        //        return the addresses.
+        //     ii) if it didn't find the addresses in the
+        //         addressCache for any reason,
+        //         it should add the host in the
+        //         lookupTable and return null so the
+        //         following code would do  a lookup itself.
+        if ((addresses = checkLookupTable(host)) == null) {
+            try {
+                // This is the first thread which looks up the addresses
+                // this host or the cache entry for this host has been
+                // expired so this thread should do the lookup.
+                for (NameService nameService : nameServices) {
+                    try {
+                        /*
+                         * Do not put the call to lookup() inside the
+                         * constructor.  if you do you will still be
+                         * allocating space when the lookup fails.
+                         */
+
+                        addresses = nameService.lookupAllHostAddr(host);
+                        success = true;
+                        break;
+                    } catch (UnknownHostException uhe) {
+                        if (host.equalsIgnoreCase("localhost")) {
+                            InetAddress[] local = new InetAddress[] { impl.loopbackAddress() };
+                            addresses = local;
+                            success = true;
+                            break;
+                        }
+                        else {
+                            addresses = unknown_array;
+                            success = false;
+                            ex = uhe;
+                        }
+                    }
+                }
+
+                // More to do?
+                if (reqAddr != null && addresses.length > 1 && !addresses[0].equals(reqAddr)) {
+                    // Find it?
+                    int i = 1;
+                    for (; i < addresses.length; i++) {
+                        if (addresses[i].equals(reqAddr)) {
+                            break;
+                        }
+                    }
+                    // Rotate
+                    if (i < addresses.length) {
+                        InetAddress tmp, tmp2 = reqAddr;
+                        for (int j = 0; j < i; j++) {
+                            tmp = addresses[j];
+                            addresses[j] = tmp2;
+                            tmp2 = tmp;
+                        }
+                        addresses[i] = tmp2;
+                    }
+                }
+                // Cache the address.
+                cacheAddresses(host, addresses, success);
+
+                if (!success && ex != null)
+                    throw ex;
+
+            } finally {
+                // Delete host from the lookupTable and notify
+                // all threads waiting on the lookupTable monitor.
+                updateLookupTable(host);
+            }
+        }
+
+        return addresses;
+!!!7485442.java!!!	checkLookupTable(inout host : String) : InetAddress
+        synchronized (lookupTable) {
+            // If the host isn't in the lookupTable, add it in the
+            // lookuptable and return null. The caller should do
+            // the lookup.
+            if (lookupTable.containsKey(host) == false) {
+                lookupTable.put(host, null);
+                return null;
+            }
+
+            // If the host is in the lookupTable, it means that another
+            // thread is trying to look up the addresses of this host.
+            // This thread should wait.
+            while (lookupTable.containsKey(host)) {
+                try {
+                    lookupTable.wait();
+                } catch (InterruptedException e) {
+                }
+            }
+        }
+
+        // The other thread has finished looking up the addresses of
+        // the host. This thread should retry to get the addresses
+        // from the addressCache. If it doesn't get the addresses from
+        // the cache, it will try to look up the addresses itself.
+        InetAddress[] addresses = getCachedAddresses(host);
+        if (addresses == null) {
+            synchronized (lookupTable) {
+                lookupTable.put(host, null);
+                return null;
+            }
+        }
+
+        return addresses;
+!!!7485570.java!!!	updateLookupTable(inout host : String) : void
+        synchronized (lookupTable) {
+            lookupTable.remove(host);
+            lookupTable.notifyAll();
+        }
+!!!7485698.java!!!	getByAddress(inout addr : byte [[]]) : InetAddress
+        return getByAddress(null, addr);
+!!!7485826.java!!!	getLocalHost() : InetAddress
+
+        SecurityManager security = System.getSecurityManager();
+        try {
+            String local = impl.getLocalHostName();
+
+            if (security != null) {
+                security.checkConnect(local, -1);
+            }
+
+            if (local.equals("localhost")) {
+                return impl.loopbackAddress();
+            }
+
+            InetAddress ret = null;
+            synchronized (cacheLock) {
+                long now = System.currentTimeMillis();
+                if (cachedLocalHost != null) {
+                    if ((now - cacheTime) < maxCacheTime) // Less than 5s old?
+                        ret = cachedLocalHost;
+                    else
+                        cachedLocalHost = null;
+                }
+
+                // we are calling getAddressesFromNameService directly
+                // to avoid getting localHost from cache
+                if (ret == null) {
+                    InetAddress[] localAddrs;
+                    try {
+                        localAddrs =
+                            InetAddress.getAddressesFromNameService(local, null);
+                    } catch (UnknownHostException uhe) {
+                        // Rethrow with a more informative error message.
+                        UnknownHostException uhe2 =
+                            new UnknownHostException(local + ": " +
+                                                     uhe.getMessage());
+                        uhe2.initCause(uhe);
+                        throw uhe2;
+                    }
+                    cachedLocalHost = localAddrs[0];
+                    cacheTime = now;
+                    ret = localAddrs[0];
+                }
+            }
+            return ret;
+        } catch (java.lang.SecurityException e) {
+            return impl.loopbackAddress();
+        }
+!!!7486082.java!!!	anyLocalAddress() : InetAddress
+        return impl.anyLocalAddress();
+!!!7486210.java!!!	loadImpl(inout implName : String) : InetAddressImpl
+        Object impl = null;
+
+        /*
+         * Property "impl.prefix" will be prepended to the classname
+         * of the implementation object we instantiate, to which we
+         * delegate the real work (like native methods).  This
+         * property can vary across implementations of the java.
+         * classes.  The default is an empty String "".
+         */
+        String prefix = AccessController.doPrivileged(
+                      new GetPropertyAction("impl.prefix", ""));
+        try {
+            impl = Class.forName("java.net." + prefix + implName).newInstance();
+        } catch (ClassNotFoundException e) {
+            System.err.println("Class not found: java.net." + prefix +
+                               implName + ":\ncheck impl.prefix property " +
+                               "in your properties file.");
+        } catch (InstantiationException e) {
+            System.err.println("Could not instantiate: java.net." + prefix +
+                               implName + ":\ncheck impl.prefix property " +
+                               "in your properties file.");
+        } catch (IllegalAccessException e) {
+            System.err.println("Cannot access class: java.net." + prefix +
+                               implName + ":\ncheck impl.prefix property " +
+                               "in your properties file.");
+        }
+
+        if (impl == null) {
+            try {
+                impl = Class.forName(implName).newInstance();
+            } catch (Exception e) {
+                throw new Error("System property impl.prefix incorrect");
+            }
+        }
+
+        return (InetAddressImpl) impl;
+!!!7486338.java!!!	readObjectNoData(inout s : ObjectInputStream) : void
+        if (getClass().getClassLoader() != null) {
+            throw new SecurityException ("invalid address type");
+        }
+!!!7486466.java!!!	readObject(inout s : ObjectInputStream) : void
+        if (getClass().getClassLoader() != null) {
+            throw new SecurityException ("invalid address type");
+        }
+        GetField gf = s.readFields();
+        String host = (String)gf.get("hostName", null);
+        int address= gf.get("address", 0);
+        int family= gf.get("family", 0);
+        InetAddressHolder h = new InetAddressHolder(host, address, family);
+        UNSAFE.putObject(this, FIELDS_OFFSET, h);
+!!!7486594.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        if (getClass().getClassLoader() != null) {
+            throw new SecurityException ("invalid address type");
+        }
+        PutField pf = s.putFields();
+        pf.put("hostName", holder().getHostName());
+        pf.put("address", holder().getAddress());
+        pf.put("family", holder().getFamily());
+        s.writeFields();

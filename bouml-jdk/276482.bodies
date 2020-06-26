@@ -1,0 +1,46 @@
+class JDKClassLoader
+!!!1458434.java!!!	loadClass(inout aClass : Class, inout className : String) : Class
+
+        // Maintain the same error semantics as Class.forName()
+        if (className == null) {
+            throw new NullPointerException();
+        }
+        if (className.length() == 0) {
+            throw new ClassNotFoundException();
+        }
+
+        // It would be nice to bypass JDKClassLoader's attempts completely
+        // if it's known that the latest user defined ClassLoader will
+        // fail.
+        //
+        // Otherwise, we end up calling Class.forName here as well as in
+        // the next step in JDKBridge.  That can take a long time depending
+        // on the length of the classpath.
+
+        // Note: Looking at the only place in JDKBridge where this code
+        // is invoked, it is clear that aClass will always be null.
+        ClassLoader loader;
+        if (aClass != null) {
+            loader = aClass.getClassLoader();
+        } else {
+            loader = bridge.getLatestUserDefinedLoader();
+        }
+        // See createKey for a description of what's involved
+        Object key = classCache.createKey(className, loader);
+
+        if (classCache.knownToFail(key)) {
+            throw new ClassNotFoundException(className);
+        } else {
+            try {
+                // Loading this class with the call stack
+                // loader isn't known to fail, so try
+                // to load it.
+                return Class.forName(className, false, loader);
+            } catch(ClassNotFoundException cnfe) {
+                // Record that we failed to find the class
+                // with this particular loader.  This way, we won't
+                // waste time looking with this loader, again.
+                classCache.recordFailure(key);
+                throw cnfe;
+            }
+        }

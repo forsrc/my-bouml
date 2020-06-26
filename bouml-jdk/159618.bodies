@@ -1,0 +1,133 @@
+class DynSequenceImpl
+!!!308866.java!!!	DynSequenceImpl()
+        this(null, (Any)null, false);
+!!!308994.java!!!	DynSequenceImpl(inout orb : ORB, inout any : Any, inout copyValue : boolean)
+        super(orb, any, copyValue);
+!!!309122.java!!!	DynSequenceImpl(inout orb : ORB, inout typeCode : TypeCode)
+        super(orb, typeCode);
+!!!309250.java!!!	initializeComponentsFromAny() : boolean
+        // This typeCode is of kind tk_sequence.
+        TypeCode typeCode = any.type();
+        int length;
+        TypeCode contentType = getContentType();
+        InputStream input;
+
+        try {
+            input = any.create_input_stream();
+        } catch (BAD_OPERATION e) {
+            return false;
+        }
+
+        length = input.read_long();
+        components = new DynAny[length];
+        anys = new Any[length];
+
+        for (int i=0; i<length; i++) {
+            // _REVISIT_ Could use read_xxx_array() methods on InputStream for efficiency
+            // but only for primitive types
+            anys[i] = DynAnyUtil.extractAnyFromStream(contentType, input, orb);
+            try {
+                // Creates the appropriate subtype without copying the Any
+                components[i] = DynAnyUtil.createMostDerivedDynAny(anys[i], orb, false);
+            } catch (InconsistentTypeCode itc) { // impossible
+            }
+        }
+        return true;
+!!!309378.java!!!	initializeComponentsFromTypeCode() : boolean
+        // already done in the type code constructor
+        components = new DynAny[0];
+        anys = new Any[0];
+        return true;
+!!!309506.java!!!	initializeAnyFromComponents() : boolean
+        OutputStream out = any.create_output_stream();
+        // Writing the length first is the only difference to supers implementation
+        out.write_long(components.length);
+        for (int i=0; i<components.length; i++) {
+            if (components[i] instanceof DynAnyImpl) {
+                ((DynAnyImpl)components[i]).writeAny(out);
+            } else {
+                // Not our implementation. Nothing we can do to prevent copying.
+                components[i].to_any().write_value(out);
+            }
+        }
+        any.read_value(out.create_input_stream(), any.type());
+        return true;
+!!!309634.java!!!	get_length() : int
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        return (checkInitComponents() ? components.length : 0);
+!!!309762.java!!!	set_length(in len : int) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        int bound = getBound();
+        if (bound > 0 && len > bound) {
+            throw new InvalidValue();
+        }
+
+        checkInitComponents();
+
+        int oldLength = components.length;
+        if (len > oldLength) {
+            // Increase length
+            DynAny[] newComponents = new DynAny[len];
+            Any[] newAnys = new Any[len];
+            System.arraycopy(components, 0, newComponents, 0, oldLength);
+            System.arraycopy(anys, 0, newAnys, 0, oldLength);
+            components = newComponents;
+            anys = newAnys;
+
+            // Newly added elements are default-initialized
+            TypeCode contentType = getContentType();
+            for (int i=oldLength; i<len; i++) {
+                createDefaultComponentAt(i, contentType);
+            }
+
+            // Increasing the length of a sequence sets the current position to the first
+            // newly-added element if the previous current position was -1.
+            if (index == NO_INDEX)
+                index = oldLength;
+        } else if (len < oldLength) {
+            // Decrease length
+            DynAny[] newComponents = new DynAny[len];
+            Any[] newAnys = new Any[len];
+            System.arraycopy(components, 0, newComponents, 0, len);
+            System.arraycopy(anys, 0, newAnys, 0, len);
+            // It is probably right not to destroy the released component DynAnys.
+            // Some other DynAny or a user variable might still hold onto them
+            // and if not then the garbage collector will take care of it.
+            //for (int i=len; i<oldLength; i++) {
+            //    components[i].destroy();
+            //}
+            components = newComponents;
+            anys = newAnys;
+
+            // ?f the length of the sequence is set to zero, the current position is set to -1.
+            // ?f the current position is -1 before decreasing the length, it remains at -1.
+            // ?f the current position indicates a valid element and that element is not removed
+            // when the length is decreased, the current position remains unaffected.
+            // ?f the current position indicates a valid element and that element is removed,
+            // the current position is set to -1.
+            if (len == 0 || index >= len) {
+                index = NO_INDEX;
+            }
+        } else {
+            // Length unchanged
+            // Maybe components is now default initialized from type code
+            if (index == NO_INDEX && len > 0) {
+                index = 0;
+            }
+        }
+!!!309890.java!!!	checkValue(inout value : Object [[]]) : void
+        if (value == null || value.length == 0) {
+            clearData();
+            index = NO_INDEX;
+            return;
+        } else {
+            index = 0;
+        }
+        int bound = getBound();
+        if (bound > 0 && value.length > bound) {
+            throw new InvalidValue();
+        }

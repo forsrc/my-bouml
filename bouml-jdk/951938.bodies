@@ -1,0 +1,187 @@
+class MethodHandleNatives
+!!!7261314.java!!!	refKindIsValid(in refKind : int) : boolean
+        return (refKind > REF_NONE && refKind < REF_LIMIT);
+!!!7261442.java!!!	refKindIsField(in refKind : byte) : boolean
+        assert(refKindIsValid(refKind));
+        return (refKind <= REF_putStatic);
+!!!7261570.java!!!	refKindIsGetter(in refKind : byte) : boolean
+        assert(refKindIsValid(refKind));
+        return (refKind <= REF_getStatic);
+!!!7261698.java!!!	refKindIsSetter(in refKind : byte) : boolean
+        return refKindIsField(refKind) && !refKindIsGetter(refKind);
+!!!7261826.java!!!	refKindIsMethod(in refKind : byte) : boolean
+        return !refKindIsField(refKind) && (refKind != REF_newInvokeSpecial);
+!!!7261954.java!!!	refKindIsConstructor(in refKind : byte) : boolean
+        return (refKind == REF_newInvokeSpecial);
+!!!7262082.java!!!	refKindHasReceiver(in refKind : byte) : boolean
+        assert(refKindIsValid(refKind));
+        return (refKind & 1) != 0;
+!!!7262210.java!!!	refKindIsStatic(in refKind : byte) : boolean
+        return !refKindHasReceiver(refKind) && (refKind != REF_newInvokeSpecial);
+!!!7262338.java!!!	refKindDoesDispatch(in refKind : byte) : boolean
+        assert(refKindIsValid(refKind));
+        return (refKind == REF_invokeVirtual ||
+                refKind == REF_invokeInterface);
+!!!7262466.java!!!	refKindName(in refKind : byte) : String
+        assert(refKindIsValid(refKind));
+        switch (refKind) {
+        case REF_getField:          return "getField";
+        case REF_getStatic:         return "getStatic";
+        case REF_putField:          return "putField";
+        case REF_putStatic:         return "putStatic";
+        case REF_invokeVirtual:     return "invokeVirtual";
+        case REF_invokeStatic:      return "invokeStatic";
+        case REF_invokeSpecial:     return "invokeSpecial";
+        case REF_newInvokeSpecial:  return "newInvokeSpecial";
+        case REF_invokeInterface:   return "invokeInterface";
+        default:                    return "REF_???";
+        }
+!!!7262722.java!!!	verifyConstants() : boolean
+        Object[] box = { null };
+        for (int i = 0; ; i++) {
+            box[0] = null;
+            int vmval = getNamedCon(i, box);
+            if (box[0] == null)  break;
+            String name = (String) box[0];
+            try {
+                Field con = Constants.class.getDeclaredField(name);
+                int jval = con.getInt(null);
+                if (jval == vmval)  continue;
+                String err = (name+": JVM has "+vmval+" while Java has "+jval);
+                if (name.equals("CONV_OP_LIMIT")) {
+                    System.err.println("warning: "+err);
+                    continue;
+                }
+                throw new InternalError(err);
+            } catch (NoSuchFieldException | IllegalAccessException ex) {
+                String err = (name+": JVM has "+vmval+" which Java does not define");
+                // ignore exotic ops the JVM cares about; we just wont issue them
+                //System.err.println("warning: "+err);
+                continue;
+            }
+        }
+        return true;
+!!!7262850.java!!!	linkCallSite(inout callerObj : Object, inout bootstrapMethodObj : Object, inout nameObj : Object, inout typeObj : Object, inout staticArguments : Object, inout appendixResult : Object [[]]) : MemberName
+        MethodHandle bootstrapMethod = (MethodHandle)bootstrapMethodObj;
+        Class<?> caller = (Class<?>)callerObj;
+        String name = nameObj.toString().intern();
+        MethodType type = (MethodType)typeObj;
+        if (!TRACE_METHOD_LINKAGE)
+            return linkCallSiteImpl(caller, bootstrapMethod, name, type,
+                                    staticArguments, appendixResult);
+        return linkCallSiteTracing(caller, bootstrapMethod, name, type,
+                                   staticArguments, appendixResult);
+!!!7262978.java!!!	linkCallSiteImpl(inout caller : Class, inout bootstrapMethod : MethodHandle, inout name : String, inout type : MethodType, inout staticArguments : Object, inout appendixResult : Object [[]]) : MemberName
+        CallSite callSite = CallSite.makeSite(bootstrapMethod,
+                                              name,
+                                              type,
+                                              staticArguments,
+                                              caller);
+        if (callSite instanceof ConstantCallSite) {
+            appendixResult[0] = callSite.dynamicInvoker();
+            return Invokers.linkToTargetMethod(type);
+        } else {
+            appendixResult[0] = callSite;
+            return Invokers.linkToCallSiteMethod(type);
+        }
+!!!7263106.java!!!	linkCallSiteTracing(inout caller : Class, inout bootstrapMethod : MethodHandle, inout name : String, inout type : MethodType, inout staticArguments : Object, inout appendixResult : Object [[]]) : MemberName
+        Object bsmReference = bootstrapMethod.internalMemberName();
+        if (bsmReference == null)  bsmReference = bootstrapMethod;
+        Object staticArglist = (staticArguments instanceof Object[] ?
+                                java.util.Arrays.asList((Object[]) staticArguments) :
+                                staticArguments);
+        System.out.println("linkCallSite "+caller.getName()+" "+
+                           bsmReference+" "+
+                           name+type+"/"+staticArglist);
+        try {
+            MemberName res = linkCallSiteImpl(caller, bootstrapMethod, name, type,
+                                              staticArguments, appendixResult);
+            System.out.println("linkCallSite => "+res+" + "+appendixResult[0]);
+            return res;
+        } catch (Throwable ex) {
+            System.out.println("linkCallSite => throw "+ex);
+            throw ex;
+        }
+!!!7263234.java!!!	findMethodHandleType(inout rtype : Class, inout ptypes : Class [[]]) : MethodType
+        return MethodType.makeImpl(rtype, ptypes, true);
+!!!7263362.java!!!	linkMethod(inout callerClass : Class, in refKind : int, inout defc : Class, inout name : String, inout type : Object, inout appendixResult : Object [[]]) : MemberName
+        if (!TRACE_METHOD_LINKAGE)
+            return linkMethodImpl(callerClass, refKind, defc, name, type, appendixResult);
+        return linkMethodTracing(callerClass, refKind, defc, name, type, appendixResult);
+!!!7263490.java!!!	linkMethodImpl(inout callerClass : Class, in refKind : int, inout defc : Class, inout name : String, inout type : Object, inout appendixResult : Object [[]]) : MemberName
+        try {
+            if (defc == MethodHandle.class && refKind == REF_invokeVirtual) {
+                return Invokers.methodHandleInvokeLinkerMethod(name, fixMethodType(callerClass, type), appendixResult);
+            }
+        } catch (Throwable ex) {
+            if (ex instanceof LinkageError)
+                throw (LinkageError) ex;
+            else
+                throw new LinkageError(ex.getMessage(), ex);
+        }
+        throw new LinkageError("no such method "+defc.getName()+"."+name+type);
+!!!7263618.java!!!	fixMethodType(inout callerClass : Class, inout type : Object) : MethodType
+        if (type instanceof MethodType)
+            return (MethodType) type;
+        else
+            return MethodType.fromMethodDescriptorString((String)type, callerClass.getClassLoader());
+!!!7263746.java!!!	linkMethodTracing(inout callerClass : Class, in refKind : int, inout defc : Class, inout name : String, inout type : Object, inout appendixResult : Object [[]]) : MemberName
+        System.out.println("linkMethod "+defc.getName()+"."+
+                           name+type+"/"+Integer.toHexString(refKind));
+        try {
+            MemberName res = linkMethodImpl(callerClass, refKind, defc, name, type, appendixResult);
+            System.out.println("linkMethod => "+res+" + "+appendixResult[0]);
+            return res;
+        } catch (Throwable ex) {
+            System.out.println("linkMethod => throw "+ex);
+            throw ex;
+        }
+!!!7263874.java!!!	linkMethodHandleConstant(inout callerClass : Class, in refKind : int, inout defc : Class, inout name : String, inout type : Object) : MethodHandle
+        try {
+            Lookup lookup = IMPL_LOOKUP.in(callerClass);
+            assert(refKindIsValid(refKind));
+            return lookup.linkMethodHandleConstant((byte) refKind, defc, name, type);
+        } catch (IllegalAccessException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof AbstractMethodError) {
+                throw (AbstractMethodError) cause;
+            } else {
+                Error err = new IllegalAccessError(ex.getMessage());
+                throw initCauseFrom(err, ex);
+            }
+        } catch (NoSuchMethodException ex) {
+            Error err = new NoSuchMethodError(ex.getMessage());
+            throw initCauseFrom(err, ex);
+        } catch (NoSuchFieldException ex) {
+            Error err = new NoSuchFieldError(ex.getMessage());
+            throw initCauseFrom(err, ex);
+        } catch (ReflectiveOperationException ex) {
+            Error err = new IncompatibleClassChangeError();
+            throw initCauseFrom(err, ex);
+        }
+!!!7264002.java!!!	initCauseFrom(inout err : Error, inout ex : Exception) : Error
+        Throwable th = ex.getCause();
+        if (err.getClass().isInstance(th))
+           return (Error) th;
+        err.initCause(th == null ? ex : th);
+        return err;
+!!!7264130.java!!!	isCallerSensitive(inout mem : MemberName) : boolean
+        if (!mem.isInvocable())  return false;  // fields are not caller sensitive
+
+        return mem.isCallerSensitive() || canBeCalledVirtual(mem);
+!!!7264258.java!!!	canBeCalledVirtual(inout mem : MemberName) : boolean
+        assert(mem.isInvocable());
+        Class<?> defc = mem.getDeclaringClass();
+        switch (mem.getName()) {
+        case "checkMemberAccess":
+            return canBeCalledVirtual(mem, java.lang.SecurityManager.class);
+        case "getContextClassLoader":
+            return canBeCalledVirtual(mem, java.lang.Thread.class);
+        }
+        return false;
+!!!7264386.java!!!	canBeCalledVirtual(inout symbolicRef : MemberName, inout definingClass : Class) : boolean
+        Class<?> symbolicRefClass = symbolicRef.getDeclaringClass();
+        if (symbolicRefClass == definingClass)  return true;
+        if (symbolicRef.isStatic() || symbolicRef.isPrivate())  return false;
+        return (definingClass.isAssignableFrom(symbolicRefClass) ||  // Msym overrides Mdef
+                symbolicRefClass.isInterface());                     // Mdef implements Msym

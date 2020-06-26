@@ -1,0 +1,182 @@
+class FactoryFinder
+!!!12083458.java!!!	dPrint(inout msg : String) : void
+        if (debug) {
+            System.err.println("JAXP: " + msg);
+        }
+!!!12083586.java!!!	getProviderClass(inout className : String, inout cl : ClassLoader, inout doFallback : boolean, inout useBSClsLoader : boolean) : Class
+        try {
+            if (cl == null) {
+                if (useBSClsLoader) {
+                    return Class.forName(className, false, FactoryFinder.class.getClassLoader());
+                } else {
+                    cl = ss.getContextClassLoader();
+                    if (cl == null) {
+                        throw new ClassNotFoundException();
+                    }
+                    else {
+                        return Class.forName(className, false, cl);
+                    }
+                }
+            }
+            else {
+                return Class.forName(className, false, cl);
+            }
+        }
+        catch (ClassNotFoundException e1) {
+            if (doFallback) {
+                // Use current class loader - should always be bootstrap CL
+                return Class.forName(className, false, FactoryFinder.class.getClassLoader());
+            }
+            else {
+                throw e1;
+            }
+        }
+!!!12083714.java!!!	newInstance(inout type : Class, inout className : String, inout cl : ClassLoader, inout doFallback : boolean) : T
+        return newInstance(type, className, cl, doFallback, false);
+!!!12083842.java!!!	newInstance(inout type : Class, inout className : String, inout cl : ClassLoader, inout doFallback : boolean, inout useBSClsLoader : boolean) : T
+        assert type != null;
+
+        // make sure we have access to restricted packages
+        if (System.getSecurityManager() != null) {
+            if (className != null && className.startsWith(DEFAULT_PACKAGE)) {
+                cl = null;
+                useBSClsLoader = true;
+            }
+        }
+
+        try {
+            Class<?> providerClass = getProviderClass(className, cl, doFallback, useBSClsLoader);
+            if (!type.isAssignableFrom(providerClass)) {
+                throw new ClassCastException(className + " cannot be cast to " + type.getName());
+            }
+            Object instance = providerClass.newInstance();
+            if (debug) {    // Extra check to avoid computing cl strings
+                dPrint("created new instance of " + providerClass +
+                       " using ClassLoader: " + cl);
+            }
+            return type.cast(instance);
+        }
+        catch (ClassNotFoundException x) {
+            throw new FactoryConfigurationError(
+                "Provider " + className + " not found", x);
+        }
+        catch (Exception x) {
+            throw new FactoryConfigurationError(
+                "Provider " + className + " could not be instantiated: " + x,
+                x);
+        }
+!!!12083970.java!!!	find(inout type : Class, inout fallbackClassName : String) : T
+        return find(type, type.getName(), null, fallbackClassName);
+!!!12084098.java!!!	find(inout type : Class, inout factoryId : String, inout cl : ClassLoader, inout fallbackClassName : String) : T
+        dPrint("find factoryId =" + factoryId);
+
+        // Use the system property first
+        try {
+
+            final String systemProp;
+            if (type.getName().equals(factoryId)) {
+                systemProp = ss.getSystemProperty(factoryId);
+            } else {
+                systemProp = System.getProperty(factoryId);
+            }
+            if (systemProp != null) {
+                dPrint("found system property, value=" + systemProp);
+                return newInstance(type, systemProp, cl, true);
+            }
+        }
+        catch (SecurityException se) {
+            throw new FactoryConfigurationError(
+                    "Failed to read factoryId '" + factoryId + "'", se);
+        }
+
+        // Try read $java.home/lib/stax.properties followed by
+        // $java.home/lib/jaxp.properties if former not present
+        String configFile = null;
+        try {
+            if (firstTime) {
+                synchronized (cacheProps) {
+                    if (firstTime) {
+                        configFile = ss.getSystemProperty("java.home") + File.separator +
+                            "lib" + File.separator + "stax.properties";
+                        File f = new File(configFile);
+                        firstTime = false;
+                        if (ss.doesFileExist(f)) {
+                            dPrint("Read properties file "+f);
+                            cacheProps.load(ss.getFileInputStream(f));
+                        }
+                        else {
+                            configFile = ss.getSystemProperty("java.home") + File.separator +
+                                "lib" + File.separator + "jaxp.properties";
+                            f = new File(configFile);
+                            if (ss.doesFileExist(f)) {
+                                dPrint("Read properties file "+f);
+                                cacheProps.load(ss.getFileInputStream(f));
+                            }
+                        }
+                    }
+                }
+            }
+            final String factoryClassName = cacheProps.getProperty(factoryId);
+
+            if (factoryClassName != null) {
+                dPrint("found in " + configFile + " value=" + factoryClassName);
+                return newInstance(type, factoryClassName, cl, true);
+            }
+        }
+        catch (Exception ex) {
+            if (debug) ex.printStackTrace();
+        }
+
+        if (type.getName().equals(factoryId)) {
+            // Try Jar Service Provider Mechanism
+            final T provider = findServiceProvider(type, cl);
+            if (provider != null) {
+                return provider;
+            }
+        } else {
+            // We're in the case where a 'custom' factoryId was provided,
+            // and in every case where that happens, we expect that
+            // fallbackClassName will be null.
+            assert fallbackClassName == null;
+        }
+        if (fallbackClassName == null) {
+            throw new FactoryConfigurationError(
+                "Provider for " + factoryId + " cannot be found", null);
+        }
+
+        dPrint("loaded from fallback value: " + fallbackClassName);
+        return newInstance(type, fallbackClassName, cl, true);
+!!!12084226.java!!!	findServiceProvider(in type : Class, in cl : ClassLoader) : T
+        try {
+            return AccessController.doPrivileged(new PrivilegedAction<T>() {
+                @Override
+                public T run() {
+                    final ServiceLoader<T> serviceLoader;
+                    if (cl == null) {
+                        //the current thread's context class loader
+                        serviceLoader = ServiceLoader.load(type);
+                    } else {
+                        serviceLoader = ServiceLoader.load(type, cl);
+                    }
+                    final Iterator<T> iterator = serviceLoader.iterator();
+                    if (iterator.hasNext()) {
+                        return iterator.next();
+                    } else {
+                        return null;
+                    }
+                }
+            });
+        } catch(ServiceConfigurationError e) {
+            // It is not possible to wrap an error directly in
+            // FactoryConfigurationError - so we need to wrap the
+            // ServiceConfigurationError in a RuntimeException.
+            // The alternative would be to modify the logic in
+            // FactoryConfigurationError to allow setting a
+            // Throwable as the cause, but that could cause
+            // compatibility issues down the road.
+            final RuntimeException x = new RuntimeException(
+                    "Provider for " + type + " cannot be created", e);
+            final FactoryConfigurationError error =
+                    new FactoryConfigurationError(x, x.getMessage());
+            throw error;
+          }

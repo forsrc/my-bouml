@@ -1,0 +1,104 @@
+class Shutdown
+!!!7089794.java!!!	setRunFinalizersOnExit(inout run : boolean) : void
+        synchronized (lock) {
+            runFinalizersOnExit = run;
+        }
+!!!7089922.java!!!	add(in slot : int, inout registerShutdownInProgress : boolean, inout hook : Runnable) : void
+        synchronized (lock) {
+            if (hooks[slot] != null)
+                throw new InternalError("Shutdown hook at slot " + slot + " already registered");
+
+            if (!registerShutdownInProgress) {
+                if (state > RUNNING)
+                    throw new IllegalStateException("Shutdown in progress");
+            } else {
+                if (state > HOOKS || (state == HOOKS && slot <= currentRunningHook))
+                    throw new IllegalStateException("Shutdown in progress");
+            }
+
+            hooks[slot] = hook;
+        }
+!!!7090050.java!!!	runHooks() : void
+        for (int i=0; i < MAX_SYSTEM_HOOKS; i++) {
+            try {
+                Runnable hook;
+                synchronized (lock) {
+                    // acquire the lock to make sure the hook registered during
+                    // shutdown is visible here.
+                    currentRunningHook = i;
+                    hook = hooks[i];
+                }
+                if (hook != null) hook.run();
+            } catch(Throwable t) {
+                if (t instanceof ThreadDeath) {
+                    ThreadDeath td = (ThreadDeath)t;
+                    throw td;
+                }
+            }
+        }
+!!!7090178.java!!!	halt(in status : int) : void
+        synchronized (haltLock) {
+            halt0(status);
+        }
+!!!7090562.java!!!	sequence() : void
+        synchronized (lock) {
+            /* Guard against the possibility of a daemon thread invoking exit
+             * after DestroyJavaVM initiates the shutdown sequence
+             */
+            if (state != HOOKS) return;
+        }
+        runHooks();
+        boolean rfoe;
+        synchronized (lock) {
+            state = FINALIZERS;
+            rfoe = runFinalizersOnExit;
+        }
+        if (rfoe) runAllFinalizers();
+!!!7090690.java!!!	exit(in status : int) : void
+        boolean runMoreFinalizers = false;
+        synchronized (lock) {
+            if (status != 0) runFinalizersOnExit = false;
+            switch (state) {
+            case RUNNING:       /* Initiate shutdown */
+                state = HOOKS;
+                break;
+            case HOOKS:         /* Stall and halt */
+                break;
+            case FINALIZERS:
+                if (status != 0) {
+                    /* Halt immediately on nonzero status */
+                    halt(status);
+                } else {
+                    /* Compatibility with old behavior:
+                     * Run more finalizers and then halt
+                     */
+                    runMoreFinalizers = runFinalizersOnExit;
+                }
+                break;
+            }
+        }
+        if (runMoreFinalizers) {
+            runAllFinalizers();
+            halt(status);
+        }
+        synchronized (Shutdown.class) {
+            /* Synchronize on the class object, causing any other thread
+             * that attempts to initiate shutdown to stall indefinitely
+             */
+            sequence();
+            halt(status);
+        }
+!!!7090818.java!!!	shutdown() : void
+        synchronized (lock) {
+            switch (state) {
+            case RUNNING:       /* Initiate shutdown */
+                state = HOOKS;
+                break;
+            case HOOKS:         /* Stall and then return */
+            case FINALIZERS:
+                break;
+            }
+        }
+        synchronized (Shutdown.class) {
+            sequence();
+        }

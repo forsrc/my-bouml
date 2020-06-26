@@ -1,0 +1,207 @@
+class DynUnionImpl
+!!!312578.java!!!	DynUnionImpl()
+        this(null, (Any)null, false);
+!!!312706.java!!!	DynUnionImpl(inout orb : ORB, inout any : Any, inout copyValue : boolean)
+        // We can be sure that typeCode is of kind tk_union
+        super(orb, any, copyValue);
+!!!312834.java!!!	DynUnionImpl(inout orb : ORB, inout typeCode : TypeCode)
+        // We can be sure that typeCode is of kind tk_union
+        super(orb, typeCode);
+!!!312962.java!!!	initializeComponentsFromAny() : boolean
+        try {
+            InputStream input = any.create_input_stream();
+            Any discriminatorAny = DynAnyUtil.extractAnyFromStream(discriminatorType(), input, orb);
+            discriminator = DynAnyUtil.createMostDerivedDynAny(discriminatorAny, orb, false);
+            currentMemberIndex = currentUnionMemberIndex(discriminatorAny);
+            Any memberAny = DynAnyUtil.extractAnyFromStream(memberType(currentMemberIndex), input, orb);
+            currentMember = DynAnyUtil.createMostDerivedDynAny(memberAny, orb, false);
+            components = new DynAny[] {discriminator, currentMember};
+        } catch (InconsistentTypeCode ictc) { // impossible
+        }
+        return true;
+!!!313090.java!!!	initializeComponentsFromTypeCode() : boolean
+        //System.out.println(this + " initializeComponentsFromTypeCode");
+        try {
+            // We can be sure that memberCount() > 0 according to the IDL language spec
+            discriminator = DynAnyUtil.createMostDerivedDynAny(memberLabel(0), orb, false);
+            index = 0;
+            currentMemberIndex = 0;
+            currentMember = DynAnyUtil.createMostDerivedDynAny(memberType(0), orb);
+            components = new DynAny[] {discriminator, currentMember};
+        } catch (InconsistentTypeCode ictc) { // impossible
+        }
+        return true;
+!!!313218.java!!!	discriminatorType() : TypeCode
+        TypeCode discriminatorType = null;
+        try {
+            discriminatorType = any.type().discriminator_type();
+        } catch (BadKind bad) {
+        }
+        return discriminatorType;
+!!!313346.java!!!	memberCount() : int
+        int memberCount = 0;
+        try {
+            memberCount = any.type().member_count();
+        } catch (BadKind bad) {
+        }
+        return memberCount;
+!!!313474.java!!!	memberLabel(in i : int) : Any
+        Any memberLabel = null;
+        try {
+            memberLabel = any.type().member_label(i);
+        } catch (BadKind bad) {
+        } catch (Bounds bounds) {
+        }
+        return memberLabel;
+!!!313602.java!!!	memberType(in i : int) : TypeCode
+        TypeCode memberType = null;
+        try {
+            memberType = any.type().member_type(i);
+        } catch (BadKind bad) {
+        } catch (Bounds bounds) {
+        }
+        return memberType;
+!!!313730.java!!!	memberName(in i : int) : String
+        String memberName = null;
+        try {
+            memberName = any.type().member_name(i);
+        } catch (BadKind bad) {
+        } catch (Bounds bounds) {
+        }
+        return memberName;
+!!!313858.java!!!	defaultIndex() : int
+        int defaultIndex = -1;
+        try {
+            defaultIndex = any.type().default_index();
+        } catch (BadKind bad) {
+        }
+        return defaultIndex;
+!!!313986.java!!!	currentUnionMemberIndex(inout discriminatorValue : Any) : int
+        int memberCount = memberCount();
+        Any memberLabel;
+        for (int i=0; i<memberCount; i++) {
+            memberLabel = memberLabel(i);
+            if (memberLabel.equal(discriminatorValue)) {
+                return i;
+            }
+        }
+        if (defaultIndex() != -1) {
+            return defaultIndex();
+        }
+        return NO_INDEX;
+!!!314114.java!!!	clearData() : void
+        super.clearData();
+        discriminator = null;
+        // Necessary to guarantee OBJECT_NOT_EXIST in member()
+        currentMember.destroy();
+        currentMember = null;
+        currentMemberIndex = NO_INDEX;
+!!!314242.java!!!	get_discriminator() : DynAny
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        return (checkInitComponents() ? discriminator : null);
+!!!314370.java!!!	set_discriminator(inout newDiscriminator : DynAny) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if ( ! newDiscriminator.type().equal(discriminatorType())) {
+            throw new TypeMismatch();
+        }
+        newDiscriminator = DynAnyUtil.convertToNative(newDiscriminator, orb);
+        Any newDiscriminatorAny = getAny(newDiscriminator);
+        int newCurrentMemberIndex = currentUnionMemberIndex(newDiscriminatorAny);
+        if (newCurrentMemberIndex == NO_INDEX) {
+            clearData();
+            index = 0;
+        } else {
+            // _REVISIT_ Could possibly optimize here if we don't need to initialize components
+            checkInitComponents();
+            if (currentMemberIndex == NO_INDEX || newCurrentMemberIndex != currentMemberIndex) {
+                clearData();
+                index = 1;
+                currentMemberIndex = newCurrentMemberIndex;
+                try {
+                currentMember = DynAnyUtil.createMostDerivedDynAny(memberType(currentMemberIndex), orb);
+                } catch (InconsistentTypeCode ictc) {}
+                discriminator = newDiscriminator;
+                components = new DynAny[] { discriminator, currentMember };
+                representations = REPRESENTATION_COMPONENTS;
+            }
+        }
+!!!314498.java!!!	set_to_default_member() : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        int defaultIndex = defaultIndex();
+        if (defaultIndex == -1) {
+            throw new TypeMismatch();
+        }
+        try {
+            clearData();
+            index = 1;
+            currentMemberIndex = defaultIndex;
+            currentMember = DynAnyUtil.createMostDerivedDynAny(memberType(defaultIndex), orb);
+            components = new DynAny[] {discriminator, currentMember};
+            Any discriminatorAny = orb.create_any();
+            discriminatorAny.insert_octet((byte)0);
+            discriminator = DynAnyUtil.createMostDerivedDynAny(discriminatorAny, orb, false);
+            representations = REPRESENTATION_COMPONENTS;
+        } catch (InconsistentTypeCode ictc) {}
+!!!314626.java!!!	set_to_no_active_member() : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        // _REVISIT_ How does one check for "entire range of discriminator values"?
+        if (defaultIndex() != -1) {
+            throw new TypeMismatch();
+        }
+        checkInitComponents();
+        Any discriminatorAny = getAny(discriminator);
+        // erase the discriminators value so that it does not correspond
+        // to any of the unions case labels
+        discriminatorAny.type(discriminatorAny.type());
+        index = 0;
+        currentMemberIndex = NO_INDEX;
+        // Necessary to guarantee OBJECT_NOT_EXIST in member()
+        currentMember.destroy();
+        currentMember = null;
+        components[0] = discriminator;
+        representations = REPRESENTATION_COMPONENTS;
+!!!314754.java!!!	has_no_active_member() : boolean
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        // _REVISIT_ How does one check for "entire range of discriminator values"?
+        if (defaultIndex() != -1) {
+            return false;
+        }
+        checkInitComponents();
+        return (checkInitComponents() ? (currentMemberIndex == NO_INDEX) : false);
+!!!314882.java!!!	discriminator_kind() : TCKind
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        return discriminatorType().kind();
+!!!315010.java!!!	member() : DynAny
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if ( ! checkInitComponents() || currentMemberIndex == NO_INDEX)
+            throw new InvalidValue();
+        return currentMember;
+!!!315138.java!!!	member_name() : String
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if ( ! checkInitComponents() || currentMemberIndex == NO_INDEX)
+            throw new InvalidValue();
+        String memberName = memberName(currentMemberIndex);
+        return (memberName == null ? "" : memberName);
+!!!315266.java!!!	member_kind() : TCKind
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if ( ! checkInitComponents() || currentMemberIndex == NO_INDEX)
+            throw new InvalidValue();
+        return memberType(currentMemberIndex).kind();

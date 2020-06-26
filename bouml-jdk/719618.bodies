@@ -1,0 +1,232 @@
+class DocumentBuilderImpl
+!!!4862722.java!!!	DocumentBuilderImpl(inout dbf : DocumentBuilderFactoryImpl, inout dbfAttrs : Map, inout features : Map)
+        this(dbf, dbfAttrs, features, false);
+!!!4862850.java!!!	DocumentBuilderImpl(inout dbf : DocumentBuilderFactoryImpl, inout dbfAttrs : Map, inout features : Map, inout secureProcessing : boolean)
+        domParser = new DOMParser();
+
+        // If validating, provide a default ErrorHandler that prints
+        // validation errors with a warning telling the user to set an
+        // ErrorHandler
+        if (dbf.isValidating()) {
+            fInitErrorHandler = new DefaultValidationErrorHandler(domParser.getXMLParserConfiguration().getLocale());
+            setErrorHandler(fInitErrorHandler);
+        }
+        else {
+            fInitErrorHandler = domParser.getErrorHandler();
+        }
+
+        domParser.setFeature(VALIDATION_FEATURE, dbf.isValidating());
+
+        // "namespaceAware" == SAX Namespaces feature
+        domParser.setFeature(NAMESPACES_FEATURE, dbf.isNamespaceAware());
+
+        // Set various parameters obtained from DocumentBuilderFactory
+        domParser.setFeature(INCLUDE_IGNORABLE_WHITESPACE,
+                !dbf.isIgnoringElementContentWhitespace());
+        domParser.setFeature(CREATE_ENTITY_REF_NODES_FEATURE,
+                !dbf.isExpandEntityReferences());
+        domParser.setFeature(INCLUDE_COMMENTS_FEATURE,
+                !dbf.isIgnoringComments());
+        domParser.setFeature(CREATE_CDATA_NODES_FEATURE,
+                !dbf.isCoalescing());
+
+        // Avoid setting the XInclude processing feature if the value is false.
+        // This will keep the configuration from throwing an exception if it
+        // does not support XInclude.
+        if (dbf.isXIncludeAware()) {
+            domParser.setFeature(XINCLUDE_FEATURE, true);
+        }
+
+        fSecurityPropertyMgr = new XMLSecurityPropertyManager();
+        domParser.setProperty(XML_SECURITY_PROPERTY_MANAGER, fSecurityPropertyMgr);
+
+        fSecurityManager = new XMLSecurityManager(secureProcessing);
+        domParser.setProperty(SECURITY_MANAGER, fSecurityManager);
+
+        if (secureProcessing) {
+            /**
+             * If secure processing is explicitly set on the factory, the
+             * access properties will be set unless the corresponding
+             * System Properties or jaxp.properties are set
+             */
+            if (features != null) {
+                Boolean temp = features.get(XMLConstants.FEATURE_SECURE_PROCESSING);
+                if (temp != null) {
+                    if (temp && Constants.IS_JDK8_OR_ABOVE) {
+                        fSecurityPropertyMgr.setValue(Property.ACCESS_EXTERNAL_DTD,
+                                State.FSP, Constants.EXTERNAL_ACCESS_DEFAULT_FSP);
+                        fSecurityPropertyMgr.setValue(Property.ACCESS_EXTERNAL_SCHEMA,
+                                State.FSP, Constants.EXTERNAL_ACCESS_DEFAULT_FSP);
+                    }
+                }
+            }
+        }
+
+        this.grammar = dbf.getSchema();
+        if (grammar != null) {
+            XMLParserConfiguration config = domParser.getXMLParserConfiguration();
+            XMLComponent validatorComponent = null;
+            /** For Xerces grammars, use built-in schema validator. **/
+            if (grammar instanceof XSGrammarPoolContainer) {
+                validatorComponent = new XMLSchemaValidator();
+                fSchemaValidationManager = new ValidationManager();
+                fUnparsedEntityHandler = new UnparsedEntityHandler(fSchemaValidationManager);
+                config.setDTDHandler(fUnparsedEntityHandler);
+                fUnparsedEntityHandler.setDTDHandler(domParser);
+                domParser.setDTDSource(fUnparsedEntityHandler);
+                fSchemaValidatorComponentManager = new SchemaValidatorConfiguration(config,
+                        (XSGrammarPoolContainer) grammar, fSchemaValidationManager);
+            }
+            /** For third party grammars, use the JAXP validator component. **/
+            else {
+                validatorComponent = new JAXPValidatorComponent(grammar.newValidatorHandler());
+                fSchemaValidationManager = null;
+                fUnparsedEntityHandler = null;
+                fSchemaValidatorComponentManager = config;
+            }
+            config.addRecognizedFeatures(validatorComponent.getRecognizedFeatures());
+            config.addRecognizedProperties(validatorComponent.getRecognizedProperties());
+            setFeatures(features);      // Must set before calling setDocumentHandler()
+            config.setDocumentHandler((XMLDocumentHandler) validatorComponent);
+            ((XMLDocumentSource)validatorComponent).setDocumentHandler(domParser);
+            domParser.setDocumentSource((XMLDocumentSource) validatorComponent);
+            fSchemaValidator = validatorComponent;
+        }
+        else {
+            fSchemaValidationManager = null;
+            fUnparsedEntityHandler = null;
+            fSchemaValidatorComponentManager = null;
+            fSchemaValidator = null;
+            setFeatures(features);
+        }
+
+        //setAttribute override those that may be set by other means
+        setDocumentBuilderFactoryAttributes(dbfAttrs);
+
+        // Initial EntityResolver
+        fInitEntityResolver = domParser.getEntityResolver();
+!!!4862978.java!!!	setFeatures(inout features : Map) : void
+        if (features != null) {
+            for (Map.Entry<String, Boolean> entry : features.entrySet()) {
+                domParser.setFeature(entry.getKey(), entry.getValue());
+        }
+    }
+!!!4863106.java!!!	setDocumentBuilderFactoryAttributes(inout dbfAttrs : Map) : void
+        if (dbfAttrs == null) {
+            // Nothing to do
+            return;
+        }
+
+        for (Map.Entry<String, Object> entry : dbfAttrs.entrySet()) {
+            String name = entry.getKey();
+            Object val = entry.getValue();
+            if (val instanceof Boolean) {
+                // Assume feature
+                domParser.setFeature(name, (Boolean)val);
+            } else {
+                // Assume property
+                if (JAXP_SCHEMA_LANGUAGE.equals(name)) {
+                    // JAXP 1.2 support
+                    //None of the properties will take effect till the setValidating(true) has been called
+                    if ( W3C_XML_SCHEMA.equals(val) ) {
+                        if( isValidating() ) {
+                            domParser.setFeature(XMLSCHEMA_VALIDATION_FEATURE, true);
+                            // this should allow us not to emit DTD errors, as expected by the
+                            // spec when schema validation is enabled
+                            domParser.setProperty(JAXP_SCHEMA_LANGUAGE, W3C_XML_SCHEMA);
+                        }
+                     }
+                 } else if(JAXP_SCHEMA_SOURCE.equals(name)){
+                    if( isValidating() ) {
+                        String value=(String)dbfAttrs.get(JAXP_SCHEMA_LANGUAGE);
+                        if(value !=null && W3C_XML_SCHEMA.equals(value)){
+                            domParser.setProperty(name, val);
+                        }else{
+                            throw new IllegalArgumentException(
+                                DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN,
+                                "jaxp-order-not-supported",
+                                new Object[] {JAXP_SCHEMA_LANGUAGE, JAXP_SCHEMA_SOURCE}));
+                        }
+                     }
+                  } else {
+                     //check if the property is managed by security manager
+                     if (fSecurityManager == null ||
+                             !fSecurityManager.setLimit(name, XMLSecurityManager.State.APIPROPERTY, val)) {
+                         //check if the property is managed by security property manager
+                         if (fSecurityPropertyMgr == null ||
+                                 !fSecurityPropertyMgr.setValue(name, XMLSecurityPropertyManager.State.APIPROPERTY, val)) {
+                             //fall back to the existing property manager
+                             domParser.setProperty(name, val);
+                         }
+                     }
+
+                  }
+             }
+        }
+!!!4863234.java!!!	newDocument() : Document
+        return new com.sun.org.apache.xerces.internal.dom.DocumentImpl();
+!!!4863362.java!!!	getDOMImplementation() : DOMImplementation
+        return DOMImplementationImpl.getDOMImplementation();
+!!!4863490.java!!!	parse(inout is : InputSource) : Document
+        if (is == null) {
+            throw new IllegalArgumentException(
+                DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN,
+                "jaxp-null-input-source", null));
+        }
+        if (fSchemaValidator != null) {
+            if (fSchemaValidationManager != null) {
+                fSchemaValidationManager.reset();
+                fUnparsedEntityHandler.reset();
+            }
+            resetSchemaValidator();
+        }
+        domParser.parse(is);
+        Document doc = domParser.getDocument();
+        domParser.dropDocumentReferences();
+        return doc;
+!!!4863618.java!!!	isNamespaceAware() : boolean
+        try {
+            return domParser.getFeature(NAMESPACES_FEATURE);
+        }
+        catch (SAXException x) {
+            throw new IllegalStateException(x.getMessage());
+        }
+!!!4863746.java!!!	isValidating() : boolean
+        try {
+            return domParser.getFeature(VALIDATION_FEATURE);
+        }
+        catch (SAXException x) {
+            throw new IllegalStateException(x.getMessage());
+        }
+!!!4863874.java!!!	isXIncludeAware() : boolean
+        try {
+            return domParser.getFeature(XINCLUDE_FEATURE);
+        }
+        catch (SAXException exc) {
+            return false;
+        }
+!!!4864002.java!!!	setEntityResolver(inout er : EntityResolver) : void
+        domParser.setEntityResolver(er);
+!!!4864130.java!!!	setErrorHandler(inout eh : ErrorHandler) : void
+        domParser.setErrorHandler(eh);
+!!!4864258.java!!!	getSchema() : Schema
+        return grammar;
+!!!4864386.java!!!	reset() : void
+        /** Restore the initial error handler. **/
+        if (domParser.getErrorHandler() != fInitErrorHandler) {
+            domParser.setErrorHandler(fInitErrorHandler);
+        }
+        /** Restore the initial entity resolver. **/
+        if (domParser.getEntityResolver() != fInitEntityResolver) {
+            domParser.setEntityResolver(fInitEntityResolver);
+        }
+!!!4864514.java!!!	getDOMParser() : DOMParser
+        return domParser;
+!!!4864642.java!!!	resetSchemaValidator() : void
+        try {
+            fSchemaValidator.reset(fSchemaValidatorComponentManager);
+        }
+        // This should never be thrown from the schema validator.
+        catch (XMLConfigurationException e) {
+            throw new SAXException(e);
+        }

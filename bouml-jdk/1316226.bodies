@@ -1,0 +1,881 @@
+class ElementBuffer
+!!!10966146.java!!!	ElementBuffer(inout root : Element)
+            this.root = root;
+            changes = new Vector<ElemChanges>();
+            path = new Stack<ElemChanges>();
+!!!10966274.java!!!	getRootElement() : Element
+            return root;
+!!!10966402.java!!!	insert(in offset : int, in length : int, inout data : DefaultStyledDocument::ElementSpec [[]], inout de : AbstractDocument::DefaultDocumentEvent) : void
+            if (length == 0) {
+                // Nothing was inserted, no structure change.
+                return;
+            }
+            insertOp = true;
+            beginEdits(offset, length);
+            insertUpdate(data);
+            endEdits(de);
+
+            insertOp = false;
+!!!10966530.java!!!	create(in length : int, inout data : DefaultStyledDocument::ElementSpec [[]], inout de : AbstractDocument::DefaultDocumentEvent) : void
+            insertOp = true;
+            beginEdits(offset, length);
+
+            // PENDING(prinz) this needs to be fixed to create a new
+            // root element as well, but requires changes to the
+            // DocumentEvent to inform the views that there is a new
+            // root element.
+
+            // Recreate the ending fake element to have the correct offsets.
+            Element elem = root;
+            int index = elem.getElementIndex(0);
+            while (! elem.isLeaf()) {
+                Element child = elem.getElement(index);
+                push(elem, index);
+                elem = child;
+                index = elem.getElementIndex(0);
+            }
+            ElemChanges ec = path.peek();
+            Element child = ec.parent.getElement(ec.index);
+            ec.added.addElement(createLeafElement(ec.parent,
+                                child.getAttributes(), getLength(),
+                                child.getEndOffset()));
+            ec.removed.addElement(child);
+            while (path.size() > 1) {
+                pop();
+            }
+
+            int n = data.length;
+
+            // Reset the root elements attributes.
+            AttributeSet newAttrs = null;
+            if (n > 0 && data[0].getType() == ElementSpec.StartTagType) {
+                newAttrs = data[0].getAttributes();
+            }
+            if (newAttrs == null) {
+                newAttrs = SimpleAttributeSet.EMPTY;
+            }
+            MutableAttributeSet attr = (MutableAttributeSet)root.
+                                       getAttributes();
+            de.addEdit(new AttributeUndoableEdit(root, newAttrs, true));
+            attr.removeAttributes(attr);
+            attr.addAttributes(newAttrs);
+
+            // fold in the specified subtree
+            for (int i = 1; i < n; i++) {
+                insertElement(data[i]);
+            }
+
+            // pop the remaining path
+            while (path.size() != 0) {
+                pop();
+            }
+
+            endEdits(de);
+            insertOp = false;
+!!!10966658.java!!!	remove(in offset : int, in length : int, inout de : AbstractDocument::DefaultDocumentEvent) : void
+            beginEdits(offset, length);
+            removeUpdate();
+            endEdits(de);
+!!!10966786.java!!!	change(in offset : int, in length : int, inout de : AbstractDocument::DefaultDocumentEvent) : void
+            beginEdits(offset, length);
+            changeUpdate();
+            endEdits(de);
+!!!10966914.java!!!	insertUpdate(inout data : DefaultStyledDocument::ElementSpec [[]]) : void
+            // push the path
+            Element elem = root;
+            int index = elem.getElementIndex(offset);
+            while (! elem.isLeaf()) {
+                Element child = elem.getElement(index);
+                push(elem, (child.isLeaf() ? index : index+1));
+                elem = child;
+                index = elem.getElementIndex(offset);
+            }
+
+            // Build a copy of the original path.
+            insertPath = new ElemChanges[path.size()];
+            path.copyInto(insertPath);
+
+            // Haven't created the fracture yet.
+            createdFracture = false;
+
+            // Insert the first content.
+            int i;
+
+            recreateLeafs = false;
+            if(data[0].getType() == ElementSpec.ContentType) {
+                insertFirstContent(data);
+                pos += data[0].getLength();
+                i = 1;
+            }
+            else {
+                fractureDeepestLeaf(data);
+                i = 0;
+            }
+
+            // fold in the specified subtree
+            int n = data.length;
+            for (; i < n; i++) {
+                insertElement(data[i]);
+            }
+
+            // Fracture, if we haven't yet.
+            if(!createdFracture)
+                fracture(-1);
+
+            // pop the remaining path
+            while (path.size() != 0) {
+                pop();
+            }
+
+            // Offset the last index if necessary.
+            if(offsetLastIndex && offsetLastIndexOnReplace) {
+                insertPath[insertPath.length - 1].index++;
+            }
+
+            // Make sure an edit is going to be created for each of the
+            // original path items that have a change.
+            for(int counter = insertPath.length - 1; counter >= 0;
+                counter--) {
+                ElemChanges change = insertPath[counter];
+                if(change.parent == fracturedParent)
+                    change.added.addElement(fracturedChild);
+                if((change.added.size() > 0 ||
+                    change.removed.size() > 0) && !changes.contains(change)) {
+                    // PENDING(sky): Do I need to worry about order here?
+                    changes.addElement(change);
+                }
+            }
+
+            // An insert at 0 with an initial end implies some elements
+            // will have no children (the bottomost leaf would have length 0)
+            // this will find what element need to be removed and remove it.
+            if (offset == 0 && fracturedParent != null &&
+                data[0].getType() == ElementSpec.EndTagType) {
+                int counter = 0;
+                while (counter < data.length &&
+                       data[counter].getType() == ElementSpec.EndTagType) {
+                    counter++;
+                }
+                ElemChanges change = insertPath[insertPath.length -
+                                               counter - 1];
+                change.removed.insertElementAt(change.parent.getElement
+                                               (--change.index), 0);
+            }
+!!!10967042.java!!!	removeUpdate() : void
+            removeElements(root, offset, offset + length);
+!!!10967170.java!!!	changeUpdate() : void
+            boolean didEnd = split(offset, length);
+            if (! didEnd) {
+                // need to do the other end
+                while (path.size() != 0) {
+                    pop();
+                }
+                split(offset + length, 0);
+            }
+            while (path.size() != 0) {
+                pop();
+            }
+!!!10967298.java!!!	split(in offs : int, in len : int) : boolean
+            boolean splitEnd = false;
+            // push the path
+            Element e = root;
+            int index = e.getElementIndex(offs);
+            while (! e.isLeaf()) {
+                push(e, index);
+                e = e.getElement(index);
+                index = e.getElementIndex(offs);
+            }
+
+            ElemChanges ec = path.peek();
+            Element child = ec.parent.getElement(ec.index);
+            // make sure there is something to do... if the
+            // offset is already at a boundary then there is
+            // nothing to do.
+            if (child.getStartOffset() < offs && offs < child.getEndOffset()) {
+                // we need to split, now see if the other end is within
+                // the same parent.
+                int index0 = ec.index;
+                int index1 = index0;
+                if (((offs + len) < ec.parent.getEndOffset()) && (len != 0)) {
+                    // it's a range split in the same parent
+                    index1 = ec.parent.getElementIndex(offs+len);
+                    if (index1 == index0) {
+                        // it's a three-way split
+                        ec.removed.addElement(child);
+                        e = createLeafElement(ec.parent, child.getAttributes(),
+                                              child.getStartOffset(), offs);
+                        ec.added.addElement(e);
+                        e = createLeafElement(ec.parent, child.getAttributes(),
+                                          offs, offs + len);
+                        ec.added.addElement(e);
+                        e = createLeafElement(ec.parent, child.getAttributes(),
+                                              offs + len, child.getEndOffset());
+                        ec.added.addElement(e);
+                        return true;
+                    } else {
+                        child = ec.parent.getElement(index1);
+                        if ((offs + len) == child.getStartOffset()) {
+                            // end is already on a boundary
+                            index1 = index0;
+                        }
+                    }
+                    splitEnd = true;
+                }
+
+                // split the first location
+                pos = offs;
+                child = ec.parent.getElement(index0);
+                ec.removed.addElement(child);
+                e = createLeafElement(ec.parent, child.getAttributes(),
+                                      child.getStartOffset(), pos);
+                ec.added.addElement(e);
+                e = createLeafElement(ec.parent, child.getAttributes(),
+                                      pos, child.getEndOffset());
+                ec.added.addElement(e);
+
+                // pick up things in the middle
+                for (int i = index0 + 1; i < index1; i++) {
+                    child = ec.parent.getElement(i);
+                    ec.removed.addElement(child);
+                    ec.added.addElement(child);
+                }
+
+                if (index1 != index0) {
+                    child = ec.parent.getElement(index1);
+                    pos = offs + len;
+                    ec.removed.addElement(child);
+                    e = createLeafElement(ec.parent, child.getAttributes(),
+                                          child.getStartOffset(), pos);
+                    ec.added.addElement(e);
+                    e = createLeafElement(ec.parent, child.getAttributes(),
+                                          pos, child.getEndOffset());
+                    ec.added.addElement(e);
+                }
+            }
+            return splitEnd;
+!!!10967426.java!!!	endEdits(inout de : AbstractDocument::DefaultDocumentEvent) : void
+            int n = changes.size();
+            for (int i = 0; i < n; i++) {
+                ElemChanges ec = changes.elementAt(i);
+                Element[] removed = new Element[ec.removed.size()];
+                ec.removed.copyInto(removed);
+                Element[] added = new Element[ec.added.size()];
+                ec.added.copyInto(added);
+                int index = ec.index;
+                ((BranchElement) ec.parent).replace(index, removed.length, added);
+                ElementEdit ee = new ElementEdit(ec.parent, index, removed, added);
+                de.addEdit(ee);
+            }
+
+            changes.removeAllElements();
+            path.removeAllElements();
+
+            /*
+            for (int i = 0; i < n; i++) {
+                ElemChanges ec = (ElemChanges) changes.elementAt(i);
+                System.err.print("edited: " + ec.parent + " at: " + ec.index +
+                    " removed " + ec.removed.size());
+                if (ec.removed.size() > 0) {
+                    int r0 = ((Element) ec.removed.firstElement()).getStartOffset();
+                    int r1 = ((Element) ec.removed.lastElement()).getEndOffset();
+                    System.err.print("[" + r0 + "," + r1 + "]");
+                }
+                System.err.print(" added " + ec.added.size());
+                if (ec.added.size() > 0) {
+                    int p0 = ((Element) ec.added.firstElement()).getStartOffset();
+                    int p1 = ((Element) ec.added.lastElement()).getEndOffset();
+                    System.err.print("[" + p0 + "," + p1 + "]");
+                }
+                System.err.println("");
+            }
+            */
+!!!10967554.java!!!	beginEdits(in offset : int, in length : int) : void
+            this.offset = offset;
+            this.length = length;
+            this.endOffset = offset + length;
+            pos = offset;
+            if (changes == null) {
+                changes = new Vector<ElemChanges>();
+            } else {
+                changes.removeAllElements();
+            }
+            if (path == null) {
+                path = new Stack<ElemChanges>();
+            } else {
+                path.removeAllElements();
+            }
+            fracturedParent = null;
+            fracturedChild = null;
+            offsetLastIndex = offsetLastIndexOnReplace = false;
+!!!10967682.java!!!	push(inout e : Element, in index : int, inout isFracture : boolean) : void
+            ElemChanges ec = new ElemChanges(e, index, isFracture);
+            path.push(ec);
+!!!10967810.java!!!	push(inout e : Element, in index : int) : void
+            push(e, index, false);
+!!!10967938.java!!!	pop() : void
+            ElemChanges ec = path.peek();
+            path.pop();
+            if ((ec.added.size() > 0) || (ec.removed.size() > 0)) {
+                changes.addElement(ec);
+            } else if (! path.isEmpty()) {
+                Element e = ec.parent;
+                if(e.getElementCount() == 0) {
+                    // if we pushed a branch element that didn't get
+                    // used, make sure its not marked as having been added.
+                    ec = path.peek();
+                    ec.added.removeElement(e);
+                }
+            }
+!!!10968066.java!!!	advance(in n : int) : void
+            pos += n;
+!!!10968194.java!!!	insertElement(inout es : DefaultStyledDocument::ElementSpec) : void
+            ElemChanges ec = path.peek();
+            switch(es.getType()) {
+            case ElementSpec.StartTagType:
+                switch(es.getDirection()) {
+                case ElementSpec.JoinNextDirection:
+                    // Don't create a new element, use the existing one
+                    // at the specified location.
+                    Element parent = ec.parent.getElement(ec.index);
+
+                    if(parent.isLeaf()) {
+                        // This happens if inserting into a leaf, followed
+                        // by a join next where next sibling is not a leaf.
+                        if((ec.index + 1) < ec.parent.getElementCount())
+                            parent = ec.parent.getElement(ec.index + 1);
+                        else
+                            throw new StateInvariantError("Join next to leaf");
+                    }
+                    // Not really a fracture, but need to treat it like
+                    // one so that content join next will work correctly.
+                    // We can do this because there will never be a join
+                    // next followed by a join fracture.
+                    push(parent, 0, true);
+                    break;
+                case ElementSpec.JoinFractureDirection:
+                    if(!createdFracture) {
+                        // Should always be something on the stack!
+                        fracture(path.size() - 1);
+                    }
+                    // If parent isn't a fracture, fracture will be
+                    // fracturedChild.
+                    if(!ec.isFracture) {
+                        push(fracturedChild, 0, true);
+                    }
+                    else
+                        // Parent is a fracture, use 1st element.
+                        push(ec.parent.getElement(0), 0, true);
+                    break;
+                default:
+                    Element belem = createBranchElement(ec.parent,
+                                                        es.getAttributes());
+                    ec.added.addElement(belem);
+                    push(belem, 0);
+                    break;
+                }
+                break;
+            case ElementSpec.EndTagType:
+                pop();
+                break;
+            case ElementSpec.ContentType:
+              int len = es.getLength();
+                if (es.getDirection() != ElementSpec.JoinNextDirection) {
+                    Element leaf = createLeafElement(ec.parent, es.getAttributes(),
+                                                     pos, pos + len);
+                    ec.added.addElement(leaf);
+                }
+                else {
+                    // JoinNext on tail is only applicable if last element
+                    // and attributes come from that of first element.
+                    // With a little extra testing it would be possible
+                    // to NOT due this again, as more than likely fracture()
+                    // created this element.
+                    if(!ec.isFracture) {
+                        Element first = null;
+                        if(insertPath != null) {
+                            for(int counter = insertPath.length - 1;
+                                counter >= 0; counter--) {
+                                if(insertPath[counter] == ec) {
+                                    if(counter != (insertPath.length - 1))
+                                        first = ec.parent.getElement(ec.index);
+                                    break;
+                                }
+                            }
+                        }
+                        if(first == null)
+                            first = ec.parent.getElement(ec.index + 1);
+                        Element leaf = createLeafElement(ec.parent, first.
+                                 getAttributes(), pos, first.getEndOffset());
+                        ec.added.addElement(leaf);
+                        ec.removed.addElement(first);
+                    }
+                    else {
+                        // Parent was fractured element.
+                        Element first = ec.parent.getElement(0);
+                        Element leaf = createLeafElement(ec.parent, first.
+                                 getAttributes(), pos, first.getEndOffset());
+                        ec.added.addElement(leaf);
+                        ec.removed.addElement(first);
+                    }
+                }
+                pos += len;
+                break;
+            }
+!!!10968322.java!!!	removeElements(inout elem : Element, in rmOffs0 : int, in rmOffs1 : int) : boolean
+            if (! elem.isLeaf()) {
+                // update path for changes
+                int index0 = elem.getElementIndex(rmOffs0);
+                int index1 = elem.getElementIndex(rmOffs1);
+                push(elem, index0);
+                ElemChanges ec = path.peek();
+
+                // if the range is contained by one element,
+                // we just forward the request
+                if (index0 == index1) {
+                    Element child0 = elem.getElement(index0);
+                    if(rmOffs0 <= child0.getStartOffset() &&
+                       rmOffs1 >= child0.getEndOffset()) {
+                        // Element totally removed.
+                        ec.removed.addElement(child0);
+                    }
+                    else if(removeElements(child0, rmOffs0, rmOffs1)) {
+                        ec.removed.addElement(child0);
+                    }
+                } else {
+                    // the removal range spans elements.  If we can join
+                    // the two endpoints, do it.  Otherwise we remove the
+                    // interior and forward to the endpoints.
+                    Element child0 = elem.getElement(index0);
+                    Element child1 = elem.getElement(index1);
+                    boolean containsOffs1 = (rmOffs1 < elem.getEndOffset());
+                    if (containsOffs1 && canJoin(child0, child1)) {
+                        // remove and join
+                        for (int i = index0; i <= index1; i++) {
+                            ec.removed.addElement(elem.getElement(i));
+                        }
+                        Element e = join(elem, child0, child1, rmOffs0, rmOffs1);
+                        ec.added.addElement(e);
+                    } else {
+                        // remove interior and forward
+                        int rmIndex0 = index0 + 1;
+                        int rmIndex1 = index1 - 1;
+                        if (child0.getStartOffset() == rmOffs0 ||
+                            (index0 == 0 &&
+                             child0.getStartOffset() > rmOffs0 &&
+                             child0.getEndOffset() <= rmOffs1)) {
+                            // start element completely consumed
+                            child0 = null;
+                            rmIndex0 = index0;
+                        }
+                        if (!containsOffs1) {
+                            child1 = null;
+                            rmIndex1++;
+                        }
+                        else if (child1.getStartOffset() == rmOffs1) {
+                            // end element not touched
+                            child1 = null;
+                        }
+                        if (rmIndex0 <= rmIndex1) {
+                            ec.index = rmIndex0;
+                        }
+                        for (int i = rmIndex0; i <= rmIndex1; i++) {
+                            ec.removed.addElement(elem.getElement(i));
+                        }
+                        if (child0 != null) {
+                            if(removeElements(child0, rmOffs0, rmOffs1)) {
+                                ec.removed.insertElementAt(child0, 0);
+                                ec.index = index0;
+                            }
+                        }
+                        if (child1 != null) {
+                            if(removeElements(child1, rmOffs0, rmOffs1)) {
+                                ec.removed.addElement(child1);
+                            }
+                        }
+                    }
+                }
+
+                // publish changes
+                pop();
+
+                // Return true if we no longer have any children.
+                if(elem.getElementCount() == (ec.removed.size() -
+                                              ec.added.size())) {
+                    return true;
+                }
+            }
+            return false;
+!!!10968450.java!!!	canJoin(inout e0 : Element, inout e1 : Element) : boolean
+            if ((e0 == null) || (e1 == null)) {
+                return false;
+            }
+            // Don't join a leaf to a branch.
+            boolean leaf0 = e0.isLeaf();
+            boolean leaf1 = e1.isLeaf();
+            if(leaf0 != leaf1) {
+                return false;
+            }
+            if (leaf0) {
+                // Only join leaves if the attributes match, otherwise
+                // style information will be lost.
+                return e0.getAttributes().isEqual(e1.getAttributes());
+            }
+            // Only join non-leafs if the names are equal. This may result
+            // in loss of style information, but this is typically acceptable
+            // for non-leafs.
+            String name0 = e0.getName();
+            String name1 = e1.getName();
+            if (name0 != null) {
+                return name0.equals(name1);
+            }
+            if (name1 != null) {
+                return name1.equals(name0);
+            }
+            // Both names null, treat as equal.
+            return true;
+!!!10968578.java!!!	join(inout p : Element, inout left : Element, inout right : Element, in rmOffs0 : int, in rmOffs1 : int) : Element
+            if (left.isLeaf() && right.isLeaf()) {
+                return createLeafElement(p, left.getAttributes(), left.getStartOffset(),
+                                         right.getEndOffset());
+            } else if ((!left.isLeaf()) && (!right.isLeaf())) {
+                // join two branch elements.  This copies the children before
+                // the removal range on the left element, and after the removal
+                // range on the right element.  The two elements on the edge
+                // are joined if possible and needed.
+                Element to = createBranchElement(p, left.getAttributes());
+                int ljIndex = left.getElementIndex(rmOffs0);
+                int rjIndex = right.getElementIndex(rmOffs1);
+                Element lj = left.getElement(ljIndex);
+                if (lj.getStartOffset() >= rmOffs0) {
+                    lj = null;
+                }
+                Element rj = right.getElement(rjIndex);
+                if (rj.getStartOffset() == rmOffs1) {
+                    rj = null;
+                }
+                Vector<Element> children = new Vector<Element>();
+
+                // transfer the left
+                for (int i = 0; i < ljIndex; i++) {
+                    children.addElement(clone(to, left.getElement(i)));
+                }
+
+                // transfer the join/middle
+                if (canJoin(lj, rj)) {
+                    Element e = join(to, lj, rj, rmOffs0, rmOffs1);
+                    children.addElement(e);
+                } else {
+                    if (lj != null) {
+                        children.addElement(cloneAsNecessary(to, lj, rmOffs0, rmOffs1));
+                    }
+                    if (rj != null) {
+                        children.addElement(cloneAsNecessary(to, rj, rmOffs0, rmOffs1));
+                    }
+                }
+
+                // transfer the right
+                int n = right.getElementCount();
+                for (int i = (rj == null) ? rjIndex : rjIndex + 1; i < n; i++) {
+                    children.addElement(clone(to, right.getElement(i)));
+                }
+
+                // install the children
+                Element[] c = new Element[children.size()];
+                children.copyInto(c);
+                ((BranchElement)to).replace(0, 0, c);
+                return to;
+            } else {
+                throw new StateInvariantError(
+                    "No support to join leaf element with non-leaf element");
+            }
+!!!10968706.java!!!	clone(inout parent : Element, inout clonee : Element) : Element
+            if (clonee.isLeaf()) {
+                return createLeafElement(parent, clonee.getAttributes(),
+                                         clonee.getStartOffset(),
+                                         clonee.getEndOffset());
+            }
+            Element e = createBranchElement(parent, clonee.getAttributes());
+            int n = clonee.getElementCount();
+            Element[] children = new Element[n];
+            for (int i = 0; i < n; i++) {
+                children[i] = clone(e, clonee.getElement(i));
+            }
+            ((BranchElement)e).replace(0, 0, children);
+            return e;
+!!!10968834.java!!!	cloneAsNecessary(inout parent : Element, inout clonee : Element, in rmOffs0 : int, in rmOffs1 : int) : Element
+            if (clonee.isLeaf()) {
+                return createLeafElement(parent, clonee.getAttributes(),
+                                         clonee.getStartOffset(),
+                                         clonee.getEndOffset());
+            }
+            Element e = createBranchElement(parent, clonee.getAttributes());
+            int n = clonee.getElementCount();
+            ArrayList<Element> childrenList = new ArrayList<Element>(n);
+            for (int i = 0; i < n; i++) {
+                Element elem = clonee.getElement(i);
+                if (elem.getStartOffset() < rmOffs0 || elem.getEndOffset() > rmOffs1) {
+                    childrenList.add(cloneAsNecessary(e, elem, rmOffs0, rmOffs1));
+                }
+            }
+            Element[] children = new Element[childrenList.size()];
+            children = childrenList.toArray(children);
+            ((BranchElement)e).replace(0, 0, children);
+            return e;
+!!!10968962.java!!!	fracture(in depth : int) : void
+            int cLength = insertPath.length;
+            int lastIndex = -1;
+            boolean needRecreate = recreateLeafs;
+            ElemChanges lastChange = insertPath[cLength - 1];
+            // Use childAltered to determine when a child has been altered,
+            // that is the point of insertion is less than the element count.
+            boolean childAltered = ((lastChange.index + 1) <
+                                    lastChange.parent.getElementCount());
+            int deepestAlteredIndex = (needRecreate) ? cLength : -1;
+            int lastAlteredIndex = cLength - 1;
+
+            createdFracture = true;
+            // Determine where to start recreating from.
+            // Start at - 2, as first one is indicated by recreateLeafs and
+            // childAltered.
+            for(int counter = cLength - 2; counter >= 0; counter--) {
+                ElemChanges change = insertPath[counter];
+                if(change.added.size() > 0 || counter == depth) {
+                    lastIndex = counter;
+                    if(!needRecreate && childAltered) {
+                        needRecreate = true;
+                        if(deepestAlteredIndex == -1)
+                            deepestAlteredIndex = lastAlteredIndex + 1;
+                    }
+                }
+                if(!childAltered && change.index <
+                   change.parent.getElementCount()) {
+                    childAltered = true;
+                    lastAlteredIndex = counter;
+                }
+            }
+            if(needRecreate) {
+                // Recreate all children to right of parent starting
+                // at lastIndex.
+                if(lastIndex == -1)
+                    lastIndex = cLength - 1;
+                fractureFrom(insertPath, lastIndex, deepestAlteredIndex);
+            }
+!!!10969090.java!!!	fractureFrom(inout changed : DefaultStyledDocument::ElementBuffer::ElemChanges [[]], in startIndex : int, in endFractureIndex : int) : void
+            // Recreate the element representing the inserted index.
+            ElemChanges change = changed[startIndex];
+            Element child;
+            Element newChild;
+            int changeLength = changed.length;
+
+            if((startIndex + 1) == changeLength)
+                child = change.parent.getElement(change.index);
+            else
+                child = change.parent.getElement(change.index - 1);
+            if(child.isLeaf()) {
+                newChild = createLeafElement(change.parent,
+                               child.getAttributes(), Math.max(endOffset,
+                               child.getStartOffset()), child.getEndOffset());
+            }
+            else {
+                newChild = createBranchElement(change.parent,
+                                               child.getAttributes());
+            }
+            fracturedParent = change.parent;
+            fracturedChild = newChild;
+
+            // Recreate all the elements to the right of the
+            // insertion point.
+            Element parent = newChild;
+
+            while(++startIndex < endFractureIndex) {
+                boolean isEnd = ((startIndex + 1) == endFractureIndex);
+                boolean isEndLeaf = ((startIndex + 1) == changeLength);
+
+                // Create the newChild, a duplicate of the elment at
+                // index. This isn't done if isEnd and offsetLastIndex are true
+                // indicating a join previous was done.
+                change = changed[startIndex];
+
+                // Determine the child to duplicate, won't have to duplicate
+                // if at end of fracture, or offseting index.
+                if(isEnd) {
+                    if(offsetLastIndex || !isEndLeaf)
+                        child = null;
+                    else
+                        child = change.parent.getElement(change.index);
+                }
+                else {
+                    child = change.parent.getElement(change.index - 1);
+                }
+                // Duplicate it.
+                if(child != null) {
+                    if(child.isLeaf()) {
+                        newChild = createLeafElement(parent,
+                               child.getAttributes(), Math.max(endOffset,
+                               child.getStartOffset()), child.getEndOffset());
+                    }
+                    else {
+                        newChild = createBranchElement(parent,
+                                                   child.getAttributes());
+                    }
+                }
+                else
+                    newChild = null;
+
+                // Recreate the remaining children (there may be none).
+                int kidsToMove = change.parent.getElementCount() -
+                                 change.index;
+                Element[] kids;
+                int moveStartIndex;
+                int kidStartIndex = 1;
+
+                if(newChild == null) {
+                    // Last part of fracture.
+                    if(isEndLeaf) {
+                        kidsToMove--;
+                        moveStartIndex = change.index + 1;
+                    }
+                    else {
+                        moveStartIndex = change.index;
+                    }
+                    kidStartIndex = 0;
+                    kids = new Element[kidsToMove];
+                }
+                else {
+                    if(!isEnd) {
+                        // Branch.
+                        kidsToMove++;
+                        moveStartIndex = change.index;
+                    }
+                    else {
+                        // Last leaf, need to recreate part of it.
+                        moveStartIndex = change.index + 1;
+                    }
+                    kids = new Element[kidsToMove];
+                    kids[0] = newChild;
+                }
+
+                for(int counter = kidStartIndex; counter < kidsToMove;
+                    counter++) {
+                    Element toMove =change.parent.getElement(moveStartIndex++);
+                    kids[counter] = recreateFracturedElement(parent, toMove);
+                    change.removed.addElement(toMove);
+                }
+                ((BranchElement)parent).replace(0, 0, kids);
+                parent = newChild;
+            }
+!!!10969218.java!!!	recreateFracturedElement(inout parent : Element, inout toDuplicate : Element) : Element
+            if(toDuplicate.isLeaf()) {
+                return createLeafElement(parent, toDuplicate.getAttributes(),
+                                         Math.max(toDuplicate.getStartOffset(),
+                                                  endOffset),
+                                         toDuplicate.getEndOffset());
+            }
+            // Not a leaf
+            Element newParent = createBranchElement(parent, toDuplicate.
+                                                    getAttributes());
+            int childCount = toDuplicate.getElementCount();
+            Element[] newKids = new Element[childCount];
+            for(int counter = 0; counter < childCount; counter++) {
+                newKids[counter] = recreateFracturedElement(newParent,
+                                             toDuplicate.getElement(counter));
+            }
+            ((BranchElement)newParent).replace(0, 0, newKids);
+            return newParent;
+!!!10969346.java!!!	fractureDeepestLeaf(inout specs : DefaultStyledDocument::ElementSpec [[]]) : void
+            // Split the bottommost leaf. It will be recreated elsewhere.
+            ElemChanges ec = path.peek();
+            Element child = ec.parent.getElement(ec.index);
+            // Inserts at offset 0 do not need to recreate child (it would
+            // have a length of 0!).
+            if (offset != 0) {
+                Element newChild = createLeafElement(ec.parent,
+                                                 child.getAttributes(),
+                                                 child.getStartOffset(),
+                                                 offset);
+
+                ec.added.addElement(newChild);
+            }
+            ec.removed.addElement(child);
+            if(child.getEndOffset() != endOffset)
+                recreateLeafs = true;
+            else
+                offsetLastIndex = true;
+!!!10969474.java!!!	insertFirstContent(inout specs : DefaultStyledDocument::ElementSpec [[]]) : void
+            ElementSpec firstSpec = specs[0];
+            ElemChanges ec = path.peek();
+            Element child = ec.parent.getElement(ec.index);
+            int firstEndOffset = offset + firstSpec.getLength();
+            boolean isOnlyContent = (specs.length == 1);
+
+            switch(firstSpec.getDirection()) {
+            case ElementSpec.JoinPreviousDirection:
+                if(child.getEndOffset() != firstEndOffset &&
+                    !isOnlyContent) {
+                    // Create the left split part containing new content.
+                    Element newE = createLeafElement(ec.parent,
+                            child.getAttributes(), child.getStartOffset(),
+                            firstEndOffset);
+                    ec.added.addElement(newE);
+                    ec.removed.addElement(child);
+                    // Remainder will be created later.
+                    if(child.getEndOffset() != endOffset)
+                        recreateLeafs = true;
+                    else
+                        offsetLastIndex = true;
+                }
+                else {
+                    offsetLastIndex = true;
+                    offsetLastIndexOnReplace = true;
+                }
+                // else Inserted at end, and is total length.
+                // Update index incase something added/removed.
+                break;
+            case ElementSpec.JoinNextDirection:
+                if(offset != 0) {
+                    // Recreate the first element, its offset will have
+                    // changed.
+                    Element newE = createLeafElement(ec.parent,
+                            child.getAttributes(), child.getStartOffset(),
+                            offset);
+                    ec.added.addElement(newE);
+                    // Recreate the second, merge part. We do no checking
+                    // to see if JoinNextDirection is valid here!
+                    Element nextChild = ec.parent.getElement(ec.index + 1);
+                    if(isOnlyContent)
+                        newE = createLeafElement(ec.parent, nextChild.
+                            getAttributes(), offset, nextChild.getEndOffset());
+                    else
+                        newE = createLeafElement(ec.parent, nextChild.
+                            getAttributes(), offset, firstEndOffset);
+                    ec.added.addElement(newE);
+                    ec.removed.addElement(child);
+                    ec.removed.addElement(nextChild);
+                }
+                // else nothin to do.
+                // PENDING: if !isOnlyContent could raise here!
+                break;
+            default:
+                // Inserted into middle, need to recreate split left
+                // new content, and split right.
+                if(child.getStartOffset() != offset) {
+                    Element newE = createLeafElement(ec.parent,
+                            child.getAttributes(), child.getStartOffset(),
+                            offset);
+                    ec.added.addElement(newE);
+                }
+                ec.removed.addElement(child);
+                // new content
+                Element newE = createLeafElement(ec.parent,
+                                                 firstSpec.getAttributes(),
+                                                 offset, firstEndOffset);
+                ec.added.addElement(newE);
+                if(child.getEndOffset() != endOffset) {
+                    // Signals need to recreate right split later.
+                    recreateLeafs = true;
+                }
+                else {
+                    offsetLastIndex = true;
+                }
+                break;
+            }

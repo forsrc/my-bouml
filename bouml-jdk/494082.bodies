@@ -1,0 +1,264 @@
+class ImmutableDescriptor
+!!!9751426.java!!!	ImmutableDescriptor(inout fieldNames : String [[]], inout fieldValues : Object [[]])
+        this(makeMap(fieldNames, fieldValues));
+!!!9751554.java!!!	ImmutableDescriptor(inout  : String...fields)
+        this(makeMap(fields));
+!!!9751682.java!!!	ImmutableDescriptor(inout fields : Map)
+        if (fields == null)
+            throw new IllegalArgumentException("Null Map");
+        SortedMap<String, Object> map =
+                new TreeMap<String, Object>(String.CASE_INSENSITIVE_ORDER);
+        for (Map.Entry<String, ?> entry : fields.entrySet()) {
+            String name = entry.getKey();
+            if (name == null || name.equals(""))
+                throw new IllegalArgumentException("Empty or null field name");
+            if (map.containsKey(name))
+                throw new IllegalArgumentException("Duplicate name: " + name);
+            map.put(name, entry.getValue());
+        }
+        int size = map.size();
+        this.names = map.keySet().toArray(new String[size]);
+        this.values = map.values().toArray(new Object[size]);
+!!!9751810.java!!!	readResolve() : Object
+
+        boolean bad = false;
+        if (names == null || values == null || names.length != values.length)
+            bad = true;
+        if (!bad) {
+            if (names.length == 0 && getClass() == ImmutableDescriptor.class)
+                return EMPTY_DESCRIPTOR;
+            final Comparator<String> compare = String.CASE_INSENSITIVE_ORDER;
+            String lastName = ""; // also catches illegal null name
+            for (int i = 0; i < names.length; i++) {
+                if (names[i] == null ||
+                        compare.compare(lastName, names[i]) >= 0) {
+                    bad = true;
+                    break;
+                }
+                lastName = names[i];
+            }
+        }
+        if (bad)
+            throw new InvalidObjectException("Bad names or values");
+
+        return this;
+!!!9751938.java!!!	makeMap(inout fieldNames : String [[]], inout fieldValues : Object [[]]) : SortedMap
+        if (fieldNames == null || fieldValues == null)
+            throw new IllegalArgumentException("Null array parameter");
+        if (fieldNames.length != fieldValues.length)
+            throw new IllegalArgumentException("Different size arrays");
+        SortedMap<String, Object> map =
+                new TreeMap<String, Object>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < fieldNames.length; i++) {
+            String name = fieldNames[i];
+            if (name == null || name.equals(""))
+                throw new IllegalArgumentException("Empty or null field name");
+            Object old = map.put(name, fieldValues[i]);
+            if (old != null) {
+                throw new IllegalArgumentException("Duplicate field name: " +
+                                                   name);
+            }
+        }
+        return map;
+!!!9752066.java!!!	makeMap(inout fields : String [[]]) : SortedMap
+        if (fields == null)
+            throw new IllegalArgumentException("Null fields parameter");
+        String[] fieldNames = new String[fields.length];
+        String[] fieldValues = new String[fields.length];
+        for (int i = 0; i < fields.length; i++) {
+            String field = fields[i];
+            int eq = field.indexOf('=');
+            if (eq < 0) {
+                throw new IllegalArgumentException("Missing = character: " +
+                                                   field);
+            }
+            fieldNames[i] = field.substring(0, eq);
+            // makeMap will catch the case where the name is empty
+            fieldValues[i] = field.substring(eq + 1);
+        }
+        return makeMap(fieldNames, fieldValues);
+!!!9752194.java!!!	union(inout  : Descriptor...descriptors) : ImmutableDescriptor
+        // Optimize the case where exactly one Descriptor is non-Empty
+        // and it is immutable - we can just return it.
+        int index = findNonEmpty(descriptors, 0);
+        if (index < 0)
+            return EMPTY_DESCRIPTOR;
+        if (descriptors[index] instanceof ImmutableDescriptor
+                && findNonEmpty(descriptors, index + 1) < 0)
+            return (ImmutableDescriptor) descriptors[index];
+
+        Map<String, Object> map =
+            new TreeMap<String, Object>(String.CASE_INSENSITIVE_ORDER);
+        ImmutableDescriptor biggestImmutable = EMPTY_DESCRIPTOR;
+        for (Descriptor d : descriptors) {
+            if (d != null) {
+                String[] names;
+                if (d instanceof ImmutableDescriptor) {
+                    ImmutableDescriptor id = (ImmutableDescriptor) d;
+                    names = id.names;
+                    if (id.getClass() == ImmutableDescriptor.class
+                            && names.length > biggestImmutable.names.length)
+                        biggestImmutable = id;
+                } else
+                    names = d.getFieldNames();
+                for (String n : names) {
+                    Object v = d.getFieldValue(n);
+                    Object old = map.put(n, v);
+                    if (old != null) {
+                        boolean equal;
+                        if (old.getClass().isArray()) {
+                            equal = Arrays.deepEquals(new Object[] {old},
+                                                      new Object[] {v});
+                        } else
+                            equal = old.equals(v);
+                        if (!equal) {
+                            final String msg =
+                                "Inconsistent values for descriptor field " +
+                                n + ": " + old + " :: " + v;
+                            throw new IllegalArgumentException(msg);
+                        }
+                    }
+                }
+            }
+        }
+        if (biggestImmutable.names.length == map.size())
+            return biggestImmutable;
+        return new ImmutableDescriptor(map);
+!!!9752322.java!!!	isEmpty(inout d : Descriptor) : boolean
+        if (d == null)
+            return true;
+        else if (d instanceof ImmutableDescriptor)
+            return ((ImmutableDescriptor) d).names.length == 0;
+        else
+            return (d.getFieldNames().length == 0);
+!!!9752450.java!!!	findNonEmpty(inout ds : Descriptor [[]], in start : int) : int
+        for (int i = start; i < ds.length; i++) {
+            if (!isEmpty(ds[i]))
+                return i;
+        }
+        return -1;
+!!!9752578.java!!!	fieldIndex(inout name : String) : int
+        return Arrays.binarySearch(names, name, String.CASE_INSENSITIVE_ORDER);
+!!!9752706.java!!!	getFieldValue(inout fieldName : String) : Object
+        checkIllegalFieldName(fieldName);
+        int i = fieldIndex(fieldName);
+        if (i < 0)
+            return null;
+        Object v = values[i];
+        if (v == null || !v.getClass().isArray())
+            return v;
+        if (v instanceof Object[])
+            return ((Object[]) v).clone();
+        // clone the primitive array, could use an 8-way if/else here
+        int len = Array.getLength(v);
+        Object a = Array.newInstance(v.getClass().getComponentType(), len);
+        System.arraycopy(v, 0, a, 0, len);
+        return a;
+!!!9752834.java!!!	getFields() : String
+        String[] result = new String[names.length];
+        for (int i = 0; i < result.length; i++) {
+            Object value = values[i];
+            if (value == null)
+                value = "";
+            else if (!(value instanceof String))
+                value = "(" + value + ")";
+            result[i] = names[i] + "=" + value;
+        }
+        return result;
+!!!9752962.java!!!	getFieldValues(inout  : String...fieldNames) : Object
+        if (fieldNames == null)
+            return values.clone();
+        Object[] result = new Object[fieldNames.length];
+        for (int i = 0; i < fieldNames.length; i++) {
+            String name = fieldNames[i];
+            if (name != null && !name.equals(""))
+                result[i] = getFieldValue(name);
+        }
+        return result;
+!!!9753090.java!!!	getFieldNames() : String
+        return names.clone();
+!!!9753218.java!!!	equals(inout o : Object) : boolean
+        if (o == this)
+            return true;
+        if (!(o instanceof Descriptor))
+            return false;
+        String[] onames;
+        if (o instanceof ImmutableDescriptor) {
+            onames = ((ImmutableDescriptor) o).names;
+        } else {
+            onames = ((Descriptor) o).getFieldNames();
+            Arrays.sort(onames, String.CASE_INSENSITIVE_ORDER);
+        }
+        if (names.length != onames.length)
+            return false;
+        for (int i = 0; i < names.length; i++) {
+            if (!names[i].equalsIgnoreCase(onames[i]))
+                return false;
+        }
+        Object[] ovalues;
+        if (o instanceof ImmutableDescriptor)
+            ovalues = ((ImmutableDescriptor) o).values;
+        else
+            ovalues = ((Descriptor) o).getFieldValues(onames);
+        return Arrays.deepEquals(values, ovalues);
+!!!9753346.java!!!	hashCode() : int
+        if (hashCode == -1) {
+            hashCode = Util.hashCode(names, values);
+        }
+        return hashCode;
+!!!9753474.java!!!	toString() : String
+        StringBuilder sb = new StringBuilder("{");
+        for (int i = 0; i < names.length; i++) {
+            if (i > 0)
+                sb.append(", ");
+            sb.append(names[i]).append("=");
+            Object v = values[i];
+            if (v != null && v.getClass().isArray()) {
+                String s = Arrays.deepToString(new Object[] {v});
+                s = s.substring(1, s.length() - 1); // remove [...]
+                v = s;
+            }
+            sb.append(String.valueOf(v));
+        }
+        return sb.append("}").toString();
+!!!9753602.java!!!	isValid() : boolean
+        return true;
+!!!9753730.java!!!	clone() : Descriptor
+        return this;
+!!!9753858.java!!!	setFields(inout fieldNames : String [[]], inout fieldValues : Object [[]]) : void
+        if (fieldNames == null || fieldValues == null)
+            illegal("Null argument");
+        if (fieldNames.length != fieldValues.length)
+            illegal("Different array sizes");
+        for (int i = 0; i < fieldNames.length; i++)
+            checkIllegalFieldName(fieldNames[i]);
+        for (int i = 0; i < fieldNames.length; i++)
+            setField(fieldNames[i], fieldValues[i]);
+!!!9753986.java!!!	setField(inout fieldName : String, inout fieldValue : Object) : void
+        checkIllegalFieldName(fieldName);
+        int i = fieldIndex(fieldName);
+        if (i < 0)
+            unsupported();
+        Object value = values[i];
+        if ((value == null) ?
+                (fieldValue != null) :
+                !value.equals(fieldValue))
+            unsupported();
+!!!9754114.java!!!	removeField(inout fieldName : String) : void
+        if (fieldName != null && fieldIndex(fieldName) >= 0)
+            unsupported();
+!!!9754242.java!!!	nonNullDescriptor(inout d : Descriptor) : Descriptor
+        if (d == null)
+            return EMPTY_DESCRIPTOR;
+        else
+            return d;
+!!!9754370.java!!!	checkIllegalFieldName(inout name : String) : void
+        if (name == null || name.equals(""))
+            illegal("Null or empty field name");
+!!!9754498.java!!!	unsupported() : void
+        UnsupportedOperationException uoe =
+            new UnsupportedOperationException("Descriptor is read-only");
+        throw new RuntimeOperationsException(uoe);
+!!!9754626.java!!!	illegal(inout message : String) : void
+        IllegalArgumentException iae = new IllegalArgumentException(message);
+        throw new RuntimeOperationsException(iae);

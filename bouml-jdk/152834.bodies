@@ -1,0 +1,180 @@
+class RequestImpl
+!!!255106.java!!!	RequestImpl(inout orb : ORB, inout targetObject : Object, inout ctx : Context, inout operationName : String, inout argumentList : NVList, inout resultContainer : NamedValue, inout exceptionList : ExceptionList, inout ctxList : ContextList)
+
+        // initialize the orb
+        _orb    = orb;
+        _wrapper = ORBUtilSystemException.get( orb,
+            CORBALogDomains.OA_INVOCATION ) ;
+
+        // initialize target, context and operation name
+        _target     = targetObject;
+        _ctx    = ctx;
+        _opName = operationName;
+
+        // initialize argument list if not passed in
+        if (argumentList == null)
+            _arguments = new NVListImpl(_orb);
+        else
+            _arguments = argumentList;
+
+        // set result container.
+        _result = resultContainer;
+
+        // initialize exception list if not passed in
+        if (exceptionList == null)
+            _exceptions = new ExceptionListImpl();
+        else
+            _exceptions = exceptionList;
+
+        // initialize context list if not passed in
+        if (ctxList == null)
+            _ctxList = new ContextListImpl(_orb);
+        else
+            _ctxList = ctxList;
+
+        // initialize environment
+        _env    = new EnvironmentImpl();
+
+!!!255234.java!!!	target() : Object
+        return _target;
+!!!255362.java!!!	operation() : String
+        return _opName;
+!!!255490.java!!!	arguments() : NVList
+        return _arguments;
+!!!255618.java!!!	result() : NamedValue
+        return _result;
+!!!255746.java!!!	env() : Environment
+        return _env;
+!!!255874.java!!!	exceptions() : ExceptionList
+        return _exceptions;
+!!!256002.java!!!	contexts() : ContextList
+        return _ctxList;
+!!!256130.java!!!	ctx() : Context
+        if (_ctx == null)
+            _ctx = new ContextImpl(_orb);
+        return _ctx;
+!!!256258.java!!!	ctx(inout newCtx : Context) : void
+        _ctx = newCtx;
+!!!256386.java!!!	add_in_arg() : Any
+        return _arguments.add(org.omg.CORBA.ARG_IN.value).value();
+!!!256514.java!!!	add_named_in_arg(inout name : String) : Any
+        return _arguments.add_item(name, org.omg.CORBA.ARG_IN.value).value();
+!!!256642.java!!!	add_inout_arg() : Any
+        return _arguments.add(org.omg.CORBA.ARG_INOUT.value).value();
+!!!256770.java!!!	add_named_inout_arg(inout name : String) : Any
+        return _arguments.add_item(name, org.omg.CORBA.ARG_INOUT.value).value();
+!!!256898.java!!!	add_out_arg() : Any
+        return _arguments.add(org.omg.CORBA.ARG_OUT.value).value();
+!!!257026.java!!!	add_named_out_arg(inout name : String) : Any
+        return _arguments.add_item(name, org.omg.CORBA.ARG_OUT.value).value();
+!!!257154.java!!!	set_return_type(inout tc : TypeCode) : void
+        if (_result == null)
+            _result = new NamedValueImpl(_orb);
+        _result.value().type(tc);
+!!!257282.java!!!	return_value() : Any
+        if (_result == null)
+            _result = new NamedValueImpl(_orb);
+        return _result.value();
+!!!257410.java!!!	add_exception(inout exceptionType : TypeCode) : void
+        _exceptions.add(exceptionType);
+!!!257538.java!!!	invoke() : void
+        doInvocation();
+!!!257666.java!!!	send_oneway() : void
+        _isOneWay = true;
+        doInvocation();
+!!!257794.java!!!	send_deferred() : void
+        AsynchInvoke invokeObject = new AsynchInvoke(_orb, this, false);
+        new Thread(invokeObject).start();
+!!!257922.java!!!	poll_response() : boolean
+        // this method has to be synchronized even though it seems
+        // "readonly" since the thread object doing the asynchronous
+        // invocation can potentially update this variable in parallel.
+        // updates are currently simply synchronized againt the request
+        // object.
+        return gotResponse;
+!!!258050.java!!!	get_response() : void
+        while (gotResponse == false) {
+            // release the lock. wait to be notified by the thread that is
+            // doing the asynchronous invocation.
+            try {
+                wait();
+            }
+            catch (InterruptedException e) {}
+        }
+!!!258178.java!!!	doInvocation() : void
+        org.omg.CORBA.portable.Delegate delegate = StubAdapter.getDelegate(
+            _target ) ;
+
+        // Initiate Client Portable Interceptors.  Inform the PIHandler that
+        // this is a DII request so that it knows to ignore the second
+        // inevitable call to initiateClientPIRequest in createRequest.
+        // Also, save the RequestImpl object for later use.
+        _orb.getPIHandler().initiateClientPIRequest( true );
+        _orb.getPIHandler().setClientPIInfo( this );
+
+        InputStream $in = null;
+        try {
+            OutputStream $out = delegate.request(null, _opName, !_isOneWay);
+            // Marshal args
+            try {
+                for (int i=0; i<_arguments.count() ; i++) {
+                    NamedValue nv = _arguments.item(i);
+                    switch (nv.flags()) {
+                    case ARG_IN.value:
+                        nv.value().write_value($out);
+                        break;
+                    case ARG_OUT.value:
+                        break;
+                    case ARG_INOUT.value:
+                        nv.value().write_value($out);
+                        break;
+                    }
+                }
+            } catch ( org.omg.CORBA.Bounds ex ) {
+                throw _wrapper.boundsErrorInDiiRequest( ex ) ;
+            }
+
+            $in = delegate.invoke(null, $out);
+        } catch (ApplicationException e) {
+            // REVISIT - minor code.
+            // This is already handled in subcontract.
+            // REVISIT - uncomment.
+            //throw new INTERNAL();
+        } catch (RemarshalException e) {
+            doInvocation();
+        } catch( SystemException ex ) {
+            _env.exception(ex);
+            // NOTE: The exception should not be thrown.
+            // However, JDK 1.4 and earlier threw the exception,
+            // so we keep the behavior to be compatible.
+            throw ex;
+        } finally {
+            delegate.releaseReply(null, $in);
+        }
+!!!258306.java!!!	unmarshalReply(inout is : InputStream) : void
+        // First unmarshal the return value if it is not void
+        if ( _result != null ) {
+            Any returnAny = _result.value();
+            TypeCode returnType = returnAny.type();
+            if ( returnType.kind().value() != TCKind._tk_void )
+                returnAny.read_value(is, returnType);
+        }
+
+        // Now unmarshal the out/inout args
+        try {
+            for ( int i=0; i<_arguments.count() ; i++) {
+                NamedValue nv = _arguments.item(i);
+                switch( nv.flags() ) {
+                case ARG_IN.value:
+                    break;
+                case ARG_OUT.value:
+                case ARG_INOUT.value:
+                    Any any = nv.value();
+                    any.read_value(is, any.type());
+                    break;
+                }
+            }
+        }
+        catch ( org.omg.CORBA.Bounds ex ) {
+            // Cannot happen since we only iterate till _arguments.count()
+        }

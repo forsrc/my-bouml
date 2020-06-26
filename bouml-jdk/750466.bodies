@@ -1,0 +1,169 @@
+class CatalogResolver
+!!!5281538.java!!!	CatalogResolver()
+    initializeCatalogs(false);
+!!!5281666.java!!!	CatalogResolver(inout privateCatalog : boolean)
+    initializeCatalogs(privateCatalog);
+!!!5281794.java!!!	CatalogResolver(inout manager : CatalogManager)
+    catalogManager = manager;
+    initializeCatalogs(!catalogManager.getUseStaticCatalog());
+!!!5281922.java!!!	initializeCatalogs(inout privateCatalog : boolean) : void
+    catalog = catalogManager.getCatalog();
+!!!5282050.java!!!	getCatalog() : Catalog
+    return catalog;
+!!!5282178.java!!!	getResolvedEntity(inout publicId : String, inout systemId : String) : String
+    String resolved = null;
+
+    if (catalog == null) {
+      catalogManager.debug.message(1, "Catalog resolution attempted with null catalog; ignored");
+      return null;
+    }
+
+    if (systemId != null) {
+      try {
+        resolved = catalog.resolveSystem(systemId);
+      } catch (MalformedURLException me) {
+        catalogManager.debug.message(1, "Malformed URL exception trying to resolve",
+                      publicId);
+        resolved = null;
+      } catch (IOException ie) {
+        catalogManager.debug.message(1, "I/O exception trying to resolve", publicId);
+        resolved = null;
+      }
+    }
+
+    if (resolved == null) {
+      if (publicId != null) {
+        try {
+          resolved = catalog.resolvePublic(publicId, systemId);
+        } catch (MalformedURLException me) {
+          catalogManager.debug.message(1, "Malformed URL exception trying to resolve",
+                        publicId);
+        } catch (IOException ie) {
+          catalogManager.debug.message(1, "I/O exception trying to resolve", publicId);
+        }
+      }
+
+      if (resolved != null) {
+        catalogManager.debug.message(2, "Resolved public", publicId, resolved);
+      }
+    } else {
+      catalogManager.debug.message(2, "Resolved system", systemId, resolved);
+    }
+
+    return resolved;
+!!!5282306.java!!!	resolveEntity(inout publicId : String, inout systemId : String) : InputSource
+    String resolved = getResolvedEntity(publicId, systemId);
+
+    if (resolved != null) {
+      try {
+        InputSource iSource = new InputSource(resolved);
+        iSource.setPublicId(publicId);
+
+        // Ideally this method would not attempt to open the
+        // InputStream, but there is a bug (in Xerces, at least)
+        // that causes the parser to mistakenly open the wrong
+        // system identifier if the returned InputSource does
+        // not have a byteStream.
+        //
+        // It could be argued that we still shouldn't do this here,
+        // but since the purpose of calling the entityResolver is
+        // almost certainly to open the input stream, it seems to
+        // do little harm.
+        //
+        URL url = new URL(resolved);
+        InputStream iStream = url.openStream();
+        iSource.setByteStream(iStream);
+
+        return iSource;
+      } catch (Exception e) {
+        catalogManager.debug.message(1, "Failed to create InputSource", resolved);
+        return null;
+      }
+    }
+
+    return null;
+!!!5282434.java!!!	resolve(inout href : String, inout base : String) : Source
+
+    String uri = href;
+    String fragment = null;
+    int hashPos = href.indexOf("#");
+    if (hashPos >= 0) {
+      uri = href.substring(0, hashPos);
+      fragment = href.substring(hashPos+1);
+    }
+
+    String result = null;
+
+    try {
+      result = catalog.resolveURI(href);
+    } catch (Exception e) {
+      // nop;
+    }
+
+    if (result == null) {
+      try {
+        URL url = null;
+
+        if (base==null) {
+          url = new URL(uri);
+          result = url.toString();
+        } else {
+          URL baseURL = new URL(base);
+          url = (href.length()==0 ? baseURL : new URL(baseURL, uri));
+          result = url.toString();
+        }
+      } catch (java.net.MalformedURLException mue) {
+        // try to make an absolute URI from the current base
+        String absBase = makeAbsolute(base);
+        if (!absBase.equals(base)) {
+          // don't bother if the absBase isn't different!
+          return resolve(href, absBase);
+        } else {
+          throw new TransformerException("Malformed URL "
+                                         + href + "(base " + base + ")",
+                                         mue);
+        }
+      }
+    }
+
+    catalogManager.debug.message(2, "Resolved URI", href, result);
+
+    SAXSource source = new SAXSource();
+    source.setInputSource(new InputSource(result));
+    setEntityResolver(source);
+    return source;
+!!!5282562.java!!!	setEntityResolver(inout source : SAXSource) : void
+    XMLReader reader = source.getXMLReader();
+    if (reader == null) {
+      SAXParserFactory spFactory = catalogManager.useServicesMechanism() ?
+                    SAXParserFactory.newInstance() : new SAXParserFactoryImpl();
+      spFactory.setNamespaceAware(true);
+      try {
+        reader = spFactory.newSAXParser().getXMLReader();
+      }
+      catch (ParserConfigurationException ex) {
+        throw new TransformerException(ex);
+      }
+      catch (SAXException ex) {
+        throw new TransformerException(ex);
+      }
+    }
+    reader.setEntityResolver(this);
+    source.setXMLReader(reader);
+!!!5282690.java!!!	makeAbsolute(inout uri : String) : String
+    if (uri == null) {
+      uri = "";
+    }
+
+    try {
+      URL url = new URL(uri);
+      return url.toString();
+    } catch (MalformedURLException mue) {
+      try {
+        URL fileURL = FileURL.makeURL(uri);
+        return fileURL.toString();
+      } catch (MalformedURLException mue2) {
+        // bail
+        return uri;
+      }
+    }

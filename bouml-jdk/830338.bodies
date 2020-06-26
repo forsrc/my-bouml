@@ -1,0 +1,87 @@
+class Policy
+!!!5966338.java!!!	getPolicy() : Policy
+        java.lang.SecurityManager sm = System.getSecurityManager();
+        if (sm != null) sm.checkPermission(new AuthPermission("getPolicy"));
+        return getPolicyNoCheck();
+!!!5966466.java!!!	getPolicyNoCheck() : Policy
+        if (policy == null) {
+
+            synchronized(Policy.class) {
+
+                if (policy == null) {
+                    String policy_class = null;
+                    policy_class = AccessController.doPrivileged
+                        (new PrivilegedAction<String>() {
+                        public String run() {
+                            return java.security.Security.getProperty
+                                ("auth.policy.provider");
+                        }
+                    });
+                    if (policy_class == null) {
+                        policy_class = AUTH_POLICY;
+                    }
+
+                    try {
+                        final String finalClass = policy_class;
+
+                        Policy untrustedImpl = AccessController.doPrivileged(
+                                new PrivilegedExceptionAction<Policy>() {
+                                    public Policy run() throws ClassNotFoundException,
+                                            InstantiationException,
+                                            IllegalAccessException {
+                                        Class<? extends Policy> implClass = Class.forName(
+                                                finalClass, false,
+                                                Thread.currentThread().getContextClassLoader()
+                                        ).asSubclass(Policy.class);
+                                        return implClass.newInstance();
+                                    }
+                                });
+                        AccessController.doPrivileged(
+                                new PrivilegedExceptionAction<Void>() {
+                                    public Void run() {
+                                        setPolicy(untrustedImpl);
+                                        isCustomPolicy = !finalClass.equals(AUTH_POLICY);
+                                        return null;
+                                    }
+                                }, Objects.requireNonNull(untrustedImpl.acc)
+                        );
+                    } catch (Exception e) {
+                        throw new SecurityException
+                                (sun.security.util.ResourcesMgr.getString
+                                ("unable.to.instantiate.Subject.based.policy"));
+                    }
+                }
+            }
+        }
+        return policy;
+!!!5966594.java!!!	setPolicy(inout policy : Policy) : void
+        java.lang.SecurityManager sm = System.getSecurityManager();
+        if (sm != null) sm.checkPermission(new AuthPermission("setPolicy"));
+        Policy.policy = policy;
+        // all non-null policy objects are assumed to be custom
+        isCustomPolicy = policy != null ? true : false;
+!!!5966722.java!!!	isCustomPolicySet(inout debug : Debug) : boolean
+        if (policy != null) {
+            if (debug != null && isCustomPolicy) {
+                debug.println("Providing backwards compatibility for " +
+                              "javax.security.auth.policy implementation: " +
+                              policy.toString());
+            }
+            return isCustomPolicy;
+        }
+        // check if custom policy has been set using auth.policy.provider prop
+        String policyClass = java.security.AccessController.doPrivileged
+            (new java.security.PrivilegedAction<String>() {
+                public String run() {
+                    return Security.getProperty("auth.policy.provider");
+                }
+        });
+        if (policyClass != null && !policyClass.equals(AUTH_POLICY)) {
+            if (debug != null) {
+                debug.println("Providing backwards compatibility for " +
+                              "javax.security.auth.policy implementation: " +
+                              policyClass);
+            }
+            return true;
+        }
+        return false;

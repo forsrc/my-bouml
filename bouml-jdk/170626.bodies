@@ -1,0 +1,619 @@
+class BlockDataInputStream
+!!!419074.java!!!	BlockDataInputStream(inout in : InputStream)
+            this.in = new PeekInputStream(in);
+            din = new DataInputStream(this);
+!!!419202.java!!!	setBlockDataMode(inout newmode : boolean) : boolean
+            if (blkmode == newmode) {
+                return blkmode;
+            }
+            if (newmode) {
+                pos = 0;
+                end = 0;
+                unread = 0;
+            } else if (pos < end) {
+                throw new IllegalStateException("unread block data");
+            }
+            blkmode = newmode;
+            return !blkmode;
+!!!419330.java!!!	getBlockDataMode() : boolean
+            return blkmode;
+!!!419458.java!!!	skipBlockData() : void
+            if (!blkmode) {
+                throw new IllegalStateException("not in block data mode");
+            }
+            while (end >= 0) {
+                refill();
+            }
+!!!419586.java!!!	readBlockHeader(inout canBlock : boolean) : int
+            if (defaultDataEnd) {
+                /*
+                 * Fix for 4360508: stream is currently at the end of a field
+                 * value block written via default serialization; since there
+                 * is no terminating TC_ENDBLOCKDATA tag, simulate
+                 * end-of-custom-data behavior explicitly.
+                 */
+                return -1;
+            }
+            try {
+                for (;;) {
+                    int avail = canBlock ? Integer.MAX_VALUE : in.available();
+                    if (avail == 0) {
+                        return HEADER_BLOCKED;
+                    }
+
+                    int tc = in.peek();
+                    switch (tc) {
+                        case TC_BLOCKDATA:
+                            if (avail < 2) {
+                                return HEADER_BLOCKED;
+                            }
+                            in.readFully(hbuf, 0, 2);
+                            return hbuf[1] & 0xFF;
+
+                        case TC_BLOCKDATALONG:
+                            if (avail < 5) {
+                                return HEADER_BLOCKED;
+                            }
+                            in.readFully(hbuf, 0, 5);
+                            int len = Bits.getInt(hbuf, 1);
+                            if (len < 0) {
+                                throw new StreamCorruptedException(
+                                    "illegal block data header length: " +
+                                    len);
+                            }
+                            return len;
+
+                        /*
+                         * TC_RESETs may occur in between data blocks.
+                         * Unfortunately, this case must be parsed at a lower
+                         * level than other typecodes, since primitive data
+                         * reads may span data blocks separated by a TC_RESET.
+                         */
+                        case TC_RESET:
+                            in.read();
+                            handleReset();
+                            break;
+
+                        default:
+                            if (tc >= 0 && (tc < TC_BASE || tc > TC_MAX)) {
+                                throw new StreamCorruptedException(
+                                    String.format("invalid type code: %02X",
+                                    tc));
+                            }
+                            return -1;
+                    }
+                }
+            } catch (EOFException ex) {
+                throw new StreamCorruptedException(
+                    "unexpected EOF while reading block data header");
+            }
+!!!419714.java!!!	refill() : void
+            try {
+                do {
+                    pos = 0;
+                    if (unread > 0) {
+                        int n =
+                            in.read(buf, 0, Math.min(unread, MAX_BLOCK_SIZE));
+                        if (n >= 0) {
+                            end = n;
+                            unread -= n;
+                        } else {
+                            throw new StreamCorruptedException(
+                                "unexpected EOF in middle of data block");
+                        }
+                    } else {
+                        int n = readBlockHeader(true);
+                        if (n >= 0) {
+                            end = 0;
+                            unread = n;
+                        } else {
+                            end = -1;
+                            unread = 0;
+                        }
+                    }
+                } while (pos == end);
+            } catch (IOException ex) {
+                pos = 0;
+                end = -1;
+                unread = 0;
+                throw ex;
+            }
+!!!419842.java!!!	currentBlockRemaining() : int
+            if (blkmode) {
+                return (end >= 0) ? (end - pos) + unread : 0;
+            } else {
+                throw new IllegalStateException();
+            }
+!!!419970.java!!!	peek() : int
+            if (blkmode) {
+                if (pos == end) {
+                    refill();
+                }
+                return (end >= 0) ? (buf[pos] & 0xFF) : -1;
+            } else {
+                return in.peek();
+            }
+!!!420098.java!!!	peekByte() : byte
+            int val = peek();
+            if (val < 0) {
+                throw new EOFException();
+            }
+            return (byte) val;
+!!!420226.java!!!	read() : int
+            if (blkmode) {
+                if (pos == end) {
+                    refill();
+                }
+                return (end >= 0) ? (buf[pos++] & 0xFF) : -1;
+            } else {
+                return in.read();
+            }
+!!!420354.java!!!	read(inout b : byte [[]], in off : int, in len : int) : int
+            return read(b, off, len, false);
+!!!420482.java!!!	skip(in len : long) : long
+            long remain = len;
+            while (remain > 0) {
+                if (blkmode) {
+                    if (pos == end) {
+                        refill();
+                    }
+                    if (end < 0) {
+                        break;
+                    }
+                    int nread = (int) Math.min(remain, end - pos);
+                    remain -= nread;
+                    pos += nread;
+                } else {
+                    int nread = (int) Math.min(remain, MAX_BLOCK_SIZE);
+                    if ((nread = in.read(buf, 0, nread)) < 0) {
+                        break;
+                    }
+                    remain -= nread;
+                }
+            }
+            return len - remain;
+!!!420610.java!!!	available() : int
+            if (blkmode) {
+                if ((pos == end) && (unread == 0)) {
+                    int n;
+                    while ((n = readBlockHeader(false)) == 0) ;
+                    switch (n) {
+                        case HEADER_BLOCKED:
+                            break;
+
+                        case -1:
+                            pos = 0;
+                            end = -1;
+                            break;
+
+                        default:
+                            pos = 0;
+                            end = 0;
+                            unread = n;
+                            break;
+                    }
+                }
+                // avoid unnecessary call to in.available() if possible
+                int unreadAvail = (unread > 0) ?
+                    Math.min(in.available(), unread) : 0;
+                return (end >= 0) ? (end - pos) + unreadAvail : 0;
+            } else {
+                return in.available();
+            }
+!!!420738.java!!!	close() : void
+            if (blkmode) {
+                pos = 0;
+                end = -1;
+                unread = 0;
+            }
+            in.close();
+!!!420866.java!!!	read(inout b : byte [[]], in off : int, in len : int, inout copy : boolean) : int
+            if (len == 0) {
+                return 0;
+            } else if (blkmode) {
+                if (pos == end) {
+                    refill();
+                }
+                if (end < 0) {
+                    return -1;
+                }
+                int nread = Math.min(len, end - pos);
+                System.arraycopy(buf, pos, b, off, nread);
+                pos += nread;
+                return nread;
+            } else if (copy) {
+                int nread = in.read(buf, 0, Math.min(len, MAX_BLOCK_SIZE));
+                if (nread > 0) {
+                    System.arraycopy(buf, 0, b, off, nread);
+                }
+                return nread;
+            } else {
+                return in.read(b, off, len);
+            }
+!!!420994.java!!!	readFully(inout b : byte [[]]) : void
+            readFully(b, 0, b.length, false);
+!!!421122.java!!!	readFully(inout b : byte [[]], in off : int, in len : int) : void
+            readFully(b, off, len, false);
+!!!421250.java!!!	readFully(inout b : byte [[]], in off : int, in len : int, inout copy : boolean) : void
+            while (len > 0) {
+                int n = read(b, off, len, copy);
+                if (n < 0) {
+                    throw new EOFException();
+                }
+                off += n;
+                len -= n;
+            }
+!!!421378.java!!!	skipBytes(in n : int) : int
+            return din.skipBytes(n);
+!!!421506.java!!!	readBoolean() : boolean
+            int v = read();
+            if (v < 0) {
+                throw new EOFException();
+            }
+            return (v != 0);
+!!!421634.java!!!	readByte() : byte
+            int v = read();
+            if (v < 0) {
+                throw new EOFException();
+            }
+            return (byte) v;
+!!!421762.java!!!	readUnsignedByte() : int
+            int v = read();
+            if (v < 0) {
+                throw new EOFException();
+            }
+            return v;
+!!!421890.java!!!	readChar() : char
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 2);
+            } else if (end - pos < 2) {
+                return din.readChar();
+            }
+            char v = Bits.getChar(buf, pos);
+            pos += 2;
+            return v;
+!!!422018.java!!!	readShort() : short
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 2);
+            } else if (end - pos < 2) {
+                return din.readShort();
+            }
+            short v = Bits.getShort(buf, pos);
+            pos += 2;
+            return v;
+!!!422146.java!!!	readUnsignedShort() : int
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 2);
+            } else if (end - pos < 2) {
+                return din.readUnsignedShort();
+            }
+            int v = Bits.getShort(buf, pos) & 0xFFFF;
+            pos += 2;
+            return v;
+!!!422274.java!!!	readInt() : int
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 4);
+            } else if (end - pos < 4) {
+                return din.readInt();
+            }
+            int v = Bits.getInt(buf, pos);
+            pos += 4;
+            return v;
+!!!422402.java!!!	readFloat() : float
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 4);
+            } else if (end - pos < 4) {
+                return din.readFloat();
+            }
+            float v = Bits.getFloat(buf, pos);
+            pos += 4;
+            return v;
+!!!422530.java!!!	readLong() : long
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 8);
+            } else if (end - pos < 8) {
+                return din.readLong();
+            }
+            long v = Bits.getLong(buf, pos);
+            pos += 8;
+            return v;
+!!!422658.java!!!	readDouble() : double
+            if (!blkmode) {
+                pos = 0;
+                in.readFully(buf, 0, 8);
+            } else if (end - pos < 8) {
+                return din.readDouble();
+            }
+            double v = Bits.getDouble(buf, pos);
+            pos += 8;
+            return v;
+!!!422786.java!!!	readUTF() : String
+            return readUTFBody(readUnsignedShort());
+!!!422914.java!!!	readLine() : String
+            return din.readLine();      // deprecated, not worth optimizing
+!!!423042.java!!!	readBooleans(inout v : boolean [[]], in off : int, in len : int) : void
+            int stop, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    int span = Math.min(endoff - off, MAX_BLOCK_SIZE);
+                    in.readFully(buf, 0, span);
+                    stop = off + span;
+                    pos = 0;
+                } else if (end - pos < 1) {
+                    v[off++] = din.readBoolean();
+                    continue;
+                } else {
+                    stop = Math.min(endoff, off + end - pos);
+                }
+
+                while (off < stop) {
+                    v[off++] = Bits.getBoolean(buf, pos++);
+                }
+            }
+!!!423170.java!!!	readChars(inout v : char [[]], in off : int, in len : int) : void
+            int stop, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    int span = Math.min(endoff - off, MAX_BLOCK_SIZE >> 1);
+                    in.readFully(buf, 0, span << 1);
+                    stop = off + span;
+                    pos = 0;
+                } else if (end - pos < 2) {
+                    v[off++] = din.readChar();
+                    continue;
+                } else {
+                    stop = Math.min(endoff, off + ((end - pos) >> 1));
+                }
+
+                while (off < stop) {
+                    v[off++] = Bits.getChar(buf, pos);
+                    pos += 2;
+                }
+            }
+!!!423298.java!!!	readShorts(inout v : short [[]], in off : int, in len : int) : void
+            int stop, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    int span = Math.min(endoff - off, MAX_BLOCK_SIZE >> 1);
+                    in.readFully(buf, 0, span << 1);
+                    stop = off + span;
+                    pos = 0;
+                } else if (end - pos < 2) {
+                    v[off++] = din.readShort();
+                    continue;
+                } else {
+                    stop = Math.min(endoff, off + ((end - pos) >> 1));
+                }
+
+                while (off < stop) {
+                    v[off++] = Bits.getShort(buf, pos);
+                    pos += 2;
+                }
+            }
+!!!423426.java!!!	readInts(inout v : int [[]], in off : int, in len : int) : void
+            int stop, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    int span = Math.min(endoff - off, MAX_BLOCK_SIZE >> 2);
+                    in.readFully(buf, 0, span << 2);
+                    stop = off + span;
+                    pos = 0;
+                } else if (end - pos < 4) {
+                    v[off++] = din.readInt();
+                    continue;
+                } else {
+                    stop = Math.min(endoff, off + ((end - pos) >> 2));
+                }
+
+                while (off < stop) {
+                    v[off++] = Bits.getInt(buf, pos);
+                    pos += 4;
+                }
+            }
+!!!423554.java!!!	readFloats(inout v : float [[]], in off : int, in len : int) : void
+            int span, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    span = Math.min(endoff - off, MAX_BLOCK_SIZE >> 2);
+                    in.readFully(buf, 0, span << 2);
+                    pos = 0;
+                } else if (end - pos < 4) {
+                    v[off++] = din.readFloat();
+                    continue;
+                } else {
+                    span = Math.min(endoff - off, ((end - pos) >> 2));
+                }
+
+                bytesToFloats(buf, pos, v, off, span);
+                off += span;
+                pos += span << 2;
+            }
+!!!423682.java!!!	readLongs(inout v : long [[]], in off : int, in len : int) : void
+            int stop, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    int span = Math.min(endoff - off, MAX_BLOCK_SIZE >> 3);
+                    in.readFully(buf, 0, span << 3);
+                    stop = off + span;
+                    pos = 0;
+                } else if (end - pos < 8) {
+                    v[off++] = din.readLong();
+                    continue;
+                } else {
+                    stop = Math.min(endoff, off + ((end - pos) >> 3));
+                }
+
+                while (off < stop) {
+                    v[off++] = Bits.getLong(buf, pos);
+                    pos += 8;
+                }
+            }
+!!!423810.java!!!	readDoubles(inout v : double [[]], in off : int, in len : int) : void
+            int span, endoff = off + len;
+            while (off < endoff) {
+                if (!blkmode) {
+                    span = Math.min(endoff - off, MAX_BLOCK_SIZE >> 3);
+                    in.readFully(buf, 0, span << 3);
+                    pos = 0;
+                } else if (end - pos < 8) {
+                    v[off++] = din.readDouble();
+                    continue;
+                } else {
+                    span = Math.min(endoff - off, ((end - pos) >> 3));
+                }
+
+                bytesToDoubles(buf, pos, v, off, span);
+                off += span;
+                pos += span << 3;
+            }
+!!!423938.java!!!	readLongUTF() : String
+            return readUTFBody(readLong());
+!!!424066.java!!!	readUTFBody(in utflen : long) : String
+            StringBuilder sbuf = new StringBuilder();
+            if (!blkmode) {
+                end = pos = 0;
+            }
+
+            while (utflen > 0) {
+                int avail = end - pos;
+                if (avail >= 3 || (long) avail == utflen) {
+                    utflen -= readUTFSpan(sbuf, utflen);
+                } else {
+                    if (blkmode) {
+                        // near block boundary, read one byte at a time
+                        utflen -= readUTFChar(sbuf, utflen);
+                    } else {
+                        // shift and refill buffer manually
+                        if (avail > 0) {
+                            System.arraycopy(buf, pos, buf, 0, avail);
+                        }
+                        pos = 0;
+                        end = (int) Math.min(MAX_BLOCK_SIZE, utflen);
+                        in.readFully(buf, avail, end - avail);
+                    }
+                }
+            }
+
+            return sbuf.toString();
+!!!424194.java!!!	readUTFSpan(inout sbuf : StringBuilder, in utflen : long) : long
+            int cpos = 0;
+            int start = pos;
+            int avail = Math.min(end - pos, CHAR_BUF_SIZE);
+            // stop short of last char unless all of utf bytes in buffer
+            int stop = pos + ((utflen > avail) ? avail - 2 : (int) utflen);
+            boolean outOfBounds = false;
+
+            try {
+                while (pos < stop) {
+                    int b1, b2, b3;
+                    b1 = buf[pos++] & 0xFF;
+                    switch (b1 >> 4) {
+                        case 0:
+                        case 1:
+                        case 2:
+                        case 3:
+                        case 4:
+                        case 5:
+                        case 6:
+                        case 7:   // 1 byte format: 0xxxxxxx
+                            cbuf[cpos++] = (char) b1;
+                            break;
+
+                        case 12:
+                        case 13:  // 2 byte format: 110xxxxx 10xxxxxx
+                            b2 = buf[pos++];
+                            if ((b2 & 0xC0) != 0x80) {
+                                throw new UTFDataFormatException();
+                            }
+                            cbuf[cpos++] = (char) (((b1 & 0x1F) << 6) |
+                                                   ((b2 & 0x3F) << 0));
+                            break;
+
+                        case 14:  // 3 byte format: 1110xxxx 10xxxxxx 10xxxxxx
+                            b3 = buf[pos + 1];
+                            b2 = buf[pos + 0];
+                            pos += 2;
+                            if ((b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) {
+                                throw new UTFDataFormatException();
+                            }
+                            cbuf[cpos++] = (char) (((b1 & 0x0F) << 12) |
+                                                   ((b2 & 0x3F) << 6) |
+                                                   ((b3 & 0x3F) << 0));
+                            break;
+
+                        default:  // 10xx xxxx, 1111 xxxx
+                            throw new UTFDataFormatException();
+                    }
+                }
+            } catch (ArrayIndexOutOfBoundsException ex) {
+                outOfBounds = true;
+            } finally {
+                if (outOfBounds || (pos - start) > utflen) {
+                    /*
+                     * Fix for 4450867: if a malformed utf char causes the
+                     * conversion loop to scan past the expected end of the utf
+                     * string, only consume the expected number of utf bytes.
+                     */
+                    pos = start + (int) utflen;
+                    throw new UTFDataFormatException();
+                }
+            }
+
+            sbuf.append(cbuf, 0, cpos);
+            return pos - start;
+!!!424322.java!!!	readUTFChar(inout sbuf : StringBuilder, in utflen : long) : int
+            int b1, b2, b3;
+            b1 = readByte() & 0xFF;
+            switch (b1 >> 4) {
+                case 0:
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                case 5:
+                case 6:
+                case 7:     // 1 byte format: 0xxxxxxx
+                    sbuf.append((char) b1);
+                    return 1;
+
+                case 12:
+                case 13:    // 2 byte format: 110xxxxx 10xxxxxx
+                    if (utflen < 2) {
+                        throw new UTFDataFormatException();
+                    }
+                    b2 = readByte();
+                    if ((b2 & 0xC0) != 0x80) {
+                        throw new UTFDataFormatException();
+                    }
+                    sbuf.append((char) (((b1 & 0x1F) << 6) |
+                                        ((b2 & 0x3F) << 0)));
+                    return 2;
+
+                case 14:    // 3 byte format: 1110xxxx 10xxxxxx 10xxxxxx
+                    if (utflen < 3) {
+                        if (utflen == 2) {
+                            readByte();         // consume remaining byte
+                        }
+                        throw new UTFDataFormatException();
+                    }
+                    b2 = readByte();
+                    b3 = readByte();
+                    if ((b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) {
+                        throw new UTFDataFormatException();
+                    }
+                    sbuf.append((char) (((b1 & 0x0F) << 12) |
+                                        ((b2 & 0x3F) << 6) |
+                                        ((b3 & 0x3F) << 0)));
+                    return 3;
+
+                default:   // 10xx xxxx, 1111 xxxx
+                    throw new UTFDataFormatException();
+            }
+!!!424450.java!!!	getBytesRead() : long
+            return in.getBytesRead();

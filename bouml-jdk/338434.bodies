@@ -1,0 +1,1200 @@
+class JComponent
+!!!1987586.java!!!	safelyGetGraphics(inout c : Component) : Graphics
+        return safelyGetGraphics(c, SwingUtilities.getRoot(c));
+!!!1987714.java!!!	safelyGetGraphics(inout c : Component, inout root : Component) : Graphics
+        synchronized(componentObtainingGraphicsFromLock) {
+            componentObtainingGraphicsFrom = root;
+            Graphics g = c.getGraphics();
+            componentObtainingGraphicsFrom = null;
+            return g;
+        }
+!!!1987842.java!!!	getGraphicsInvoked(inout root : Component) : void
+        if (!JComponent.isComponentObtainingGraphicsFrom(root)) {
+            JRootPane rootPane = ((RootPaneContainer)root).getRootPane();
+            if (rootPane != null) {
+                rootPane.disableTrueDoubleBuffering();
+            }
+        }
+!!!1987970.java!!!	isComponentObtainingGraphicsFrom(inout c : Component) : boolean
+        synchronized(componentObtainingGraphicsFromLock) {
+            return (componentObtainingGraphicsFrom == c);
+        }
+!!!1988098.java!!!	getManagingFocusForwardTraversalKeys() : Set
+        synchronized(JComponent.class) {
+            if (managingFocusForwardTraversalKeys == null) {
+                managingFocusForwardTraversalKeys = new HashSet<KeyStroke>(1);
+                managingFocusForwardTraversalKeys.add(
+                    KeyStroke.getKeyStroke(KeyEvent.VK_TAB,
+                                           InputEvent.CTRL_MASK));
+            }
+        }
+        return managingFocusForwardTraversalKeys;
+!!!1988226.java!!!	getManagingFocusBackwardTraversalKeys() : Set
+        synchronized(JComponent.class) {
+            if (managingFocusBackwardTraversalKeys == null) {
+                managingFocusBackwardTraversalKeys = new HashSet<KeyStroke>(1);
+                managingFocusBackwardTraversalKeys.add(
+                    KeyStroke.getKeyStroke(KeyEvent.VK_TAB,
+                                           InputEvent.SHIFT_MASK |
+                                           InputEvent.CTRL_MASK));
+            }
+        }
+        return managingFocusBackwardTraversalKeys;
+!!!1988354.java!!!	fetchRectangle() : Rectangle
+        synchronized(tempRectangles) {
+            Rectangle rect;
+            int size = tempRectangles.size();
+            if (size > 0) {
+                rect = tempRectangles.remove(size - 1);
+            }
+            else {
+                rect = new Rectangle(0, 0, 0, 0);
+            }
+            return rect;
+        }
+!!!1988482.java!!!	recycleRectangle(inout rect : Rectangle) : void
+        synchronized(tempRectangles) {
+            tempRectangles.add(rect);
+        }
+!!!1988610.java!!!	setInheritsPopupMenu(inout value : boolean) : void
+        boolean oldValue = getFlag(INHERITS_POPUP_MENU);
+        setFlag(INHERITS_POPUP_MENU, value);
+        firePropertyChange("inheritsPopupMenu", oldValue, value);
+!!!1988738.java!!!	getInheritsPopupMenu() : boolean
+        return getFlag(INHERITS_POPUP_MENU);
+!!!1988866.java!!!	setComponentPopupMenu(inout popup : JPopupMenu) : void
+        if(popup != null) {
+            enableEvents(AWTEvent.MOUSE_EVENT_MASK);
+        }
+        JPopupMenu oldPopup = this.popupMenu;
+        this.popupMenu = popup;
+        firePropertyChange("componentPopupMenu", oldPopup, popup);
+!!!1988994.java!!!	getComponentPopupMenu() : JPopupMenu
+
+        if(!getInheritsPopupMenu()) {
+            return popupMenu;
+        }
+
+        if(popupMenu == null) {
+            // Search parents for its popup
+            Container parent = getParent();
+            while (parent != null) {
+                if(parent instanceof JComponent) {
+                    return ((JComponent)parent).getComponentPopupMenu();
+                }
+                if(parent instanceof Window ||
+                   parent instanceof Applet) {
+                    // Reached toplevel, break and return null
+                    break;
+                }
+                parent = parent.getParent();
+            }
+            return null;
+        }
+
+        return popupMenu;
+!!!1989122.java!!!	JComponent()
+        super();
+        // We enable key events on all JComponents so that accessibility
+        // bindings will work everywhere. This is a partial fix to BugID
+        // 4282211.
+        enableEvents(AWTEvent.KEY_EVENT_MASK);
+        if (isManagingFocus()) {
+            LookAndFeel.installProperty(this,
+                                        "focusTraversalKeysForward",
+                                  getManagingFocusForwardTraversalKeys());
+            LookAndFeel.installProperty(this,
+                                        "focusTraversalKeysBackward",
+                                  getManagingFocusBackwardTraversalKeys());
+        }
+
+        super.setLocale( JComponent.getDefaultLocale() );
+!!!1989378.java!!!	setUI(inout newUI : ComponentUI) : void
+        /* We do not check that the UI instance is different
+         * before allowing the switch in order to enable the
+         * same UI instance *with different default settings*
+         * to be installed.
+         */
+
+        uninstallUIAndProperties();
+
+        // aaText shouldn't persist between look and feels, reset it.
+        aaTextInfo =
+            UIManager.getDefaults().get(SwingUtilities2.AA_TEXT_PROPERTY_KEY);
+        ComponentUI oldUI = ui;
+        ui = newUI;
+        if (ui != null) {
+            ui.installUI(this);
+        }
+
+        firePropertyChange("UI", oldUI, newUI);
+        revalidate();
+        repaint();
+!!!1989506.java!!!	uninstallUIAndProperties() : void
+        if (ui != null) {
+            ui.uninstallUI(this);
+            //clean UIClientPropertyKeys from client properties
+            if (clientProperties != null) {
+                synchronized(clientProperties) {
+                    Object[] clientPropertyKeys =
+                        clientProperties.getKeys(null);
+                    if (clientPropertyKeys != null) {
+                        for (Object key : clientPropertyKeys) {
+                            if (key instanceof UIClientPropertyKey) {
+                                putClientProperty(key, null);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+!!!1989634.java!!!	getUIClassID() : String
+        return uiClassID;
+!!!1989762.java!!!	getComponentGraphics(inout g : Graphics) : Graphics
+        Graphics componentGraphics = g;
+        if (ui != null && DEBUG_GRAPHICS_LOADED) {
+            if ((DebugGraphics.debugComponentCount() != 0) &&
+                    (shouldDebugGraphics() != 0) &&
+                    !(g instanceof DebugGraphics)) {
+                componentGraphics = new DebugGraphics(g,this);
+            }
+        }
+        componentGraphics.setColor(getForeground());
+        componentGraphics.setFont(getFont());
+
+        return componentGraphics;
+!!!1989890.java!!!	paintComponent(inout g : Graphics) : void
+        if (ui != null) {
+            Graphics scratchGraphics = (g == null) ? null : g.create();
+            try {
+                ui.update(scratchGraphics, this);
+            }
+            finally {
+                scratchGraphics.dispose();
+            }
+        }
+!!!1990018.java!!!	paintChildren(inout g : Graphics) : void
+        Graphics sg = g;
+
+        synchronized(getTreeLock()) {
+            int i = getComponentCount() - 1;
+            if (i < 0) {
+                return;
+            }
+            // If we are only to paint to a specific child, determine
+            // its index.
+            if (paintingChild != null &&
+                (paintingChild instanceof JComponent) &&
+                paintingChild.isOpaque()) {
+                for (; i >= 0; i--) {
+                    if (getComponent(i) == paintingChild){
+                        break;
+                    }
+                }
+            }
+            Rectangle tmpRect = fetchRectangle();
+            boolean checkSiblings = (!isOptimizedDrawingEnabled() &&
+                                     checkIfChildObscuredBySibling());
+            Rectangle clipBounds = null;
+            if (checkSiblings) {
+                clipBounds = sg.getClipBounds();
+                if (clipBounds == null) {
+                    clipBounds = new Rectangle(0, 0, getWidth(),
+                                               getHeight());
+                }
+            }
+            boolean printing = getFlag(IS_PRINTING);
+            final Window window = SwingUtilities.getWindowAncestor(this);
+            final boolean isWindowOpaque = window == null || window.isOpaque();
+            for (; i >= 0 ; i--) {
+                Component comp = getComponent(i);
+                if (comp == null) {
+                    continue;
+                }
+
+                final boolean isJComponent = comp instanceof JComponent;
+
+                // Enable painting of heavyweights in non-opaque windows.
+                // See 6884960
+                if ((!isWindowOpaque || isJComponent ||
+                            isLightweightComponent(comp)) && comp.isVisible())
+                {
+                    Rectangle cr;
+
+                    cr = comp.getBounds(tmpRect);
+
+                    boolean hitClip = g.hitClip(cr.x, cr.y, cr.width,
+                                                cr.height);
+
+                    if (hitClip) {
+                        if (checkSiblings && i > 0) {
+                            int x = cr.x;
+                            int y = cr.y;
+                            int width = cr.width;
+                            int height = cr.height;
+                            SwingUtilities.computeIntersection
+                                (clipBounds.x, clipBounds.y,
+                                 clipBounds.width, clipBounds.height, cr);
+
+                            if(getObscuredState(i, cr.x, cr.y, cr.width,
+                                          cr.height) == COMPLETELY_OBSCURED) {
+                                continue;
+                            }
+                            cr.x = x;
+                            cr.y = y;
+                            cr.width = width;
+                            cr.height = height;
+                        }
+                        Graphics cg = sg.create(cr.x, cr.y, cr.width,
+                                                cr.height);
+                        cg.setColor(comp.getForeground());
+                        cg.setFont(comp.getFont());
+                        boolean shouldSetFlagBack = false;
+                        try {
+                            if(isJComponent) {
+                                if(getFlag(ANCESTOR_USING_BUFFER)) {
+                                    ((JComponent)comp).setFlag(
+                                                 ANCESTOR_USING_BUFFER,true);
+                                    shouldSetFlagBack = true;
+                                }
+                                if(getFlag(IS_PAINTING_TILE)) {
+                                    ((JComponent)comp).setFlag(
+                                                 IS_PAINTING_TILE,true);
+                                    shouldSetFlagBack = true;
+                                }
+                                if(!printing) {
+                                    comp.paint(cg);
+                                }
+                                else {
+                                    if (!getFlag(IS_PRINTING_ALL)) {
+                                        comp.print(cg);
+                                    }
+                                    else {
+                                        comp.printAll(cg);
+                                    }
+                                }
+                            } else {
+                                // The component is either lightweight, or
+                                // heavyweight in a non-opaque window
+                                if (!printing) {
+                                    comp.paint(cg);
+                                }
+                                else {
+                                    if (!getFlag(IS_PRINTING_ALL)) {
+                                        comp.print(cg);
+                                    }
+                                    else {
+                                        comp.printAll(cg);
+                                    }
+                                }
+                            }
+                        } finally {
+                            cg.dispose();
+                            if(shouldSetFlagBack) {
+                                ((JComponent)comp).setFlag(
+                                             ANCESTOR_USING_BUFFER,false);
+                                ((JComponent)comp).setFlag(
+                                             IS_PAINTING_TILE,false);
+                            }
+                        }
+                    }
+                }
+
+            }
+            recycleRectangle(tmpRect);
+        }
+!!!1990146.java!!!	paintBorder(inout g : Graphics) : void
+        Border border = getBorder();
+        if (border != null) {
+            border.paintBorder(this, g, 0, 0, getWidth(), getHeight());
+        }
+!!!1990274.java!!!	update(inout g : Graphics) : void
+        paint(g);
+!!!1990402.java!!!	paint(inout g : Graphics) : void
+        boolean shouldClearPaintFlags = false;
+
+        if ((getWidth() <= 0) || (getHeight() <= 0)) {
+            return;
+        }
+
+        Graphics componentGraphics = getComponentGraphics(g);
+        Graphics co = componentGraphics.create();
+        try {
+            RepaintManager repaintManager = RepaintManager.currentManager(this);
+            Rectangle clipRect = co.getClipBounds();
+            int clipX;
+            int clipY;
+            int clipW;
+            int clipH;
+            if (clipRect == null) {
+                clipX = clipY = 0;
+                clipW = getWidth();
+                clipH = getHeight();
+            }
+            else {
+                clipX = clipRect.x;
+                clipY = clipRect.y;
+                clipW = clipRect.width;
+                clipH = clipRect.height;
+            }
+
+            if(clipW > getWidth()) {
+                clipW = getWidth();
+            }
+            if(clipH > getHeight()) {
+                clipH = getHeight();
+            }
+
+            if(getParent() != null && !(getParent() instanceof JComponent)) {
+                adjustPaintFlags();
+                shouldClearPaintFlags = true;
+            }
+
+            int bw,bh;
+            boolean printing = getFlag(IS_PRINTING);
+            if (!printing && repaintManager.isDoubleBufferingEnabled() &&
+                !getFlag(ANCESTOR_USING_BUFFER) && isDoubleBuffered() &&
+                (getFlag(IS_REPAINTING) || repaintManager.isPainting()))
+            {
+                repaintManager.beginPaint();
+                try {
+                    repaintManager.paint(this, this, co, clipX, clipY, clipW,
+                                         clipH);
+                } finally {
+                    repaintManager.endPaint();
+                }
+            }
+            else {
+                // Will ocassionaly happen in 1.2, especially when printing.
+                if (clipRect == null) {
+                    co.setClip(clipX, clipY, clipW, clipH);
+                }
+
+                if (!rectangleIsObscured(clipX,clipY,clipW,clipH)) {
+                    if (!printing) {
+                        paintComponent(co);
+                        paintBorder(co);
+                    }
+                    else {
+                        printComponent(co);
+                        printBorder(co);
+                    }
+                }
+                if (!printing) {
+                    paintChildren(co);
+                }
+                else {
+                    printChildren(co);
+                }
+            }
+        } finally {
+            co.dispose();
+            if(shouldClearPaintFlags) {
+                setFlag(ANCESTOR_USING_BUFFER,false);
+                setFlag(IS_PAINTING_TILE,false);
+                setFlag(IS_PRINTING,false);
+                setFlag(IS_PRINTING_ALL,false);
+            }
+        }
+!!!1990530.java!!!	paintForceDoubleBuffered(inout g : Graphics) : void
+        RepaintManager rm = RepaintManager.currentManager(this);
+        Rectangle clip = g.getClipBounds();
+        rm.beginPaint();
+        setFlag(IS_REPAINTING, true);
+        try {
+            rm.paint(this, this, g, clip.x, clip.y, clip.width, clip.height);
+        } finally {
+            rm.endPaint();
+            setFlag(IS_REPAINTING, false);
+        }
+!!!1990658.java!!!	isPainting() : boolean
+        Container component = this;
+        while (component != null) {
+            if (component instanceof JComponent &&
+                   ((JComponent)component).getFlag(ANCESTOR_USING_BUFFER)) {
+                return true;
+            }
+            component = component.getParent();
+        }
+        return false;
+!!!1990786.java!!!	adjustPaintFlags() : void
+        JComponent jparent;
+        Container parent;
+        for(parent = getParent() ; parent != null ; parent =
+            parent.getParent()) {
+            if(parent instanceof JComponent) {
+                jparent = (JComponent) parent;
+                if(jparent.getFlag(ANCESTOR_USING_BUFFER))
+                  setFlag(ANCESTOR_USING_BUFFER, true);
+                if(jparent.getFlag(IS_PAINTING_TILE))
+                  setFlag(IS_PAINTING_TILE, true);
+                if(jparent.getFlag(IS_PRINTING))
+                  setFlag(IS_PRINTING, true);
+                if(jparent.getFlag(IS_PRINTING_ALL))
+                  setFlag(IS_PRINTING_ALL, true);
+                break;
+            }
+        }
+!!!1990914.java!!!	printAll(inout g : Graphics) : void
+        setFlag(IS_PRINTING_ALL, true);
+        try {
+            print(g);
+        }
+        finally {
+            setFlag(IS_PRINTING_ALL, false);
+        }
+!!!1991042.java!!!	print(inout g : Graphics) : void
+        setFlag(IS_PRINTING, true);
+        firePropertyChange("paintingForPrint", false, true);
+        try {
+            paint(g);
+        }
+        finally {
+            setFlag(IS_PRINTING, false);
+            firePropertyChange("paintingForPrint", true, false);
+        }
+!!!1991170.java!!!	printComponent(inout g : Graphics) : void
+        paintComponent(g);
+!!!1991298.java!!!	printChildren(inout g : Graphics) : void
+        paintChildren(g);
+!!!1991426.java!!!	printBorder(inout g : Graphics) : void
+        paintBorder(g);
+!!!1991554.java!!!	isPaintingTile() : boolean
+        return getFlag(IS_PAINTING_TILE);
+!!!1991682.java!!!	isPaintingForPrint() : boolean
+        return getFlag(IS_PRINTING);
+!!!1991810.java!!!	isManagingFocus() : boolean
+        return false;
+!!!1991938.java!!!	registerNextFocusableComponent() : void
+        registerNextFocusableComponent(getNextFocusableComponent());
+!!!1992066.java!!!	registerNextFocusableComponent(inout nextFocusableComponent : Component) : void
+        if (nextFocusableComponent == null) {
+            return;
+        }
+
+        Container nearestRoot =
+            (isFocusCycleRoot()) ? this : getFocusCycleRootAncestor();
+        FocusTraversalPolicy policy = nearestRoot.getFocusTraversalPolicy();
+        if (!(policy instanceof LegacyGlueFocusTraversalPolicy)) {
+            policy = new LegacyGlueFocusTraversalPolicy(policy);
+            nearestRoot.setFocusTraversalPolicy(policy);
+        }
+        ((LegacyGlueFocusTraversalPolicy)policy).
+            setNextFocusableComponent(this, nextFocusableComponent);
+!!!1992194.java!!!	deregisterNextFocusableComponent() : void
+        Component nextFocusableComponent = getNextFocusableComponent();
+        if (nextFocusableComponent == null) {
+            return;
+        }
+
+        Container nearestRoot =
+            (isFocusCycleRoot()) ? this : getFocusCycleRootAncestor();
+        if (nearestRoot == null) {
+            return;
+        }
+        FocusTraversalPolicy policy = nearestRoot.getFocusTraversalPolicy();
+        if (policy instanceof LegacyGlueFocusTraversalPolicy) {
+            ((LegacyGlueFocusTraversalPolicy)policy).
+                unsetNextFocusableComponent(this, nextFocusableComponent);
+        }
+!!!1992322.java!!!	setNextFocusableComponent(inout aComponent : Component) : void
+        boolean displayable = isDisplayable();
+        if (displayable) {
+            deregisterNextFocusableComponent();
+        }
+        putClientProperty(NEXT_FOCUS, aComponent);
+        if (displayable) {
+            registerNextFocusableComponent(aComponent);
+        }
+!!!1992450.java!!!	getNextFocusableComponent() : Component
+        return (Component)getClientProperty(NEXT_FOCUS);
+!!!1992578.java!!!	setRequestFocusEnabled(inout requestFocusEnabled : boolean) : void
+        setFlag(REQUEST_FOCUS_DISABLED, !requestFocusEnabled);
+!!!1992706.java!!!	isRequestFocusEnabled() : boolean
+        return !getFlag(REQUEST_FOCUS_DISABLED);
+!!!1992834.java!!!	requestFocus() : void
+        super.requestFocus();
+!!!1992962.java!!!	requestFocus(inout temporary : boolean) : boolean
+        return super.requestFocus(temporary);
+!!!1993090.java!!!	requestFocusInWindow() : boolean
+        return super.requestFocusInWindow();
+!!!1993218.java!!!	requestFocusInWindow(inout temporary : boolean) : boolean
+        return super.requestFocusInWindow(temporary);
+!!!1993346.java!!!	grabFocus() : void
+        requestFocus();
+!!!1993474.java!!!	setVerifyInputWhenFocusTarget(inout verifyInputWhenFocusTarget : boolean) : void
+        boolean oldVerifyInputWhenFocusTarget =
+            this.verifyInputWhenFocusTarget;
+        this.verifyInputWhenFocusTarget = verifyInputWhenFocusTarget;
+        firePropertyChange("verifyInputWhenFocusTarget",
+                           oldVerifyInputWhenFocusTarget,
+                           verifyInputWhenFocusTarget);
+!!!1993602.java!!!	getVerifyInputWhenFocusTarget() : boolean
+        return verifyInputWhenFocusTarget;
+!!!1993730.java!!!	getFontMetrics(inout font : Font) : FontMetrics
+        return SwingUtilities2.getFontMetrics(this, font);
+!!!1993858.java!!!	setPreferredSize(inout preferredSize : Dimension) : void
+        super.setPreferredSize(preferredSize);
+!!!1993986.java!!!	getPreferredSize() : Dimension
+        if (isPreferredSizeSet()) {
+            return super.getPreferredSize();
+        }
+        Dimension size = null;
+        if (ui != null) {
+            size = ui.getPreferredSize(this);
+        }
+        return (size != null) ? size : super.getPreferredSize();
+!!!1994114.java!!!	setMaximumSize(inout maximumSize : Dimension) : void
+        super.setMaximumSize(maximumSize);
+!!!1994242.java!!!	getMaximumSize() : Dimension
+        if (isMaximumSizeSet()) {
+            return super.getMaximumSize();
+        }
+        Dimension size = null;
+        if (ui != null) {
+            size = ui.getMaximumSize(this);
+        }
+        return (size != null) ? size : super.getMaximumSize();
+!!!1994370.java!!!	setMinimumSize(inout minimumSize : Dimension) : void
+        super.setMinimumSize(minimumSize);
+!!!1994498.java!!!	getMinimumSize() : Dimension
+        if (isMinimumSizeSet()) {
+            return super.getMinimumSize();
+        }
+        Dimension size = null;
+        if (ui != null) {
+            size = ui.getMinimumSize(this);
+        }
+        return (size != null) ? size : super.getMinimumSize();
+!!!1994626.java!!!	contains(in x : int, in y : int) : boolean
+        return (ui != null) ? ui.contains(this, x, y) : super.contains(x, y);
+!!!1994754.java!!!	setBorder(inout border : Border) : void
+        Border         oldBorder = this.border;
+
+        this.border = border;
+        firePropertyChange("border", oldBorder, border);
+        if (border != oldBorder) {
+            if (border == null || oldBorder == null ||
+                !(border.getBorderInsets(this).equals(oldBorder.getBorderInsets(this)))) {
+                revalidate();
+            }
+            repaint();
+        }
+!!!1994882.java!!!	getBorder() : Border
+        return border;
+!!!1995010.java!!!	getInsets() : Insets
+        if (border != null) {
+            return border.getBorderInsets(this);
+        }
+        return super.getInsets();
+!!!1995138.java!!!	getInsets(inout insets : Insets) : Insets
+        if (insets == null) {
+            insets = new Insets(0, 0, 0, 0);
+        }
+        if (border != null) {
+            if (border instanceof AbstractBorder) {
+                return ((AbstractBorder)border).getBorderInsets(this, insets);
+            } else {
+                // Can't reuse border insets because the Border interface
+                // can't be enhanced.
+                return border.getBorderInsets(this);
+            }
+        } else {
+            // super.getInsets() always returns an Insets object with
+            // all of its value zeroed.  No need for a new object here.
+            insets.left = insets.top = insets.right = insets.bottom = 0;
+            return insets;
+        }
+!!!1995266.java!!!	getAlignmentY() : float
+        if (isAlignmentYSet) {
+            return alignmentY;
+        }
+        return super.getAlignmentY();
+!!!1995394.java!!!	setAlignmentY(in alignmentY : float) : void
+        this.alignmentY = alignmentY > 1.0f ? 1.0f : alignmentY < 0.0f ? 0.0f : alignmentY;
+        isAlignmentYSet = true;
+!!!1995522.java!!!	getAlignmentX() : float
+        if (isAlignmentXSet) {
+            return alignmentX;
+        }
+        return super.getAlignmentX();
+!!!1995650.java!!!	setAlignmentX(in alignmentX : float) : void
+        this.alignmentX = alignmentX > 1.0f ? 1.0f : alignmentX < 0.0f ? 0.0f : alignmentX;
+        isAlignmentXSet = true;
+!!!1995778.java!!!	setInputVerifier(inout inputVerifier : InputVerifier) : void
+        InputVerifier oldInputVerifier = (InputVerifier)getClientProperty(
+                                         JComponent_INPUT_VERIFIER);
+        putClientProperty(JComponent_INPUT_VERIFIER, inputVerifier);
+        firePropertyChange("inputVerifier", oldInputVerifier, inputVerifier);
+!!!1995906.java!!!	getInputVerifier() : InputVerifier
+        return (InputVerifier)getClientProperty(JComponent_INPUT_VERIFIER);
+!!!1996034.java!!!	getGraphics() : Graphics
+        if (DEBUG_GRAPHICS_LOADED && shouldDebugGraphics() != 0) {
+            DebugGraphics graphics = new DebugGraphics(super.getGraphics(),
+                                                       this);
+            return graphics;
+        }
+        return super.getGraphics();
+!!!1996162.java!!!	setDebugGraphicsOptions(in debugOptions : int) : void
+        DebugGraphics.setDebugOptions(this, debugOptions);
+!!!1996290.java!!!	getDebugGraphicsOptions() : int
+        return DebugGraphics.getDebugOptions(this);
+!!!1996418.java!!!	shouldDebugGraphics() : int
+        return DebugGraphics.shouldComponentDebug(this);
+!!!1996546.java!!!	registerKeyboardAction(inout anAction : ActionListener, inout aCommand : String, inout aKeyStroke : KeyStroke, in aCondition : int) : void
+
+        InputMap inputMap = getInputMap(aCondition, true);
+
+        if (inputMap != null) {
+            ActionMap actionMap = getActionMap(true);
+            ActionStandin action = new ActionStandin(anAction, aCommand);
+            inputMap.put(aKeyStroke, action);
+            if (actionMap != null) {
+                actionMap.put(action, action);
+            }
+        }
+!!!1996674.java!!!	registerWithKeyboardManager(inout onlyIfNew : boolean) : void
+        InputMap inputMap = getInputMap(WHEN_IN_FOCUSED_WINDOW, false);
+        KeyStroke[] strokes;
+        Hashtable<KeyStroke, KeyStroke> registered =
+                (Hashtable<KeyStroke, KeyStroke>)getClientProperty
+                                (WHEN_IN_FOCUSED_WINDOW_BINDINGS);
+
+        if (inputMap != null) {
+            // Push any new KeyStrokes to the KeyboardManager.
+            strokes = inputMap.allKeys();
+            if (strokes != null) {
+                for (int counter = strokes.length - 1; counter >= 0;
+                     counter--) {
+                    if (!onlyIfNew || registered == null ||
+                        registered.get(strokes[counter]) == null) {
+                        registerWithKeyboardManager(strokes[counter]);
+                    }
+                    if (registered != null) {
+                        registered.remove(strokes[counter]);
+                    }
+                }
+            }
+        }
+        else {
+            strokes = null;
+        }
+        // Remove any old ones.
+        if (registered != null && registered.size() > 0) {
+            Enumeration<KeyStroke> keys = registered.keys();
+
+            while (keys.hasMoreElements()) {
+                KeyStroke ks = keys.nextElement();
+                unregisterWithKeyboardManager(ks);
+            }
+            registered.clear();
+        }
+        // Updated the registered Hashtable.
+        if (strokes != null && strokes.length > 0) {
+            if (registered == null) {
+                registered = new Hashtable<KeyStroke, KeyStroke>(strokes.length);
+                putClientProperty(WHEN_IN_FOCUSED_WINDOW_BINDINGS, registered);
+            }
+            for (int counter = strokes.length - 1; counter >= 0; counter--) {
+                registered.put(strokes[counter], strokes[counter]);
+            }
+        }
+        else {
+            putClientProperty(WHEN_IN_FOCUSED_WINDOW_BINDINGS, null);
+        }
+!!!1996802.java!!!	unregisterWithKeyboardManager() : void
+        Hashtable<KeyStroke, KeyStroke> registered =
+                (Hashtable<KeyStroke, KeyStroke>)getClientProperty
+                                (WHEN_IN_FOCUSED_WINDOW_BINDINGS);
+
+        if (registered != null && registered.size() > 0) {
+            Enumeration<KeyStroke> keys = registered.keys();
+
+            while (keys.hasMoreElements()) {
+                KeyStroke ks = keys.nextElement();
+                unregisterWithKeyboardManager(ks);
+            }
+        }
+        putClientProperty(WHEN_IN_FOCUSED_WINDOW_BINDINGS, null);
+!!!1996930.java!!!	componentInputMapChanged(inout inputMap : ComponentInputMap) : void
+        InputMap km = getInputMap(WHEN_IN_FOCUSED_WINDOW, false);
+
+        while (km != inputMap && km != null) {
+            km = km.getParent();
+        }
+        if (km != null) {
+            registerWithKeyboardManager(false);
+        }
+!!!1997058.java!!!	registerWithKeyboardManager(inout aKeyStroke : KeyStroke) : void
+        KeyboardManager.getCurrentManager().registerKeyStroke(aKeyStroke,this);
+!!!1997186.java!!!	unregisterWithKeyboardManager(inout aKeyStroke : KeyStroke) : void
+        KeyboardManager.getCurrentManager().unregisterKeyStroke(aKeyStroke,
+                                                                this);
+!!!1997314.java!!!	registerKeyboardAction(inout anAction : ActionListener, inout aKeyStroke : KeyStroke, in aCondition : int) : void
+        registerKeyboardAction(anAction,null,aKeyStroke,aCondition);
+!!!1997442.java!!!	unregisterKeyboardAction(inout aKeyStroke : KeyStroke) : void
+        ActionMap am = getActionMap(false);
+        for (int counter = 0; counter < 3; counter++) {
+            InputMap km = getInputMap(counter, false);
+            if (km != null) {
+                Object actionID = km.get(aKeyStroke);
+
+                if (am != null && actionID != null) {
+                    am.remove(actionID);
+                }
+                km.remove(aKeyStroke);
+            }
+        }
+!!!1997570.java!!!	getRegisteredKeyStrokes() : KeyStroke
+        int[] counts = new int[3];
+        KeyStroke[][] strokes = new KeyStroke[3][];
+
+        for (int counter = 0; counter < 3; counter++) {
+            InputMap km = getInputMap(counter, false);
+            strokes[counter] = (km != null) ? km.allKeys() : null;
+            counts[counter] = (strokes[counter] != null) ?
+                               strokes[counter].length : 0;
+        }
+        KeyStroke[] retValue = new KeyStroke[counts[0] + counts[1] +
+                                            counts[2]];
+        for (int counter = 0, last = 0; counter < 3; counter++) {
+            if (counts[counter] > 0) {
+                System.arraycopy(strokes[counter], 0, retValue, last,
+                                 counts[counter]);
+                last += counts[counter];
+            }
+        }
+        return retValue;
+!!!1997698.java!!!	getConditionForKeyStroke(inout aKeyStroke : KeyStroke) : int
+        for (int counter = 0; counter < 3; counter++) {
+            InputMap inputMap = getInputMap(counter, false);
+            if (inputMap != null && inputMap.get(aKeyStroke) != null) {
+                return counter;
+            }
+        }
+        return UNDEFINED_CONDITION;
+!!!1997826.java!!!	getActionForKeyStroke(inout aKeyStroke : KeyStroke) : ActionListener
+        ActionMap am = getActionMap(false);
+
+        if (am == null) {
+            return null;
+        }
+        for (int counter = 0; counter < 3; counter++) {
+            InputMap inputMap = getInputMap(counter, false);
+            if (inputMap != null) {
+                Object actionBinding = inputMap.get(aKeyStroke);
+
+                if (actionBinding != null) {
+                    Action action = am.get(actionBinding);
+                    if (action instanceof ActionStandin) {
+                        return ((ActionStandin)action).actionListener;
+                    }
+                    return action;
+                }
+            }
+        }
+        return null;
+!!!1997954.java!!!	resetKeyboardActions() : void
+        // Keys
+        for (int counter = 0; counter < 3; counter++) {
+            InputMap inputMap = getInputMap(counter, false);
+
+            if (inputMap != null) {
+                inputMap.clear();
+            }
+        }
+
+        // Actions
+        ActionMap am = getActionMap(false);
+
+        if (am != null) {
+            am.clear();
+        }
+!!!1998082.java!!!	setInputMap(in condition : int, inout map : InputMap) : void
+        switch (condition) {
+        case WHEN_IN_FOCUSED_WINDOW:
+            if (map != null && !(map instanceof ComponentInputMap)) {
+                throw new IllegalArgumentException("WHEN_IN_FOCUSED_WINDOW InputMaps must be of type ComponentInputMap");
+            }
+            windowInputMap = (ComponentInputMap)map;
+            setFlag(WIF_INPUTMAP_CREATED, true);
+            registerWithKeyboardManager(false);
+            break;
+        case WHEN_ANCESTOR_OF_FOCUSED_COMPONENT:
+            ancestorInputMap = map;
+            setFlag(ANCESTOR_INPUTMAP_CREATED, true);
+            break;
+        case WHEN_FOCUSED:
+            focusInputMap = map;
+            setFlag(FOCUS_INPUTMAP_CREATED, true);
+            break;
+        default:
+            throw new IllegalArgumentException("condition must be one of JComponent.WHEN_IN_FOCUSED_WINDOW, JComponent.WHEN_FOCUSED or JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT");
+        }
+!!!1998210.java!!!	getInputMap(in condition : int) : InputMap
+        return getInputMap(condition, true);
+!!!1998338.java!!!	getInputMap() : InputMap
+        return getInputMap(WHEN_FOCUSED, true);
+!!!1998466.java!!!	setActionMap(inout am : ActionMap) : void
+        actionMap = am;
+        setFlag(ACTIONMAP_CREATED, true);
+!!!1998594.java!!!	getActionMap() : ActionMap
+        return getActionMap(true);
+!!!1998722.java!!!	getInputMap(in condition : int, inout create : boolean) : InputMap
+        switch (condition) {
+        case WHEN_FOCUSED:
+            if (getFlag(FOCUS_INPUTMAP_CREATED)) {
+                return focusInputMap;
+            }
+            // Hasn't been created yet.
+            if (create) {
+                InputMap km = new InputMap();
+                setInputMap(condition, km);
+                return km;
+            }
+            break;
+        case WHEN_ANCESTOR_OF_FOCUSED_COMPONENT:
+            if (getFlag(ANCESTOR_INPUTMAP_CREATED)) {
+                return ancestorInputMap;
+            }
+            // Hasn't been created yet.
+            if (create) {
+                InputMap km = new InputMap();
+                setInputMap(condition, km);
+                return km;
+            }
+            break;
+        case WHEN_IN_FOCUSED_WINDOW:
+            if (getFlag(WIF_INPUTMAP_CREATED)) {
+                return windowInputMap;
+            }
+            // Hasn't been created yet.
+            if (create) {
+                ComponentInputMap km = new ComponentInputMap(this);
+                setInputMap(condition, km);
+                return km;
+            }
+            break;
+        default:
+            throw new IllegalArgumentException("condition must be one of JComponent.WHEN_IN_FOCUSED_WINDOW, JComponent.WHEN_FOCUSED or JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT");
+        }
+        return null;
+!!!1998850.java!!!	getActionMap(inout create : boolean) : ActionMap
+        if (getFlag(ACTIONMAP_CREATED)) {
+            return actionMap;
+        }
+        // Hasn't been created.
+        if (create) {
+            ActionMap am = new ActionMap();
+            setActionMap(am);
+            return am;
+        }
+        return null;
+!!!1998978.java!!!	getBaseline(in width : int, in height : int) : int
+        // check size.
+        super.getBaseline(width, height);
+        if (ui != null) {
+            return ui.getBaseline(this, width, height);
+        }
+        return -1;
+!!!1999106.java!!!	getBaselineResizeBehavior() : Component::BaselineResizeBehavior
+        if (ui != null) {
+            return ui.getBaselineResizeBehavior(this);
+        }
+        return BaselineResizeBehavior.OTHER;
+!!!1999234.java!!!	requestDefaultFocus() : boolean
+        Container nearestRoot =
+            (isFocusCycleRoot()) ? this : getFocusCycleRootAncestor();
+        if (nearestRoot == null) {
+            return false;
+        }
+        Component comp = nearestRoot.getFocusTraversalPolicy().
+            getDefaultComponent(nearestRoot);
+        if (comp != null) {
+            comp.requestFocus();
+            return true;
+        } else {
+            return false;
+        }
+!!!1999362.java!!!	setVisible(inout aFlag : boolean) : void
+        if (aFlag != isVisible()) {
+            super.setVisible(aFlag);
+            if (aFlag) {
+                Container parent = getParent();
+                if (parent != null) {
+                    Rectangle r = getBounds();
+                    parent.repaint(r.x, r.y, r.width, r.height);
+                }
+                revalidate();
+            }
+        }
+!!!1999490.java!!!	setEnabled(inout enabled : boolean) : void
+        boolean oldEnabled = isEnabled();
+        super.setEnabled(enabled);
+        firePropertyChange("enabled", oldEnabled, enabled);
+        if (enabled != oldEnabled) {
+            repaint();
+        }
+!!!1999618.java!!!	setForeground(inout fg : Color) : void
+        Color oldFg = getForeground();
+        super.setForeground(fg);
+        if ((oldFg != null) ? !oldFg.equals(fg) : ((fg != null) && !fg.equals(oldFg))) {
+            // foreground already bound in AWT1.2
+            repaint();
+        }
+!!!1999746.java!!!	setBackground(inout bg : Color) : void
+        Color oldBg = getBackground();
+        super.setBackground(bg);
+        if ((oldBg != null) ? !oldBg.equals(bg) : ((bg != null) && !bg.equals(oldBg))) {
+            // background already bound in AWT1.2
+            repaint();
+        }
+!!!1999874.java!!!	setFont(inout font : Font) : void
+        Font oldFont = getFont();
+        super.setFont(font);
+        // font already bound in AWT1.2
+        if (font != oldFont) {
+            revalidate();
+            repaint();
+        }
+!!!2000002.java!!!	getDefaultLocale() : Locale
+        Locale l = (Locale) SwingUtilities.appContextGet(defaultLocale);
+        if( l == null ) {
+            //REMIND(bcb) choosing the default value is more complicated
+            //than this.
+            l = Locale.getDefault();
+            JComponent.setDefaultLocale( l );
+        }
+        return l;
+!!!2000130.java!!!	setDefaultLocale(inout l : Locale) : void
+        SwingUtilities.appContextPut(defaultLocale, l);
+!!!2000386.java!!!	processKeyEvent(inout e : KeyEvent) : void
+      boolean result;
+      boolean shouldProcessKey;
+
+      // This gives the key event listeners a crack at the event
+      super.processKeyEvent(e);
+
+      // give the component itself a crack at the event
+      if (! e.isConsumed()) {
+          processComponentKeyEvent(e);
+      }
+
+      shouldProcessKey = KeyboardState.shouldProcess(e);
+
+      if(e.isConsumed()) {
+        return;
+      }
+
+      if (shouldProcessKey && processKeyBindings(e, e.getID() ==
+                                                 KeyEvent.KEY_PRESSED)) {
+          e.consume();
+      }
+!!!2000514.java!!!	processKeyBinding(inout ks : KeyStroke, inout e : KeyEvent, in condition : int, inout pressed : boolean) : boolean
+        InputMap map = getInputMap(condition, false);
+        ActionMap am = getActionMap(false);
+
+        if(map != null && am != null && isEnabled()) {
+            Object binding = map.get(ks);
+            Action action = (binding == null) ? null : am.get(binding);
+            if (action != null) {
+                return SwingUtilities.notifyAction(action, ks, e, this,
+                                                   e.getModifiers());
+            }
+        }
+        return false;
+!!!2000642.java!!!	processKeyBindings(inout e : KeyEvent, inout pressed : boolean) : boolean
+      if (!SwingUtilities.isValidKeyEventForKeyBindings(e)) {
+          return false;
+      }
+      // Get the KeyStroke
+      // There may be two keystrokes associated with a low-level key event;
+      // in this case a keystroke made of an extended key code has a priority.
+      KeyStroke ks;
+      KeyStroke ksE = null;
+
+      if (e.getID() == KeyEvent.KEY_TYPED) {
+          ks = KeyStroke.getKeyStroke(e.getKeyChar());
+      }
+      else {
+          ks = KeyStroke.getKeyStroke(e.getKeyCode(),e.getModifiers(),
+                                    (pressed ? false:true));
+          if (e.getKeyCode() != e.getExtendedKeyCode()) {
+              ksE = KeyStroke.getKeyStroke(e.getExtendedKeyCode(),e.getModifiers(),
+                                    (pressed ? false:true));
+          }
+      }
+
+      // Do we have a key binding for e?
+      // If we have a binding by an extended code, use it.
+      // If not, check for regular code binding.
+      if(ksE != null && processKeyBinding(ksE, e, WHEN_FOCUSED, pressed)) {
+          return true;
+      }
+      if(processKeyBinding(ks, e, WHEN_FOCUSED, pressed))
+          return true;
+
+      /* We have no key binding. Let's try the path from our parent to the
+       * window excluded. We store the path components so we can avoid
+       * asking the same component twice.
+       */
+      Container parent = this;
+      while (parent != null && !(parent instanceof Window) &&
+             !(parent instanceof Applet)) {
+          if(parent instanceof JComponent) {
+              if(ksE != null && ((JComponent)parent).processKeyBinding(ksE, e,
+                               WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, pressed))
+                  return true;
+              if(((JComponent)parent).processKeyBinding(ks, e,
+                               WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, pressed))
+                  return true;
+          }
+          // This is done so that the children of a JInternalFrame are
+          // given precedence for WHEN_IN_FOCUSED_WINDOW bindings before
+          // other components WHEN_IN_FOCUSED_WINDOW bindings. This also gives
+          // more precedence to the WHEN_IN_FOCUSED_WINDOW bindings of the
+          // JInternalFrame's children vs the
+          // WHEN_ANCESTOR_OF_FOCUSED_COMPONENT bindings of the parents.
+          // maybe generalize from JInternalFrame (like isFocusCycleRoot).
+          if ((parent instanceof JInternalFrame) &&
+              JComponent.processKeyBindingsForAllComponents(e,parent,pressed)){
+              return true;
+          }
+          parent = parent.getParent();
+      }
+
+      /* No components between the focused component and the window is
+       * actually interested by the key event. Let's try the other
+       * JComponent in this window.
+       */
+      if(parent != null) {
+        return JComponent.processKeyBindingsForAllComponents(e,parent,pressed);
+      }
+      return false;
+!!!2000770.java!!!	processKeyBindingsForAllComponents(inout e : KeyEvent, inout container : Container, inout pressed : boolean) : boolean
+        while (true) {
+            if (KeyboardManager.getCurrentManager().fireKeyboardAction(
+                                e, pressed, container)) {
+                return true;
+            }
+            if (container instanceof Popup.HeavyWeightWindow) {
+                container = ((Window)container).getOwner();
+            }
+            else {
+                return false;
+            }
+        }
+!!!2000898.java!!!	setToolTipText(inout text : String) : void
+        String oldText = getToolTipText();
+        putClientProperty(TOOL_TIP_TEXT_KEY, text);
+        ToolTipManager toolTipManager = ToolTipManager.sharedInstance();
+        if (text != null) {
+            if (oldText == null) {
+                toolTipManager.registerComponent(this);
+            }
+        } else {
+            toolTipManager.unregisterComponent(this);
+        }
+!!!2001026.java!!!	getToolTipText() : String
+        return (String)getClientProperty(TOOL_TIP_TEXT_KEY);
+!!!2001154.java!!!	getToolTipText(inout event : MouseEvent) : String
+        return getToolTipText();
+!!!2001282.java!!!	getToolTipLocation(inout event : MouseEvent) : Point
+        return null;
+!!!2001410.java!!!	getPopupLocation(inout event : MouseEvent) : Point
+        return null;
+!!!2001538.java!!!	createToolTip() : JToolTip
+        JToolTip tip = new JToolTip();
+        tip.setComponent(this);
+        return tip;
+!!!2001666.java!!!	scrollRectToVisible(inout aRect : Rectangle) : void
+        Container parent;
+        int dx = getX(), dy = getY();
+
+        for (parent = getParent();
+                 !(parent == null) &&
+                 !(parent instanceof JComponent) &&
+                 !(parent instanceof CellRendererPane);
+             parent = parent.getParent()) {
+             Rectangle bounds = parent.getBounds();
+
+             dx += bounds.x;
+             dy += bounds.y;
+        }
+
+        if (!(parent == null) && !(parent instanceof CellRendererPane)) {
+            aRect.x += dx;
+            aRect.y += dy;
+
+            ((JComponent)parent).scrollRectToVisible(aRect);
+            aRect.x -= dx;
+            aRect.y -= dy;
+        }
+!!!2001794.java!!!	setAutoscrolls(inout autoscrolls : boolean) : void
+        setFlag(AUTOSCROLLS_SET, true);
+        if (this.autoscrolls != autoscrolls) {
+            this.autoscrolls = autoscrolls;
+            if (autoscrolls) {
+                enableEvents(AWTEvent.MOUSE_EVENT_MASK);
+                enableEvents(AWTEvent.MOUSE_MOTION_EVENT_MASK);
+            }
+            else {
+                Autoscroller.stop(this);
+            }
+        }
+!!!2001922.java!!!	getAutoscrolls() : boolean
+        return autoscrolls;
+!!!2002050.java!!!	setTransferHandler(inout newHandler : TransferHandler) : void
+        TransferHandler oldHandler = (TransferHandler)getClientProperty(
+                                      JComponent_TRANSFER_HANDLER);
+        putClientProperty(JComponent_TRANSFER_HANDLER, newHandler);
+
+        SwingUtilities.installSwingDropTargetAsNecessary(this, newHandler);
+        firePropertyChange("transferHandler", oldHandler, newHandler);
+!!!2002178.java!!!	getTransferHandler() : TransferHandler
+        return (TransferHandler)getClientProperty(JComponent_TRANSFER_HANDLER);
+!!!2002306.java!!!	dropLocationForPoint(inout p : Point) : TransferHandler::DropLocation
+        return null;
+!!!2002434.java!!!	setDropLocation(inout location : TransferHandler::DropLocation, inout state : Object, inout forDrop : boolean) : Object
+
+        return null;
+!!!2002690.java!!!	processMouseEvent(inout e : MouseEvent) : void
+        if (autoscrolls && e.getID() == MouseEvent.MOUSE_RELEASED) {
+            Autoscroller.stop(this);
+        }
+        super.processMouseEvent(e);
+!!!2002818.java!!!	processMouseMotionEvent(inout e : MouseEvent) : void
+        boolean dispatch = true;
+        if (autoscrolls && e.getID() == MouseEvent.MOUSE_DRAGGED) {
+            // We don't want to do the drags when the mouse moves if we're
+            // autoscrolling.  It makes it feel spastic.
+            dispatch = !Autoscroller.isRunning(this);
+            Autoscroller.processMouseDragged(e);
+        }
+        if (dispatch) {
+            super.processMouseMotionEvent(e);
+        }
+!!!2002946.java!!!	superProcessMouseMotionEvent(inout e : MouseEvent) : void
+        super.processMouseMotionEvent(e);
+!!!2003074.java!!!	setCreatedDoubleBuffer(inout newValue : boolean) : void
+        setFlag(CREATED_DOUBLE_BUFFER, newValue);
+!!!2003202.java!!!	getCreatedDoubleBuffer() : boolean
+        return getFlag(CREATED_DOUBLE_BUFFER);
+!!!2006274.java!!!	enable() : void
+        if (isEnabled() != true) {
+            super.enable();
+            if (accessibleContext != null) {
+                accessibleContext.firePropertyChange(
+                    AccessibleContext.ACCESSIBLE_STATE_PROPERTY,
+                    null, AccessibleState.ENABLED);
+            }
+        }
+!!!2006402.java!!!	disable() : void
+        if (isEnabled() != false) {
+            super.disable();
+            if (accessibleContext != null) {
+                accessibleContext.firePropertyChange(
+                    AccessibleContext.ACCESSIBLE_STATE_PROPERTY,
+                    AccessibleState.ENABLED, null);
+            }
+        }

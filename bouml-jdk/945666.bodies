@@ -1,0 +1,814 @@
+class MethodHandleImpl
+!!!7243650.java!!!	initStatics() : void
+        // Trigger selected static initializations.
+        MemberName.Factory.INSTANCE.getClass();
+!!!7243778.java!!!	makeArrayElementAccessor(inout arrayClass : Class, inout isSetter : boolean) : MethodHandle
+        if (arrayClass == Object[].class)
+            return (isSetter ? ArrayAccessor.OBJECT_ARRAY_SETTER : ArrayAccessor.OBJECT_ARRAY_GETTER);
+        if (!arrayClass.isArray())
+            throw newIllegalArgumentException("not an array: "+arrayClass);
+        MethodHandle[] cache = ArrayAccessor.TYPED_ACCESSORS.get(arrayClass);
+        int cacheIndex = (isSetter ? ArrayAccessor.SETTER_INDEX : ArrayAccessor.GETTER_INDEX);
+        MethodHandle mh = cache[cacheIndex];
+        if (mh != null)  return mh;
+        mh = ArrayAccessor.getAccessor(arrayClass, isSetter);
+        MethodType correctType = ArrayAccessor.correctType(arrayClass, isSetter);
+        if (mh.type() != correctType) {
+            assert(mh.type().parameterType(0) == Object[].class);
+            assert((isSetter ? mh.type().parameterType(2) : mh.type().returnType()) == Object.class);
+            assert(isSetter || correctType.parameterType(0).getComponentType() == correctType.returnType());
+            // safe to view non-strictly, because element type follows from array type
+            mh = mh.viewAsType(correctType, false);
+        }
+        mh = makeIntrinsic(mh, (isSetter ? Intrinsic.ARRAY_STORE : Intrinsic.ARRAY_LOAD));
+        // Atomically update accessor cache.
+        synchronized(cache) {
+            if (cache[cacheIndex] == null) {
+                cache[cacheIndex] = mh;
+            } else {
+                // Throw away newly constructed accessor and use cached version.
+                mh = cache[cacheIndex];
+            }
+        }
+        return mh;
+!!!7246722.java!!!	makePairwiseConvert(inout target : MethodHandle, inout srcType : MethodType, inout strict : boolean, inout monobox : boolean) : MethodHandle
+        MethodType dstType = target.type();
+        if (srcType == dstType)
+            return target;
+        return makePairwiseConvertByEditor(target, srcType, strict, monobox);
+!!!7246850.java!!!	countNonNull(inout array : Object [[]]) : int
+        int count = 0;
+        for (Object x : array) {
+            if (x != null)  ++count;
+        }
+        return count;
+!!!7246978.java!!!	makePairwiseConvertByEditor(inout target : MethodHandle, inout srcType : MethodType, inout strict : boolean, inout monobox : boolean) : MethodHandle
+        Object[] convSpecs = computeValueConversions(srcType, target.type(), strict, monobox);
+        int convCount = countNonNull(convSpecs);
+        if (convCount == 0)
+            return target.viewAsType(srcType, strict);
+        MethodType basicSrcType = srcType.basicType();
+        MethodType midType = target.type().basicType();
+        BoundMethodHandle mh = target.rebind();
+        // FIXME: Reduce number of bindings when there is more than one Class conversion.
+        // FIXME: Reduce number of bindings when there are repeated conversions.
+        for (int i = 0; i < convSpecs.length-1; i++) {
+            Object convSpec = convSpecs[i];
+            if (convSpec == null)  continue;
+            MethodHandle fn;
+            if (convSpec instanceof Class) {
+                fn = Lazy.MH_castReference.bindTo(convSpec);
+            } else {
+                fn = (MethodHandle) convSpec;
+            }
+            Class<?> newType = basicSrcType.parameterType(i);
+            if (--convCount == 0)
+                midType = srcType;
+            else
+                midType = midType.changeParameterType(i, newType);
+            LambdaForm form2 = mh.editor().filterArgumentForm(1+i, BasicType.basicType(newType));
+            mh = mh.copyWithExtendL(midType, form2, fn);
+            mh = mh.rebind();
+        }
+        Object convSpec = convSpecs[convSpecs.length-1];
+        if (convSpec != null) {
+            MethodHandle fn;
+            if (convSpec instanceof Class) {
+                if (convSpec == void.class)
+                    fn = null;
+                else
+                    fn = Lazy.MH_castReference.bindTo(convSpec);
+            } else {
+                fn = (MethodHandle) convSpec;
+            }
+            Class<?> newType = basicSrcType.returnType();
+            assert(--convCount == 0);
+            midType = srcType;
+            if (fn != null) {
+                mh = mh.rebind();  // rebind if too complex
+                LambdaForm form2 = mh.editor().filterReturnForm(BasicType.basicType(newType), false);
+                mh = mh.copyWithExtendL(midType, form2, fn);
+            } else {
+                LambdaForm form2 = mh.editor().filterReturnForm(BasicType.basicType(newType), true);
+                mh = mh.copyWith(midType, form2);
+            }
+        }
+        assert(convCount == 0);
+        assert(mh.type().equals(srcType));
+        return mh;
+!!!7247106.java!!!	makePairwiseConvertIndirect(inout target : MethodHandle, inout srcType : MethodType, inout strict : boolean, inout monobox : boolean) : MethodHandle
+        assert(target.type().parameterCount() == srcType.parameterCount());
+        // Calculate extra arguments (temporaries) required in the names array.
+        Object[] convSpecs = computeValueConversions(srcType, target.type(), strict, monobox);
+        final int INARG_COUNT = srcType.parameterCount();
+        int convCount = countNonNull(convSpecs);
+        boolean retConv = (convSpecs[INARG_COUNT] != null);
+        boolean retVoid = srcType.returnType() == void.class;
+        if (retConv && retVoid) {
+            convCount -= 1;
+            retConv = false;
+        }
+
+        final int IN_MH         = 0;
+        final int INARG_BASE    = 1;
+        final int INARG_LIMIT   = INARG_BASE + INARG_COUNT;
+        final int NAME_LIMIT    = INARG_LIMIT + convCount + 1;
+        final int RETURN_CONV   = (!retConv ? -1         : NAME_LIMIT - 1);
+        final int OUT_CALL      = (!retConv ? NAME_LIMIT : RETURN_CONV) - 1;
+        final int RESULT        = (retVoid ? -1 : NAME_LIMIT - 1);
+
+        // Now build a LambdaForm.
+        MethodType lambdaType = srcType.basicType().invokerType();
+        Name[] names = arguments(NAME_LIMIT - INARG_LIMIT, lambdaType);
+
+        // Collect the arguments to the outgoing call, maybe with conversions:
+        final int OUTARG_BASE = 0;  // target MH is Name.function, name Name.arguments[0]
+        Object[] outArgs = new Object[OUTARG_BASE + INARG_COUNT];
+
+        int nameCursor = INARG_LIMIT;
+        for (int i = 0; i < INARG_COUNT; i++) {
+            Object convSpec = convSpecs[i];
+            if (convSpec == null) {
+                // do nothing: difference is trivial
+                outArgs[OUTARG_BASE + i] = names[INARG_BASE + i];
+                continue;
+            }
+
+            Name conv;
+            if (convSpec instanceof Class) {
+                Class<?> convClass = (Class<?>) convSpec;
+                conv = new Name(Lazy.MH_castReference, convClass, names[INARG_BASE + i]);
+            } else {
+                MethodHandle fn = (MethodHandle) convSpec;
+                conv = new Name(fn, names[INARG_BASE + i]);
+            }
+            assert(names[nameCursor] == null);
+            names[nameCursor++] = conv;
+            assert(outArgs[OUTARG_BASE + i] == null);
+            outArgs[OUTARG_BASE + i] = conv;
+        }
+
+        // Build argument array for the call.
+        assert(nameCursor == OUT_CALL);
+        names[OUT_CALL] = new Name(target, outArgs);
+
+        Object convSpec = convSpecs[INARG_COUNT];
+        if (!retConv) {
+            assert(OUT_CALL == names.length-1);
+        } else {
+            Name conv;
+            if (convSpec == void.class) {
+                conv = new Name(LambdaForm.constantZero(BasicType.basicType(srcType.returnType())));
+            } else if (convSpec instanceof Class) {
+                Class<?> convClass = (Class<?>) convSpec;
+                conv = new Name(Lazy.MH_castReference, convClass, names[OUT_CALL]);
+            } else {
+                MethodHandle fn = (MethodHandle) convSpec;
+                if (fn.type().parameterCount() == 0)
+                    conv = new Name(fn);  // don't pass retval to void conversion
+                else
+                    conv = new Name(fn, names[OUT_CALL]);
+            }
+            assert(names[RETURN_CONV] == null);
+            names[RETURN_CONV] = conv;
+            assert(RETURN_CONV == names.length-1);
+        }
+
+        LambdaForm form = new LambdaForm("convert", lambdaType.parameterCount(), names, RESULT);
+        return SimpleMethodHandle.make(srcType, form);
+!!!7247234.java!!!	castReference(inout t : Class, inout x : U) : T
+        // inlined Class.cast because we can't ForceInline it
+        if (x != null && !t.isInstance(x))
+            throw newClassCastException(t, x);
+        return (T) x;
+!!!7247362.java!!!	newClassCastException(inout t : Class, inout obj : Object) : ClassCastException
+        return new ClassCastException("Cannot cast " + obj.getClass().getName() + " to " + t.getName());
+!!!7247490.java!!!	computeValueConversions(inout srcType : MethodType, inout dstType : MethodType, inout strict : boolean, inout monobox : boolean) : Object
+        final int INARG_COUNT = srcType.parameterCount();
+        Object[] convSpecs = new Object[INARG_COUNT+1];
+        for (int i = 0; i <= INARG_COUNT; i++) {
+            boolean isRet = (i == INARG_COUNT);
+            Class<?> src = isRet ? dstType.returnType() : srcType.parameterType(i);
+            Class<?> dst = isRet ? srcType.returnType() : dstType.parameterType(i);
+            if (!VerifyType.isNullConversion(src, dst, /*keepInterfaces=*/ strict)) {
+                convSpecs[i] = valueConversion(src, dst, strict, monobox);
+            }
+        }
+        return convSpecs;
+!!!7247618.java!!!	makePairwiseConvert(inout target : MethodHandle, inout srcType : MethodType, inout strict : boolean) : MethodHandle
+        return makePairwiseConvert(target, srcType, strict, /*monobox=*/ false);
+!!!7247746.java!!!	valueConversion(inout src : Class, inout dst : Class, inout strict : boolean, inout monobox : boolean) : Object
+        assert(!VerifyType.isNullConversion(src, dst, /*keepInterfaces=*/ strict));  // caller responsibility
+        if (dst == void.class)
+            return dst;
+        MethodHandle fn;
+        if (src.isPrimitive()) {
+            if (src == void.class) {
+                return void.class;  // caller must recognize this specially
+            } else if (dst.isPrimitive()) {
+                // Examples: int->byte, byte->int, boolean->int (!strict)
+                fn = ValueConversions.convertPrimitive(src, dst);
+            } else {
+                // Examples: int->Integer, boolean->Object, float->Number
+                Wrapper wsrc = Wrapper.forPrimitiveType(src);
+                fn = ValueConversions.boxExact(wsrc);
+                assert(fn.type().parameterType(0) == wsrc.primitiveType());
+                assert(fn.type().returnType() == wsrc.wrapperType());
+                if (!VerifyType.isNullConversion(wsrc.wrapperType(), dst, strict)) {
+                    // Corner case, such as int->Long, which will probably fail.
+                    MethodType mt = MethodType.methodType(dst, src);
+                    if (strict)
+                        fn = fn.asType(mt);
+                    else
+                        fn = MethodHandleImpl.makePairwiseConvert(fn, mt, /*strict=*/ false);
+                }
+            }
+        } else if (dst.isPrimitive()) {
+            Wrapper wdst = Wrapper.forPrimitiveType(dst);
+            if (monobox || src == wdst.wrapperType()) {
+                // Use a strongly-typed unboxer, if possible.
+                fn = ValueConversions.unboxExact(wdst, strict);
+            } else {
+                // Examples:  Object->int, Number->int, Comparable->int, Byte->int
+                // must include additional conversions
+                // src must be examined at runtime, to detect Byte, Character, etc.
+                fn = (strict
+                        ? ValueConversions.unboxWiden(wdst)
+                        : ValueConversions.unboxCast(wdst));
+            }
+        } else {
+            // Simple reference conversion.
+            // Note:  Do not check for a class hierarchy relation
+            // between src and dst.  In all cases a 'null' argument
+            // will pass the cast conversion.
+            return dst;
+        }
+        assert(fn.type().parameterCount() <= 1) : "pc"+Arrays.asList(src.getSimpleName(), dst.getSimpleName(), fn);
+        return fn;
+!!!7247874.java!!!	makeVarargsCollector(inout target : MethodHandle, inout arrayType : Class) : MethodHandle
+        MethodType type = target.type();
+        int last = type.parameterCount() - 1;
+        if (type.parameterType(last) != arrayType)
+            target = target.asType(type.changeParameterType(last, arrayType));
+        target = target.asFixedArity();  // make sure this attribute is turned off
+        return new AsVarargsCollector(target, arrayType);
+!!!7249026.java!!!	makeSpreadArguments(inout target : MethodHandle, inout spreadArgType : Class, in spreadArgPos : int, in spreadArgCount : int) : MethodHandle
+        MethodType targetType = target.type();
+
+        for (int i = 0; i < spreadArgCount; i++) {
+            Class<?> arg = VerifyType.spreadArgElementType(spreadArgType, i);
+            if (arg == null)  arg = Object.class;
+            targetType = targetType.changeParameterType(spreadArgPos + i, arg);
+        }
+        target = target.asType(targetType);
+
+        MethodType srcType = targetType
+                .replaceParameterTypes(spreadArgPos, spreadArgPos + spreadArgCount, spreadArgType);
+        // Now build a LambdaForm.
+        MethodType lambdaType = srcType.invokerType();
+        Name[] names = arguments(spreadArgCount + 2, lambdaType);
+        int nameCursor = lambdaType.parameterCount();
+        int[] indexes = new int[targetType.parameterCount()];
+
+        for (int i = 0, argIndex = 1; i < targetType.parameterCount() + 1; i++, argIndex++) {
+            Class<?> src = lambdaType.parameterType(i);
+            if (i == spreadArgPos) {
+                // Spread the array.
+                MethodHandle aload = MethodHandles.arrayElementGetter(spreadArgType);
+                Name array = names[argIndex];
+                names[nameCursor++] = new Name(Lazy.NF_checkSpreadArgument, array, spreadArgCount);
+                for (int j = 0; j < spreadArgCount; i++, j++) {
+                    indexes[i] = nameCursor;
+                    names[nameCursor++] = new Name(aload, array, j);
+                }
+            } else if (i < indexes.length) {
+                indexes[i] = argIndex;
+            }
+        }
+        assert(nameCursor == names.length-1);  // leave room for the final call
+
+        // Build argument array for the call.
+        Name[] targetArgs = new Name[targetType.parameterCount()];
+        for (int i = 0; i < targetType.parameterCount(); i++) {
+            int idx = indexes[i];
+            targetArgs[i] = names[idx];
+        }
+        names[names.length - 1] = new Name(target, (Object[]) targetArgs);
+
+        LambdaForm form = new LambdaForm("spread", lambdaType.parameterCount(), names);
+        return SimpleMethodHandle.make(srcType, form);
+!!!7249154.java!!!	checkSpreadArgument(inout av : Object, in n : int) : void
+        if (av == null) {
+            if (n == 0)  return;
+        } else if (av instanceof Object[]) {
+            int len = ((Object[])av).length;
+            if (len == n)  return;
+        } else {
+            int len = java.lang.reflect.Array.getLength(av);
+            if (len == n)  return;
+        }
+        // fall through to error:
+        throw newIllegalArgumentException("array is not of length "+n);
+!!!7249282.java!!!	makeCollectArguments(inout target : MethodHandle, inout collector : MethodHandle, in collectArgPos : int, inout retainOriginalArgs : boolean) : MethodHandle
+        MethodType targetType = target.type();          // (a..., c, [b...])=>r
+        MethodType collectorType = collector.type();    // (b...)=>c
+        int collectArgCount = collectorType.parameterCount();
+        Class<?> collectValType = collectorType.returnType();
+        int collectValCount = (collectValType == void.class ? 0 : 1);
+        MethodType srcType = targetType                 // (a..., [b...])=>r
+                .dropParameterTypes(collectArgPos, collectArgPos+collectValCount);
+        if (!retainOriginalArgs) {                      // (a..., b...)=>r
+            srcType = srcType.insertParameterTypes(collectArgPos, collectorType.parameterList());
+        }
+        // in  arglist: [0: ...keep1 | cpos: collect...  | cpos+cacount: keep2... ]
+        // out arglist: [0: ...keep1 | cpos: collectVal? | cpos+cvcount: keep2... ]
+        // out(retain): [0: ...keep1 | cpos: cV? coll... | cpos+cvc+cac: keep2... ]
+
+        // Now build a LambdaForm.
+        MethodType lambdaType = srcType.invokerType();
+        Name[] names = arguments(2, lambdaType);
+        final int collectNamePos = names.length - 2;
+        final int targetNamePos  = names.length - 1;
+
+        Name[] collectorArgs = Arrays.copyOfRange(names, 1 + collectArgPos, 1 + collectArgPos + collectArgCount);
+        names[collectNamePos] = new Name(collector, (Object[]) collectorArgs);
+
+        // Build argument array for the target.
+        // Incoming LF args to copy are: [ (mh) headArgs collectArgs tailArgs ].
+        // Output argument array is [ headArgs (collectVal)? (collectArgs)? tailArgs ].
+        Name[] targetArgs = new Name[targetType.parameterCount()];
+        int inputArgPos  = 1;  // incoming LF args to copy to target
+        int targetArgPos = 0;  // fill pointer for targetArgs
+        int chunk = collectArgPos;  // |headArgs|
+        System.arraycopy(names, inputArgPos, targetArgs, targetArgPos, chunk);
+        inputArgPos  += chunk;
+        targetArgPos += chunk;
+        if (collectValType != void.class) {
+            targetArgs[targetArgPos++] = names[collectNamePos];
+        }
+        chunk = collectArgCount;
+        if (retainOriginalArgs) {
+            System.arraycopy(names, inputArgPos, targetArgs, targetArgPos, chunk);
+            targetArgPos += chunk;   // optionally pass on the collected chunk
+        }
+        inputArgPos += chunk;
+        chunk = targetArgs.length - targetArgPos;  // all the rest
+        System.arraycopy(names, inputArgPos, targetArgs, targetArgPos, chunk);
+        assert(inputArgPos + chunk == collectNamePos);  // use of rest of input args also
+        names[targetNamePos] = new Name(target, (Object[]) targetArgs);
+
+        LambdaForm form = new LambdaForm("collect", lambdaType.parameterCount(), names);
+        return SimpleMethodHandle.make(srcType, form);
+!!!7249410.java!!!	selectAlternative(inout testResult : boolean, inout target : MethodHandle, inout fallback : MethodHandle) : MethodHandle
+        if (testResult) {
+            return target;
+        } else {
+            return fallback;
+        }
+!!!7249538.java!!!	profileBoolean(inout result : boolean, inout counters : int [[]]) : boolean
+        // Profile is int[2] where [0] and [1] correspond to false and true occurrences respectively.
+        int idx = result ? 1 : 0;
+        try {
+            counters[idx] = Math.addExact(counters[idx], 1);
+        } catch (ArithmeticException e) {
+            // Avoid continuous overflow by halving the problematic count.
+            counters[idx] = counters[idx] / 2;
+        }
+        return result;
+!!!7249666.java!!!	makeGuardWithTest(inout test : MethodHandle, inout target : MethodHandle, inout fallback : MethodHandle) : MethodHandle
+        MethodType type = target.type();
+        assert(test.type().equals(type.changeReturnType(boolean.class)) && fallback.type().equals(type));
+        MethodType basicType = type.basicType();
+        LambdaForm form = makeGuardWithTestForm(basicType);
+        BoundMethodHandle mh;
+        try {
+            if (PROFILE_GWT) {
+                int[] counts = new int[2];
+                mh = (BoundMethodHandle)
+                        BoundMethodHandle.speciesData_LLLL().constructor().invokeBasic(type, form,
+                                (Object) test, (Object) profile(target), (Object) profile(fallback), counts);
+            } else {
+                mh = (BoundMethodHandle)
+                        BoundMethodHandle.speciesData_LLL().constructor().invokeBasic(type, form,
+                                (Object) test, (Object) profile(target), (Object) profile(fallback));
+            }
+        } catch (Throwable ex) {
+            throw uncaughtException(ex);
+        }
+        assert(mh.type() == type);
+        return mh;
+!!!7249794.java!!!	profile(inout target : MethodHandle) : MethodHandle
+        if (DONT_INLINE_THRESHOLD >= 0) {
+            return makeBlockInlningWrapper(target);
+        } else {
+            return target;
+        }
+!!!7249922.java!!!	makeBlockInlningWrapper(inout target : MethodHandle) : MethodHandle
+        LambdaForm lform = PRODUCE_BLOCK_INLINING_FORM.apply(target);
+        return new CountingWrapper(target, lform,
+                PRODUCE_BLOCK_INLINING_FORM, PRODUCE_REINVOKER_FORM,
+                                   DONT_INLINE_THRESHOLD);
+!!!7250690.java!!!	makeGuardWithTestForm(inout basicType : MethodType) : LambdaForm
+        LambdaForm lform = basicType.form().cachedLambdaForm(MethodTypeForm.LF_GWT);
+        if (lform != null)  return lform;
+        final int THIS_MH      = 0;  // the BMH_LLL
+        final int ARG_BASE     = 1;  // start of incoming arguments
+        final int ARG_LIMIT    = ARG_BASE + basicType.parameterCount();
+        int nameCursor = ARG_LIMIT;
+        final int GET_TEST     = nameCursor++;
+        final int GET_TARGET   = nameCursor++;
+        final int GET_FALLBACK = nameCursor++;
+        final int GET_COUNTERS = PROFILE_GWT ? nameCursor++ : -1;
+        final int CALL_TEST    = nameCursor++;
+        final int PROFILE      = (GET_COUNTERS != -1) ? nameCursor++ : -1;
+        final int TEST         = nameCursor-1; // previous statement: either PROFILE or CALL_TEST
+        final int SELECT_ALT   = nameCursor++;
+        final int CALL_TARGET  = nameCursor++;
+        assert(CALL_TARGET == SELECT_ALT+1);  // must be true to trigger IBG.emitSelectAlternative
+
+        MethodType lambdaType = basicType.invokerType();
+        Name[] names = arguments(nameCursor - ARG_LIMIT, lambdaType);
+
+        BoundMethodHandle.SpeciesData data =
+                (GET_COUNTERS != -1) ? BoundMethodHandle.speciesData_LLLL()
+                                     : BoundMethodHandle.speciesData_LLL();
+        names[THIS_MH] = names[THIS_MH].withConstraint(data);
+        names[GET_TEST]     = new Name(data.getterFunction(0), names[THIS_MH]);
+        names[GET_TARGET]   = new Name(data.getterFunction(1), names[THIS_MH]);
+        names[GET_FALLBACK] = new Name(data.getterFunction(2), names[THIS_MH]);
+        if (GET_COUNTERS != -1) {
+            names[GET_COUNTERS] = new Name(data.getterFunction(3), names[THIS_MH]);
+        }
+        Object[] invokeArgs = Arrays.copyOfRange(names, 0, ARG_LIMIT, Object[].class);
+
+        // call test
+        MethodType testType = basicType.changeReturnType(boolean.class).basicType();
+        invokeArgs[0] = names[GET_TEST];
+        names[CALL_TEST] = new Name(testType, invokeArgs);
+
+        // profile branch
+        if (PROFILE != -1) {
+            names[PROFILE] = new Name(Lazy.NF_profileBoolean, names[CALL_TEST], names[GET_COUNTERS]);
+        }
+        // call selectAlternative
+        names[SELECT_ALT] = new Name(Lazy.MH_selectAlternative, names[TEST], names[GET_TARGET], names[GET_FALLBACK]);
+
+        // call target or fallback
+        invokeArgs[0] = names[SELECT_ALT];
+        names[CALL_TARGET] = new Name(basicType, invokeArgs);
+
+        lform = new LambdaForm("guard", lambdaType.parameterCount(), names, /*forceInline=*/true);
+
+        return basicType.form().setCachedLambdaForm(MethodTypeForm.LF_GWT, lform);
+!!!7250818.java!!!	makeGuardWithCatchForm(inout basicType : MethodType) : LambdaForm
+        MethodType lambdaType = basicType.invokerType();
+
+        LambdaForm lform = basicType.form().cachedLambdaForm(MethodTypeForm.LF_GWC);
+        if (lform != null) {
+            return lform;
+        }
+        final int THIS_MH      = 0;  // the BMH_LLLLL
+        final int ARG_BASE     = 1;  // start of incoming arguments
+        final int ARG_LIMIT    = ARG_BASE + basicType.parameterCount();
+
+        int nameCursor = ARG_LIMIT;
+        final int GET_TARGET       = nameCursor++;
+        final int GET_CLASS        = nameCursor++;
+        final int GET_CATCHER      = nameCursor++;
+        final int GET_COLLECT_ARGS = nameCursor++;
+        final int GET_UNBOX_RESULT = nameCursor++;
+        final int BOXED_ARGS       = nameCursor++;
+        final int TRY_CATCH        = nameCursor++;
+        final int UNBOX_RESULT     = nameCursor++;
+
+        Name[] names = arguments(nameCursor - ARG_LIMIT, lambdaType);
+
+        BoundMethodHandle.SpeciesData data = BoundMethodHandle.speciesData_LLLLL();
+        names[THIS_MH]          = names[THIS_MH].withConstraint(data);
+        names[GET_TARGET]       = new Name(data.getterFunction(0), names[THIS_MH]);
+        names[GET_CLASS]        = new Name(data.getterFunction(1), names[THIS_MH]);
+        names[GET_CATCHER]      = new Name(data.getterFunction(2), names[THIS_MH]);
+        names[GET_COLLECT_ARGS] = new Name(data.getterFunction(3), names[THIS_MH]);
+        names[GET_UNBOX_RESULT] = new Name(data.getterFunction(4), names[THIS_MH]);
+
+        // FIXME: rework argument boxing/result unboxing logic for LF interpretation
+
+        // t_{i}:L=MethodHandle.invokeBasic(collectArgs:L,a1:L,...);
+        MethodType collectArgsType = basicType.changeReturnType(Object.class);
+        MethodHandle invokeBasic = MethodHandles.basicInvoker(collectArgsType);
+        Object[] args = new Object[invokeBasic.type().parameterCount()];
+        args[0] = names[GET_COLLECT_ARGS];
+        System.arraycopy(names, ARG_BASE, args, 1, ARG_LIMIT-ARG_BASE);
+        names[BOXED_ARGS] = new Name(makeIntrinsic(invokeBasic, Intrinsic.GUARD_WITH_CATCH), args);
+
+        // t_{i+1}:L=MethodHandleImpl.guardWithCatch(target:L,exType:L,catcher:L,t_{i}:L);
+        Object[] gwcArgs = new Object[] {names[GET_TARGET], names[GET_CLASS], names[GET_CATCHER], names[BOXED_ARGS]};
+        names[TRY_CATCH] = new Name(Lazy.NF_guardWithCatch, gwcArgs);
+
+        // t_{i+2}:I=MethodHandle.invokeBasic(unbox:L,t_{i+1}:L);
+        MethodHandle invokeBasicUnbox = MethodHandles.basicInvoker(MethodType.methodType(basicType.rtype(), Object.class));
+        Object[] unboxArgs  = new Object[] {names[GET_UNBOX_RESULT], names[TRY_CATCH]};
+        names[UNBOX_RESULT] = new Name(invokeBasicUnbox, unboxArgs);
+
+        lform = new LambdaForm("guardWithCatch", lambdaType.parameterCount(), names);
+
+        return basicType.form().setCachedLambdaForm(MethodTypeForm.LF_GWC, lform);
+!!!7250946.java!!!	makeGuardWithCatch(inout target : MethodHandle, inout exType : Class, inout catcher : MethodHandle) : MethodHandle
+        MethodType type = target.type();
+        LambdaForm form = makeGuardWithCatchForm(type.basicType());
+
+        // Prepare auxiliary method handles used during LambdaForm interpreation.
+        // Box arguments and wrap them into Object[]: ValueConversions.array().
+        MethodType varargsType = type.changeReturnType(Object[].class);
+        MethodHandle collectArgs = varargsArray(type.parameterCount()).asType(varargsType);
+        // Result unboxing: ValueConversions.unbox() OR ValueConversions.identity() OR ValueConversions.ignore().
+        MethodHandle unboxResult;
+        Class<?> rtype = type.returnType();
+        if (rtype.isPrimitive()) {
+            if (rtype == void.class) {
+                unboxResult = ValueConversions.ignore();
+            } else {
+                Wrapper w = Wrapper.forPrimitiveType(type.returnType());
+                unboxResult = ValueConversions.unboxExact(w);
+            }
+        } else {
+            unboxResult = MethodHandles.identity(Object.class);
+        }
+
+        BoundMethodHandle.SpeciesData data = BoundMethodHandle.speciesData_LLLLL();
+        BoundMethodHandle mh;
+        try {
+            mh = (BoundMethodHandle)
+                    data.constructor().invokeBasic(type, form, (Object) target, (Object) exType, (Object) catcher,
+                                                   (Object) collectArgs, (Object) unboxResult);
+        } catch (Throwable ex) {
+            throw uncaughtException(ex);
+        }
+        assert(mh.type() == type);
+        return mh;
+!!!7251074.java!!!	guardWithCatch(inout target : MethodHandle, inout exType : Class, inout catcher : MethodHandle, inout  : Object...av) : Object
+        // Use asFixedArity() to avoid unnecessary boxing of last argument for VarargsCollector case.
+        try {
+            return target.asFixedArity().invokeWithArguments(av);
+        } catch (Throwable t) {
+            if (!exType.isInstance(t)) throw t;
+            return catcher.asFixedArity().invokeWithArguments(prepend(t, av));
+        }
+!!!7251202.java!!!	prepend(inout elem : Object, inout array : Object [[]]) : Object
+        Object[] newArray = new Object[array.length+1];
+        newArray[0] = elem;
+        System.arraycopy(array, 0, newArray, 1, array.length);
+        return newArray;
+!!!7251330.java!!!	throwException(inout type : MethodType) : MethodHandle
+        assert(Throwable.class.isAssignableFrom(type.parameterType(0)));
+        int arity = type.parameterCount();
+        if (arity > 1) {
+            MethodHandle mh = throwException(type.dropParameterTypes(1, arity));
+            mh = MethodHandles.dropArguments(mh, 1, type.parameterList().subList(1, arity));
+            return mh;
+        }
+        return makePairwiseConvert(Lazy.NF_throwException.resolvedHandle(), type, false, true);
+!!!7251458.java!!!	throwException(inout t : T) : Empty
+ throw t;
+!!!7251586.java!!!	fakeMethodHandleInvoke(inout method : MemberName) : MethodHandle
+        int idx;
+        assert(method.isMethodHandleInvoke());
+        switch (method.getName()) {
+        case "invoke":       idx = 0; break;
+        case "invokeExact":  idx = 1; break;
+        default:             throw new InternalError(method.getName());
+        }
+        MethodHandle mh = FAKE_METHOD_HANDLE_INVOKE[idx];
+        if (mh != null)  return mh;
+        MethodType type = MethodType.methodType(Object.class, UnsupportedOperationException.class,
+                                                MethodHandle.class, Object[].class);
+        mh = throwException(type);
+        mh = mh.bindTo(new UnsupportedOperationException("cannot reflectively invoke MethodHandle"));
+        if (!method.getInvocationType().equals(mh.type()))
+            throw new InternalError(method.toString());
+        mh = mh.withInternalMemberName(method, false);
+        mh = mh.asVarargsCollector(Object[].class);
+        assert(method.isVarargs());
+        FAKE_METHOD_HANDLE_INVOKE[idx] = mh;
+        return mh;
+!!!7251714.java!!!	bindCaller(inout mh : MethodHandle, inout hostClass : Class) : MethodHandle
+        return BindCaller.bindCaller(mh, hostClass);
+!!!7253506.java!!!	makeWrappedMember(inout target : MethodHandle, inout member : MemberName, inout isInvokeSpecial : boolean) : MethodHandle
+        if (member.equals(target.internalMemberName()) && isInvokeSpecial == target.isInvokeSpecial())
+            return target;
+        return new WrappedMember(target, target.type(), member, isInvokeSpecial, null);
+!!!7254402.java!!!	makeIntrinsic(inout target : MethodHandle, inout intrinsicName : MethodHandleImpl::Intrinsic) : MethodHandle
+        if (intrinsicName == target.intrinsicName())
+            return target;
+        return new IntrinsicMethodHandle(target, intrinsicName);
+!!!7254530.java!!!	makeIntrinsic(inout type : MethodType, inout form : LambdaForm, inout intrinsicName : MethodHandleImpl::Intrinsic) : MethodHandle
+        return new IntrinsicMethodHandle(SimpleMethodHandle.make(type, form), intrinsicName);
+!!!7254658.java!!!	findCollector(inout name : String, in nargs : int, inout rtype : Class, inout ptypes : Class<?>...) : MethodHandle
+        MethodType type = MethodType.genericMethodType(nargs)
+                .changeReturnType(rtype)
+                .insertParameterTypes(0, ptypes);
+        try {
+            return IMPL_LOOKUP.findStatic(MethodHandleImpl.class, name, type);
+        } catch (ReflectiveOperationException ex) {
+            return null;
+        }
+!!!7254786.java!!!	makeArray(inout  : Object...args) : Object
+ return args;
+!!!7254914.java!!!	array() : Object
+ return NO_ARGS_ARRAY;
+!!!7255042.java!!!	array(inout a0 : Object) : Object
+ return makeArray(a0);
+!!!7255170.java!!!	array(inout a0 : Object, inout a1 : Object) : Object
+ return makeArray(a0, a1);
+!!!7255298.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object) : Object
+ return makeArray(a0, a1, a2);
+!!!7255426.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object) : Object
+ return makeArray(a0, a1, a2, a3);
+!!!7255554.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object) : Object
+ return makeArray(a0, a1, a2, a3, a4);
+!!!7255682.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object) : Object
+ return makeArray(a0, a1, a2, a3, a4, a5);
+!!!7255810.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object) : Object
+ return makeArray(a0, a1, a2, a3, a4, a5, a6);
+!!!7255938.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object, inout a7 : Object) : Object
+ return makeArray(a0, a1, a2, a3, a4, a5, a6, a7);
+!!!7256066.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object, inout a7 : Object, inout a8 : Object) : Object
+ return makeArray(a0, a1, a2, a3, a4, a5, a6, a7, a8);
+!!!7256194.java!!!	array(inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object, inout a7 : Object, inout a8 : Object, inout a9 : Object) : Object
+ return makeArray(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
+!!!7256322.java!!!	makeArrays() : MethodHandle
+        ArrayList<MethodHandle> mhs = new ArrayList<>();
+        for (;;) {
+            MethodHandle mh = findCollector("array", mhs.size(), Object[].class);
+            if (mh == null)  break;
+            mh = makeIntrinsic(mh, Intrinsic.NEW_ARRAY);
+            mhs.add(mh);
+        }
+        assert(mhs.size() == 11);  // current number of methods
+        return mhs.toArray(new MethodHandle[MAX_ARITY+1]);
+!!!7256450.java!!!	fillNewArray(inout len : Integer, inout args : Object [[]]) : Object
+        Object[] a = new Object[len];
+        fillWithArguments(a, 0, args);
+        return a;
+!!!7256578.java!!!	fillNewTypedArray(inout example : Object [[]], inout len : Integer, inout args : Object [[]]) : Object
+        Object[] a = Arrays.copyOf(example, len);
+        assert(a.getClass() != Object[].class);
+        fillWithArguments(a, 0, args);
+        return a;
+!!!7256706.java!!!	fillWithArguments(inout a : Object [[]], in pos : int, inout  : Object...args) : void
+        System.arraycopy(args, 0, a, pos, args.length);
+!!!7256834.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object) : Object
+ fillWithArguments(a, pos, a0); return a;
+!!!7256962.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object) : Object
+ fillWithArguments(a, pos, a0, a1); return a;
+!!!7257090.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2); return a;
+!!!7257218.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3); return a;
+!!!7257346.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3, a4); return a;
+!!!7257474.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3, a4, a5); return a;
+!!!7257602.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3, a4, a5, a6); return a;
+!!!7257730.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object, inout a7 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3, a4, a5, a6, a7); return a;
+!!!7257858.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object, inout a7 : Object, inout a8 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3, a4, a5, a6, a7, a8); return a;
+!!!7257986.java!!!	fillArray(inout pos : Integer, inout a : Object [[]], inout a0 : Object, inout a1 : Object, inout a2 : Object, inout a3 : Object, inout a4 : Object, inout a5 : Object, inout a6 : Object, inout a7 : Object, inout a8 : Object, inout a9 : Object) : Object
+ fillWithArguments(a, pos, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9); return a;
+!!!7258114.java!!!	makeFillArrays() : MethodHandle
+        ArrayList<MethodHandle> mhs = new ArrayList<>();
+        mhs.add(null);  // there is no empty fill; at least a0 is required
+        for (;;) {
+            MethodHandle mh = findCollector("fillArray", mhs.size(), Object[].class, Integer.class, Object[].class);
+            if (mh == null)  break;
+            mhs.add(mh);
+        }
+        assert(mhs.size() == FILL_ARRAYS_COUNT);
+        return mhs.toArray(new MethodHandle[0]);
+!!!7258242.java!!!	copyAsPrimitiveArray(inout w : Wrapper, inout  : Object...boxes) : Object
+        Object a = w.makeArray(boxes.length);
+        w.copyArrayUnboxing(boxes, 0, a, 0, boxes.length);
+        return a;
+!!!7258370.java!!!	varargsArray(in nargs : int) : MethodHandle
+        MethodHandle mh = Lazy.ARRAYS[nargs];
+        if (mh != null)  return mh;
+        mh = findCollector("array", nargs, Object[].class);
+        if (mh != null)  mh = makeIntrinsic(mh, Intrinsic.NEW_ARRAY);
+        if (mh != null)  return Lazy.ARRAYS[nargs] = mh;
+        mh = buildVarargsArray(Lazy.MH_fillNewArray, Lazy.MH_arrayIdentity, nargs);
+        assert(assertCorrectArity(mh, nargs));
+        mh = makeIntrinsic(mh, Intrinsic.NEW_ARRAY);
+        return Lazy.ARRAYS[nargs] = mh;
+!!!7258498.java!!!	assertCorrectArity(inout mh : MethodHandle, in arity : int) : boolean
+        assert(mh.type().parameterCount() == arity) : "arity != "+arity+": "+mh;
+        return true;
+!!!7258626.java!!!	identity(inout x : T [[]]) : T
+        return x;
+!!!7258754.java!!!	buildVarargsArray(inout newArray : MethodHandle, inout finisher : MethodHandle, in nargs : int) : MethodHandle
+        // Build up the result mh as a sequence of fills like this:
+        //   finisher(fill(fill(newArrayWA(23,x1..x10),10,x11..x20),20,x21..x23))
+        // The various fill(_,10*I,___*[J]) are reusable.
+        int leftLen = Math.min(nargs, LEFT_ARGS);  // absorb some arguments immediately
+        int rightLen = nargs - leftLen;
+        MethodHandle leftCollector = newArray.bindTo(nargs);
+        leftCollector = leftCollector.asCollector(Object[].class, leftLen);
+        MethodHandle mh = finisher;
+        if (rightLen > 0) {
+            MethodHandle rightFiller = fillToRight(LEFT_ARGS + rightLen);
+            if (mh == Lazy.MH_arrayIdentity)
+                mh = rightFiller;
+            else
+                mh = MethodHandles.collectArguments(mh, 0, rightFiller);
+        }
+        if (mh == Lazy.MH_arrayIdentity)
+            mh = leftCollector;
+        else
+            mh = MethodHandles.collectArguments(mh, 0, leftCollector);
+        return mh;
+!!!7258882.java!!!	fillToRight(in nargs : int) : MethodHandle
+        MethodHandle filler = FILL_ARRAY_TO_RIGHT[nargs];
+        if (filler != null)  return filler;
+        filler = buildFiller(nargs);
+        assert(assertCorrectArity(filler, nargs - LEFT_ARGS + 1));
+        return FILL_ARRAY_TO_RIGHT[nargs] = filler;
+!!!7259010.java!!!	buildFiller(in nargs : int) : MethodHandle
+        if (nargs <= LEFT_ARGS)
+            return Lazy.MH_arrayIdentity;  // no args to fill; return the array unchanged
+        // we need room for both mh and a in mh.invoke(a, arg*[nargs])
+        final int CHUNK = LEFT_ARGS;
+        int rightLen = nargs % CHUNK;
+        int midLen = nargs - rightLen;
+        if (rightLen == 0) {
+            midLen = nargs - (rightLen = CHUNK);
+            if (FILL_ARRAY_TO_RIGHT[midLen] == null) {
+                // build some precursors from left to right
+                for (int j = LEFT_ARGS % CHUNK; j < midLen; j += CHUNK)
+                    if (j > LEFT_ARGS)  fillToRight(j);
+            }
+        }
+        if (midLen < LEFT_ARGS) rightLen = nargs - (midLen = LEFT_ARGS);
+        assert(rightLen > 0);
+        MethodHandle midFill = fillToRight(midLen);  // recursive fill
+        MethodHandle rightFill = Lazy.FILL_ARRAYS[rightLen].bindTo(midLen);  // [midLen..nargs-1]
+        assert(midFill.type().parameterCount()   == 1 + midLen - LEFT_ARGS);
+        assert(rightFill.type().parameterCount() == 1 + rightLen);
+
+        // Combine the two fills:
+        //   right(mid(a, x10..x19), x20..x23)
+        // The final product will look like this:
+        //   right(mid(newArrayLeft(24, x0..x9), x10..x19), x20..x23)
+        if (midLen == LEFT_ARGS)
+            return rightFill;
+        else
+            return MethodHandles.collectArguments(rightFill, 0, midFill);
+!!!7259138.java!!!	varargsArray(inout arrayType : Class, in nargs : int) : MethodHandle
+        Class<?> elemType = arrayType.getComponentType();
+        if (elemType == null)  throw new IllegalArgumentException("not an array: "+arrayType);
+        // FIXME: Need more special casing and caching here.
+        if (nargs >= MAX_JVM_ARITY/2 - 1) {
+            int slots = nargs;
+            final int MAX_ARRAY_SLOTS = MAX_JVM_ARITY - 1;  // 1 for receiver MH
+            if (slots <= MAX_ARRAY_SLOTS && elemType.isPrimitive())
+                slots *= Wrapper.forPrimitiveType(elemType).stackSlots();
+            if (slots > MAX_ARRAY_SLOTS)
+                throw new IllegalArgumentException("too many arguments: "+arrayType.getSimpleName()+", length "+nargs);
+        }
+        if (elemType == Object.class)
+            return varargsArray(nargs);
+        // other cases:  primitive arrays, subtypes of Object[]
+        MethodHandle cache[] = TYPED_COLLECTORS.get(elemType);
+        MethodHandle mh = nargs < cache.length ? cache[nargs] : null;
+        if (mh != null)  return mh;
+        if (nargs == 0) {
+            Object example = java.lang.reflect.Array.newInstance(arrayType.getComponentType(), 0);
+            mh = MethodHandles.constant(arrayType, example);
+        } else if (elemType.isPrimitive()) {
+            MethodHandle builder = Lazy.MH_fillNewArray;
+            MethodHandle producer = buildArrayProducer(arrayType);
+            mh = buildVarargsArray(builder, producer, nargs);
+        } else {
+            Class<? extends Object[]> objArrayType = arrayType.asSubclass(Object[].class);
+            Object[] example = Arrays.copyOf(NO_ARGS_ARRAY, 0, objArrayType);
+            MethodHandle builder = Lazy.MH_fillNewTypedArray.bindTo(example);
+            MethodHandle producer = Lazy.MH_arrayIdentity; // must be weakly typed
+            mh = buildVarargsArray(builder, producer, nargs);
+        }
+        mh = mh.asType(MethodType.methodType(arrayType, Collections.<Class<?>>nCopies(nargs, elemType)));
+        mh = makeIntrinsic(mh, Intrinsic.NEW_ARRAY);
+        assert(assertCorrectArity(mh, nargs));
+        if (nargs < cache.length)
+            cache[nargs] = mh;
+        return mh;
+!!!7259266.java!!!	buildArrayProducer(inout arrayType : Class) : MethodHandle
+        Class<?> elemType = arrayType.getComponentType();
+        assert(elemType.isPrimitive());
+        return Lazy.MH_copyAsPrimitiveArray.bindTo(Wrapper.forPrimitiveType(elemType));
+!!!7259394.java!!!	assertSame(inout mh1 : Object, inout mh2 : Object) : void
+        if (mh1 != mh2) {
+            String msg = String.format("mh1 != mh2: mh1 = %s (form: %s); mh2 = %s (form: %s)",
+                    mh1, ((MethodHandle)mh1).form,
+                    mh2, ((MethodHandle)mh2).form);
+            throw newInternalError(msg);
+        }

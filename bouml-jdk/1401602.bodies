@@ -1,0 +1,692 @@
+class DefaultTreeSelectionModel
+!!!11885570.java!!!	DefaultTreeSelectionModel()
+        listSelectionModel = new DefaultListSelectionModel();
+        selectionMode = DISCONTIGUOUS_TREE_SELECTION;
+        leadIndex = leadRow = -1;
+        uniquePaths = new Hashtable<TreePath, Boolean>();
+        lastPaths = new Hashtable<TreePath, Boolean>();
+        tempPaths = new TreePath[1];
+!!!11885698.java!!!	setRowMapper(inout newMapper : RowMapper) : void
+        rowMapper = newMapper;
+        resetRowSelection();
+!!!11885826.java!!!	getRowMapper() : RowMapper
+        return rowMapper;
+!!!11885954.java!!!	setSelectionMode(in mode : int) : void
+        int            oldMode = selectionMode;
+
+        selectionMode = mode;
+        if(selectionMode != TreeSelectionModel.SINGLE_TREE_SELECTION &&
+           selectionMode != TreeSelectionModel.CONTIGUOUS_TREE_SELECTION &&
+           selectionMode != TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION)
+            selectionMode = TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION;
+        if(oldMode != selectionMode && changeSupport != null)
+            changeSupport.firePropertyChange(SELECTION_MODE_PROPERTY,
+                                             Integer.valueOf(oldMode),
+                                             Integer.valueOf(selectionMode));
+!!!11886082.java!!!	getSelectionMode() : int
+        return selectionMode;
+!!!11886210.java!!!	setSelectionPath(inout path : TreePath) : void
+        if(path == null)
+            setSelectionPaths(null);
+        else {
+            TreePath[]          newPaths = new TreePath[1];
+
+            newPaths[0] = path;
+            setSelectionPaths(newPaths);
+        }
+!!!11886338.java!!!	setSelectionPaths(inout pPaths : TreePath [[]]) : void
+        int            newCount, newCounter, oldCount, oldCounter;
+        TreePath[]     paths = pPaths;
+
+        if(paths == null)
+            newCount = 0;
+        else
+            newCount = paths.length;
+        if(selection == null)
+            oldCount = 0;
+        else
+            oldCount = selection.length;
+        if((newCount + oldCount) != 0) {
+            if(selectionMode == TreeSelectionModel.SINGLE_TREE_SELECTION) {
+                /* If single selection and more than one path, only allow
+                   first. */
+                if(newCount > 1) {
+                    paths = new TreePath[1];
+                    paths[0] = pPaths[0];
+                    newCount = 1;
+                }
+            }
+            else if(selectionMode ==
+                    TreeSelectionModel.CONTIGUOUS_TREE_SELECTION) {
+                /* If contiguous selection and paths aren't contiguous,
+                   only select the first path item. */
+                if(newCount > 0 && !arePathsContiguous(paths)) {
+                    paths = new TreePath[1];
+                    paths[0] = pPaths[0];
+                    newCount = 1;
+                }
+            }
+
+            TreePath         beginLeadPath = leadPath;
+            Vector<PathPlaceHolder> cPaths = new Vector<PathPlaceHolder>(newCount + oldCount);
+            List<TreePath> newSelectionAsList =
+                    new ArrayList<TreePath>(newCount);
+
+            lastPaths.clear();
+            leadPath = null;
+            /* Find the paths that are new. */
+            for(newCounter = 0; newCounter < newCount; newCounter++) {
+                TreePath path = paths[newCounter];
+                if (path != null && lastPaths.get(path) == null) {
+                    lastPaths.put(path, Boolean.TRUE);
+                    if (uniquePaths.get(path) == null) {
+                        cPaths.addElement(new PathPlaceHolder(path, true));
+                    }
+                    leadPath = path;
+                    newSelectionAsList.add(path);
+                }
+            }
+
+            TreePath[] newSelection = newSelectionAsList.toArray(
+                    new TreePath[newSelectionAsList.size()]);
+
+            /* Get the paths that were selected but no longer selected. */
+            for(oldCounter = 0; oldCounter < oldCount; oldCounter++)
+                if(selection[oldCounter] != null &&
+                    lastPaths.get(selection[oldCounter]) == null)
+                    cPaths.addElement(new PathPlaceHolder
+                                      (selection[oldCounter], false));
+
+            selection = newSelection;
+
+            Hashtable<TreePath, Boolean>  tempHT = uniquePaths;
+
+            uniquePaths = lastPaths;
+            lastPaths = tempHT;
+            lastPaths.clear();
+
+            // No reason to do this now, but will still call it.
+            insureUniqueness();
+
+            updateLeadIndex();
+
+            resetRowSelection();
+            /* Notify of the change. */
+            if(cPaths.size() > 0)
+                notifyPathChange(cPaths, beginLeadPath);
+        }
+!!!11886466.java!!!	addSelectionPath(inout path : TreePath) : void
+        if(path != null) {
+            TreePath[]            toAdd = new TreePath[1];
+
+            toAdd[0] = path;
+            addSelectionPaths(toAdd);
+        }
+!!!11886594.java!!!	addSelectionPaths(inout paths : TreePath [[]]) : void
+        int       newPathLength = ((paths == null) ? 0 : paths.length);
+
+        if(newPathLength > 0) {
+            if(selectionMode == TreeSelectionModel.SINGLE_TREE_SELECTION) {
+                setSelectionPaths(paths);
+            }
+            else if(selectionMode == TreeSelectionModel.
+                    CONTIGUOUS_TREE_SELECTION && !canPathsBeAdded(paths)) {
+                if(arePathsContiguous(paths)) {
+                    setSelectionPaths(paths);
+                }
+                else {
+                    TreePath[]          newPaths = new TreePath[1];
+
+                    newPaths[0] = paths[0];
+                    setSelectionPaths(newPaths);
+                }
+            }
+            else {
+                int               counter, validCount;
+                int               oldCount;
+                TreePath          beginLeadPath = leadPath;
+                Vector<PathPlaceHolder>  cPaths = null;
+
+                if(selection == null)
+                    oldCount = 0;
+                else
+                    oldCount = selection.length;
+                /* Determine the paths that aren't currently in the
+                   selection. */
+                lastPaths.clear();
+                for(counter = 0, validCount = 0; counter < newPathLength;
+                    counter++) {
+                    if(paths[counter] != null) {
+                        if (uniquePaths.get(paths[counter]) == null) {
+                            validCount++;
+                            if(cPaths == null)
+                                cPaths = new Vector<PathPlaceHolder>();
+                            cPaths.addElement(new PathPlaceHolder
+                                              (paths[counter], true));
+                            uniquePaths.put(paths[counter], Boolean.TRUE);
+                            lastPaths.put(paths[counter], Boolean.TRUE);
+                        }
+                        leadPath = paths[counter];
+                    }
+                }
+
+                if(leadPath == null) {
+                    leadPath = beginLeadPath;
+                }
+
+                if(validCount > 0) {
+                    TreePath         newSelection[] = new TreePath[oldCount +
+                                                                  validCount];
+
+                    /* And build the new selection. */
+                    if(oldCount > 0)
+                        System.arraycopy(selection, 0, newSelection, 0,
+                                         oldCount);
+                    if(validCount != paths.length) {
+                        /* Some of the paths in paths are already in
+                           the selection. */
+                        Enumeration<TreePath> newPaths = lastPaths.keys();
+
+                        counter = oldCount;
+                        while (newPaths.hasMoreElements()) {
+                            newSelection[counter++] = newPaths.nextElement();
+                        }
+                    }
+                    else {
+                        System.arraycopy(paths, 0, newSelection, oldCount,
+                                         validCount);
+                    }
+
+                    selection = newSelection;
+
+                    insureUniqueness();
+
+                    updateLeadIndex();
+
+                    resetRowSelection();
+
+                    notifyPathChange(cPaths, beginLeadPath);
+                }
+                else
+                    leadPath = beginLeadPath;
+                lastPaths.clear();
+            }
+        }
+!!!11886722.java!!!	removeSelectionPath(inout path : TreePath) : void
+        if(path != null) {
+            TreePath[]             rPath = new TreePath[1];
+
+            rPath[0] = path;
+            removeSelectionPaths(rPath);
+        }
+!!!11886850.java!!!	removeSelectionPaths(inout paths : TreePath [[]]) : void
+        if (paths != null && selection != null && paths.length > 0) {
+            if(!canPathsBeRemoved(paths)) {
+                /* Could probably do something more interesting here! */
+                clearSelection();
+            }
+            else {
+                Vector<PathPlaceHolder> pathsToRemove = null;
+
+                /* Find the paths that can be removed. */
+                for (int removeCounter = paths.length - 1; removeCounter >= 0;
+                     removeCounter--) {
+                    if(paths[removeCounter] != null) {
+                        if (uniquePaths.get(paths[removeCounter]) != null) {
+                            if(pathsToRemove == null)
+                                pathsToRemove = new Vector<PathPlaceHolder>(paths.length);
+                            uniquePaths.remove(paths[removeCounter]);
+                            pathsToRemove.addElement(new PathPlaceHolder
+                                         (paths[removeCounter], false));
+                        }
+                    }
+                }
+                if(pathsToRemove != null) {
+                    int         removeCount = pathsToRemove.size();
+                    TreePath    beginLeadPath = leadPath;
+
+                    if(removeCount == selection.length) {
+                        selection = null;
+                    }
+                    else {
+                        Enumeration<TreePath> pEnum = uniquePaths.keys();
+                        int                  validCount = 0;
+
+                        selection = new TreePath[selection.length -
+                                                removeCount];
+                        while (pEnum.hasMoreElements()) {
+                            selection[validCount++] = pEnum.nextElement();
+                        }
+                    }
+                    if (leadPath != null &&
+                        uniquePaths.get(leadPath) == null) {
+                        if (selection != null) {
+                            leadPath = selection[selection.length - 1];
+                        }
+                        else {
+                            leadPath = null;
+                        }
+                    }
+                    else if (selection != null) {
+                        leadPath = selection[selection.length - 1];
+                    }
+                    else {
+                        leadPath = null;
+                    }
+                    updateLeadIndex();
+
+                    resetRowSelection();
+
+                    notifyPathChange(pathsToRemove, beginLeadPath);
+                }
+            }
+        }
+!!!11886978.java!!!	getSelectionPath() : TreePath
+        if (selection != null && selection.length > 0) {
+            return selection[0];
+        }
+        return null;
+!!!11887106.java!!!	getSelectionPaths() : TreePath
+        if(selection != null) {
+            int                 pathSize = selection.length;
+            TreePath[]          result = new TreePath[pathSize];
+
+            System.arraycopy(selection, 0, result, 0, pathSize);
+            return result;
+        }
+        return new TreePath[0];
+!!!11887234.java!!!	getSelectionCount() : int
+        return (selection == null) ? 0 : selection.length;
+!!!11887362.java!!!	isPathSelected(inout path : TreePath) : boolean
+        return (path != null) ? (uniquePaths.get(path) != null) : false;
+!!!11887490.java!!!	isSelectionEmpty() : boolean
+        return (selection == null || selection.length == 0);
+!!!11887618.java!!!	clearSelection() : void
+        if (selection != null && selection.length > 0) {
+            int                    selSize = selection.length;
+            boolean[]              newness = new boolean[selSize];
+
+            for(int counter = 0; counter < selSize; counter++)
+                newness[counter] = false;
+
+            TreeSelectionEvent     event = new TreeSelectionEvent
+                (this, selection, newness, leadPath, null);
+
+            leadPath = null;
+            leadIndex = leadRow = -1;
+            uniquePaths.clear();
+            selection = null;
+            resetRowSelection();
+            fireValueChanged(event);
+        }
+!!!11887746.java!!!	addTreeSelectionListener(inout x : TreeSelectionListener) : void
+        listenerList.add(TreeSelectionListener.class, x);
+!!!11887874.java!!!	removeTreeSelectionListener(inout x : TreeSelectionListener) : void
+        listenerList.remove(TreeSelectionListener.class, x);
+!!!11888002.java!!!	getTreeSelectionListeners() : TreeSelectionListener
+        return listenerList.getListeners(TreeSelectionListener.class);
+!!!11888130.java!!!	fireValueChanged(inout e : TreeSelectionEvent) : void
+        // Guaranteed to return a non-null array
+        Object[] listeners = listenerList.getListenerList();
+        // TreeSelectionEvent e = null;
+        // Process the listeners last to first, notifying
+        // those that are interested in this event
+        for (int i = listeners.length-2; i>=0; i-=2) {
+            if (listeners[i]==TreeSelectionListener.class) {
+                // Lazily create the event:
+                // if (e == null)
+                // e = new ListSelectionEvent(this, firstIndex, lastIndex);
+                ((TreeSelectionListener)listeners[i+1]).valueChanged(e);
+            }
+        }
+!!!11888258.java!!!	getListeners(inout listenerType : Class) : T
+        return listenerList.getListeners(listenerType);
+!!!11888386.java!!!	getSelectionRows() : int
+        // This is currently rather expensive.  Needs
+        // to be better support from ListSelectionModel to speed this up.
+        if (rowMapper != null && selection != null && selection.length > 0) {
+            int[]      rows = rowMapper.getRowsForPaths(selection);
+
+            if (rows != null) {
+                int       invisCount = 0;
+
+                for (int counter = rows.length - 1; counter >= 0; counter--) {
+                    if (rows[counter] == -1) {
+                        invisCount++;
+                    }
+                }
+                if (invisCount > 0) {
+                    if (invisCount == rows.length) {
+                        rows = null;
+                    }
+                    else {
+                        int[]    tempRows = new int[rows.length - invisCount];
+
+                        for (int counter = rows.length - 1, visCounter = 0;
+                             counter >= 0; counter--) {
+                            if (rows[counter] != -1) {
+                                tempRows[visCounter++] = rows[counter];
+                            }
+                        }
+                        rows = tempRows;
+                    }
+                }
+            }
+            return rows;
+        }
+        return new int[0];
+!!!11888514.java!!!	getMinSelectionRow() : int
+        return listSelectionModel.getMinSelectionIndex();
+!!!11888642.java!!!	getMaxSelectionRow() : int
+        return listSelectionModel.getMaxSelectionIndex();
+!!!11888770.java!!!	isRowSelected(in row : int) : boolean
+        return listSelectionModel.isSelectedIndex(row);
+!!!11888898.java!!!	resetRowSelection() : void
+        listSelectionModel.clearSelection();
+        if(selection != null && rowMapper != null) {
+            int               aRow;
+            int               validCount = 0;
+            int[]             rows = rowMapper.getRowsForPaths(selection);
+
+            for(int counter = 0, maxCounter = selection.length;
+                counter < maxCounter; counter++) {
+                aRow = rows[counter];
+                if(aRow != -1) {
+                    listSelectionModel.addSelectionInterval(aRow, aRow);
+                }
+            }
+            if(leadIndex != -1 && rows != null) {
+                leadRow = rows[leadIndex];
+            }
+            else if (leadPath != null) {
+                // Lead selection path doesn't have to be in the selection.
+                tempPaths[0] = leadPath;
+                rows = rowMapper.getRowsForPaths(tempPaths);
+                leadRow = (rows != null) ? rows[0] : -1;
+            }
+            else {
+                leadRow = -1;
+            }
+            insureRowContinuity();
+
+        }
+        else
+            leadRow = -1;
+!!!11889026.java!!!	getLeadSelectionRow() : int
+        return leadRow;
+!!!11889154.java!!!	getLeadSelectionPath() : TreePath
+        return leadPath;
+!!!11889282.java!!!	addPropertyChangeListener(inout listener : PropertyChangeListener) : void
+        if (changeSupport == null) {
+            changeSupport = new SwingPropertyChangeSupport(this);
+        }
+        changeSupport.addPropertyChangeListener(listener);
+!!!11889410.java!!!	removePropertyChangeListener(inout listener : PropertyChangeListener) : void
+        if (changeSupport == null) {
+            return;
+        }
+        changeSupport.removePropertyChangeListener(listener);
+!!!11889538.java!!!	getPropertyChangeListeners() : PropertyChangeListener
+        if (changeSupport == null) {
+            return new PropertyChangeListener[0];
+        }
+        return changeSupport.getPropertyChangeListeners();
+!!!11889666.java!!!	insureRowContinuity() : void
+        if(selectionMode == TreeSelectionModel.CONTIGUOUS_TREE_SELECTION &&
+           selection != null && rowMapper != null) {
+            DefaultListSelectionModel lModel = listSelectionModel;
+            int                       min = lModel.getMinSelectionIndex();
+
+            if(min != -1) {
+                for(int counter = min,
+                        maxCounter = lModel.getMaxSelectionIndex();
+                        counter <= maxCounter; counter++) {
+                    if(!lModel.isSelectedIndex(counter)) {
+                        if(counter == min) {
+                            clearSelection();
+                        }
+                        else {
+                            TreePath[] newSel = new TreePath[counter - min];
+                            int selectionIndex[] = rowMapper.getRowsForPaths(selection);
+                            // find the actual selection pathes corresponded to the
+                            // rows of the new selection
+                            for (int i = 0; i < selectionIndex.length; i++) {
+                                if (selectionIndex[i]<counter) {
+                                    newSel[selectionIndex[i]-min] = selection[i];
+                                }
+                            }
+                            setSelectionPaths(newSel);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        else if(selectionMode == TreeSelectionModel.SINGLE_TREE_SELECTION &&
+                selection != null && selection.length > 1) {
+            setSelectionPath(selection[0]);
+        }
+!!!11889794.java!!!	arePathsContiguous(inout paths : TreePath [[]]) : boolean
+        if(rowMapper == null || paths.length < 2)
+            return true;
+        else {
+            BitSet                             bitSet = new BitSet(32);
+            int                                anIndex, counter, min;
+            int                                pathCount = paths.length;
+            int                                validCount = 0;
+            TreePath[]                         tempPath = new TreePath[1];
+
+            tempPath[0] = paths[0];
+            min = rowMapper.getRowsForPaths(tempPath)[0];
+            for(counter = 0; counter < pathCount; counter++) {
+                if(paths[counter] != null) {
+                    tempPath[0] = paths[counter];
+                    int[] rows = rowMapper.getRowsForPaths(tempPath);
+                    if (rows == null) {
+                        return false;
+                    }
+                    anIndex = rows[0];
+                    if(anIndex == -1 || anIndex < (min - pathCount) ||
+                       anIndex > (min + pathCount))
+                        return false;
+                    if(anIndex < min)
+                        min = anIndex;
+                    if(!bitSet.get(anIndex)) {
+                        bitSet.set(anIndex);
+                        validCount++;
+                    }
+                }
+            }
+            int          maxCounter = validCount + min;
+
+            for(counter = min; counter < maxCounter; counter++)
+                if(!bitSet.get(counter))
+                    return false;
+        }
+        return true;
+!!!11889922.java!!!	canPathsBeAdded(inout paths : TreePath [[]]) : boolean
+        if(paths == null || paths.length == 0 || rowMapper == null ||
+           selection == null || selectionMode ==
+           TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION)
+            return true;
+        else {
+            BitSet                       bitSet = new BitSet();
+            DefaultListSelectionModel    lModel = listSelectionModel;
+            int                          anIndex;
+            int                          counter;
+            int                          min = lModel.getMinSelectionIndex();
+            int                          max = lModel.getMaxSelectionIndex();
+            TreePath[]                   tempPath = new TreePath[1];
+
+            if(min != -1) {
+                for(counter = min; counter <= max; counter++) {
+                    if(lModel.isSelectedIndex(counter))
+                        bitSet.set(counter);
+                }
+            }
+            else {
+                tempPath[0] = paths[0];
+                min = max = rowMapper.getRowsForPaths(tempPath)[0];
+            }
+            for(counter = paths.length - 1; counter >= 0; counter--) {
+                if(paths[counter] != null) {
+                    tempPath[0] = paths[counter];
+                    int[]   rows = rowMapper.getRowsForPaths(tempPath);
+                    if (rows == null) {
+                        return false;
+                    }
+                    anIndex = rows[0];
+                    min = Math.min(anIndex, min);
+                    max = Math.max(anIndex, max);
+                    if(anIndex == -1)
+                        return false;
+                    bitSet.set(anIndex);
+                }
+            }
+            for(counter = min; counter <= max; counter++)
+                if(!bitSet.get(counter))
+                    return false;
+        }
+        return true;
+!!!11890050.java!!!	canPathsBeRemoved(inout paths : TreePath [[]]) : boolean
+        if(rowMapper == null || selection == null ||
+           selectionMode == TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION)
+            return true;
+        else {
+            BitSet               bitSet = new BitSet();
+            int                  counter;
+            int                  pathCount = paths.length;
+            int                  anIndex;
+            int                  min = -1;
+            int                  validCount = 0;
+            TreePath[]           tempPath = new TreePath[1];
+            int[]                rows;
+
+            /* Determine the rows for the removed entries. */
+            lastPaths.clear();
+            for (counter = 0; counter < pathCount; counter++) {
+                if (paths[counter] != null) {
+                    lastPaths.put(paths[counter], Boolean.TRUE);
+                }
+            }
+            for(counter = selection.length - 1; counter >= 0; counter--) {
+                if(lastPaths.get(selection[counter]) == null) {
+                    tempPath[0] = selection[counter];
+                    rows = rowMapper.getRowsForPaths(tempPath);
+                    if(rows != null && rows[0] != -1 && !bitSet.get(rows[0])) {
+                        validCount++;
+                        if(min == -1)
+                            min = rows[0];
+                        else
+                            min = Math.min(min, rows[0]);
+                        bitSet.set(rows[0]);
+                    }
+                }
+            }
+            lastPaths.clear();
+            /* Make sure they are contiguous. */
+            if(validCount > 1) {
+                for(counter = min + validCount - 1; counter >= min;
+                    counter--)
+                    if(!bitSet.get(counter))
+                        return false;
+            }
+        }
+        return true;
+!!!11890178.java!!!	notifyPathChange(inout changedPaths : Vector, inout oldLeadSelection : TreePath) : void
+        int                    cPathCount = changedPaths.size();
+        boolean[]              newness = new boolean[cPathCount];
+        TreePath[]            paths = new TreePath[cPathCount];
+        PathPlaceHolder        placeholder;
+
+        for(int counter = 0; counter < cPathCount; counter++) {
+            placeholder = (PathPlaceHolder) changedPaths.elementAt(counter);
+            newness[counter] = placeholder.isNew;
+            paths[counter] = placeholder.path;
+        }
+
+        TreeSelectionEvent     event = new TreeSelectionEvent
+                          (this, paths, newness, oldLeadSelection, leadPath);
+
+        fireValueChanged(event);
+!!!11890306.java!!!	updateLeadIndex() : void
+        if(leadPath != null) {
+            if(selection == null) {
+                leadPath = null;
+                leadIndex = leadRow = -1;
+            }
+            else {
+                leadRow = leadIndex = -1;
+                for(int counter = selection.length - 1; counter >= 0;
+                    counter--) {
+                    // Can use == here since we know leadPath came from
+                    // selection
+                    if(selection[counter] == leadPath) {
+                        leadIndex = counter;
+                        break;
+                    }
+                }
+            }
+        }
+        else {
+            leadIndex = -1;
+        }
+!!!11890562.java!!!	toString() : String
+        int                selCount = getSelectionCount();
+        StringBuffer       retBuffer = new StringBuffer();
+        int[]              rows;
+
+        if(rowMapper != null)
+            rows = rowMapper.getRowsForPaths(selection);
+        else
+            rows = null;
+        retBuffer.append(getClass().getName() + " " + hashCode() + " [ ");
+        for(int counter = 0; counter < selCount; counter++) {
+            if(rows != null)
+                retBuffer.append(selection[counter].toString() + "@" +
+                                 Integer.toString(rows[counter])+ " ");
+            else
+                retBuffer.append(selection[counter].toString() + " ");
+        }
+        retBuffer.append("]");
+        return retBuffer.toString();
+!!!11890690.java!!!	clone() : Object
+        DefaultTreeSelectionModel        clone = (DefaultTreeSelectionModel)
+                            super.clone();
+
+        clone.changeSupport = null;
+        if(selection != null) {
+            int              selLength = selection.length;
+
+            clone.selection = new TreePath[selLength];
+            System.arraycopy(selection, 0, clone.selection, 0, selLength);
+        }
+        clone.listenerList = new EventListenerList();
+        clone.listSelectionModel = (DefaultListSelectionModel)
+            listSelectionModel.clone();
+        clone.uniquePaths = new Hashtable<TreePath, Boolean>();
+        clone.lastPaths = new Hashtable<TreePath, Boolean>();
+        clone.tempPaths = new TreePath[1];
+        return clone;
+!!!11890818.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        Object[]             tValues;
+
+        s.defaultWriteObject();
+        // Save the rowMapper, if it implements Serializable
+        if(rowMapper != null && rowMapper instanceof Serializable) {
+            tValues = new Object[2];
+            tValues[0] = "rowMapper";
+            tValues[1] = rowMapper;
+        }
+        else
+            tValues = new Object[0];
+        s.writeObject(tValues);
+!!!11890946.java!!!	readObject(inout s : ObjectInputStream) : void
+        Object[]      tValues;
+
+        s.defaultReadObject();
+
+        tValues = (Object[])s.readObject();
+
+        if(tValues.length > 0 && tValues[0].equals("rowMapper"))
+            rowMapper = (RowMapper)tValues[1];

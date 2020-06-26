@@ -1,0 +1,521 @@
+class RepositoryId
+!!!1460354.java!!!	RepositoryId(inout aRepId : String)
+        init(aRepId);
+!!!1460482.java!!!	init(inout aRepId : String) : RepositoryId
+        this.repId = aRepId;
+
+        // Special case for remote
+        if (aRepId.length() == 0) {
+            clazz = java.rmi.Remote.class;
+            typeString = "";
+            isRMIValueType = true;
+            suid = kInterfaceOnlyHashStr;
+            return this;
+        } else if (aRepId.equals(kWStringValueRepID)) {
+            clazz = java.lang.String.class;
+            typeString = kWStringTypeStr;
+            isIDLType = true;
+            // fix where Attempting to obtain a FullValueDescription
+            // for an RMI value type with a String field causes an exception.
+            completeClassName = "java.lang.String";
+            versionString = kWStringValueVersion;
+            return this;
+        } else {
+            String repId = convertFromISOLatin1(aRepId);
+
+            int firstIndex = repId.indexOf(':') ;
+            if (firstIndex == -1)
+                throw new IllegalArgumentException( "RepsitoryId must have the form <type>:<body>" ) ;
+            int secondIndex = repId.indexOf( ':', firstIndex + 1 ) ;
+
+            if (secondIndex == -1)
+                versionString = "" ;
+            else
+                versionString = repId.substring(secondIndex) ;
+
+            if (repId.startsWith(kIDLPrefix)) {
+                typeString =
+                    repId.substring(kIDLPrefixLength, repId.indexOf(':', kIDLPrefixLength));
+                isIDLType = true;
+
+                if (typeString.startsWith(kIDLNamePrefix))
+                    completeClassName = kIDLClassnamePrefix +
+                        typeString.substring(kIDLNamePrefix.length()).replace('/','.');
+                else
+                    completeClassName = typeString.replace('/','.');
+
+            } else if (repId.startsWith(kValuePrefix)) {
+                typeString =
+                    repId.substring(kValuePrefixLength, repId.indexOf(':', kValuePrefixLength));
+                isRMIValueType = true;
+
+                if (versionString.indexOf('.') == -1) {
+                    actualSuid = versionString.substring(1);
+                    suid = actualSuid;  // default if not explicitly specified
+
+                    if (actualSuid.indexOf(':') != -1){
+                    // we have a declared hash also
+                        int pos = actualSuid.indexOf(':')+1;
+                        // actualSuid = suid.substring(pos);
+                        // suid = suid.substring(0, pos-1);
+                        suid = actualSuid.substring(pos);
+                        actualSuid = actualSuid.substring(0, pos-1);
+                    }
+                } else {
+                    // _REVISIT_ : Special case version failure ?
+                }
+            } else {
+                isSupportedFormat = false;
+                typeString = "" ;
+            }
+
+            if (typeString.startsWith(kSequencePrefix)) {
+                isSequence = true;
+            }
+
+            return this;
+        }
+!!!1460610.java!!!	getUnqualifiedName() : String
+        if (unqualifiedName == null){
+            String className = getClassName();
+            int index = className.lastIndexOf('.');
+            if (index == -1){
+                unqualifiedName = className;
+                definedInId = "IDL::1.0";
+            }
+            else {
+                unqualifiedName = className.substring(index);
+                definedInId = "IDL:" + className.substring(0, index).replace('.','/') + ":1.0";
+            }
+        }
+
+        return unqualifiedName;
+!!!1460738.java!!!	getDefinedInId() : String
+        if (definedInId == null){
+            getUnqualifiedName();
+        }
+
+        return definedInId;
+!!!1460866.java!!!	getTypeString() : String
+        return typeString;
+!!!1460994.java!!!	getVersionString() : String
+        return versionString;
+!!!1461122.java!!!	getSerialVersionUID() : String
+        return suid;
+!!!1461250.java!!!	getActualSerialVersionUID() : String
+        return actualSuid;
+!!!1461378.java!!!	getSerialVersionUIDAsLong() : long
+        return suidLong;
+!!!1461506.java!!!	getActualSerialVersionUIDAsLong() : long
+        return actualSuidLong;
+!!!1461634.java!!!	isRMIValueType() : boolean
+        return isRMIValueType;
+!!!1461762.java!!!	isIDLType() : boolean
+        return isIDLType;
+!!!1461890.java!!!	getRepositoryId() : String
+        return repId;
+!!!1462018.java!!!	getByteArray(inout repStr : String) : byte
+        synchronized (repStrToByteArray){
+            return (byte[]) repStrToByteArray.get(repStr);
+        }
+!!!1462146.java!!!	setByteArray(inout repStr : String, inout repStrBytes : byte [[]]) : void
+        synchronized (repStrToByteArray){
+            repStrToByteArray.put(repStr, repStrBytes);
+        }
+!!!1462274.java!!!	isSequence() : boolean
+        return isSequence;
+!!!1462402.java!!!	isSupportedFormat() : boolean
+        return isSupportedFormat;
+!!!1462530.java!!!	getClassName() : String
+
+        if (isRMIValueType)
+            return typeString;
+        else if (isIDLType)
+            return completeClassName;
+        else return null;
+
+!!!1462658.java!!!	getAnyClassFromType() : Class
+        try {
+            return getClassFromType();
+        } catch (ClassNotFoundException cnfe) {
+            Class clz = (Class)repStrToClass.get(repId);
+            if (clz != null)
+                return clz;
+            else
+                throw cnfe;
+        }
+!!!1462786.java!!!	getClassFromType() : Class
+        if (clazz != null)
+            return clazz;
+
+        Class specialCase = (Class)kSpecialCasesClasses.get(getClassName());
+
+        if (specialCase != null){
+            clazz = specialCase;
+            return specialCase;
+        }
+        else
+            {
+                try{
+                    return Util.loadClass(getClassName(), null, null);
+                }
+                catch(ClassNotFoundException cnfe){
+                    if (defaultServerURL != null) {
+                        try{
+                            return getClassFromType(defaultServerURL);
+                        }
+                        catch(MalformedURLException mue){
+                            throw cnfe;
+                        }
+                    }
+                    else throw cnfe;
+                }
+            }
+
+!!!1462914.java!!!	getClassFromType(inout expectedType : Class, inout codebase : String) : Class
+        if (clazz != null)
+            return clazz;
+
+        Class specialCase = (Class)kSpecialCasesClasses.get(getClassName());
+
+        if (specialCase != null){
+            clazz = specialCase;
+            return specialCase;
+        } else {
+            ClassLoader expectedTypeClassLoader = (expectedType == null ? null : expectedType.getClassLoader());
+            return Utility.loadClassOfType(getClassName(),
+                                            codebase,
+                                            expectedTypeClassLoader,
+                                            expectedType,
+                                            expectedTypeClassLoader);
+        }
+
+!!!1463042.java!!!	getClassFromType(inout url : String) : Class
+        return Util.loadClass(getClassName(), url, null);
+!!!1463170.java!!!	toString() : String
+        return repId;
+!!!1463298.java!!!	useFullValueDescription(inout clazz : Class, inout repositoryID : String) : boolean
+
+        String clazzRepIDStr = createForAnyType(clazz);
+
+        if (clazzRepIDStr.equals(repositoryID))
+            return false;
+
+        RepositoryId targetRepid;
+        RepositoryId clazzRepid;
+
+        synchronized(cache) {
+        // to avoid race condition where multiple threads could be
+        // accessing this method, and their access to the cache may
+        // be interleaved giving unexpected results
+
+            targetRepid = cache.getId(repositoryID);
+            clazzRepid = cache.getId(clazzRepIDStr);
+        }
+        //ObjectStreamClass osc = ObjectStreamClass.lookup(clazz);
+
+        if ((targetRepid.isRMIValueType()) && (clazzRepid.isRMIValueType())){
+            if (!targetRepid.getSerialVersionUID().equals(clazzRepid.getSerialVersionUID())) {
+
+                String mssg = "Mismatched serialization UIDs : Source (Rep. ID" +
+                    clazzRepid + ") = " +
+                    clazzRepid.getSerialVersionUID() + " whereas Target (Rep. ID " + repositoryID +
+                    ") = " + targetRepid.getSerialVersionUID();
+                                //com.sun.corba.se.impl.io.ValueUtility.log("RepositoryId",mssg);
+                throw new IOException(mssg);
+        }
+            else {
+                return true;
+            }
+        }
+        else {
+
+            throw new IOException("The repository ID is not of an RMI value type (Expected ID = " + clazzRepIDStr + "; Received ID = " + repositoryID +")");
+    }
+!!!1463426.java!!!	createHashString(inout ser : Serializable) : String
+
+        return createHashString(ser.getClass());
+!!!1463554.java!!!	createHashString(inout clazz : Class) : String
+
+        if (clazz.isInterface() || !java.io.Serializable.class.isAssignableFrom(clazz))
+            return kInterfaceHashCode;
+
+        //ObjectStreamClass osc = ObjectStreamClass.lookup(clazz);
+
+        long actualLong = ObjectStreamClass.getActualSerialVersionUID(clazz);
+        String hash = null;
+        if (actualLong == 0)
+            hash = kInterfaceOnlyHashStr;
+        else if (actualLong == 1)
+            hash = kExternalizableHashStr;
+        else
+            hash = Long.toHexString(actualLong).toUpperCase();
+        while(hash.length() < 16){
+            hash = "0" + hash;
+        }
+
+        long declaredLong = ObjectStreamClass.getSerialVersionUID(clazz);
+        String declared = null;
+        if (declaredLong == 0)
+            declared = kInterfaceOnlyHashStr;
+        else if (declaredLong == 1)
+            declared = kExternalizableHashStr;
+        else
+            declared = Long.toHexString(declaredLong).toUpperCase();
+        while (declared.length() < 16){
+            declared = "0" + declared;
+    }
+        hash = hash + ":" + declared;
+
+        return ":" + hash;
+!!!1463682.java!!!	createSequenceRepID(inout ser : Object) : String
+        return createSequenceRepID(ser.getClass());
+!!!1463810.java!!!	createSequenceRepID(inout clazz : Class) : String
+        synchronized (classSeqToRepStr){
+
+        String repid = (String)classSeqToRepStr.get(clazz);
+        if (repid != null)
+            return repid;
+
+        Class originalClazz = clazz;
+
+        Class type = null;
+        int numOfDims = 0;
+
+        while ((type = clazz.getComponentType()) != null) {
+            numOfDims++;
+            clazz = type;
+        }
+
+        if (clazz.isPrimitive())
+            repid = kValuePrefix + originalClazz.getName() + kPrimitiveSequenceValueHash;
+        else {
+            StringBuffer buf = new StringBuffer();
+            buf.append(kValuePrefix);
+            while(numOfDims-- > 0) {
+                buf.append("[");
+            }
+            buf.append("L");
+            buf.append(convertToISOLatin1(clazz.getName()));
+            buf.append(";");
+            buf.append(createHashString(clazz));
+            repid = buf.toString();
+        }
+        classSeqToRepStr.put(originalClazz,repid);
+        return repid;
+        }
+
+!!!1463938.java!!!	createForSpecialCase(inout clazz : Class) : String
+        if (clazz.isArray()){
+            return createSequenceRepID(clazz);
+        }
+        else {
+            return (String)kSpecialCasesRepIDs.get(clazz);
+        }
+!!!1464066.java!!!	createForSpecialCase(inout ser : Serializable) : String
+        Class clazz = ser.getClass();
+        if (clazz.isArray()){
+            return createSequenceRepID(ser);
+        }
+        else
+            return createForSpecialCase(clazz);
+!!!1464194.java!!!	createForJavaType(inout ser : Serializable) : String
+        synchronized (classToRepStr) {
+        String repid = createForSpecialCase(ser);
+        if (repid != null)
+            return repid;
+        Class clazz = ser.getClass();
+        repid = (String)classToRepStr.get(clazz);
+
+        if (repid != null)
+            return repid;
+
+        repid = kValuePrefix + convertToISOLatin1(clazz.getName()) +
+            createHashString(clazz);
+
+        classToRepStr.put(clazz, repid);
+            repStrToClass.put(repid, clazz);
+        return repid;
+    }
+!!!1464322.java!!!	createForJavaType(inout clz : Class) : String
+        synchronized (classToRepStr){
+        String repid = createForSpecialCase(clz);
+        if (repid != null)
+            return repid;
+
+        repid = (String)classToRepStr.get(clz);
+        if (repid != null)
+            return repid;
+
+        repid = kValuePrefix + convertToISOLatin1(clz.getName()) +
+            createHashString(clz);
+
+        classToRepStr.put(clz, repid);
+            repStrToClass.put(repid, clz);
+        return repid;
+    }
+!!!1464450.java!!!	createForIDLType(inout ser : Class, in major : int, in minor : int) : String
+        synchronized (classIDLToRepStr){
+        String repid = (String)classIDLToRepStr.get(ser);
+        if (repid != null)
+            return repid;
+
+        repid = kIDLPrefix + convertToISOLatin1(ser.getName()).replace('.','/') +
+            ":" + major + "." + minor;
+        classIDLToRepStr.put(ser, repid);
+        return repid;
+    }
+!!!1464578.java!!!	getIdFromHelper(inout clazz : Class) : String
+        try {
+            Class helperClazz = Utility.loadClassForClass(clazz.getName()+"Helper", null,
+                                    clazz.getClassLoader(), clazz, clazz.getClassLoader());
+            Method idMethod = helperClazz.getDeclaredMethod("id", kNoParamTypes);
+            return (String)idMethod.invoke(null, kNoArgs);
+        }
+        catch(java.lang.ClassNotFoundException cnfe)
+            {
+                throw new org.omg.CORBA.MARSHAL(cnfe.toString());
+            }
+        catch(java.lang.NoSuchMethodException nsme)
+            {
+                throw new org.omg.CORBA.MARSHAL(nsme.toString());
+            }
+        catch(java.lang.reflect.InvocationTargetException ite)
+            {
+                throw new org.omg.CORBA.MARSHAL(ite.toString());
+            }
+        catch(java.lang.IllegalAccessException iae)
+            {
+                throw new org.omg.CORBA.MARSHAL(iae.toString());
+    }
+!!!1464706.java!!!	createForAnyType(inout type : Class) : String
+        try{
+            if (type.isArray())
+                return createSequenceRepID(type);
+            else if (IDLEntity.class.isAssignableFrom(type))
+                {
+                    try{
+                        return getIdFromHelper(type);
+                    }
+                    catch(Throwable t) {
+                        return createForIDLType(type, 1, 0);
+                    }
+                }
+            else return createForJavaType(type);
+        }
+        catch(com.sun.corba.se.impl.io.TypeMismatchException e){
+            return null;
+        }
+
+!!!1464834.java!!!	isAbstractBase(inout clazz : Class) : boolean
+        return (clazz.isInterface() &&
+                IDLEntity.class.isAssignableFrom(clazz) &&
+                (!ValueBase.class.isAssignableFrom(clazz)) &&
+                (!org.omg.CORBA.Object.class.isAssignableFrom(clazz)));
+
+!!!1464962.java!!!	isAnyRequired(inout clazz : Class) : boolean
+        return ((clazz == java.lang.Object.class) ||
+                (clazz == java.io.Serializable.class) ||
+                (clazz == java.io.Externalizable.class));
+!!!1465090.java!!!	fromHex(inout hexNumber : String) : long
+        if (hexNumber.startsWith("0x"))
+            return Long.valueOf(hexNumber.substring(2), 16).longValue();
+        else return Long.valueOf(hexNumber, 16).longValue();
+!!!1465218.java!!!	convertToISOLatin1(inout name : String) : String
+
+        int length = name.length();
+        if (length == 0) {
+            return name;
+        }
+        StringBuffer buffer = null;
+
+        for (int i = 0; i < length; i++) {
+
+            char c = name.charAt(i);
+
+            if (c > 255 || IDL_IDENTIFIER_CHARS[c] == 0) {
+
+                // We gotta convert. Have we already started?
+
+                if (buffer == null) {
+
+                    // No, so get set up...
+
+                    buffer = new StringBuffer(name.substring(0,i));
+                }
+
+                // Convert the character into the IDL escape syntax...
+                buffer.append(
+                              "\\U" +
+                              (char)ASCII_HEX[(c & 0xF000) >>> 12] +
+                              (char)ASCII_HEX[(c & 0x0F00) >>> 8] +
+                              (char)ASCII_HEX[(c & 0x00F0) >>> 4] +
+                              (char)ASCII_HEX[(c & 0x000F)]);
+
+            } else {
+                if (buffer != null) {
+                    buffer.append(c);
+                }
+            }
+        }
+
+        if (buffer != null) {
+            name = buffer.toString();
+        }
+
+        return name;
+!!!1465346.java!!!	convertFromISOLatin1(inout name : String) : String
+
+        int index = -1;
+        StringBuffer buf = new StringBuffer(name);
+
+        while ((index = buf.toString().indexOf("\\U")) != -1){
+            String str = "0000" + buf.toString().substring(index+2, index+6);
+
+            // Convert Hexadecimal
+            byte[] buffer = new byte[(str.length() - 4) / 2];
+            for (int i=4, j=0; i < str.length(); i +=2, j++) {
+                buffer[j] = (byte)((Utility.hexOf(str.charAt(i)) << 4) & 0xF0);
+                buffer[j] |= (byte)((Utility.hexOf(str.charAt(i+1)) << 0) & 0x0F);
+            }
+            buf = new StringBuffer(delete(buf.toString(), index, index+6));
+            buf.insert(index, (char)buffer[1]);
+        }
+
+        return buf.toString();
+
+
+!!!1465474.java!!!	delete(inout str : String, in from : int, in to : int) : String
+        return str.substring(0, from) + str.substring(to, str.length());
+!!!1465602.java!!!	replace(inout target : String, inout arg : String, inout source : String) : String
+        int i = 0;
+        i = target.indexOf(arg);
+
+        while(i != -1)
+            {
+                String left = target.substring(0, i);
+                String right = target.substring(i+arg.length());
+                target = new String(left+source+right);
+                i = target.indexOf(arg);
+            }
+        return target;
+!!!1465730.java!!!	computeValueTag(inout codeBasePresent : boolean, in typeInfo : int, inout chunkedEncoding : boolean) : int
+        int value_tag = kInitialValueTag;
+
+        if (codeBasePresent)
+            value_tag = value_tag | 0x00000001;
+
+        value_tag = value_tag | typeInfo;
+
+        if (chunkedEncoding)
+            value_tag = value_tag | kChunkedMask;
+
+        return value_tag;
+!!!1465858.java!!!	isCodeBasePresent(in value_tag : int) : boolean
+        return ((value_tag & 0x00000001) == 1);
+!!!1465986.java!!!	getTypeInfo(in value_tag : int) : int
+        return (value_tag & 0x00000006);
+!!!1466114.java!!!	isChunkedEncoding(in value_tag : int) : boolean
+        return ((value_tag & kChunkedMask) != 0);
+!!!1466242.java!!!	getServerURL() : String
+        return defaultServerURL;

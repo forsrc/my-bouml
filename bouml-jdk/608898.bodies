@@ -1,0 +1,141 @@
+class Text
+!!!3800962.java!!!	Text()
+        _textElement = true;
+!!!3801090.java!!!	Text(inout text : String)
+        _text = text;
+!!!3801218.java!!!	getText() : String
+        return _text;
+!!!3801346.java!!!	setText(inout text : String) : void
+        if (_text == null)
+            _text = text;
+        else
+            _text = _text + text;
+!!!3801474.java!!!	display(in indent : int) : void
+        indent(indent);
+        Util.println("Text");
+        indent(indent + IndentIncrement);
+        Util.println(_text);
+!!!3801602.java!!!	parseContents(inout parser : Parser) : void
+        final String str = getAttribute("disable-output-escaping");
+        if ((str != null) && (str.equals("yes"))) _escaping = false;
+
+        parseChildren(parser);
+
+        if (_text == null) {
+            if (_textElement) {
+                _text = EMPTYSTRING;
+            }
+            else {
+                _ignore = true;
+            }
+        }
+        else if (_textElement) {
+            if (_text.length() == 0) _ignore = true;
+        }
+        else if (getParent() instanceof LiteralElement) {
+            LiteralElement element = (LiteralElement)getParent();
+            String space = element.getAttribute("xml:space");
+            if ((space == null) || (!space.equals("preserve")))
+        {
+            int i;
+            final int textLength = _text.length();
+            for (i = 0; i < textLength; i++) {
+                char c = _text.charAt(i);
+                if (!isWhitespace(c))
+                    break;
+            }
+            if (i == textLength)
+                _ignore = true;
+        }
+        }
+        else {
+        int i;
+        final int textLength = _text.length();
+        for (i = 0; i < textLength; i++)
+        {
+            char c = _text.charAt(i);
+            if (!isWhitespace(c))
+                break;
+        }
+        if (i == textLength)
+            _ignore = true;
+        }
+!!!3801730.java!!!	ignore() : void
+        _ignore = true;
+!!!3801858.java!!!	isIgnore() : boolean
+        return _ignore;
+!!!3801986.java!!!	isTextElement() : boolean
+        return _textElement;
+!!!3802114.java!!!	contextDependent() : boolean
+        return false;
+!!!3802242.java!!!	isWhitespace(in c : char) : boolean
+        return (c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D);
+!!!3802370.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+
+        if (!_ignore) {
+            // Turn off character escaping if so is wanted.
+            final int esc = cpg.addInterfaceMethodref(OUTPUT_HANDLER,
+                                                      "setEscaping", "(Z)Z");
+            if (!_escaping) {
+                il.append(methodGen.loadHandler());
+                il.append(new PUSH(cpg, false));
+                il.append(new INVOKEINTERFACE(esc, 2));
+            }
+
+            il.append(methodGen.loadHandler());
+
+            // Call characters(String) or characters(char[],int,int), as
+            // appropriate.
+            if (!canLoadAsArrayOffsetLength()) {
+                final int characters = cpg.addInterfaceMethodref(OUTPUT_HANDLER,
+                                                           "characters",
+                                                           "("+STRING_SIG+")V");
+                il.append(new PUSH(cpg, _text));
+                il.append(new INVOKEINTERFACE(characters, 2));
+            } else {
+                final int characters = cpg.addInterfaceMethodref(OUTPUT_HANDLER,
+                                                                 "characters",
+                                                                 "([CII)V");
+                loadAsArrayOffsetLength(classGen, methodGen);
+                il.append(new INVOKEINTERFACE(characters, 4));
+            }
+
+            // Restore character escaping setting to whatever it was.
+            // Note: setEscaping(bool) returns the original (old) value
+            if (!_escaping) {
+                il.append(methodGen.loadHandler());
+                il.append(SWAP);
+                il.append(new INVOKEINTERFACE(esc, 2));
+                il.append(POP);
+            }
+        }
+        translateContents(classGen, methodGen);
+!!!3802498.java!!!	canLoadAsArrayOffsetLength() : boolean
+        // Magic number!  21845*3 == 65535.  BCEL uses a DataOutputStream to
+        // serialize class files.  The Java run-time places a limit on the size
+        // of String data written using a DataOutputStream - it cannot require
+        // more than 64KB when represented as UTF-8.  The number of bytes
+        // required to represent a Java string as UTF-8 cannot be greater
+        // than three times the number of char's in the string, hence the
+        // check for 21845.
+
+        return (_text.length() <= 21845);
+!!!3802626.java!!!	loadAsArrayOffsetLength(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+        final XSLTC xsltc = classGen.getParser().getXSLTC();
+
+        // The XSLTC object keeps track of character data
+        // that is to be stored in char arrays.
+        final int offset = xsltc.addCharacterData(_text);
+        final int length = _text.length();
+        String charDataFieldName =
+            STATIC_CHAR_DATA_FIELD + (xsltc.getCharacterDataCount()-1);
+
+        il.append(new GETSTATIC(cpg.addFieldref(xsltc.getClassName(),
+                                       charDataFieldName,
+                                       STATIC_CHAR_DATA_FIELD_SIG)));
+        il.append(new PUSH(cpg, offset));
+        il.append(new PUSH(cpg, _text.length()));

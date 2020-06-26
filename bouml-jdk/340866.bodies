@@ -1,0 +1,160 @@
+class Cursor
+!!!2343682.java!!!	initCursorDir() : String
+        String jhome = java.security.AccessController.doPrivileged(
+               new sun.security.action.GetPropertyAction("java.home"));
+        return jhome +
+            File.separator + "lib" + File.separator + "images" +
+            File.separator + "cursors" + File.separator;
+!!!2344194.java!!!	setPData(in pData : long) : void
+        this.pData = pData;
+        if (GraphicsEnvironment.isHeadless()) {
+            return;
+        }
+        if (disposer == null) {
+            disposer = new CursorDisposer(pData);
+            // anchor is null after deserialization
+            if (anchor == null) {
+                anchor = new Object();
+            }
+            sun.java2d.Disposer.addRecord(anchor, disposer);
+        } else {
+            disposer.pData = pData;
+        }
+!!!2344322.java!!!	getPredefinedCursor(in type : int) : Cursor
+        if (type < Cursor.DEFAULT_CURSOR || type > Cursor.MOVE_CURSOR) {
+            throw new IllegalArgumentException("illegal cursor type");
+        }
+        Cursor c = predefinedPrivate[type];
+        if (c == null) {
+            predefinedPrivate[type] = c = new Cursor(type);
+        }
+        // fill 'predefined' array for backwards compatibility.
+        if (predefined[type] == null) {
+            predefined[type] = c;
+        }
+        return c;
+!!!2344450.java!!!	getSystemCustomCursor(in name : String) : Cursor
+        GraphicsEnvironment.checkHeadless();
+        Cursor cursor = systemCustomCursors.get(name);
+
+        if (cursor == null) {
+            synchronized(systemCustomCursors) {
+                if (systemCustomCursorProperties == null)
+                    loadSystemCustomCursorProperties();
+            }
+
+            String prefix = CursorDotPrefix + name;
+            String key    = prefix + DotFileSuffix;
+
+            if (!systemCustomCursorProperties.containsKey(key)) {
+                if (log.isLoggable(PlatformLogger.Level.FINER)) {
+                    log.finer("Cursor.getSystemCustomCursor(" + name + ") returned null");
+                }
+                return null;
+            }
+
+            final String fileName =
+                systemCustomCursorProperties.getProperty(key);
+
+            String localized = systemCustomCursorProperties.getProperty(prefix + DotNameSuffix);
+
+            if (localized == null) localized = name;
+
+            String hotspot = systemCustomCursorProperties.getProperty(prefix + DotHotspotSuffix);
+
+            if (hotspot == null)
+                throw new AWTException("no hotspot property defined for cursor: " + name);
+
+            StringTokenizer st = new StringTokenizer(hotspot, ",");
+
+            if (st.countTokens() != 2)
+                throw new AWTException("failed to parse hotspot property for cursor: " + name);
+
+            int x = 0;
+            int y = 0;
+
+            try {
+                x = Integer.parseInt(st.nextToken());
+                y = Integer.parseInt(st.nextToken());
+            } catch (NumberFormatException nfe) {
+                throw new AWTException("failed to parse hotspot property for cursor: " + name);
+            }
+
+            try {
+                final int fx = x;
+                final int fy = y;
+                final String flocalized = localized;
+
+                cursor = java.security.AccessController.<Cursor>doPrivileged(
+                    new java.security.PrivilegedExceptionAction<Cursor>() {
+                    public Cursor run() throws Exception {
+                        Toolkit toolkit = Toolkit.getDefaultToolkit();
+                        Image image = toolkit.getImage(
+                           systemCustomCursorDirPrefix + fileName);
+                        return toolkit.createCustomCursor(
+                                    image, new Point(fx,fy), flocalized);
+                    }
+                });
+            } catch (Exception e) {
+                throw new AWTException(
+                    "Exception: " + e.getClass() + " " + e.getMessage() +
+                    " occurred while creating cursor " + name);
+            }
+
+            if (cursor == null) {
+                if (log.isLoggable(PlatformLogger.Level.FINER)) {
+                    log.finer("Cursor.getSystemCustomCursor(" + name + ") returned null");
+                }
+            } else {
+                systemCustomCursors.put(name, cursor);
+            }
+        }
+
+        return cursor;
+!!!2344578.java!!!	getDefaultCursor() : Cursor
+        return getPredefinedCursor(Cursor.DEFAULT_CURSOR);
+!!!2344706.java!!!	Cursor(in type : int)
+        if (type < Cursor.DEFAULT_CURSOR || type > Cursor.MOVE_CURSOR) {
+            throw new IllegalArgumentException("illegal cursor type");
+        }
+        this.type = type;
+
+        // Lookup localized name.
+        name = Toolkit.getProperty(cursorProperties[type][0],
+                                   cursorProperties[type][1]);
+!!!2344834.java!!!	Cursor(inout name : String)
+        this.type = Cursor.CUSTOM_CURSOR;
+        this.name = name;
+!!!2344962.java!!!	getType() : int
+        return type;
+!!!2345090.java!!!	getName() : String
+        return name;
+!!!2345218.java!!!	toString() : String
+        return getClass().getName() + "[" + getName() + "]";
+!!!2345346.java!!!	loadSystemCustomCursorProperties() : void
+        synchronized(systemCustomCursors) {
+            systemCustomCursorProperties = new Properties();
+
+            try {
+                AccessController.<Object>doPrivileged(
+                      new java.security.PrivilegedExceptionAction<Object>() {
+                    public Object run() throws Exception {
+                        FileInputStream fis = null;
+                        try {
+                            fis = new FileInputStream(
+                                           systemCustomCursorPropertiesFile);
+                            systemCustomCursorProperties.load(fis);
+                        } finally {
+                            if (fis != null)
+                                fis.close();
+                        }
+                        return null;
+                    }
+                });
+            } catch (Exception e) {
+                systemCustomCursorProperties = null;
+                 throw new AWTException("Exception: " + e.getClass() + " " +
+                   e.getMessage() + " occurred while loading: " +
+                                        systemCustomCursorPropertiesFile);
+            }
+        }

@@ -1,0 +1,241 @@
+class SuballocatedByteVector
+!!!5705986.java!!!	SuballocatedByteVector()
+    this(2048);
+!!!5706114.java!!!	SuballocatedByteVector(in blocksize : int)
+    m_blocksize = blocksize;
+    m_map0=new byte[blocksize];
+    m_map = new byte[m_numblocks][];
+    m_map[0]=m_map0;
+!!!5706242.java!!!	SuballocatedByteVector(in blocksize : int, in increaseSize : int)
+    // increaseSize not currently used.
+    this(blocksize);
+!!!5706370.java!!!	size() : int
+    return m_firstFree;
+!!!5706498.java!!!	setSize(in sz : int) : void
+    if(m_firstFree<sz)
+      m_firstFree = sz;
+!!!5706626.java!!!	addElement(in value : byte) : void
+    if(m_firstFree<m_blocksize)
+      m_map0[m_firstFree++]=value;
+    else
+    {
+      int index=m_firstFree/m_blocksize;
+      int offset=m_firstFree%m_blocksize;
+      ++m_firstFree;
+
+      if(index>=m_map.length)
+      {
+        int newsize=index+m_numblocks;
+        byte[][] newMap=new byte[newsize][];
+        System.arraycopy(m_map, 0, newMap, 0, m_map.length);
+        m_map=newMap;
+      }
+      byte[] block=m_map[index];
+      if(null==block)
+        block=m_map[index]=new byte[m_blocksize];
+      block[offset]=value;
+    }
+!!!5706754.java!!!	addElements(in value : byte, in numberOfElements : int) : void
+    if(m_firstFree+numberOfElements<m_blocksize)
+      for (int i = 0; i < numberOfElements; i++)
+      {
+        m_map0[m_firstFree++]=value;
+      }
+    else
+    {
+      int index=m_firstFree/m_blocksize;
+      int offset=m_firstFree%m_blocksize;
+      m_firstFree+=numberOfElements;
+      while( numberOfElements>0)
+      {
+        if(index>=m_map.length)
+        {
+          int newsize=index+m_numblocks;
+          byte[][] newMap=new byte[newsize][];
+          System.arraycopy(m_map, 0, newMap, 0, m_map.length);
+          m_map=newMap;
+        }
+        byte[] block=m_map[index];
+        if(null==block)
+          block=m_map[index]=new byte[m_blocksize];
+        int copied=(m_blocksize-offset < numberOfElements)
+          ? m_blocksize-offset : numberOfElements;
+        numberOfElements-=copied;
+        while(copied-- > 0)
+          block[offset++]=value;
+
+        ++index;offset=0;
+      }
+    }
+!!!5706882.java!!!	addElements(in numberOfElements : int) : void
+    int newlen=m_firstFree+numberOfElements;
+    if(newlen>m_blocksize)
+    {
+      int index=m_firstFree%m_blocksize;
+      int newindex=(m_firstFree+numberOfElements)%m_blocksize;
+      for(int i=index+1;i<=newindex;++i)
+        m_map[i]=new byte[m_blocksize];
+    }
+    m_firstFree=newlen;
+!!!5707010.java!!!	insertElementAt(in value : byte, in at : int) : void
+    if(at==m_firstFree)
+      addElement(value);
+    else if (at>m_firstFree)
+    {
+      int index=at/m_blocksize;
+      if(index>=m_map.length)
+      {
+        int newsize=index+m_numblocks;
+        byte[][] newMap=new byte[newsize][];
+        System.arraycopy(m_map, 0, newMap, 0, m_map.length);
+        m_map=newMap;
+      }
+      byte[] block=m_map[index];
+      if(null==block)
+        block=m_map[index]=new byte[m_blocksize];
+      int offset=at%m_blocksize;
+      block[offset]=value;
+      m_firstFree=offset+1;
+    }
+    else
+    {
+      int index=at/m_blocksize;
+      int maxindex=m_firstFree+1/m_blocksize;
+      ++m_firstFree;
+      int offset=at%m_blocksize;
+      byte push;
+
+      // ***** Easier to work down from top?
+      while(index<=maxindex)
+      {
+        int copylen=m_blocksize-offset-1;
+        byte[] block=m_map[index];
+        if(null==block)
+        {
+          push=0;
+          block=m_map[index]=new byte[m_blocksize];
+        }
+        else
+        {
+          push=block[m_blocksize-1];
+          System.arraycopy(block, offset , block, offset+1, copylen);
+        }
+        block[offset]=value;
+        value=push;
+        offset=0;
+        ++index;
+      }
+    }
+!!!5707138.java!!!	removeAllElements() : void
+    m_firstFree = 0;
+!!!5707266.java!!!	removeElement(in s : byte) : boolean
+    int at=indexOf(s,0);
+    if(at<0)
+      return false;
+    removeElementAt(at);
+    return true;
+!!!5707394.java!!!	removeElementAt(in at : int) : void
+    // No point in removing elements that "don't exist"...
+    if(at<m_firstFree)
+    {
+      int index=at/m_blocksize;
+      int maxindex=m_firstFree/m_blocksize;
+      int offset=at%m_blocksize;
+
+      while(index<=maxindex)
+      {
+        int copylen=m_blocksize-offset-1;
+        byte[] block=m_map[index];
+        if(null==block)
+          block=m_map[index]=new byte[m_blocksize];
+        else
+          System.arraycopy(block, offset+1, block, offset, copylen);
+        if(index<maxindex)
+        {
+          byte[] next=m_map[index+1];
+          if(next!=null)
+            block[m_blocksize-1]=(next!=null) ? next[0] : 0;
+        }
+        else
+          block[m_blocksize-1]=0;
+        offset=0;
+        ++index;
+      }
+    }
+    --m_firstFree;
+!!!5707522.java!!!	setElementAt(in value : byte, in at : int) : void
+    if(at<m_blocksize)
+    {
+      m_map0[at]=value;
+      return;
+    }
+
+    int index=at/m_blocksize;
+    int offset=at%m_blocksize;
+
+    if(index>=m_map.length)
+    {
+      int newsize=index+m_numblocks;
+      byte[][] newMap=new byte[newsize][];
+      System.arraycopy(m_map, 0, newMap, 0, m_map.length);
+      m_map=newMap;
+    }
+
+    byte[] block=m_map[index];
+    if(null==block)
+      block=m_map[index]=new byte[m_blocksize];
+    block[offset]=value;
+
+    if(at>=m_firstFree)
+      m_firstFree=at+1;
+!!!5707650.java!!!	elementAt(in i : int) : byte
+    // %OPT% Does this really buy us anything? Test versus division for small,
+    // test _plus_ division for big docs.
+    if(i<m_blocksize)
+      return m_map0[i];
+
+    return m_map[i/m_blocksize][i%m_blocksize];
+!!!5707778.java!!!	contains(in s : byte) : boolean
+    return (indexOf(s,0) >= 0);
+!!!5707906.java!!!	indexOf(in elem : byte, in index : int) : int
+    if(index>=m_firstFree)
+      return -1;
+
+    int bindex=index/m_blocksize;
+    int boffset=index%m_blocksize;
+    int maxindex=m_firstFree/m_blocksize;
+    byte[] block;
+
+    for(;bindex<maxindex;++bindex)
+    {
+      block=m_map[bindex];
+      if(block!=null)
+        for(int offset=boffset;offset<m_blocksize;++offset)
+          if(block[offset]==elem)
+            return offset+bindex*m_blocksize;
+      boffset=0; // after first
+    }
+    // Last block may need to stop before end
+    int maxoffset=m_firstFree%m_blocksize;
+    block=m_map[maxindex];
+    for(int offset=boffset;offset<maxoffset;++offset)
+      if(block[offset]==elem)
+        return offset+maxindex*m_blocksize;
+
+    return -1;
+!!!5708034.java!!!	indexOf(in elem : byte) : int
+    return indexOf(elem,0);
+!!!5708162.java!!!	lastIndexOf(in elem : byte) : int
+    int boffset=m_firstFree%m_blocksize;
+    for(int index=m_firstFree/m_blocksize;
+        index>=0;
+        --index)
+    {
+      byte[] block=m_map[index];
+      if(block!=null)
+        for(int offset=boffset; offset>=0; --offset)
+          if(block[offset]==elem)
+            return offset+index*m_blocksize;
+      boffset=0; // after first
+    }
+    return -1;

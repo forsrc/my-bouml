@@ -1,0 +1,278 @@
+class WeakHashMap
+!!!595074.java!!!	newTable(in n : int) : Map::Entry
+        return (Entry<K,V>[]) new Entry<?,?>[n];
+!!!595202.java!!!	WeakHashMap(in initialCapacity : int, in loadFactor : float)
+        if (initialCapacity < 0)
+            throw new IllegalArgumentException("Illegal Initial Capacity: "+
+                                               initialCapacity);
+        if (initialCapacity > MAXIMUM_CAPACITY)
+            initialCapacity = MAXIMUM_CAPACITY;
+
+        if (loadFactor <= 0 || Float.isNaN(loadFactor))
+            throw new IllegalArgumentException("Illegal Load factor: "+
+                                               loadFactor);
+        int capacity = 1;
+        while (capacity < initialCapacity)
+            capacity <<= 1;
+        table = newTable(capacity);
+        this.loadFactor = loadFactor;
+        threshold = (int)(capacity * loadFactor);
+!!!595330.java!!!	WeakHashMap(in initialCapacity : int)
+        this(initialCapacity, DEFAULT_LOAD_FACTOR);
+!!!595458.java!!!	WeakHashMap()
+        this(DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR);
+!!!595586.java!!!	WeakHashMap(inout m : Map)
+        this(Math.max((int) (m.size() / DEFAULT_LOAD_FACTOR) + 1,
+                DEFAULT_INITIAL_CAPACITY),
+             DEFAULT_LOAD_FACTOR);
+        putAll(m);
+!!!595714.java!!!	maskNull(inout key : Object) : Object
+        return (key == null) ? NULL_KEY : key;
+!!!595842.java!!!	unmaskNull(inout key : Object) : Object
+        return (key == NULL_KEY) ? null : key;
+!!!595970.java!!!	eq(inout x : Object, inout y : Object) : boolean
+        return x == y || x.equals(y);
+!!!596098.java!!!	hash(inout k : Object) : int
+        int h = k.hashCode();
+
+        // This function ensures that hashCodes that differ only by
+        // constant multiples at each bit position have a bounded
+        // number of collisions (approximately 8 at default load factor).
+        h ^= (h >>> 20) ^ (h >>> 12);
+        return h ^ (h >>> 7) ^ (h >>> 4);
+!!!596226.java!!!	indexFor(in h : int, in length : int) : int
+        return h & (length-1);
+!!!596354.java!!!	expungeStaleEntries() : void
+        for (Object x; (x = queue.poll()) != null; ) {
+            synchronized (queue) {
+                @SuppressWarnings("unchecked")
+                    Entry<K,V> e = (Entry<K,V>) x;
+                int i = indexFor(e.hash, table.length);
+
+                Entry<K,V> prev = table[i];
+                Entry<K,V> p = prev;
+                while (p != null) {
+                    Entry<K,V> next = p.next;
+                    if (p == e) {
+                        if (prev == e)
+                            table[i] = next;
+                        else
+                            prev.next = next;
+                        // Must not null out e.next;
+                        // stale entries may be in use by a HashIterator
+                        e.value = null; // Help GC
+                        size--;
+                        break;
+                    }
+                    prev = p;
+                    p = next;
+                }
+            }
+        }
+!!!596482.java!!!	getTable() : Map::Entry
+        expungeStaleEntries();
+        return table;
+!!!596610.java!!!	size() : int
+        if (size == 0)
+            return 0;
+        expungeStaleEntries();
+        return size;
+!!!596738.java!!!	isEmpty() : boolean
+        return size() == 0;
+!!!596866.java!!!	get(inout key : Object) : V
+        Object k = maskNull(key);
+        int h = hash(k);
+        Entry<K,V>[] tab = getTable();
+        int index = indexFor(h, tab.length);
+        Entry<K,V> e = tab[index];
+        while (e != null) {
+            if (e.hash == h && eq(k, e.get()))
+                return e.value;
+            e = e.next;
+        }
+        return null;
+!!!596994.java!!!	containsKey(inout key : Object) : boolean
+        return getEntry(key) != null;
+!!!597122.java!!!	getEntry(inout key : Object) : Map::Entry
+        Object k = maskNull(key);
+        int h = hash(k);
+        Entry<K,V>[] tab = getTable();
+        int index = indexFor(h, tab.length);
+        Entry<K,V> e = tab[index];
+        while (e != null && !(e.hash == h && eq(k, e.get())))
+            e = e.next;
+        return e;
+!!!597250.java!!!	put(inout key : K, inout value : V) : V
+        Object k = maskNull(key);
+        int h = hash(k);
+        Entry<K,V>[] tab = getTable();
+        int i = indexFor(h, tab.length);
+
+        for (Entry<K,V> e = tab[i]; e != null; e = e.next) {
+            if (h == e.hash && eq(k, e.get())) {
+                V oldValue = e.value;
+                if (value != oldValue)
+                    e.value = value;
+                return oldValue;
+            }
+        }
+
+        modCount++;
+        Entry<K,V> e = tab[i];
+        tab[i] = new Entry<>(k, value, queue, h, e);
+        if (++size >= threshold)
+            resize(tab.length * 2);
+        return null;
+!!!597378.java!!!	resize(in newCapacity : int) : void
+        Entry<K,V>[] oldTable = getTable();
+        int oldCapacity = oldTable.length;
+        if (oldCapacity == MAXIMUM_CAPACITY) {
+            threshold = Integer.MAX_VALUE;
+            return;
+        }
+
+        Entry<K,V>[] newTable = newTable(newCapacity);
+        transfer(oldTable, newTable);
+        table = newTable;
+
+        /*
+         * If ignoring null elements and processing ref queue caused massive
+         * shrinkage, then restore old table.  This should be rare, but avoids
+         * unbounded expansion of garbage-filled tables.
+         */
+        if (size >= threshold / 2) {
+            threshold = (int)(newCapacity * loadFactor);
+        } else {
+            expungeStaleEntries();
+            transfer(newTable, oldTable);
+            table = oldTable;
+        }
+!!!597506.java!!!	transfer(inout src : Map::Entry [[]], inout dest : Map::Entry [[]]) : void
+        for (int j = 0; j < src.length; ++j) {
+            Entry<K,V> e = src[j];
+            src[j] = null;
+            while (e != null) {
+                Entry<K,V> next = e.next;
+                Object key = e.get();
+                if (key == null) {
+                    e.next = null;  // Help GC
+                    e.value = null; //  "   "
+                    size--;
+                } else {
+                    int i = indexFor(e.hash, dest.length);
+                    e.next = dest[i];
+                    dest[i] = e;
+                }
+                e = next;
+            }
+        }
+!!!597634.java!!!	putAll(inout m : Map) : void
+        int numKeysToBeAdded = m.size();
+        if (numKeysToBeAdded == 0)
+            return;
+
+        /*
+         * Expand the map if the map if the number of mappings to be added
+         * is greater than or equal to threshold.  This is conservative; the
+         * obvious condition is (m.size() + size) >= threshold, but this
+         * condition could result in a map with twice the appropriate capacity,
+         * if the keys to be added overlap with the keys already in this map.
+         * By using the conservative calculation, we subject ourself
+         * to at most one extra resize.
+         */
+        if (numKeysToBeAdded > threshold) {
+            int targetCapacity = (int)(numKeysToBeAdded / loadFactor + 1);
+            if (targetCapacity > MAXIMUM_CAPACITY)
+                targetCapacity = MAXIMUM_CAPACITY;
+            int newCapacity = table.length;
+            while (newCapacity < targetCapacity)
+                newCapacity <<= 1;
+            if (newCapacity > table.length)
+                resize(newCapacity);
+        }
+
+        for (Map.Entry<? extends K, ? extends V> e : m.entrySet())
+            put(e.getKey(), e.getValue());
+!!!597762.java!!!	remove(inout key : Object) : V
+        Object k = maskNull(key);
+        int h = hash(k);
+        Entry<K,V>[] tab = getTable();
+        int i = indexFor(h, tab.length);
+        Entry<K,V> prev = tab[i];
+        Entry<K,V> e = prev;
+
+        while (e != null) {
+            Entry<K,V> next = e.next;
+            if (h == e.hash && eq(k, e.get())) {
+                modCount++;
+                size--;
+                if (prev == e)
+                    tab[i] = next;
+                else
+                    prev.next = next;
+                return e.value;
+            }
+            prev = e;
+            e = next;
+        }
+
+        return null;
+!!!597890.java!!!	removeMapping(inout o : Object) : boolean
+        if (!(o instanceof Map.Entry))
+            return false;
+        Entry<K,V>[] tab = getTable();
+        Map.Entry<?,?> entry = (Map.Entry<?,?>)o;
+        Object k = maskNull(entry.getKey());
+        int h = hash(k);
+        int i = indexFor(h, tab.length);
+        Entry<K,V> prev = tab[i];
+        Entry<K,V> e = prev;
+
+        while (e != null) {
+            Entry<K,V> next = e.next;
+            if (h == e.hash && e.equals(entry)) {
+                modCount++;
+                size--;
+                if (prev == e)
+                    tab[i] = next;
+                else
+                    prev.next = next;
+                return true;
+            }
+            prev = e;
+            e = next;
+        }
+
+        return false;
+!!!598018.java!!!	clear() : void
+        // clear out ref queue. We don't need to expunge entries
+        // since table is getting cleared.
+        while (queue.poll() != null)
+            ;
+
+        modCount++;
+        Arrays.fill(table, null);
+        size = 0;
+
+        // Allocation of array may have caused GC, which may have caused
+        // additional entries to go stale.  Removing these entries from the
+        // reference queue will make them eligible for reclamation.
+        while (queue.poll() != null)
+            ;
+!!!598146.java!!!	containsValue(inout value : Object) : boolean
+        if (value==null)
+            return containsNullValue();
+
+        Entry<K,V>[] tab = getTable();
+        for (int i = tab.length; i-- > 0;)
+            for (Entry<K,V> e = tab[i]; e != null; e = e.next)
+                if (value.equals(e.value))
+                    return true;
+        return false;
+!!!598274.java!!!	containsNullValue() : boolean
+        Entry<K,V>[] tab = getTable();
+        for (int i = tab.length; i-- > 0;)
+            for (Entry<K,V> e = tab[i]; e != null; e = e.next)
+                if (e.value==null)
+                    return true;
+        return false;

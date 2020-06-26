@@ -1,0 +1,279 @@
+class SecureSet
+!!!10215810.java!!!	SecureSet(inout subject : Subject, in which : int)
+            this.subject = subject;
+            this.which = which;
+            this.elements = new LinkedList<E>();
+!!!10215938.java!!!	SecureSet(inout subject : Subject, in which : int, inout set : Set)
+            this.subject = subject;
+            this.which = which;
+            this.elements = new LinkedList<E>(set);
+!!!10216066.java!!!	size() : int
+            return elements.size();
+!!!10216194.java!!!	iterator() : Iterator
+            final LinkedList<E> list = elements;
+            return new Iterator<E>() {
+                ListIterator<E> i = list.listIterator(0);
+
+                public boolean hasNext() {return i.hasNext();}
+
+                public E next() {
+                    if (which != Subject.PRIV_CREDENTIAL_SET) {
+                        return i.next();
+                    }
+
+                    SecurityManager sm = System.getSecurityManager();
+                    if (sm != null) {
+                        try {
+                            sm.checkPermission(new PrivateCredentialPermission
+                                (list.get(i.nextIndex()).getClass().getName(),
+                                subject.getPrincipals()));
+                        } catch (SecurityException se) {
+                            i.next();
+                            throw (se);
+                        }
+                    }
+                    return i.next();
+                }
+
+                public void remove() {
+
+                    if (subject.isReadOnly()) {
+                        throw new IllegalStateException(ResourcesMgr.getString
+                                ("Subject.is.read.only"));
+                    }
+
+                    java.lang.SecurityManager sm = System.getSecurityManager();
+                    if (sm != null) {
+                        switch (which) {
+                        case Subject.PRINCIPAL_SET:
+                            sm.checkPermission(AuthPermissionHolder.MODIFY_PRINCIPALS_PERMISSION);
+                            break;
+                        case Subject.PUB_CREDENTIAL_SET:
+                            sm.checkPermission(AuthPermissionHolder.MODIFY_PUBLIC_CREDENTIALS_PERMISSION);
+                            break;
+                        default:
+                            sm.checkPermission(AuthPermissionHolder.MODIFY_PRIVATE_CREDENTIALS_PERMISSION);
+                            break;
+                        }
+                    }
+                    i.remove();
+                }
+            };
+!!!10216322.java!!!	add(inout o : E) : boolean
+
+            if (subject.isReadOnly()) {
+                throw new IllegalStateException
+                        (ResourcesMgr.getString("Subject.is.read.only"));
+            }
+
+            java.lang.SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                switch (which) {
+                case Subject.PRINCIPAL_SET:
+                    sm.checkPermission(AuthPermissionHolder.MODIFY_PRINCIPALS_PERMISSION);
+                    break;
+                case Subject.PUB_CREDENTIAL_SET:
+                    sm.checkPermission(AuthPermissionHolder.MODIFY_PUBLIC_CREDENTIALS_PERMISSION);
+                    break;
+                default:
+                    sm.checkPermission(AuthPermissionHolder.MODIFY_PRIVATE_CREDENTIALS_PERMISSION);
+                    break;
+                }
+            }
+
+            switch (which) {
+            case Subject.PRINCIPAL_SET:
+                if (!(o instanceof Principal)) {
+                    throw new SecurityException(ResourcesMgr.getString
+                        ("attempting.to.add.an.object.which.is.not.an.instance.of.java.security.Principal.to.a.Subject.s.Principal.Set"));
+                }
+                break;
+            default:
+                // ok to add Objects of any kind to credential sets
+                break;
+            }
+
+            // check for duplicates
+            if (!elements.contains(o))
+                return elements.add(o);
+            else
+                return false;
+!!!10216450.java!!!	remove(inout o : Object) : boolean
+
+            final Iterator<E> e = iterator();
+            while (e.hasNext()) {
+                E next;
+                if (which != Subject.PRIV_CREDENTIAL_SET) {
+                    next = e.next();
+                } else {
+                    next = java.security.AccessController.doPrivileged
+                        (new java.security.PrivilegedAction<E>() {
+                        public E run() {
+                            return e.next();
+                        }
+                    });
+                }
+
+                if (next == null) {
+                    if (o == null) {
+                        e.remove();
+                        return true;
+                    }
+                } else if (next.equals(o)) {
+                    e.remove();
+                    return true;
+                }
+            }
+            return false;
+!!!10216578.java!!!	contains(inout o : Object) : boolean
+            final Iterator<E> e = iterator();
+            while (e.hasNext()) {
+                E next;
+                if (which != Subject.PRIV_CREDENTIAL_SET) {
+                    next = e.next();
+                } else {
+
+                    // For private credentials:
+                    // If the caller does not have read permission for
+                    // for o.getClass(), we throw a SecurityException.
+                    // Otherwise we check the private cred set to see whether
+                    // it contains the Object
+
+                    SecurityManager sm = System.getSecurityManager();
+                    if (sm != null) {
+                        sm.checkPermission(new PrivateCredentialPermission
+                                                (o.getClass().getName(),
+                                                subject.getPrincipals()));
+                    }
+                    next = java.security.AccessController.doPrivileged
+                        (new java.security.PrivilegedAction<E>() {
+                        public E run() {
+                            return e.next();
+                        }
+                    });
+                }
+
+                if (next == null) {
+                    if (o == null) {
+                        return true;
+                    }
+                } else if (next.equals(o)) {
+                    return true;
+                }
+            }
+            return false;
+!!!10216706.java!!!	removeAll(inout c : Collection) : boolean
+            Objects.requireNonNull(c);
+            boolean modified = false;
+            final Iterator<E> e = iterator();
+            while (e.hasNext()) {
+                E next;
+                if (which != Subject.PRIV_CREDENTIAL_SET) {
+                    next = e.next();
+                } else {
+                    next = java.security.AccessController.doPrivileged
+                        (new java.security.PrivilegedAction<E>() {
+                        public E run() {
+                            return e.next();
+                        }
+                    });
+                }
+
+                Iterator<?> ce = c.iterator();
+                while (ce.hasNext()) {
+                    Object o = ce.next();
+                    if (next == null) {
+                        if (o == null) {
+                            e.remove();
+                            modified = true;
+                            break;
+                        }
+                    } else if (next.equals(o)) {
+                        e.remove();
+                        modified = true;
+                        break;
+                    }
+                }
+            }
+            return modified;
+!!!10216834.java!!!	retainAll(inout c : Collection) : boolean
+            Objects.requireNonNull(c);
+            boolean modified = false;
+            boolean retain = false;
+            final Iterator<E> e = iterator();
+            while (e.hasNext()) {
+                retain = false;
+                E next;
+                if (which != Subject.PRIV_CREDENTIAL_SET) {
+                    next = e.next();
+                } else {
+                    next = java.security.AccessController.doPrivileged
+                        (new java.security.PrivilegedAction<E>() {
+                        public E run() {
+                            return e.next();
+                        }
+                    });
+                }
+
+                Iterator<?> ce = c.iterator();
+                while (ce.hasNext()) {
+                    Object o = ce.next();
+                    if (next == null) {
+                        if (o == null) {
+                            retain = true;
+                            break;
+                        }
+                    } else if (next.equals(o)) {
+                        retain = true;
+                        break;
+                    }
+                }
+
+                if (!retain) {
+                    e.remove();
+                    retain = false;
+                    modified = true;
+                }
+            }
+            return modified;
+!!!10216962.java!!!	clear() : void
+            final Iterator<E> e = iterator();
+            while (e.hasNext()) {
+                E next;
+                if (which != Subject.PRIV_CREDENTIAL_SET) {
+                    next = e.next();
+                } else {
+                    next = java.security.AccessController.doPrivileged
+                        (new java.security.PrivilegedAction<E>() {
+                        public E run() {
+                            return e.next();
+                        }
+                    });
+                }
+                e.remove();
+            }
+!!!10217090.java!!!	writeObject(inout oos : ObjectOutputStream) : void
+
+            if (which == Subject.PRIV_CREDENTIAL_SET) {
+                // check permissions before serializing
+                Iterator<E> i = iterator();
+                while (i.hasNext()) {
+                    i.next();
+                }
+            }
+            ObjectOutputStream.PutField fields = oos.putFields();
+            fields.put("this$0", subject);
+            fields.put("elements", elements);
+            fields.put("which", which);
+            oos.writeFields();
+!!!10217218.java!!!	readObject(inout ois : ObjectInputStream) : void
+            ObjectInputStream.GetField fields = ois.readFields();
+            subject = (Subject) fields.get("this$0", null);
+            which = fields.get("which", 0);
+
+            LinkedList<E> tmp = (LinkedList<E>) fields.get("elements", null);
+            if (tmp.getClass() != LinkedList.class) {
+                elements = new LinkedList<E>(tmp);
+            } else {
+                elements = tmp;
+            }

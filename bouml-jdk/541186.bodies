@@ -1,0 +1,151 @@
+class ClassPath
+!!!3609986.java!!!	ClassPath(inout class_path : String)
+    this.class_path = class_path;
+
+    ArrayList vec = new ArrayList();
+
+    for(StringTokenizer tok=new StringTokenizer(class_path,
+                            SecuritySupport.getSystemProperty("path.separator"));
+        tok.hasMoreTokens();)
+    {
+      String path = tok.nextToken();
+
+      if(!path.equals("")) {
+        File file = new File(path);
+
+        try {
+          if(SecuritySupport.getFileExists(file)) {
+            if(file.isDirectory())
+              vec.add(new Dir(path));
+            else
+              vec.add(new Zip(new ZipFile(file)));
+          }
+        } catch(IOException e) {
+          System.err.println("CLASSPATH component " + file + ": " + e);
+        }
+      }
+    }
+
+    paths = new PathEntry[vec.size()];
+    vec.toArray(paths);
+!!!3610114.java!!!	ClassPath()
+    // this(getClassPath());
+    this("");
+!!!3610242.java!!!	toString() : String
+    return class_path;
+!!!3610370.java!!!	hashCode() : int
+    return class_path.hashCode();
+!!!3610498.java!!!	equals(inout o : Object) : boolean
+    if(o instanceof ClassPath) {
+      return class_path.equals(((ClassPath)o).class_path);
+    }
+
+    return false;
+!!!3610626.java!!!	getPathComponents(inout path : String, inout list : ArrayList) : void
+    if(path != null) {
+      StringTokenizer tok = new StringTokenizer(path, File.pathSeparator);
+
+      while(tok.hasMoreTokens()) {
+        String name = tok.nextToken();
+        File   file = new File(name);
+
+        if(SecuritySupport.getFileExists(file)) {
+          list.add(name);
+        }
+      }
+    }
+!!!3610754.java!!!	getClassPath() : String
+
+    String class_path, boot_path, ext_path;
+
+    try {
+      class_path = SecuritySupport.getSystemProperty("java.class.path");
+      boot_path  = SecuritySupport.getSystemProperty("sun.boot.class.path");
+      ext_path   = SecuritySupport.getSystemProperty("java.ext.dirs");
+    }
+    catch (SecurityException e) {
+        return "";
+    }
+
+    ArrayList list = new ArrayList();
+
+    getPathComponents(class_path, list);
+    getPathComponents(boot_path, list);
+
+    ArrayList dirs = new ArrayList();
+    getPathComponents(ext_path, dirs);
+
+    for(Iterator e = dirs.iterator(); e.hasNext(); ) {
+      File ext_dir = new File((String)e.next());
+      String[] extensions = SecuritySupport.getFileList(ext_dir, new FilenameFilter() {
+        public boolean accept(File dir, String name) {
+          name = name.toLowerCase();
+          return name.endsWith(".zip") || name.endsWith(".jar");
+        }
+      });
+
+      if(extensions != null)
+        for(int i=0; i < extensions.length; i++)
+          list.add(ext_path + File.separatorChar + extensions[i]);
+    }
+
+    StringBuffer buf = new StringBuffer();
+
+    for(Iterator e = list.iterator(); e.hasNext(); ) {
+      buf.append((String)e.next());
+
+      if(e.hasNext())
+        buf.append(File.pathSeparatorChar);
+    }
+
+    return buf.toString().intern();
+!!!3610882.java!!!	getInputStream(inout name : String) : InputStream
+    return getInputStream(name, ".class");
+!!!3611010.java!!!	getInputStream(inout name : String, inout suffix : String) : InputStream
+    InputStream is = null;
+
+    try {
+      is = getClass().getClassLoader().getResourceAsStream(name + suffix);
+    } catch(Exception e) { }
+
+    if(is != null)
+      return is;
+
+    return getClassFile(name, suffix).getInputStream();
+!!!3611138.java!!!	getClassFile(inout name : String, inout suffix : String) : ClassPath::ClassFile
+    for(int i=0; i < paths.length; i++) {
+      ClassFile cf;
+
+      if((cf = paths[i].getClassFile(name, suffix)) != null)
+        return cf;
+    }
+
+    throw new IOException("Couldn't find: " + name + suffix);
+!!!3611266.java!!!	getClassFile(inout name : String) : ClassPath::ClassFile
+    return getClassFile(name, ".class");
+!!!3611394.java!!!	getBytes(inout name : String, inout suffix : String) : byte
+    InputStream is = getInputStream(name, suffix);
+
+    if(is == null)
+      throw new IOException("Couldn't find: " + name + suffix);
+
+    DataInputStream dis   = new DataInputStream(is);
+    byte[]          bytes = new byte[is.available()];
+    dis.readFully(bytes);
+    dis.close(); is.close();
+
+    return bytes;
+!!!3611522.java!!!	getBytes(inout name : String) : byte
+    return getBytes(name, ".class");
+!!!3611650.java!!!	getPath(inout name : String) : String
+    int    index  = name.lastIndexOf('.');
+    String suffix = "";
+
+    if(index > 0) {
+      suffix = name.substring(index);
+      name   = name.substring(0, index);
+    }
+
+    return getPath(name, suffix);
+!!!3611778.java!!!	getPath(inout name : String, inout suffix : String) : String
+    return getClassFile(name, suffix).getPath();

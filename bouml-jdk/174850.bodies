@@ -1,0 +1,81 @@
+class PutFieldImpl
+!!!451714.java!!!	PutFieldImpl(inout desc : ObjectStreamClass)
+            this.desc = desc;
+            primVals = new byte[desc.getPrimDataSize()];
+            objVals = new Object[desc.getNumObjFields()];
+!!!451842.java!!!	put(inout name : String, inout val : boolean) : void
+            Bits.putBoolean(primVals, getFieldOffset(name, Boolean.TYPE), val);
+!!!451970.java!!!	put(inout name : String, in val : byte) : void
+            primVals[getFieldOffset(name, Byte.TYPE)] = val;
+!!!452098.java!!!	put(inout name : String, in val : char) : void
+            Bits.putChar(primVals, getFieldOffset(name, Character.TYPE), val);
+!!!452226.java!!!	put(inout name : String, in val : short) : void
+            Bits.putShort(primVals, getFieldOffset(name, Short.TYPE), val);
+!!!452354.java!!!	put(inout name : String, in val : int) : void
+            Bits.putInt(primVals, getFieldOffset(name, Integer.TYPE), val);
+!!!452482.java!!!	put(inout name : String, in val : float) : void
+            Bits.putFloat(primVals, getFieldOffset(name, Float.TYPE), val);
+!!!452610.java!!!	put(inout name : String, in val : long) : void
+            Bits.putLong(primVals, getFieldOffset(name, Long.TYPE), val);
+!!!452738.java!!!	put(inout name : String, in val : double) : void
+            Bits.putDouble(primVals, getFieldOffset(name, Double.TYPE), val);
+!!!452866.java!!!	put(inout name : String, inout val : Object) : void
+            objVals[getFieldOffset(name, Object.class)] = val;
+!!!452994.java!!!	write(inout out : ObjectOutput) : void
+            /*
+             * Applications should *not* use this method to write PutField
+             * data, as it will lead to stream corruption if the PutField
+             * object writes any primitive data (since block data mode is not
+             * unset/set properly, as is done in OOS.writeFields()).  This
+             * broken implementation is being retained solely for behavioral
+             * compatibility, in order to support applications which use
+             * OOS.PutField.write() for writing only non-primitive data.
+             *
+             * Serialization of unshared objects is not implemented here since
+             * it is not necessary for backwards compatibility; also, unshared
+             * semantics may not be supported by the given ObjectOutput
+             * instance.  Applications which write unshared objects using the
+             * PutField API must use OOS.writeFields().
+             */
+            if (ObjectOutputStream.this != out) {
+                throw new IllegalArgumentException("wrong stream");
+            }
+            out.write(primVals, 0, primVals.length);
+
+            ObjectStreamField[] fields = desc.getFields(false);
+            int numPrimFields = fields.length - objVals.length;
+            // REMIND: warn if numPrimFields > 0?
+            for (int i = 0; i < objVals.length; i++) {
+                if (fields[numPrimFields + i].isUnshared()) {
+                    throw new IOException("cannot write unshared object");
+                }
+                out.writeObject(objVals[i]);
+            }
+!!!453122.java!!!	writeFields() : void
+            bout.write(primVals, 0, primVals.length, false);
+
+            ObjectStreamField[] fields = desc.getFields(false);
+            int numPrimFields = fields.length - objVals.length;
+            for (int i = 0; i < objVals.length; i++) {
+                if (extendedDebugInfo) {
+                    debugInfoStack.push(
+                        "field (class \"" + desc.getName() + "\", name: \"" +
+                        fields[numPrimFields + i].getName() + "\", type: \"" +
+                        fields[numPrimFields + i].getType() + "\")");
+                }
+                try {
+                    writeObject0(objVals[i],
+                                 fields[numPrimFields + i].isUnshared());
+                } finally {
+                    if (extendedDebugInfo) {
+                        debugInfoStack.pop();
+                    }
+                }
+            }
+!!!453250.java!!!	getFieldOffset(inout name : String, inout type : Class) : int
+            ObjectStreamField field = desc.getField(name, type);
+            if (field == null) {
+                throw new IllegalArgumentException("no such field " + name +
+                                                   " with type " + type);
+            }
+            return field.getOffset();

@@ -1,0 +1,119 @@
+class SAX2RTFDTM
+!!!5249666.java!!!	SAX2RTFDTM(inout mgr : DTMManager, inout source : Source, in dtmIdentity : int, inout whiteSpaceFilter : DTMWSFilter, inout xstringfactory : XMLStringFactory, inout doIndexing : boolean)
+    super(mgr, source, dtmIdentity, whiteSpaceFilter,
+          xstringfactory, doIndexing);
+
+    // NEVER track source locators for RTFs; they aren't meaningful. I think.
+    // (If we did track them, we'd need to tail-prune these too.)
+    //com.sun.org.apache.xalan.internal.processor.TransformerFactoryImpl.m_source_location;
+    m_useSourceLocationProperty=false;
+    m_sourceSystemId = (m_useSourceLocationProperty) ? new StringVector()
+                                                     : null;
+    m_sourceLine = (m_useSourceLocationProperty) ? new IntVector() : null;
+    m_sourceColumn = (m_useSourceLocationProperty) ? new IntVector() : null;
+
+    // Record initial sizes of fields that are pushed and restored
+    // for RTF tail-pruning.  More entries can be popped than pushed, so
+    // we need this to mark the primordial state of the DTM.
+    m_emptyNodeCount = m_size;
+    m_emptyNSDeclSetCount = (m_namespaceDeclSets == null)
+                                 ? 0 : m_namespaceDeclSets.size();
+    m_emptyNSDeclSetElemsCount = (m_namespaceDeclSetElements == null)
+                                      ? 0 : m_namespaceDeclSetElements.size();
+    m_emptyDataCount = m_data.size();
+    m_emptyCharsCount = m_chars.size();
+    m_emptyDataQNCount = m_dataOrQName.size();
+!!!5249794.java!!!	getDocument() : int
+    return makeNodeHandle(m_currentDocumentNode);
+!!!5249922.java!!!	getDocumentRoot(in nodeHandle : int) : int
+    for (int id=makeNodeIdentity(nodeHandle); id!=NULL; id=_parent(id)) {
+      if (_type(id)==DTM.DOCUMENT_NODE) {
+        return makeNodeHandle(id);
+      }
+    }
+
+    return DTM.NULL; // Safety net; should never happen
+!!!5250050.java!!!	_documentRoot(in nodeIdentifier : int) : int
+    if(nodeIdentifier==NULL) return NULL;
+
+    for (int parent=_parent(nodeIdentifier);
+         parent!=NULL;
+         nodeIdentifier=parent,parent=_parent(nodeIdentifier))
+      ;
+
+    return nodeIdentifier;
+!!!5250178.java!!!	startDocument() : void
+    // Re-initialize the tree append process
+    m_endDocumentOccured = false;
+    m_prefixMappings = new java.util.Vector();
+    m_contextIndexes = new IntStack();
+    m_parents = new IntStack();
+
+    m_currentDocumentNode=m_size;
+    super.startDocument();
+!!!5250306.java!!!	endDocument() : void
+    charactersFlush();
+
+    m_nextsib.setElementAt(NULL,m_currentDocumentNode);
+
+    if (m_firstch.elementAt(m_currentDocumentNode) == NOTPROCESSED)
+      m_firstch.setElementAt(NULL,m_currentDocumentNode);
+
+    if (DTM.NULL != m_previous)
+      m_nextsib.setElementAt(DTM.NULL,m_previous);
+
+    m_parents = null;
+    m_prefixMappings = null;
+    m_contextIndexes = null;
+
+    m_currentDocumentNode= NULL; // no longer open
+    m_endDocumentOccured = true;
+!!!5250434.java!!!	pushRewindMark() : void
+    if(m_indexing || m_elemIndexes!=null)
+      throw new java.lang.NullPointerException("Coding error; Don't try to mark/rewind an indexed DTM");
+
+    // Values from DTMDefaultBase
+    // %REVIEW% Can the namespace stack sizes ever differ? If not, save space!
+    mark_size.push(m_size);
+    mark_nsdeclset_size.push((m_namespaceDeclSets==null)
+                                   ? 0
+                                   : m_namespaceDeclSets.size());
+    mark_nsdeclelem_size.push((m_namespaceDeclSetElements==null)
+                                   ? 0
+                                   : m_namespaceDeclSetElements.size());
+
+    // Values from SAX2DTM
+    mark_data_size.push(m_data.size());
+    mark_char_size.push(m_chars.size());
+    mark_doq_size.push(m_dataOrQName.size());
+!!!5250562.java!!!	popRewindMark() : boolean
+    boolean top=mark_size.empty();
+
+    m_size=top ? m_emptyNodeCount : mark_size.pop();
+    m_exptype.setSize(m_size);
+    m_firstch.setSize(m_size);
+    m_nextsib.setSize(m_size);
+    m_prevsib.setSize(m_size);
+    m_parent.setSize(m_size);
+
+    m_elemIndexes=null;
+
+    int ds= top ? m_emptyNSDeclSetCount : mark_nsdeclset_size.pop();
+    if (m_namespaceDeclSets!=null) {
+      m_namespaceDeclSets.setSize(ds);
+    }
+
+    int ds1= top ? m_emptyNSDeclSetElemsCount : mark_nsdeclelem_size.pop();
+    if (m_namespaceDeclSetElements!=null) {
+      m_namespaceDeclSetElements.setSize(ds1);
+    }
+
+    // Values from SAX2DTM - m_data always has a reserved entry
+    m_data.setSize(top ? m_emptyDataCount : mark_data_size.pop());
+    m_chars.setLength(top ? m_emptyCharsCount : mark_char_size.pop());
+    m_dataOrQName.setSize(top ? m_emptyDataQNCount : mark_doq_size.pop());
+
+    // Return true iff DTM now empty
+    return m_size==0;
+!!!5250690.java!!!	isTreeIncomplete() : boolean
+    return !m_endDocumentOccured;

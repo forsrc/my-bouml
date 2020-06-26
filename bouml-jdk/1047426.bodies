@@ -1,0 +1,178 @@
+class MergeCollation
+!!!8291842.java!!!	MergeCollation(inout pattern : String)
+        for (int i = 0; i < statusArray.length; i++)
+            statusArray[i] = 0;
+        setPattern(pattern);
+!!!8291970.java!!!	getPattern() : String
+        return getPattern(true);
+!!!8292098.java!!!	getPattern(inout withWhiteSpace : boolean) : String
+        StringBuffer result = new StringBuffer();
+        PatternEntry tmp = null;
+        ArrayList<PatternEntry> extList = null;
+        int i;
+        for (i = 0; i < patterns.size(); ++i) {
+            PatternEntry entry = patterns.get(i);
+            if (entry.extension.length() != 0) {
+                if (extList == null)
+                    extList = new ArrayList<>();
+                extList.add(entry);
+            } else {
+                if (extList != null) {
+                    PatternEntry last = findLastWithNoExtension(i-1);
+                    for (int j = extList.size() - 1; j >= 0 ; j--) {
+                        tmp = extList.get(j);
+                        tmp.addToBuffer(result, false, withWhiteSpace, last);
+                    }
+                    extList = null;
+                }
+                entry.addToBuffer(result, false, withWhiteSpace, null);
+            }
+        }
+        if (extList != null) {
+            PatternEntry last = findLastWithNoExtension(i-1);
+            for (int j = extList.size() - 1; j >= 0 ; j--) {
+                tmp = extList.get(j);
+                tmp.addToBuffer(result, false, withWhiteSpace, last);
+            }
+            extList = null;
+        }
+        return result.toString();
+!!!8292226.java!!!	findLastWithNoExtension(in i : int) : PatternEntry
+        for (--i;i >= 0; --i) {
+            PatternEntry entry = patterns.get(i);
+            if (entry.extension.length() == 0) {
+                return entry;
+            }
+        }
+        return null;
+!!!8292354.java!!!	emitPattern() : String
+        return emitPattern(true);
+!!!8292482.java!!!	emitPattern(inout withWhiteSpace : boolean) : String
+        StringBuffer result = new StringBuffer();
+        for (int i = 0; i < patterns.size(); ++i)
+        {
+            PatternEntry entry = patterns.get(i);
+            if (entry != null) {
+                entry.addToBuffer(result, true, withWhiteSpace, null);
+            }
+        }
+        return result.toString();
+!!!8292610.java!!!	setPattern(inout pattern : String) : void
+        patterns.clear();
+        addPattern(pattern);
+!!!8292738.java!!!	addPattern(inout pattern : String) : void
+        if (pattern == null)
+            return;
+
+        PatternEntry.Parser parser = new PatternEntry.Parser(pattern);
+
+        PatternEntry entry = parser.next();
+        while (entry != null) {
+            fixEntry(entry);
+            entry = parser.next();
+        }
+!!!8292866.java!!!	getCount() : int
+        return patterns.size();
+!!!8292994.java!!!	getItemAt(in index : int) : PatternEntry
+        return patterns.get(index);
+!!!8293122.java!!!	fixEntry(inout newEntry : PatternEntry) : void
+        // check to see whether the new entry has the same characters as the previous
+        // entry did (this can happen when a pattern declaring a difference between two
+        // strings that are canonically equivalent is normalized).  If so, and the strength
+        // is anything other than IDENTICAL or RESET, throw an exception (you can't
+        // declare a string to be unequal to itself).       --rtg 5/24/99
+        if (lastEntry != null && newEntry.chars.equals(lastEntry.chars)
+                && newEntry.extension.equals(lastEntry.extension)) {
+            if (newEntry.strength != Collator.IDENTICAL
+                && newEntry.strength != PatternEntry.RESET) {
+                    throw new ParseException("The entries " + lastEntry + " and "
+                            + newEntry + " are adjacent in the rules, but have conflicting "
+                            + "strengths: A character can't be unequal to itself.", -1);
+            } else {
+                // otherwise, just skip this entry and behave as though you never saw it
+                return;
+            }
+        }
+
+        boolean changeLastEntry = true;
+        if (newEntry.strength != PatternEntry.RESET) {
+            int oldIndex = -1;
+
+            if ((newEntry.chars.length() == 1)) {
+
+                char c = newEntry.chars.charAt(0);
+                int statusIndex = c >> BYTEPOWER;
+                byte bitClump = statusArray[statusIndex];
+                byte setBit = (byte)(BITARRAYMASK << (c & BYTEMASK));
+
+                if (bitClump != 0 && (bitClump & setBit) != 0) {
+                    oldIndex = patterns.lastIndexOf(newEntry);
+                } else {
+                    // We're going to add an element that starts with this
+                    // character, so go ahead and set its bit.
+                    statusArray[statusIndex] = (byte)(bitClump | setBit);
+                }
+            } else {
+                oldIndex = patterns.lastIndexOf(newEntry);
+            }
+            if (oldIndex != -1) {
+                patterns.remove(oldIndex);
+            }
+
+            excess.setLength(0);
+            int lastIndex = findLastEntry(lastEntry, excess);
+
+            if (excess.length() != 0) {
+                newEntry.extension = excess + newEntry.extension;
+                if (lastIndex != patterns.size()) {
+                    lastEntry = saveEntry;
+                    changeLastEntry = false;
+                }
+            }
+            if (lastIndex == patterns.size()) {
+                patterns.add(newEntry);
+                saveEntry = newEntry;
+            } else {
+                patterns.add(lastIndex, newEntry);
+            }
+        }
+        if (changeLastEntry) {
+            lastEntry = newEntry;
+        }
+!!!8293250.java!!!	findLastEntry(inout entry : PatternEntry, inout excessChars : StringBuffer) : int
+        if (entry == null)
+            return 0;
+
+        if (entry.strength != PatternEntry.RESET) {
+            // Search backwards for string that contains this one;
+            // most likely entry is last one
+
+            int oldIndex = -1;
+            if ((entry.chars.length() == 1)) {
+                int index = entry.chars.charAt(0) >> BYTEPOWER;
+                if ((statusArray[index] &
+                    (BITARRAYMASK << (entry.chars.charAt(0) & BYTEMASK))) != 0) {
+                    oldIndex = patterns.lastIndexOf(entry);
+                }
+            } else {
+                oldIndex = patterns.lastIndexOf(entry);
+            }
+            if ((oldIndex == -1))
+                throw new ParseException("couldn't find last entry: "
+                                          + entry, oldIndex);
+            return oldIndex + 1;
+        } else {
+            int i;
+            for (i = patterns.size() - 1; i >= 0; --i) {
+                PatternEntry e = patterns.get(i);
+                if (e.chars.regionMatches(0,entry.chars,0,
+                                              e.chars.length())) {
+                    excessChars.append(entry.chars.substring(e.chars.length(),
+                                                            entry.chars.length()));
+                    break;
+                }
+            }
+            if (i == -1)
+                throw new ParseException("couldn't find: " + entry, i);
+            return i + 1;
+        }

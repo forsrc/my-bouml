@@ -1,0 +1,253 @@
+class Actions
+!!!2584962.java!!!	Actions(inout key : String)
+            super(key);
+!!!2585090.java!!!	actionPerformed(inout e : ActionEvent) : void
+            String key = getName();
+            if (key == CANCEL) {
+                cancel();
+            }
+            else if (key == SELECT_NEXT) {
+                selectItem(FORWARD);
+            }
+            else if (key == SELECT_PREVIOUS) {
+                selectItem(BACKWARD);
+            }
+            else if (key == SELECT_PARENT) {
+                selectParentChild(PARENT);
+            }
+            else if (key == SELECT_CHILD) {
+                selectParentChild(CHILD);
+            }
+            else if (key == RETURN) {
+                doReturn();
+            }
+!!!2585218.java!!!	doReturn() : void
+            KeyboardFocusManager fmgr =
+                KeyboardFocusManager.getCurrentKeyboardFocusManager();
+            Component focusOwner = fmgr.getFocusOwner();
+            if(focusOwner != null && !(focusOwner instanceof JRootPane)) {
+                return;
+            }
+
+            MenuSelectionManager msm = MenuSelectionManager.defaultManager();
+            MenuElement path[] = msm.getSelectedPath();
+            MenuElement lastElement;
+            if(path.length > 0) {
+                lastElement = path[path.length-1];
+                if(lastElement instanceof JMenu) {
+                    MenuElement newPath[] = new MenuElement[path.length+1];
+                    System.arraycopy(path,0,newPath,0,path.length);
+                    newPath[path.length] = ((JMenu)lastElement).getPopupMenu();
+                    msm.setSelectedPath(newPath);
+                } else if(lastElement instanceof JMenuItem) {
+                    JMenuItem mi = (JMenuItem)lastElement;
+
+                    if (mi.getUI() instanceof BasicMenuItemUI) {
+                        ((BasicMenuItemUI)mi.getUI()).doClick(msm);
+                    }
+                    else {
+                        msm.clearSelectedPath();
+                        mi.doClick(0);
+                    }
+                }
+            }
+!!!2585346.java!!!	selectParentChild(inout direction : boolean) : void
+            MenuSelectionManager msm = MenuSelectionManager.defaultManager();
+            MenuElement path[] = msm.getSelectedPath();
+            int len = path.length;
+
+            if (direction == PARENT) {
+                // selecting parent
+                int popupIndex = len-1;
+
+                if (len > 2 &&
+                    // check if we have an open submenu. A submenu item may or
+                    // may not be selected, so submenu popup can be either the
+                    // last or next to the last item.
+                    (path[popupIndex] instanceof JPopupMenu ||
+                     path[--popupIndex] instanceof JPopupMenu) &&
+                    !((JMenu)path[popupIndex-1]).isTopLevelMenu()) {
+
+                    // we have a submenu, just close it
+                    MenuElement newPath[] = new MenuElement[popupIndex];
+                    System.arraycopy(path, 0, newPath, 0, popupIndex);
+                    msm.setSelectedPath(newPath);
+                    return;
+                }
+            } else {
+                // selecting child
+                if (len > 0 && path[len-1] instanceof JMenu &&
+                    !((JMenu)path[len-1]).isTopLevelMenu()) {
+
+                    // we have a submenu, open it
+                    JMenu menu = (JMenu)path[len-1];
+                    JPopupMenu popup = menu.getPopupMenu();
+                    MenuElement[] subs = popup.getSubElements();
+                    MenuElement item = findEnabledChild(subs, -1, true);
+                    MenuElement[] newPath;
+
+                    if (item == null) {
+                        newPath = new MenuElement[len+1];
+                    } else {
+                        newPath = new MenuElement[len+2];
+                        newPath[len+1] = item;
+                    }
+                    System.arraycopy(path, 0, newPath, 0, len);
+                    newPath[len] = popup;
+                    msm.setSelectedPath(newPath);
+                    return;
+                }
+            }
+
+            // check if we have a toplevel menu selected.
+            // If this is the case, we select another toplevel menu
+            if (len > 1 && path[0] instanceof JMenuBar) {
+                MenuElement currentMenu = path[1];
+                MenuElement nextMenu = findEnabledChild(
+                    path[0].getSubElements(), currentMenu, direction);
+
+                if (nextMenu != null && nextMenu != currentMenu) {
+                    MenuElement newSelection[];
+                    if (len == 2) {
+                        // menu is selected but its popup not shown
+                        newSelection = new MenuElement[2];
+                        newSelection[0] = path[0];
+                        newSelection[1] = nextMenu;
+                    } else {
+                        // menu is selected and its popup is shown
+                        newSelection = new MenuElement[3];
+                        newSelection[0] = path[0];
+                        newSelection[1] = nextMenu;
+                        newSelection[2] = ((JMenu)nextMenu).getPopupMenu();
+                    }
+                    msm.setSelectedPath(newSelection);
+                }
+            }
+!!!2585474.java!!!	selectItem(inout direction : boolean) : void
+            MenuSelectionManager msm = MenuSelectionManager.defaultManager();
+            MenuElement path[] = msm.getSelectedPath();
+            if (path.length == 0) {
+                return;
+            }
+            int len = path.length;
+            if (len == 1 && path[0] instanceof JPopupMenu) {
+
+                JPopupMenu popup = (JPopupMenu) path[0];
+                MenuElement[] newPath = new MenuElement[2];
+                newPath[0] = popup;
+                newPath[1] = findEnabledChild(popup.getSubElements(), -1, direction);
+                msm.setSelectedPath(newPath);
+            } else if (len == 2 &&
+                    path[0] instanceof JMenuBar && path[1] instanceof JMenu) {
+
+                // a toplevel menu is selected, but its popup not shown.
+                // Show the popup and select the first item
+                JPopupMenu popup = ((JMenu)path[1]).getPopupMenu();
+                MenuElement next =
+                    findEnabledChild(popup.getSubElements(), -1, FORWARD);
+                MenuElement[] newPath;
+
+                if (next != null) {
+                    // an enabled item found -- include it in newPath
+                    newPath = new MenuElement[4];
+                    newPath[3] = next;
+                } else {
+                    // menu has no enabled items -- still must show the popup
+                    newPath = new MenuElement[3];
+                }
+                System.arraycopy(path, 0, newPath, 0, 2);
+                newPath[2] = popup;
+                msm.setSelectedPath(newPath);
+
+            } else if (path[len-1] instanceof JPopupMenu &&
+                       path[len-2] instanceof JMenu) {
+
+                // a menu (not necessarily toplevel) is open and its popup
+                // shown. Select the appropriate menu item
+                JMenu menu = (JMenu)path[len-2];
+                JPopupMenu popup = menu.getPopupMenu();
+                MenuElement next =
+                    findEnabledChild(popup.getSubElements(), -1, direction);
+
+                if (next != null) {
+                    MenuElement[] newPath = new MenuElement[len+1];
+                    System.arraycopy(path, 0, newPath, 0, len);
+                    newPath[len] = next;
+                    msm.setSelectedPath(newPath);
+                } else {
+                    // all items in the popup are disabled.
+                    // We're going to find the parent popup menu and select
+                    // its next item. If there's no parent popup menu (i.e.
+                    // current menu is toplevel), do nothing
+                    if (len > 2 && path[len-3] instanceof JPopupMenu) {
+                        popup = ((JPopupMenu)path[len-3]);
+                        next = findEnabledChild(popup.getSubElements(),
+                                                menu, direction);
+
+                        if (next != null && next != menu) {
+                            MenuElement[] newPath = new MenuElement[len-1];
+                            System.arraycopy(path, 0, newPath, 0, len-2);
+                            newPath[len-2] = next;
+                            msm.setSelectedPath(newPath);
+                        }
+                    }
+                }
+
+            } else {
+                // just select the next item, no path expansion needed
+                MenuElement subs[] = path[len-2].getSubElements();
+                MenuElement nextChild =
+                    findEnabledChild(subs, path[len-1], direction);
+                if (nextChild == null) {
+                    nextChild = findEnabledChild(subs, -1, direction);
+                }
+                if (nextChild != null) {
+                    path[len-1] = nextChild;
+                    msm.setSelectedPath(path);
+                }
+            }
+!!!2585602.java!!!	cancel() : void
+            // 4234793: This action should call JPopupMenu.firePopupMenuCanceled but it's
+            // a protected method. The real solution could be to make
+            // firePopupMenuCanceled public and call it directly.
+            JPopupMenu lastPopup = getLastPopup();
+            if (lastPopup != null) {
+                lastPopup.putClientProperty("JPopupMenu.firePopupMenuCanceled", Boolean.TRUE);
+            }
+            String mode = UIManager.getString("Menu.cancelMode");
+            if ("hideMenuTree".equals(mode)) {
+                MenuSelectionManager.defaultManager().clearSelectedPath();
+            } else {
+                shortenSelectedPath();
+            }
+!!!2585730.java!!!	shortenSelectedPath() : void
+            MenuElement path[] = MenuSelectionManager.defaultManager().getSelectedPath();
+            if (path.length <= 2) {
+                MenuSelectionManager.defaultManager().clearSelectedPath();
+                return;
+            }
+            // unselect MenuItem and its Popup by default
+            int value = 2;
+            MenuElement lastElement = path[path.length - 1];
+            JPopupMenu lastPopup = getLastPopup();
+            if (lastElement == lastPopup) {
+                MenuElement previousElement = path[path.length - 2];
+                if (previousElement instanceof JMenu) {
+                    JMenu lastMenu = (JMenu) previousElement;
+                    if (lastMenu.isEnabled() && lastPopup.getComponentCount() > 0) {
+                        // unselect the last visible popup only
+                        value = 1;
+                    } else {
+                        // unselect invisible popup and two visible elements
+                        value = 3;
+                    }
+                }
+            }
+            if (path.length - value <= 2
+                    && !UIManager.getBoolean("Menu.preserveTopLevelSelection")) {
+                // clear selection for the topLevelMenu
+                value = path.length;
+            }
+            MenuElement newPath[] = new MenuElement[path.length - value];
+            System.arraycopy(path, 0, newPath, 0, path.length - value);
+            MenuSelectionManager.defaultManager().setSelectedPath(newPath);

@@ -1,0 +1,66 @@
+class ForwardingMethodGenerator
+!!!7184002.java!!!	ForwardingMethodGenerator(inout mv : MethodVisitor)
+            super(mv);
+!!!7184130.java!!!	generate(inout methodType : MethodType) : void
+            visitCode();
+
+            if (implKind == MethodHandleInfo.REF_newInvokeSpecial) {
+                visitTypeInsn(NEW, implMethodClassName);
+                visitInsn(DUP);
+            }
+            for (int i = 0; i < argNames.length; i++) {
+                visitVarInsn(ALOAD, 0);
+                visitFieldInsn(GETFIELD, lambdaClassName, argNames[i], argDescs[i]);
+            }
+
+            convertArgumentTypes(methodType);
+
+            // Invoke the method we want to forward to
+            visitMethodInsn(invocationOpcode(), implMethodClassName,
+                            implMethodName, implMethodDesc,
+                            implDefiningClass.isInterface());
+
+            // Convert the return value (if any) and return it
+            // Note: if adapting from non-void to void, the 'return'
+            // instruction will pop the unneeded result
+            Class<?> samReturnClass = methodType.returnType();
+            convertType(implMethodReturnClass, samReturnClass, samReturnClass);
+            visitInsn(getReturnOpcode(samReturnClass));
+            // Maxs computed by ClassWriter.COMPUTE_MAXS,these arguments ignored
+            visitMaxs(-1, -1);
+            visitEnd();
+!!!7184258.java!!!	convertArgumentTypes(inout samType : MethodType) : void
+            int lvIndex = 0;
+            boolean samIncludesReceiver = implIsInstanceMethod &&
+                                                   invokedType.parameterCount() == 0;
+            int samReceiverLength = samIncludesReceiver ? 1 : 0;
+            if (samIncludesReceiver) {
+                // push receiver
+                Class<?> rcvrType = samType.parameterType(0);
+                visitVarInsn(getLoadOpcode(rcvrType), lvIndex + 1);
+                lvIndex += getParameterSize(rcvrType);
+                convertType(rcvrType, implDefiningClass, instantiatedMethodType.parameterType(0));
+            }
+            int samParametersLength = samType.parameterCount();
+            int argOffset = implMethodType.parameterCount() - samParametersLength;
+            for (int i = samReceiverLength; i < samParametersLength; i++) {
+                Class<?> argType = samType.parameterType(i);
+                visitVarInsn(getLoadOpcode(argType), lvIndex + 1);
+                lvIndex += getParameterSize(argType);
+                convertType(argType, implMethodType.parameterType(argOffset + i), instantiatedMethodType.parameterType(i));
+            }
+!!!7184386.java!!!	invocationOpcode() : int
+            switch (implKind) {
+                case MethodHandleInfo.REF_invokeStatic:
+                    return INVOKESTATIC;
+                case MethodHandleInfo.REF_newInvokeSpecial:
+                    return INVOKESPECIAL;
+                 case MethodHandleInfo.REF_invokeVirtual:
+                    return INVOKEVIRTUAL;
+                case MethodHandleInfo.REF_invokeInterface:
+                    return INVOKEINTERFACE;
+                case MethodHandleInfo.REF_invokeSpecial:
+                    return INVOKESPECIAL;
+                default:
+                    throw new InternalError("Unexpected invocation kind: " + implKind);
+            }

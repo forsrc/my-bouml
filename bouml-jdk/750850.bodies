@@ -1,0 +1,172 @@
+class ResolvingXMLFilter
+!!!5285890.java!!!	ResolvingXMLFilter()
+    super();
+    catalogResolver = new CatalogResolver(catalogManager);
+!!!5286018.java!!!	ResolvingXMLFilter(inout parent : XMLReader)
+    super(parent);
+    catalogResolver = new CatalogResolver(catalogManager);
+!!!5286146.java!!!	ResolvingXMLFilter(inout manager : CatalogManager)
+    super();
+    catalogManager = manager;
+    catalogResolver = new CatalogResolver(catalogManager);
+!!!5286274.java!!!	ResolvingXMLFilter(inout parent : XMLReader, inout manager : CatalogManager)
+    super(parent);
+    catalogManager = manager;
+    catalogResolver = new CatalogResolver(catalogManager);
+!!!5286402.java!!!	getCatalog() : Catalog
+    return catalogResolver.getCatalog();
+!!!5286530.java!!!	parse(inout input : InputSource) : void
+    allowXMLCatalogPI = true;
+
+    setupBaseURI(input.getSystemId());
+
+    try {
+      super.parse(input);
+    } catch (InternalError ie) {
+      explain(input.getSystemId());
+      throw ie;
+    }
+!!!5286658.java!!!	parse(inout systemId : String) : void
+    allowXMLCatalogPI = true;
+
+    setupBaseURI(systemId);
+
+    try {
+      super.parse(systemId);
+    } catch (InternalError ie) {
+      explain(systemId);
+      throw ie;
+    }
+!!!5286786.java!!!	resolveEntity(inout publicId : String, inout systemId : String) : InputSource
+    allowXMLCatalogPI = false;
+    String resolved = catalogResolver.getResolvedEntity(publicId, systemId);
+
+    if (resolved == null && piCatalogResolver != null) {
+      resolved = piCatalogResolver.getResolvedEntity(publicId, systemId);
+    }
+
+    if (resolved != null) {
+      try {
+        InputSource iSource = new InputSource(resolved);
+        iSource.setPublicId(publicId);
+
+        // Ideally this method would not attempt to open the
+        // InputStream, but there is a bug (in Xerces, at least)
+        // that causes the parser to mistakenly open the wrong
+        // system identifier if the returned InputSource does
+        // not have a byteStream.
+        //
+        // It could be argued that we still shouldn't do this here,
+        // but since the purpose of calling the entityResolver is
+        // almost certainly to open the input stream, it seems to
+        // do little harm.
+        //
+        URL url = new URL(resolved);
+        InputStream iStream = url.openStream();
+        iSource.setByteStream(iStream);
+
+        return iSource;
+      } catch (Exception e) {
+        catalogManager.debug.message(1, "Failed to create InputSource", resolved);
+        return null;
+      }
+    } else {
+      return null;
+    }
+!!!5286914.java!!!	notationDecl(inout name : String, inout publicId : String, inout systemId : String) : void
+    allowXMLCatalogPI = false;
+    super.notationDecl(name,publicId,systemId);
+!!!5287042.java!!!	unparsedEntityDecl(inout name : String, inout publicId : String, inout systemId : String, inout notationName : String) : void
+    allowXMLCatalogPI = false;
+    super.unparsedEntityDecl (name, publicId, systemId, notationName);
+!!!5287170.java!!!	startElement(inout uri : String, inout localName : String, inout qName : String, inout atts : Attributes) : void
+    allowXMLCatalogPI = false;
+    super.startElement(uri,localName,qName,atts);
+!!!5287298.java!!!	processingInstruction(inout target : String, inout pidata : String) : void
+    if (target.equals("oasis-xml-catalog")) {
+      URL catalog = null;
+      String data = pidata;
+
+      int pos = data.indexOf("catalog=");
+      if (pos >= 0) {
+        data = data.substring(pos+8);
+        if (data.length() > 1) {
+          String quote = data.substring(0,1);
+          data = data.substring(1);
+          pos = data.indexOf(quote);
+          if (pos >= 0) {
+            data = data.substring(0, pos);
+            try {
+              if (baseURL != null) {
+                catalog = new URL(baseURL, data);
+              } else {
+                catalog = new URL(data);
+              }
+            } catch (MalformedURLException mue) {
+              // nevermind
+            }
+          }
+        }
+      }
+
+      if (allowXMLCatalogPI) {
+        if (catalogManager.getAllowOasisXMLCatalogPI()) {
+          catalogManager.debug.message(4,"oasis-xml-catalog PI", pidata);
+
+          if (catalog != null) {
+            try {
+              catalogManager.debug.message(4,"oasis-xml-catalog", catalog.toString());
+              oasisXMLCatalogPI = true;
+
+              if (piCatalogResolver == null) {
+                piCatalogResolver = new CatalogResolver(true);
+              }
+
+              piCatalogResolver.getCatalog().parseCatalog(catalog.toString());
+            } catch (Exception e) {
+              catalogManager.debug.message(3, "Exception parsing oasis-xml-catalog: "
+                            + catalog.toString());
+            }
+          } else {
+            catalogManager.debug.message(3, "PI oasis-xml-catalog unparseable: " + pidata);
+          }
+        } else {
+          catalogManager.debug.message(4,"PI oasis-xml-catalog ignored: " + pidata);
+        }
+      } else {
+        catalogManager.debug.message(3, "PI oasis-xml-catalog occurred in an invalid place: "
+                      + pidata);
+      }
+    } else {
+      super.processingInstruction(target, pidata);
+    }
+!!!5287426.java!!!	setupBaseURI(inout systemId : String) : void
+    URL cwd = null;
+
+    try {
+      cwd = FileURL.makeURL("basename");
+    } catch (MalformedURLException mue) {
+      cwd = null;
+    }
+
+    try {
+      baseURL = new URL(systemId);
+    } catch (MalformedURLException mue) {
+      if (cwd != null) {
+        try {
+          baseURL = new URL(cwd, systemId);
+        } catch (MalformedURLException mue2) {
+          // give up
+          baseURL = null;
+        }
+      } else {
+        // give up
+        baseURL = null;
+      }
+    }
+!!!5287554.java!!!	explain(inout systemId : String) : void
+    if (!suppressExplanation) {
+      System.out.println("XMLReader probably encountered bad URI in " + systemId);
+      System.out.println("For example, replace '/some/uri' with 'file:/some/uri'.");
+    }
+    suppressExplanation = true;

@@ -1,0 +1,819 @@
+class TransformerImpl
+!!!4141826.java!!!	TransformerImpl(inout outputProperties : Properties, in indentNumber : int, inout tfactory : TransformerFactoryImpl)
+        this(null, outputProperties, indentNumber, tfactory);
+        _isIdentity = true;
+        // _properties.put(OutputKeys.METHOD, "xml");
+!!!4141954.java!!!	TransformerImpl(inout translet : Translet, inout outputProperties : Properties, in indentNumber : int, inout tfactory : TransformerFactoryImpl)
+        _translet = (AbstractTranslet) translet;
+        _properties = createOutputProperties(outputProperties);
+        _propertiesClone = (Properties) _properties.clone();
+        _indentNumber = indentNumber;
+        _tfactory = tfactory;
+        _useServicesMechanism = _tfactory.useServicesMechnism();
+        _accessExternalStylesheet = (String)_tfactory.getAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET);
+        _accessExternalDTD = (String)_tfactory.getAttribute(XMLConstants.ACCESS_EXTERNAL_DTD);
+        _securityManager = (XMLSecurityManager)_tfactory.getAttribute(XalanConstants.SECURITY_MANAGER);
+        _readerManager = XMLReaderManager.getInstance(_useServicesMechanism);
+        _readerManager.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, _accessExternalDTD);
+        _readerManager.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, _isSecureProcessing);
+        _readerManager.setProperty(XalanConstants.SECURITY_MANAGER, _securityManager);
+        //_isIncremental = tfactory._incremental;
+!!!4142082.java!!!	isSecureProcessing() : boolean
+        return _isSecureProcessing;
+!!!4142210.java!!!	setSecureProcessing(inout flag : boolean) : void
+        _isSecureProcessing = flag;
+        _readerManager.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, _isSecureProcessing);
+!!!4142338.java!!!	useServicesMechnism() : boolean
+        return _useServicesMechanism;
+!!!4142466.java!!!	setServicesMechnism(inout flag : boolean) : void
+        _useServicesMechanism = flag;
+!!!4142594.java!!!	getTranslet() : AbstractTranslet
+        return _translet;
+!!!4142722.java!!!	isIdentity() : boolean
+        return _isIdentity;
+!!!4142850.java!!!	transform(inout source : Source, inout result : Result) : void
+        if (!_isIdentity) {
+            if (_translet == null) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_NO_TRANSLET_ERR);
+                throw new TransformerException(err.toString());
+            }
+            // Pass output properties to the translet
+            transferOutputProperties(_translet);
+        }
+
+        final SerializationHandler toHandler = getOutputHandler(result);
+        if (toHandler == null) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_NO_HANDLER_ERR);
+            throw new TransformerException(err.toString());
+        }
+
+        if (_uriResolver != null && !_isIdentity) {
+            _translet.setDOMCache(this);
+        }
+
+        // Pass output properties to handler if identity
+        if (_isIdentity) {
+            transferOutputProperties(toHandler);
+        }
+
+        transform(source, toHandler, _encoding);
+        try{
+            if (result instanceof DOMResult) {
+                ((DOMResult)result).setNode(_tohFactory.getNode());
+            } else if (result instanceof StAXResult) {
+                  if (((StAXResult) result).getXMLEventWriter() != null)
+                {
+                    (_tohFactory.getXMLEventWriter()).flush();
+                }
+                else if (((StAXResult) result).getXMLStreamWriter() != null) {
+                    (_tohFactory.getXMLStreamWriter()).flush();
+                    //result = new StAXResult(_tohFactory.getXMLStreamWriter());
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Result writing error");
+        }
+!!!4142978.java!!!	getOutputHandler(inout result : Result) : SerializationHandler
+        // Get output method using get() to ignore defaults
+        _method = (String) _properties.get(OutputKeys.METHOD);
+
+        // Get encoding using getProperty() to use defaults
+        _encoding = (String) _properties.getProperty(OutputKeys.ENCODING);
+
+        _tohFactory = TransletOutputHandlerFactory.newInstance(_useServicesMechanism);
+        _tohFactory.setEncoding(_encoding);
+        if (_method != null) {
+            _tohFactory.setOutputMethod(_method);
+        }
+
+        // Set indentation number in the factory
+        if (_indentNumber >= 0) {
+            _tohFactory.setIndentNumber(_indentNumber);
+        }
+
+        // Return the content handler for this Result object
+        try {
+            // Result object could be SAXResult, DOMResult, or StreamResult
+            if (result instanceof SAXResult) {
+                final SAXResult target = (SAXResult)result;
+                final ContentHandler handler = target.getHandler();
+
+                _tohFactory.setHandler(handler);
+
+                /**
+                 * Fix for bug 24414
+                 * If the lexicalHandler is set then we need to get that
+                 * for obtaining the lexical information
+                 */
+                LexicalHandler lexicalHandler = target.getLexicalHandler();
+
+                if (lexicalHandler != null ) {
+                    _tohFactory.setLexicalHandler(lexicalHandler);
+                }
+
+                _tohFactory.setOutputType(TransletOutputHandlerFactory.SAX);
+                return _tohFactory.getSerializationHandler();
+            }
+            else if (result instanceof StAXResult) {
+                if (((StAXResult) result).getXMLEventWriter() != null)
+                    _tohFactory.setXMLEventWriter(((StAXResult) result).getXMLEventWriter());
+                else if (((StAXResult) result).getXMLStreamWriter() != null)
+                    _tohFactory.setXMLStreamWriter(((StAXResult) result).getXMLStreamWriter());
+                _tohFactory.setOutputType(TransletOutputHandlerFactory.STAX);
+                return _tohFactory.getSerializationHandler();
+            }
+            else if (result instanceof DOMResult) {
+                _tohFactory.setNode(((DOMResult) result).getNode());
+                _tohFactory.setNextSibling(((DOMResult) result).getNextSibling());
+                _tohFactory.setOutputType(TransletOutputHandlerFactory.DOM);
+                return _tohFactory.getSerializationHandler();
+            }
+            else if (result instanceof StreamResult) {
+                // Get StreamResult
+                final StreamResult target = (StreamResult) result;
+
+                // StreamResult may have been created with a java.io.File,
+                // java.io.Writer, java.io.OutputStream or just a String
+                // systemId.
+
+                _tohFactory.setOutputType(TransletOutputHandlerFactory.STREAM);
+
+                // try to get a Writer from Result object
+                final Writer writer = target.getWriter();
+                if (writer != null) {
+                    _tohFactory.setWriter(writer);
+                    return _tohFactory.getSerializationHandler();
+                }
+
+                // or try to get an OutputStream from Result object
+                final OutputStream ostream = target.getOutputStream();
+                if (ostream != null) {
+                    _tohFactory.setOutputStream(ostream);
+                    return _tohFactory.getSerializationHandler();
+                }
+
+                // or try to get just a systemId string from Result object
+                String systemId = result.getSystemId();
+                if (systemId == null) {
+                    ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_NO_RESULT_ERR);
+                    throw new TransformerException(err.toString());
+                }
+
+                // System Id may be in one of several forms, (1) a uri
+                // that starts with 'file:', (2) uri that starts with 'http:'
+                // or (3) just a filename on the local system.
+                URL url;
+                if (systemId.startsWith("file:")) {
+                    // if StreamResult(File) or setSystemID(File) was used,
+                    // the systemId will be URI encoded as a result of File.toURI(),
+                    // it must be decoded for use by URL
+                    try{
+                        URI uri = new URI(systemId) ;
+                        systemId = "file:";
+
+                        String host = uri.getHost(); // decoded String
+                        String path = uri.getPath(); //decoded String
+                        if (path == null) {
+                         path = "";
+                        }
+
+                        // if host (URI authority) then file:// + host + path
+                        // else just path (may be absolute or relative)
+                        if (host != null) {
+                         systemId += "//" + host + path;
+                        } else {
+                         systemId += "//" + path;
+                        }
+                    }
+                    catch (Exception  exception) {
+                        // URI exception which means nothing can be done so OK to ignore
+                    }
+
+                    url = new URL(systemId);
+                    _ostream = new FileOutputStream(url.getFile());
+                    _tohFactory.setOutputStream(_ostream);
+                    return _tohFactory.getSerializationHandler();
+                }
+                else if (systemId.startsWith("http:")) {
+                    url = new URL(systemId);
+                    final URLConnection connection = url.openConnection();
+                    _tohFactory.setOutputStream(_ostream = connection.getOutputStream());
+                    return _tohFactory.getSerializationHandler();
+                }
+                else {
+                    // system id is just a filename
+                    _tohFactory.setOutputStream(
+                        _ostream = new FileOutputStream(new File(systemId)));
+                    return _tohFactory.getSerializationHandler();
+                }
+            }
+        }
+        // If we cannot write to the location specified by the SystemId
+        catch (UnknownServiceException e) {
+            throw new TransformerException(e);
+        }
+        catch (ParserConfigurationException e) {
+            throw new TransformerException(e);
+        }
+        // If we cannot create the file specified by the SystemId
+        catch (IOException e) {
+            throw new TransformerException(e);
+        }
+        return null;
+!!!4143106.java!!!	setDOM(inout dom : DOM) : void
+        _dom = dom;
+!!!4143234.java!!!	getDOM(inout source : Source) : DOM
+        try {
+            DOM dom;
+
+            if (source != null) {
+                DTMWSFilter wsfilter;
+                if (_translet != null && _translet instanceof StripFilter) {
+                    wsfilter = new DOMWSFilter(_translet);
+                 } else {
+                    wsfilter = null;
+                 }
+
+                 boolean hasIdCall = (_translet != null) ? _translet.hasIdCall()
+                                                         : false;
+
+                 if (_dtmManager == null) {
+                     _dtmManager =
+                         _tfactory.createNewDTMManagerInstance();
+                     _dtmManager.setServicesMechnism(_useServicesMechanism);
+                 }
+                 dom = (DOM)_dtmManager.getDTM(source, false, wsfilter, true,
+                                              false, false, 0, hasIdCall);
+            } else if (_dom != null) {
+                 dom = _dom;
+                 _dom = null;  // use only once, so reset to 'null'
+            } else {
+                 return null;
+            }
+
+            if (!_isIdentity) {
+                // Give the translet the opportunity to make a prepass of
+                // the document, in case it can extract useful information early
+                _translet.prepassDocument(dom);
+            }
+
+            return dom;
+
+        }
+        catch (Exception e) {
+            if (_errorListener != null) {
+                postErrorToListener(e.getMessage());
+            }
+            throw new TransformerException(e);
+        }
+!!!4143362.java!!!	getTransformerFactory() : TransformerFactoryImpl
+        return _tfactory;
+!!!4143490.java!!!	getTransletOutputHandlerFactory() : TransletOutputHandlerFactory
+        return _tohFactory;
+!!!4143618.java!!!	transformIdentity(inout source : Source, inout handler : SerializationHandler) : void
+        // Get systemId from source
+        if (source != null) {
+            _sourceSystemId = source.getSystemId();
+        }
+
+        if (source instanceof StreamSource) {
+            final StreamSource stream = (StreamSource) source;
+            final InputStream streamInput = stream.getInputStream();
+            final Reader streamReader = stream.getReader();
+            final XMLReader reader = _readerManager.getXMLReader();
+
+            try {
+                // Hook up reader and output handler
+                try {
+                    reader.setProperty(LEXICAL_HANDLER_PROPERTY, handler);
+                    reader.setFeature(NAMESPACE_PREFIXES_FEATURE, true);
+                } catch (SAXException e) {
+                    // Falls through
+                }
+                reader.setContentHandler(handler);
+
+                // Create input source from source
+                InputSource input;
+                if (streamInput != null) {
+                    input = new InputSource(streamInput);
+                    input.setSystemId(_sourceSystemId);
+                }
+                else if (streamReader != null) {
+                    input = new InputSource(streamReader);
+                    input.setSystemId(_sourceSystemId);
+                }
+                else if (_sourceSystemId != null) {
+                    input = new InputSource(_sourceSystemId);
+                }
+                else {
+                    ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_NO_SOURCE_ERR);
+                    throw new TransformerException(err.toString());
+                }
+
+                // Start pushing SAX events
+                reader.parse(input);
+            } finally {
+                _readerManager.releaseXMLReader(reader);
+            }
+        } else if (source instanceof SAXSource) {
+            final SAXSource sax = (SAXSource) source;
+            XMLReader reader = sax.getXMLReader();
+            final InputSource input = sax.getInputSource();
+            boolean userReader = true;
+
+            try {
+                // Create a reader if not set by user
+                if (reader == null) {
+                    reader = _readerManager.getXMLReader();
+                    userReader = false;
+                }
+
+                // Hook up reader and output handler
+                try {
+                    reader.setProperty(LEXICAL_HANDLER_PROPERTY, handler);
+                    reader.setFeature(NAMESPACE_PREFIXES_FEATURE, true);
+                } catch (SAXException e) {
+                    // Falls through
+                }
+                reader.setContentHandler(handler);
+
+                // Start pushing SAX events
+                reader.parse(input);
+            } finally {
+                if (!userReader) {
+                    _readerManager.releaseXMLReader(reader);
+                }
+            }
+        } else if (source instanceof StAXSource) {
+            final StAXSource staxSource = (StAXSource)source;
+            StAXEvent2SAX staxevent2sax;
+            StAXStream2SAX staxStream2SAX;
+            if (staxSource.getXMLEventReader() != null) {
+                final XMLEventReader xmlEventReader = staxSource.getXMLEventReader();
+                staxevent2sax = new StAXEvent2SAX(xmlEventReader);
+                staxevent2sax.setContentHandler(handler);
+                staxevent2sax.parse();
+                handler.flushPending();
+            } else if (staxSource.getXMLStreamReader() != null) {
+                final XMLStreamReader xmlStreamReader = staxSource.getXMLStreamReader();
+                staxStream2SAX = new StAXStream2SAX(xmlStreamReader);
+                staxStream2SAX.setContentHandler(handler);
+                staxStream2SAX.parse();
+                handler.flushPending();
+            }
+        } else if (source instanceof DOMSource) {
+            final DOMSource domsrc = (DOMSource) source;
+            new DOM2TO(domsrc.getNode(), handler).parse();
+        } else if (source instanceof XSLTCSource) {
+            final DOM dom = ((XSLTCSource) source).getDOM(null, _translet);
+            ((SAXImpl)dom).copy(handler);
+        } else {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_NO_SOURCE_ERR);
+            throw new TransformerException(err.toString());
+        }
+!!!4143746.java!!!	transform(inout source : Source, inout handler : SerializationHandler, inout encoding : String) : void
+        try {
+            /*
+             * According to JAXP1.2, new SAXSource()/StreamSource()
+             * should create an empty input tree, with a default root node.
+             * new DOMSource()creates an empty document using DocumentBuilder.
+             * newDocument(); Use DocumentBuilder.newDocument() for all 3
+             * situations, since there is no clear spec. how to create
+             * an empty tree when both SAXSource() and StreamSource() are used.
+             */
+            if ((source instanceof StreamSource && source.getSystemId()==null
+                && ((StreamSource)source).getInputStream()==null &&
+                ((StreamSource)source).getReader()==null)||
+                (source instanceof SAXSource &&
+                ((SAXSource)source).getInputSource()==null &&
+                ((SAXSource)source).getXMLReader()==null )||
+                (source instanceof DOMSource &&
+                ((DOMSource)source).getNode()==null)){
+                        DocumentBuilderFactory builderF = FactoryImpl.getDOMFactory(_useServicesMechanism);
+                        DocumentBuilder builder = builderF.newDocumentBuilder();
+                        String systemID = source.getSystemId();
+                        source = new DOMSource(builder.newDocument());
+
+                        // Copy system ID from original, empty Source to new
+                        if (systemID != null) {
+                          source.setSystemId(systemID);
+                        }
+            }
+            if (_isIdentity) {
+                transformIdentity(source, handler);
+            } else {
+                _translet.transform(getDOM(source), handler);
+            }
+        } catch (TransletException e) {
+            if (_errorListener != null) postErrorToListener(e.getMessage());
+            throw new TransformerException(e);
+        } catch (RuntimeException e) {
+            if (_errorListener != null) postErrorToListener(e.getMessage());
+            throw new TransformerException(e);
+        } catch (Exception e) {
+            if (_errorListener != null) postErrorToListener(e.getMessage());
+            throw new TransformerException(e);
+        } finally {
+            _dtmManager = null;
+        }
+
+        // If we create an output stream for the Result, we need to close it after the transformation.
+        if (_ostream != null) {
+            try {
+                _ostream.close();
+            }
+            catch (IOException e) {}
+            _ostream = null;
+        }
+!!!4143874.java!!!	getErrorListener() : ErrorListener
+        return _errorListener;
+!!!4144002.java!!!	setErrorListener(inout listener : ErrorListener) : void
+        if (listener == null) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.ERROR_LISTENER_NULL_ERR,
+                                        "Transformer");
+            throw new IllegalArgumentException(err.toString());
+        }
+        _errorListener = listener;
+
+        // Register a message handler to report xsl:messages
+    if (_translet != null)
+        _translet.setMessageHandler(new MessageHandler(_errorListener));
+!!!4144130.java!!!	postErrorToListener(inout message : String) : void
+        try {
+            _errorListener.error(new TransformerException(message));
+        }
+        catch (TransformerException e) {
+            // ignored - transformation cannot be continued
+        }
+!!!4144258.java!!!	postWarningToListener(inout message : String) : void
+        try {
+            _errorListener.warning(new TransformerException(message));
+        }
+        catch (TransformerException e) {
+            // ignored - transformation cannot be continued
+        }
+!!!4144386.java!!!	getOutputProperties() : Properties
+        return (Properties) _properties.clone();
+!!!4144514.java!!!	getOutputProperty(inout name : String) : String
+        if (!validOutputProperty(name)) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_UNKNOWN_PROP_ERR, name);
+            throw new IllegalArgumentException(err.toString());
+        }
+        return _properties.getProperty(name);
+!!!4144642.java!!!	setOutputProperties(inout properties : Properties) : void
+        if (properties != null) {
+            final Enumeration names = properties.propertyNames();
+
+            while (names.hasMoreElements()) {
+                final String name = (String) names.nextElement();
+
+                // Ignore lower layer properties
+                if (isDefaultProperty(name, properties)) continue;
+
+                if (validOutputProperty(name)) {
+                    _properties.setProperty(name, properties.getProperty(name));
+                }
+                else {
+                    ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_UNKNOWN_PROP_ERR, name);
+                    throw new IllegalArgumentException(err.toString());
+                }
+            }
+        }
+        else {
+            _properties = _propertiesClone;
+        }
+!!!4144770.java!!!	setOutputProperty(inout name : String, inout value : String) : void
+        if (!validOutputProperty(name)) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_UNKNOWN_PROP_ERR, name);
+            throw new IllegalArgumentException(err.toString());
+        }
+        _properties.setProperty(name, value);
+!!!4144898.java!!!	transferOutputProperties(inout translet : AbstractTranslet) : void
+        // Return right now if no properties are set
+        if (_properties == null) return;
+
+        // Get a list of all the defined properties
+        Enumeration names = _properties.propertyNames();
+        while (names.hasMoreElements()) {
+            // Note the use of get() instead of getProperty()
+            String name  = (String) names.nextElement();
+            String value = (String) _properties.get(name);
+
+            // Ignore default properties
+            if (value == null) continue;
+
+            // Pass property value to translet - override previous setting
+            if (name.equals(OutputKeys.ENCODING)) {
+                translet._encoding = value;
+            }
+            else if (name.equals(OutputKeys.METHOD)) {
+                translet._method = value;
+            }
+            else if (name.equals(OutputKeys.DOCTYPE_PUBLIC)) {
+                translet._doctypePublic = value;
+            }
+            else if (name.equals(OutputKeys.DOCTYPE_SYSTEM)) {
+                translet._doctypeSystem = value;
+            }
+            else if (name.equals(OutputKeys.MEDIA_TYPE)) {
+                translet._mediaType = value;
+            }
+            else if (name.equals(OutputKeys.STANDALONE)) {
+                translet._standalone = value;
+            }
+            else if (name.equals(OutputKeys.VERSION)) {
+                translet._version = value;
+            }
+            else if (name.equals(OutputKeys.OMIT_XML_DECLARATION)) {
+                translet._omitHeader =
+                    (value != null && value.toLowerCase().equals("yes"));
+            }
+            else if (name.equals(OutputKeys.INDENT)) {
+                translet._indent =
+                    (value != null && value.toLowerCase().equals("yes"));
+            }
+            else if (name.equals(OutputPropertiesFactory.S_BUILTIN_OLD_EXTENSIONS_UNIVERSAL +"indent-amount")) {
+                 if (value != null) {
+                     translet._indentamount = Integer.parseInt(value);
+                 }
+            }
+            else if (name.equals(OutputPropertiesFactory.S_BUILTIN_EXTENSIONS_UNIVERSAL +"indent-amount")) {
+                 if (value != null) {
+                     translet._indentamount = Integer.parseInt(value);
+                 }
+            }
+            else if (name.equals(OutputKeys.CDATA_SECTION_ELEMENTS)) {
+                if (value != null) {
+                    translet._cdata = null; // clear previous setting
+                    StringTokenizer e = new StringTokenizer(value);
+                    while (e.hasMoreTokens()) {
+                        translet.addCdataElement(e.nextToken());
+                    }
+                }
+            }
+            else if (name.equals(OutputPropertiesFactory.ORACLE_IS_STANDALONE)) {
+                 if (value != null && value.equals("yes")) {
+                     translet._isStandalone = true;
+                 }
+            }
+        }
+!!!4145026.java!!!	transferOutputProperties(inout handler : SerializationHandler) : void
+        // Return right now if no properties are set
+        if (_properties == null) return;
+
+        String doctypePublic = null;
+        String doctypeSystem = null;
+
+        // Get a list of all the defined properties
+        Enumeration names = _properties.propertyNames();
+        while (names.hasMoreElements()) {
+            // Note the use of get() instead of getProperty()
+            String name  = (String) names.nextElement();
+            String value = (String) _properties.get(name);
+
+            // Ignore default properties
+            if (value == null) continue;
+
+            // Pass property value to translet - override previous setting
+            if (name.equals(OutputKeys.DOCTYPE_PUBLIC)) {
+                doctypePublic = value;
+            }
+            else if (name.equals(OutputKeys.DOCTYPE_SYSTEM)) {
+                doctypeSystem = value;
+            }
+            else if (name.equals(OutputKeys.MEDIA_TYPE)) {
+                handler.setMediaType(value);
+            }
+            else if (name.equals(OutputKeys.STANDALONE)) {
+                handler.setStandalone(value);
+            }
+            else if (name.equals(OutputKeys.VERSION)) {
+                handler.setVersion(value);
+            }
+            else if (name.equals(OutputKeys.OMIT_XML_DECLARATION)) {
+                handler.setOmitXMLDeclaration(
+                    value != null && value.toLowerCase().equals("yes"));
+            }
+            else if (name.equals(OutputKeys.INDENT)) {
+                handler.setIndent(
+                    value != null && value.toLowerCase().equals("yes"));
+            }
+            else if (name.equals(OutputPropertiesFactory.S_BUILTIN_OLD_EXTENSIONS_UNIVERSAL +"indent-amount")) {
+                if (value != null) {
+                    handler.setIndentAmount(Integer.parseInt(value));
+                }
+            }
+            else if (name.equals(OutputPropertiesFactory.S_BUILTIN_EXTENSIONS_UNIVERSAL +"indent-amount")) {
+                if (value != null) {
+                    handler.setIndentAmount(Integer.parseInt(value));
+                }
+            }
+            else if (name.equals(OutputPropertiesFactory.ORACLE_IS_STANDALONE)) {
+                if (value != null && value.equals("yes")) {
+                    handler.setIsStandalone(true);
+                }
+            }
+            else if (name.equals(OutputKeys.CDATA_SECTION_ELEMENTS)) {
+                if (value != null) {
+                    StringTokenizer e = new StringTokenizer(value);
+                    Vector uriAndLocalNames = null;
+                    while (e.hasMoreTokens()) {
+                        final String token = e.nextToken();
+
+                        // look for the last colon, as the String may be
+                        // something like "http://abc.com:local"
+                        int lastcolon = token.lastIndexOf(':');
+                        String uri;
+                        String localName;
+                        if (lastcolon > 0) {
+                            uri = token.substring(0, lastcolon);
+                            localName = token.substring(lastcolon+1);
+                        } else {
+                            // no colon at all, lets hope this is the
+                            // local name itself then
+                            uri = null;
+                            localName = token;
+                        }
+
+                        if (uriAndLocalNames == null) {
+                            uriAndLocalNames = new Vector();
+                        }
+                        // add the uri/localName as a pair, in that order
+                        uriAndLocalNames.addElement(uri);
+                        uriAndLocalNames.addElement(localName);
+                    }
+                    handler.setCdataSectionElements(uriAndLocalNames);
+                }
+            }
+        }
+
+        // Call setDoctype() if needed
+        if (doctypePublic != null || doctypeSystem != null) {
+            handler.setDoctype(doctypeSystem, doctypePublic);
+        }
+!!!4145154.java!!!	createOutputProperties(inout outputProperties : Properties) : Properties
+        final Properties defaults = new Properties();
+        setDefaults(defaults, "xml");
+
+        // Copy propeties set in stylesheet to base
+        final Properties base = new Properties(defaults);
+        if (outputProperties != null) {
+            final Enumeration names = outputProperties.propertyNames();
+            while (names.hasMoreElements()) {
+                final String name = (String) names.nextElement();
+                base.setProperty(name, outputProperties.getProperty(name));
+            }
+        }
+        else {
+            base.setProperty(OutputKeys.ENCODING, _translet._encoding);
+            if (_translet._method != null)
+                base.setProperty(OutputKeys.METHOD, _translet._method);
+        }
+
+        // Update defaults based on output method
+        final String method = base.getProperty(OutputKeys.METHOD);
+        if (method != null) {
+            if (method.equals("html")) {
+                setDefaults(defaults,"html");
+            }
+            else if (method.equals("text")) {
+                setDefaults(defaults,"text");
+            }
+        }
+
+        return base;
+!!!4145282.java!!!	setDefaults(inout props : Properties, inout method : String) : void
+                final Properties method_props =
+                        OutputPropertiesFactory.getDefaultMethodProperties(method);
+                {
+                        final Enumeration names = method_props.propertyNames();
+                        while (names.hasMoreElements())
+                        {
+                                final String name = (String)names.nextElement();
+                                props.setProperty(name, method_props.getProperty(name));
+                        }
+                }
+!!!4145410.java!!!	validOutputProperty(inout name : String) : boolean
+        return (name.equals(OutputKeys.ENCODING) ||
+                name.equals(OutputKeys.METHOD) ||
+                name.equals(OutputKeys.INDENT) ||
+                name.equals(OutputKeys.DOCTYPE_PUBLIC) ||
+                name.equals(OutputKeys.DOCTYPE_SYSTEM) ||
+                name.equals(OutputKeys.CDATA_SECTION_ELEMENTS) ||
+                name.equals(OutputKeys.MEDIA_TYPE) ||
+                name.equals(OutputKeys.OMIT_XML_DECLARATION)   ||
+                name.equals(OutputKeys.STANDALONE) ||
+                name.equals(OutputKeys.VERSION) ||
+                name.equals(OutputPropertiesFactory.ORACLE_IS_STANDALONE) ||
+                name.charAt(0) == '{');
+!!!4145538.java!!!	isDefaultProperty(inout name : String, inout properties : Properties) : boolean
+        return (properties.get(name) == null);
+!!!4145666.java!!!	setParameter(inout name : String, inout value : Object) : void
+
+        if (value == null) {
+            ErrorMsg err = new ErrorMsg(ErrorMsg.JAXP_INVALID_SET_PARAM_VALUE, name);
+            throw new IllegalArgumentException(err.toString());
+        }
+
+        if (_isIdentity) {
+            if (_parameters == null) {
+                _parameters = new HashMap<>();
+            }
+            _parameters.put(name, value);
+        }
+        else {
+            _translet.addParameter(name, value);
+        }
+!!!4145794.java!!!	clearParameters() : void
+        if (_isIdentity && _parameters != null) {
+            _parameters.clear();
+        }
+        else {
+            _translet.clearParameters();
+        }
+!!!4145922.java!!!	getParameter(inout name : String) : Object
+        if (_isIdentity) {
+            return (_parameters != null) ? _parameters.get(name) : null;
+        }
+        else {
+            return _translet.getParameter(name);
+        }
+!!!4146050.java!!!	getURIResolver() : URIResolver
+        return _uriResolver;
+!!!4146178.java!!!	setURIResolver(inout resolver : URIResolver) : void
+        _uriResolver = resolver;
+!!!4146306.java!!!	retrieveDocument(inout baseURI : String, inout href : String, inout translet : Translet) : DOM
+        try {
+            // Argument to document function was: document('');
+            if (href.length() == 0) {
+                href = baseURI;
+            }
+
+            /*
+             *  Fix for bug 24188
+             *  Incase the _uriResolver.resolve(href,base) is null
+             *  try to still  retrieve the document before returning null
+             *  and throwing the FileNotFoundException in
+             *  com.sun.org.apache.xalan.internal.xsltc.dom.LoadDocument
+             *
+             */
+            Source resolvedSource = _uriResolver.resolve(href, baseURI);
+            if (resolvedSource == null)  {
+                StreamSource streamSource = new StreamSource(
+                     SystemIDResolver.getAbsoluteURI(href, baseURI));
+                return getDOM(streamSource) ;
+            }
+
+            return getDOM(resolvedSource);
+        }
+        catch (TransformerException e) {
+            if (_errorListener != null)
+                postErrorToListener("File not found: " + e.getMessage());
+            return(null);
+        }
+!!!4146434.java!!!	error(inout e : TransformerException) : void
+        Throwable wrapped = e.getException();
+        if (wrapped != null) {
+            System.err.println(new ErrorMsg(ErrorMsg.ERROR_PLUS_WRAPPED_MSG,
+                                            e.getMessageAndLocation(),
+                                            wrapped.getMessage()));
+        } else {
+            System.err.println(new ErrorMsg(ErrorMsg.ERROR_MSG,
+                                            e.getMessageAndLocation()));
+        }
+        throw e;
+!!!4146562.java!!!	fatalError(inout e : TransformerException) : void
+        Throwable wrapped = e.getException();
+        if (wrapped != null) {
+            System.err.println(new ErrorMsg(ErrorMsg.FATAL_ERR_PLUS_WRAPPED_MSG,
+                                            e.getMessageAndLocation(),
+                                            wrapped.getMessage()));
+        } else {
+            System.err.println(new ErrorMsg(ErrorMsg.FATAL_ERR_MSG,
+                                            e.getMessageAndLocation()));
+        }
+        throw e;
+!!!4146690.java!!!	warning(inout e : TransformerException) : void
+        Throwable wrapped = e.getException();
+        if (wrapped != null) {
+            System.err.println(new ErrorMsg(ErrorMsg.WARNING_PLUS_WRAPPED_MSG,
+                                            e.getMessageAndLocation(),
+                                            wrapped.getMessage()));
+        } else {
+            System.err.println(new ErrorMsg(ErrorMsg.WARNING_MSG,
+                                            e.getMessageAndLocation()));
+        }
+!!!4146818.java!!!	reset() : void
+
+        _method = null;
+        _encoding = null;
+        _sourceSystemId = null;
+        _errorListener = this;
+        _uriResolver = null;
+        _dom = null;
+        _parameters = null;
+        _indentNumber = 0;
+        setOutputProperties (null);
+        _tohFactory = null;
+        _ostream = null;
+

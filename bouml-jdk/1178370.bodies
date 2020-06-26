@@ -1,0 +1,112 @@
+class FileCacheImageOutputStream
+!!!9686530.java!!!	FileCacheImageOutputStream(inout stream : OutputStream, inout cacheDir : File)
+        if (stream == null) {
+            throw new IllegalArgumentException("stream == null!");
+        }
+        if ((cacheDir != null) && !(cacheDir.isDirectory())) {
+            throw new IllegalArgumentException("Not a directory!");
+        }
+        this.stream = stream;
+        if (cacheDir == null)
+            this.cacheFile = Files.createTempFile("imageio", ".tmp").toFile();
+        else
+            this.cacheFile = Files.createTempFile(cacheDir.toPath(), "imageio", ".tmp")
+                                  .toFile();
+        this.cache = new RandomAccessFile(cacheFile, "rw");
+
+        this.closeAction = StreamCloser.createCloseAction(this);
+        StreamCloser.addToQueue(closeAction);
+!!!9686658.java!!!	read() : int
+        checkClosed();
+        bitOffset = 0;
+        int val =  cache.read();
+        if (val != -1) {
+            ++streamPos;
+        }
+        return val;
+!!!9686786.java!!!	read(inout b : byte [[]], in off : int, in len : int) : int
+        checkClosed();
+
+        if (b == null) {
+            throw new NullPointerException("b == null!");
+        }
+        if (off < 0 || len < 0 || off + len > b.length || off + len < 0) {
+            throw new IndexOutOfBoundsException
+                ("off < 0 || len < 0 || off+len > b.length || off+len < 0!");
+        }
+
+        bitOffset = 0;
+
+        if (len == 0) {
+            return 0;
+        }
+
+        int nbytes = cache.read(b, off, len);
+        if (nbytes != -1) {
+            streamPos += nbytes;
+        }
+        return nbytes;
+!!!9686914.java!!!	write(in b : int) : void
+        flushBits(); // this will call checkClosed() for us
+        cache.write(b);
+        ++streamPos;
+        maxStreamPos = Math.max(maxStreamPos, streamPos);
+!!!9687042.java!!!	write(inout b : byte [[]], in off : int, in len : int) : void
+        flushBits(); // this will call checkClosed() for us
+        cache.write(b, off, len);
+        streamPos += len;
+        maxStreamPos = Math.max(maxStreamPos, streamPos);
+!!!9687170.java!!!	length() : long
+        try {
+            checkClosed();
+            return cache.length();
+        } catch (IOException e) {
+            return -1L;
+        }
+!!!9687298.java!!!	seek(in pos : long) : void
+        checkClosed();
+
+        if (pos < flushedPos) {
+            throw new IndexOutOfBoundsException();
+        }
+
+        cache.seek(pos);
+        this.streamPos = cache.getFilePointer();
+        maxStreamPos = Math.max(maxStreamPos, streamPos);
+        this.bitOffset = 0;
+!!!9687426.java!!!	isCached() : boolean
+        return true;
+!!!9687554.java!!!	isCachedFile() : boolean
+        return true;
+!!!9687682.java!!!	isCachedMemory() : boolean
+        return false;
+!!!9687810.java!!!	close() : void
+        maxStreamPos = cache.length();
+
+        seek(maxStreamPos);
+        flushBefore(maxStreamPos);
+        super.close();
+        cache.close();
+        cache = null;
+        cacheFile.delete();
+        cacheFile = null;
+        stream.flush();
+        stream = null;
+        StreamCloser.removeFromQueue(closeAction);
+!!!9687938.java!!!	flushBefore(in pos : long) : void
+        long oFlushedPos = flushedPos;
+        super.flushBefore(pos); // this will call checkClosed() for us
+
+        long flushBytes = flushedPos - oFlushedPos;
+        if (flushBytes > 0) {
+            int bufLen = 512;
+            byte[] buf = new byte[bufLen];
+            cache.seek(oFlushedPos);
+            while (flushBytes > 0) {
+                int len = (int)Math.min(flushBytes, bufLen);
+                cache.readFully(buf, 0, len);
+                stream.write(buf, 0, len);
+                flushBytes -= len;
+            }
+            stream.flush();
+        }

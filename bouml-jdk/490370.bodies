@@ -1,0 +1,72 @@
+class MXBeanLookup
+!!!2987650.java!!!	MXBeanLookup(inout mbsc : MBeanServerConnection)
+        this.mbsc = mbsc;
+!!!2987778.java!!!	lookupFor(inout mbsc : MBeanServerConnection) : MXBeanLookup
+        synchronized (mbscToLookup) {
+            WeakReference<MXBeanLookup> weakLookup = mbscToLookup.get(mbsc);
+            MXBeanLookup lookup = (weakLookup == null) ? null : weakLookup.get();
+            if (lookup == null) {
+                lookup = new MXBeanLookup(mbsc);
+                mbscToLookup.put(mbsc, new WeakReference<MXBeanLookup>(lookup));
+            }
+            return lookup;
+        }
+!!!2987906.java!!!	objectNameToMXBean(inout name : ObjectName, inout type : Class) : T
+        WeakReference<Object> wr = objectNameToProxy.get(name);
+        if (wr != null) {
+            Object proxy = wr.get();
+            if (type.isInstance(proxy))
+                return type.cast(proxy);
+        }
+        T proxy = JMX.newMXBeanProxy(mbsc, name, type);
+        objectNameToProxy.put(name, new WeakReference<Object>(proxy));
+        return proxy;
+!!!2988034.java!!!	mxbeanToObjectName(inout mxbean : Object) : ObjectName
+        String wrong;
+        if (mxbean instanceof Proxy) {
+            InvocationHandler ih = Proxy.getInvocationHandler(mxbean);
+            if (ih instanceof MBeanServerInvocationHandler) {
+                MBeanServerInvocationHandler mbsih =
+                        (MBeanServerInvocationHandler) ih;
+                if (mbsih.getMBeanServerConnection().equals(mbsc))
+                    return mbsih.getObjectName();
+                else
+                    wrong = "proxy for a different MBeanServer";
+            } else
+                wrong = "not a JMX proxy";
+        } else {
+            ObjectName name = mxbeanToObjectName.get(mxbean);
+            if (name != null)
+                return name;
+            wrong = "not an MXBean registered in this MBeanServer";
+        }
+        String s = (mxbean == null) ?
+            "null" : "object of type " + mxbean.getClass().getName();
+        throw new OpenDataException(
+                "Could not convert " + s + " to an ObjectName: " + wrong);
+        // Message will be strange if mxbean is null but it is not
+        // supposed to be.
+!!!2988162.java!!!	addReference(inout name : ObjectName, inout mxbean : Object) : void
+        ObjectName existing = mxbeanToObjectName.get(mxbean);
+        if (existing != null) {
+            String multiname = AccessController.doPrivileged(
+                    new GetPropertyAction("jmx.mxbean.multiname"));
+            if (!"true".equalsIgnoreCase(multiname)) {
+                throw new InstanceAlreadyExistsException(
+                        "MXBean already registered with name " + existing);
+            }
+        }
+        mxbeanToObjectName.put(mxbean, name);
+!!!2988290.java!!!	removeReference(inout name : ObjectName, inout mxbean : Object) : boolean
+        if (name.equals(mxbeanToObjectName.get(mxbean))) {
+            mxbeanToObjectName.remove(mxbean);
+            return true;
+        } else
+            return false;
+        /* removeReference can be called when the above condition fails,
+         * notably if you try to register the same MXBean twice.
+         */
+!!!2988418.java!!!	getLookup() : MXBeanLookup
+        return currentLookup.get();
+!!!2988546.java!!!	setLookup(inout lookup : MXBeanLookup) : void
+        currentLookup.set(lookup);

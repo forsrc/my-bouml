@@ -1,0 +1,237 @@
+class Random
+!!!7989762.java!!!	Random()
+        this(seedUniquifier() ^ System.nanoTime());
+!!!7989890.java!!!	seedUniquifier() : long
+        // L'Ecuyer, "Tables of Linear Congruential Generators of
+        // Different Sizes and Good Lattice Structure", 1999
+        for (;;) {
+            long current = seedUniquifier.get();
+            long next = current * 181783497276652981L;
+            if (seedUniquifier.compareAndSet(current, next))
+                return next;
+        }
+!!!7990018.java!!!	Random(in seed : long)
+        if (getClass() == Random.class)
+            this.seed = new AtomicLong(initialScramble(seed));
+        else {
+            // subclass might have overriden setSeed
+            this.seed = new AtomicLong();
+            setSeed(seed);
+        }
+!!!7990146.java!!!	initialScramble(in seed : long) : long
+        return (seed ^ multiplier) & mask;
+!!!7990274.java!!!	setSeed(in seed : long) : void
+        this.seed.set(initialScramble(seed));
+        haveNextNextGaussian = false;
+!!!7990402.java!!!	next(in bits : int) : int
+        long oldseed, nextseed;
+        AtomicLong seed = this.seed;
+        do {
+            oldseed = seed.get();
+            nextseed = (oldseed * multiplier + addend) & mask;
+        } while (!seed.compareAndSet(oldseed, nextseed));
+        return (int)(nextseed >>> (48 - bits));
+!!!7990530.java!!!	nextBytes(inout bytes : byte [[]]) : void
+        for (int i = 0, len = bytes.length; i < len; )
+            for (int rnd = nextInt(),
+                     n = Math.min(len - i, Integer.SIZE/Byte.SIZE);
+                 n-- > 0; rnd >>= Byte.SIZE)
+                bytes[i++] = (byte)rnd;
+!!!7990658.java!!!	internalNextLong(in origin : long, in bound : long) : long
+        long r = nextLong();
+        if (origin < bound) {
+            long n = bound - origin, m = n - 1;
+            if ((n & m) == 0L)  // power of two
+                r = (r & m) + origin;
+            else if (n > 0L) {  // reject over-represented candidates
+                for (long u = r >>> 1;            // ensure nonnegative
+                     u + m - (r = u % n) < 0L;    // rejection check
+                     u = nextLong() >>> 1) // retry
+                    ;
+                r += origin;
+            }
+            else {              // range not representable as long
+                while (r < origin || r >= bound)
+                    r = nextLong();
+            }
+        }
+        return r;
+!!!7990786.java!!!	internalNextInt(in origin : int, in bound : int) : int
+        if (origin < bound) {
+            int n = bound - origin;
+            if (n > 0) {
+                return nextInt(n) + origin;
+            }
+            else {  // range not representable as int
+                int r;
+                do {
+                    r = nextInt();
+                } while (r < origin || r >= bound);
+                return r;
+            }
+        }
+        else {
+            return nextInt();
+        }
+!!!7990914.java!!!	internalNextDouble(in origin : double, in bound : double) : double
+        double r = nextDouble();
+        if (origin < bound) {
+            r = r * (bound - origin) + origin;
+            if (r >= bound) // correct for rounding
+                r = Double.longBitsToDouble(Double.doubleToLongBits(bound) - 1);
+        }
+        return r;
+!!!7991042.java!!!	nextInt() : int
+        return next(32);
+!!!7991170.java!!!	nextInt(in bound : int) : int
+        if (bound <= 0)
+            throw new IllegalArgumentException(BadBound);
+
+        int r = next(31);
+        int m = bound - 1;
+        if ((bound & m) == 0)  // i.e., bound is a power of 2
+            r = (int)((bound * (long)r) >> 31);
+        else {
+            for (int u = r;
+                 u - (r = u % bound) + m < 0;
+                 u = next(31))
+                ;
+        }
+        return r;
+!!!7991298.java!!!	nextLong() : long
+        // it's okay that the bottom word remains signed.
+        return ((long)(next(32)) << 32) + next(32);
+!!!7991426.java!!!	nextBoolean() : boolean
+        return next(1) != 0;
+!!!7991554.java!!!	nextFloat() : float
+        return next(24) / ((float)(1 << 24));
+!!!7991682.java!!!	nextDouble() : double
+        return (((long)(next(26)) << 27) + next(27)) * DOUBLE_UNIT;
+!!!7991810.java!!!	nextGaussian() : double
+        // See Knuth, ACP, Section 3.4.1 Algorithm C.
+        if (haveNextNextGaussian) {
+            haveNextNextGaussian = false;
+            return nextNextGaussian;
+        } else {
+            double v1, v2, s;
+            do {
+                v1 = 2 * nextDouble() - 1; // between -1 and 1
+                v2 = 2 * nextDouble() - 1; // between -1 and 1
+                s = v1 * v1 + v2 * v2;
+            } while (s >= 1 || s == 0);
+            double multiplier = StrictMath.sqrt(-2 * StrictMath.log(s)/s);
+            nextNextGaussian = v2 * multiplier;
+            haveNextNextGaussian = true;
+            return v1 * multiplier;
+        }
+!!!7991938.java!!!	ints(in streamSize : long) : IntStream
+        if (streamSize < 0L)
+            throw new IllegalArgumentException(BadSize);
+        return StreamSupport.intStream
+                (new RandomIntsSpliterator
+                         (this, 0L, streamSize, Integer.MAX_VALUE, 0),
+                 false);
+!!!7992066.java!!!	ints() : IntStream
+        return StreamSupport.intStream
+                (new RandomIntsSpliterator
+                         (this, 0L, Long.MAX_VALUE, Integer.MAX_VALUE, 0),
+                 false);
+!!!7992194.java!!!	ints(in streamSize : long, in randomNumberOrigin : int, in randomNumberBound : int) : IntStream
+        if (streamSize < 0L)
+            throw new IllegalArgumentException(BadSize);
+        if (randomNumberOrigin >= randomNumberBound)
+            throw new IllegalArgumentException(BadRange);
+        return StreamSupport.intStream
+                (new RandomIntsSpliterator
+                         (this, 0L, streamSize, randomNumberOrigin, randomNumberBound),
+                 false);
+!!!7992322.java!!!	ints(in randomNumberOrigin : int, in randomNumberBound : int) : IntStream
+        if (randomNumberOrigin >= randomNumberBound)
+            throw new IllegalArgumentException(BadRange);
+        return StreamSupport.intStream
+                (new RandomIntsSpliterator
+                         (this, 0L, Long.MAX_VALUE, randomNumberOrigin, randomNumberBound),
+                 false);
+!!!7992450.java!!!	longs(in streamSize : long) : LongStream
+        if (streamSize < 0L)
+            throw new IllegalArgumentException(BadSize);
+        return StreamSupport.longStream
+                (new RandomLongsSpliterator
+                         (this, 0L, streamSize, Long.MAX_VALUE, 0L),
+                 false);
+!!!7992578.java!!!	longs() : LongStream
+        return StreamSupport.longStream
+                (new RandomLongsSpliterator
+                         (this, 0L, Long.MAX_VALUE, Long.MAX_VALUE, 0L),
+                 false);
+!!!7992706.java!!!	longs(in streamSize : long, in randomNumberOrigin : long, in randomNumberBound : long) : LongStream
+        if (streamSize < 0L)
+            throw new IllegalArgumentException(BadSize);
+        if (randomNumberOrigin >= randomNumberBound)
+            throw new IllegalArgumentException(BadRange);
+        return StreamSupport.longStream
+                (new RandomLongsSpliterator
+                         (this, 0L, streamSize, randomNumberOrigin, randomNumberBound),
+                 false);
+!!!7992834.java!!!	longs(in randomNumberOrigin : long, in randomNumberBound : long) : LongStream
+        if (randomNumberOrigin >= randomNumberBound)
+            throw new IllegalArgumentException(BadRange);
+        return StreamSupport.longStream
+                (new RandomLongsSpliterator
+                         (this, 0L, Long.MAX_VALUE, randomNumberOrigin, randomNumberBound),
+                 false);
+!!!7992962.java!!!	doubles(in streamSize : long) : DoubleStream
+        if (streamSize < 0L)
+            throw new IllegalArgumentException(BadSize);
+        return StreamSupport.doubleStream
+                (new RandomDoublesSpliterator
+                         (this, 0L, streamSize, Double.MAX_VALUE, 0.0),
+                 false);
+!!!7993090.java!!!	doubles() : DoubleStream
+        return StreamSupport.doubleStream
+                (new RandomDoublesSpliterator
+                         (this, 0L, Long.MAX_VALUE, Double.MAX_VALUE, 0.0),
+                 false);
+!!!7993218.java!!!	doubles(in streamSize : long, in randomNumberOrigin : double, in randomNumberBound : double) : DoubleStream
+        if (streamSize < 0L)
+            throw new IllegalArgumentException(BadSize);
+        if (!(randomNumberOrigin < randomNumberBound))
+            throw new IllegalArgumentException(BadRange);
+        return StreamSupport.doubleStream
+                (new RandomDoublesSpliterator
+                         (this, 0L, streamSize, randomNumberOrigin, randomNumberBound),
+                 false);
+!!!7993346.java!!!	doubles(in randomNumberOrigin : double, in randomNumberBound : double) : DoubleStream
+        if (!(randomNumberOrigin < randomNumberBound))
+            throw new IllegalArgumentException(BadRange);
+        return StreamSupport.doubleStream
+                (new RandomDoublesSpliterator
+                         (this, 0L, Long.MAX_VALUE, randomNumberOrigin, randomNumberBound),
+                 false);
+!!!7995778.java!!!	readObject(inout s : ObjectInputStream) : void
+
+        ObjectInputStream.GetField fields = s.readFields();
+
+        // The seed is read in as {@code long} for
+        // historical reasons, but it is converted to an AtomicLong.
+        long seedVal = fields.get("seed", -1L);
+        if (seedVal < 0)
+          throw new java.io.StreamCorruptedException(
+                              "Random: invalid seed");
+        resetSeed(seedVal);
+        nextNextGaussian = fields.get("nextNextGaussian", 0.0);
+        haveNextNextGaussian = fields.get("haveNextNextGaussian", false);
+!!!7995906.java!!!	writeObject(inout s : ObjectOutputStream) : void
+
+        // set the values of the Serializable fields
+        ObjectOutputStream.PutField fields = s.putFields();
+
+        // The seed is serialized as a long for historical reasons.
+        fields.put("seed", seed.get());
+        fields.put("nextNextGaussian", nextNextGaussian);
+        fields.put("haveNextNextGaussian", haveNextNextGaussian);
+
+        // save them
+        s.writeFields();
+!!!7996034.java!!!	resetSeed(in seedVal : long) : void
+        unsafe.putObjectVolatile(this, seedOffset, new AtomicLong(seedVal));

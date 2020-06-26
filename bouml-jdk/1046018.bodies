@@ -1,0 +1,273 @@
+class Currency
+!!!8769282.java!!!	Currency(inout currencyCode : String, in defaultFractionDigits : int, in numericCode : int)
+        this.currencyCode = currencyCode;
+        this.defaultFractionDigits = defaultFractionDigits;
+        this.numericCode = numericCode;
+!!!8769410.java!!!	getInstance(inout currencyCode : String) : Currency
+        return getInstance(currencyCode, Integer.MIN_VALUE, 0);
+!!!8769538.java!!!	getInstance(inout currencyCode : String, in defaultFractionDigits : int, in numericCode : int) : Currency
+        // Try to look up the currency code in the instances table.
+        // This does the null pointer check as a side effect.
+        // Also, if there already is an entry, the currencyCode must be valid.
+        Currency instance = instances.get(currencyCode);
+        if (instance != null) {
+            return instance;
+        }
+
+        if (defaultFractionDigits == Integer.MIN_VALUE) {
+            // Currency code not internally generated, need to verify first
+            // A currency code must have 3 characters and exist in the main table
+            // or in the list of other currencies.
+            if (currencyCode.length() != 3) {
+                throw new IllegalArgumentException();
+            }
+            char char1 = currencyCode.charAt(0);
+            char char2 = currencyCode.charAt(1);
+            int tableEntry = getMainTableEntry(char1, char2);
+            if ((tableEntry & COUNTRY_TYPE_MASK) == SIMPLE_CASE_COUNTRY_MASK
+                    && tableEntry != INVALID_COUNTRY_ENTRY
+                    && currencyCode.charAt(2) - 'A' == (tableEntry & SIMPLE_CASE_COUNTRY_FINAL_CHAR_MASK)) {
+                defaultFractionDigits = (tableEntry & SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_MASK) >> SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_SHIFT;
+                numericCode = (tableEntry & NUMERIC_CODE_MASK) >> NUMERIC_CODE_SHIFT;
+            } else {
+                // Check for '-' separately so we don't get false hits in the table.
+                if (currencyCode.charAt(2) == '-') {
+                    throw new IllegalArgumentException();
+                }
+                int index = otherCurrencies.indexOf(currencyCode);
+                if (index == -1) {
+                    throw new IllegalArgumentException();
+                }
+                defaultFractionDigits = otherCurrenciesDFD[index / 4];
+                numericCode = otherCurrenciesNumericCode[index / 4];
+            }
+        }
+
+        Currency currencyVal =
+            new Currency(currencyCode, defaultFractionDigits, numericCode);
+        instance = instances.putIfAbsent(currencyCode, currencyVal);
+        return (instance != null ? instance : currencyVal);
+!!!8769666.java!!!	getInstance(inout locale : Locale) : Currency
+        String country = locale.getCountry();
+        if (country == null) {
+            throw new NullPointerException();
+        }
+
+        if (country.length() != 2) {
+            throw new IllegalArgumentException();
+        }
+
+        char char1 = country.charAt(0);
+        char char2 = country.charAt(1);
+        int tableEntry = getMainTableEntry(char1, char2);
+        if ((tableEntry & COUNTRY_TYPE_MASK) == SIMPLE_CASE_COUNTRY_MASK
+                    && tableEntry != INVALID_COUNTRY_ENTRY) {
+            char finalChar = (char) ((tableEntry & SIMPLE_CASE_COUNTRY_FINAL_CHAR_MASK) + 'A');
+            int defaultFractionDigits = (tableEntry & SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_MASK) >> SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_SHIFT;
+            int numericCode = (tableEntry & NUMERIC_CODE_MASK) >> NUMERIC_CODE_SHIFT;
+            StringBuilder sb = new StringBuilder(country);
+            sb.append(finalChar);
+            return getInstance(sb.toString(), defaultFractionDigits, numericCode);
+        } else {
+            // special cases
+            if (tableEntry == INVALID_COUNTRY_ENTRY) {
+                throw new IllegalArgumentException();
+            }
+            if (tableEntry == COUNTRY_WITHOUT_CURRENCY_ENTRY) {
+                return null;
+            } else {
+                int index = (tableEntry & SPECIAL_CASE_COUNTRY_INDEX_MASK) - SPECIAL_CASE_COUNTRY_INDEX_DELTA;
+                if (scCutOverTimes[index] == Long.MAX_VALUE || System.currentTimeMillis() < scCutOverTimes[index]) {
+                    return getInstance(scOldCurrencies[index], scOldCurrenciesDFD[index],
+                        scOldCurrenciesNumericCode[index]);
+                } else {
+                    return getInstance(scNewCurrencies[index], scNewCurrenciesDFD[index],
+                        scNewCurrenciesNumericCode[index]);
+                }
+            }
+        }
+!!!8769794.java!!!	getAvailableCurrencies() : Set
+        synchronized(Currency.class) {
+            if (available == null) {
+                available = new HashSet<>(256);
+
+                // Add simple currencies first
+                for (char c1 = 'A'; c1 <= 'Z'; c1 ++) {
+                    for (char c2 = 'A'; c2 <= 'Z'; c2 ++) {
+                        int tableEntry = getMainTableEntry(c1, c2);
+                        if ((tableEntry & COUNTRY_TYPE_MASK) == SIMPLE_CASE_COUNTRY_MASK
+                             && tableEntry != INVALID_COUNTRY_ENTRY) {
+                            char finalChar = (char) ((tableEntry & SIMPLE_CASE_COUNTRY_FINAL_CHAR_MASK) + 'A');
+                            int defaultFractionDigits = (tableEntry & SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_MASK) >> SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_SHIFT;
+                            int numericCode = (tableEntry & NUMERIC_CODE_MASK) >> NUMERIC_CODE_SHIFT;
+                            StringBuilder sb = new StringBuilder();
+                            sb.append(c1);
+                            sb.append(c2);
+                            sb.append(finalChar);
+                            available.add(getInstance(sb.toString(), defaultFractionDigits, numericCode));
+                        }
+                    }
+                }
+
+                // Now add other currencies
+                StringTokenizer st = new StringTokenizer(otherCurrencies, "-");
+                while (st.hasMoreElements()) {
+                    available.add(getInstance((String)st.nextElement()));
+                }
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        Set<Currency> result = (Set<Currency>) available.clone();
+        return result;
+!!!8769922.java!!!	getCurrencyCode() : String
+        return currencyCode;
+!!!8770050.java!!!	getSymbol() : String
+        return getSymbol(Locale.getDefault(Locale.Category.DISPLAY));
+!!!8770178.java!!!	getSymbol(inout locale : Locale) : String
+        LocaleServiceProviderPool pool =
+            LocaleServiceProviderPool.getPool(CurrencyNameProvider.class);
+        String symbol = pool.getLocalizedObject(
+                                CurrencyNameGetter.INSTANCE,
+                                locale, currencyCode, SYMBOL);
+        if (symbol != null) {
+            return symbol;
+        }
+
+        // use currency code as symbol of last resort
+        return currencyCode;
+!!!8770306.java!!!	getDefaultFractionDigits() : int
+        return defaultFractionDigits;
+!!!8770434.java!!!	getNumericCode() : int
+        return numericCode;
+!!!8770562.java!!!	getDisplayName() : String
+        return getDisplayName(Locale.getDefault(Locale.Category.DISPLAY));
+!!!8770690.java!!!	getDisplayName(inout locale : Locale) : String
+        LocaleServiceProviderPool pool =
+            LocaleServiceProviderPool.getPool(CurrencyNameProvider.class);
+        String result = pool.getLocalizedObject(
+                                CurrencyNameGetter.INSTANCE,
+                                locale, currencyCode, DISPLAYNAME);
+        if (result != null) {
+            return result;
+        }
+
+        // use currency code as symbol of last resort
+        return currencyCode;
+!!!8770818.java!!!	toString() : String
+        return currencyCode;
+!!!8770946.java!!!	readResolve() : Object
+        return getInstance(currencyCode);
+!!!8771074.java!!!	getMainTableEntry(in char1 : char, in char2 : char) : int
+        if (char1 < 'A' || char1 > 'Z' || char2 < 'A' || char2 > 'Z') {
+            throw new IllegalArgumentException();
+        }
+        return mainTable[(char1 - 'A') * A_TO_Z + (char2 - 'A')];
+!!!8771202.java!!!	setMainTableEntry(in char1 : char, in char2 : char, in entry : int) : void
+        if (char1 < 'A' || char1 > 'Z' || char2 < 'A' || char2 > 'Z') {
+            throw new IllegalArgumentException();
+        }
+        mainTable[(char1 - 'A') * A_TO_Z + (char2 - 'A')] = entry;
+!!!8771458.java!!!	readIntArray(inout dis : DataInputStream, in count : int) : int
+        int[] ret = new int[count];
+        for (int i = 0; i < count; i++) {
+            ret[i] = dis.readInt();
+        }
+
+        return ret;
+!!!8771586.java!!!	readLongArray(inout dis : DataInputStream, in count : int) : long
+        long[] ret = new long[count];
+        for (int i = 0; i < count; i++) {
+            ret[i] = dis.readLong();
+        }
+
+        return ret;
+!!!8771714.java!!!	readStringArray(inout dis : DataInputStream, in count : int) : String
+        String[] ret = new String[count];
+        for (int i = 0; i < count; i++) {
+            ret[i] = dis.readUTF();
+        }
+
+        return ret;
+!!!8771842.java!!!	replaceCurrencyData(inout pattern : Pattern, inout ctry : String, inout curdata : String) : void
+
+        if (ctry.length() != 2) {
+            // ignore invalid country code
+            info("currency.properties entry for " + ctry +
+                    " is ignored because of the invalid country code.", null);
+            return;
+        }
+
+        Matcher m = pattern.matcher(curdata);
+        if (!m.find() || (m.group(4) == null && countOccurrences(curdata, ',') >= 3)) {
+            // format is not recognized.  ignore the data
+            // if group(4) date string is null and we've 4 values, bad date value
+            info("currency.properties entry for " + ctry +
+                    " ignored because the value format is not recognized.", null);
+            return;
+        }
+
+        try {
+            if (m.group(4) != null && !isPastCutoverDate(m.group(4))) {
+                info("currency.properties entry for " + ctry +
+                        " ignored since cutover date has not passed :" + curdata, null);
+                return;
+            }
+        } catch (ParseException ex) {
+            info("currency.properties entry for " + ctry +
+                        " ignored since exception encountered :" + ex.getMessage(), null);
+            return;
+        }
+
+        String code = m.group(1);
+        int numeric = Integer.parseInt(m.group(2));
+        int entry = numeric << NUMERIC_CODE_SHIFT;
+        int fraction = Integer.parseInt(m.group(3));
+        if (fraction > SIMPLE_CASE_COUNTRY_MAX_DEFAULT_DIGITS) {
+            info("currency.properties entry for " + ctry +
+                " ignored since the fraction is more than " +
+                SIMPLE_CASE_COUNTRY_MAX_DEFAULT_DIGITS + ":" + curdata, null);
+            return;
+        }
+
+        int index;
+        for (index = 0; index < scOldCurrencies.length; index++) {
+            if (scOldCurrencies[index].equals(code)) {
+                break;
+            }
+        }
+
+        if (index == scOldCurrencies.length) {
+            // simple case
+            entry |= (fraction << SIMPLE_CASE_COUNTRY_DEFAULT_DIGITS_SHIFT) |
+                     (code.charAt(2) - 'A');
+        } else {
+            // special case
+            entry |= SPECIAL_CASE_COUNTRY_MASK |
+                     (index + SPECIAL_CASE_COUNTRY_INDEX_DELTA);
+        }
+        setMainTableEntry(ctry.charAt(0), ctry.charAt(1), entry);
+!!!8771970.java!!!	isPastCutoverDate(inout s : String) : boolean
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ROOT);
+        format.setTimeZone(TimeZone.getTimeZone("UTC"));
+        format.setLenient(false);
+        long time = format.parse(s.trim()).getTime();
+        return System.currentTimeMillis() > time;
+
+!!!8772098.java!!!	countOccurrences(inout value : String, in match : char) : int
+        int count = 0;
+        for (char c : value.toCharArray()) {
+            if (c == match) {
+               ++count;
+            }
+        }
+        return count;
+!!!8772226.java!!!	info(inout message : String, inout t : Throwable) : void
+        PlatformLogger logger = PlatformLogger.getLogger("java.util.Currency");
+        if (logger.isLoggable(PlatformLogger.Level.INFO)) {
+            if (t != null) {
+                logger.info(message, t);
+            } else {
+                logger.info(message);
+            }
+        }

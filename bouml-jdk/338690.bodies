@@ -1,0 +1,2056 @@
+class Container
+!!!1945090.java!!!	initializeFocusTraversalKeys() : void
+        focusTraversalKeys = new Set[4];
+!!!1945218.java!!!	getComponentCount() : int
+        return countComponents();
+!!!1945346.java!!!	countComponents() : int
+        // This method is not synchronized under AWT tree lock.
+        // Instead, the calling code is responsible for the
+        // synchronization. See 6784816 for details.
+        return component.size();
+!!!1945474.java!!!	getComponent(in n : int) : Component
+        // This method is not synchronized under AWT tree lock.
+        // Instead, the calling code is responsible for the
+        // synchronization. See 6784816 for details.
+        try {
+            return component.get(n);
+        } catch (IndexOutOfBoundsException z) {
+            throw new ArrayIndexOutOfBoundsException("No such child: " + n);
+        }
+!!!1945602.java!!!	getComponents() : Component
+        // This method is not synchronized under AWT tree lock.
+        // Instead, the calling code is responsible for the
+        // synchronization. See 6784816 for details.
+        return getComponents_NoClientCode();
+!!!1945730.java!!!	getComponents_NoClientCode() : Component
+        return component.toArray(EMPTY_ARRAY);
+!!!1945858.java!!!	getComponentsSync() : Component
+        synchronized (getTreeLock()) {
+            return getComponents();
+        }
+!!!1945986.java!!!	getInsets() : Insets
+        return insets();
+!!!1946114.java!!!	insets() : Insets
+        ComponentPeer peer = this.peer;
+        if (peer instanceof ContainerPeer) {
+            ContainerPeer cpeer = (ContainerPeer)peer;
+            return (Insets)cpeer.getInsets().clone();
+        }
+        return new Insets(0, 0, 0, 0);
+!!!1946242.java!!!	add(inout comp : Component) : Component
+        addImpl(comp, null, -1);
+        return comp;
+!!!1946370.java!!!	add(inout name : String, inout comp : Component) : Component
+        addImpl(comp, name, -1);
+        return comp;
+!!!1946498.java!!!	add(inout comp : Component, in index : int) : Component
+        addImpl(comp, null, index);
+        return comp;
+!!!1946626.java!!!	checkAddToSelf(inout comp : Component) : void
+        if (comp instanceof Container) {
+            for (Container cn = this; cn != null; cn=cn.parent) {
+                if (cn == comp) {
+                    throw new IllegalArgumentException("adding container's parent to itself");
+                }
+            }
+        }
+!!!1946754.java!!!	checkNotAWindow(inout comp : Component) : void
+        if (comp instanceof Window) {
+            throw new IllegalArgumentException("adding a window to a container");
+        }
+!!!1946882.java!!!	checkAdding(inout comp : Component, in index : int) : void
+        checkTreeLock();
+
+        GraphicsConfiguration thisGC = getGraphicsConfiguration();
+
+        if (index > component.size() || index < 0) {
+            throw new IllegalArgumentException("illegal component position");
+        }
+        if (comp.parent == this) {
+            if (index == component.size()) {
+                throw new IllegalArgumentException("illegal component position " +
+                                                   index + " should be less then " + component.size());
+            }
+        }
+        checkAddToSelf(comp);
+        checkNotAWindow(comp);
+
+        Window thisTopLevel = getContainingWindow();
+        Window compTopLevel = comp.getContainingWindow();
+        if (thisTopLevel != compTopLevel) {
+            throw new IllegalArgumentException("component and container should be in the same top-level window");
+        }
+        if (thisGC != null) {
+            comp.checkGD(thisGC.getDevice().getIDstring());
+        }
+!!!1947010.java!!!	removeDelicately(inout comp : Component, inout newParent : Container, in newIndex : int) : boolean
+        checkTreeLock();
+
+        int index = getComponentZOrder(comp);
+        boolean needRemoveNotify = isRemoveNotifyNeeded(comp, this, newParent);
+        if (needRemoveNotify) {
+            comp.removeNotify();
+        }
+        if (newParent != this) {
+            if (layoutMgr != null) {
+                layoutMgr.removeLayoutComponent(comp);
+            }
+            adjustListeningChildren(AWTEvent.HIERARCHY_EVENT_MASK,
+                                    -comp.numListening(AWTEvent.HIERARCHY_EVENT_MASK));
+            adjustListeningChildren(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK,
+                                    -comp.numListening(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+            adjustDescendants(-(comp.countHierarchyMembers()));
+
+            comp.parent = null;
+            if (needRemoveNotify) {
+                comp.setGraphicsConfiguration(null);
+            }
+            component.remove(index);
+
+            invalidateIfValid();
+        } else {
+            // We should remove component and then
+            // add it by the newIndex without newIndex decrement if even we shift components to the left
+            // after remove. Consult the rules below:
+            // 2->4: 012345 -> 013425, 2->5: 012345 -> 013452
+            // 4->2: 012345 -> 014235
+            component.remove(index);
+            component.add(newIndex, comp);
+        }
+        if (comp.parent == null) { // was actually removed
+            if (containerListener != null ||
+                (eventMask & AWTEvent.CONTAINER_EVENT_MASK) != 0 ||
+                Toolkit.enabledOnToolkit(AWTEvent.CONTAINER_EVENT_MASK)) {
+                ContainerEvent e = new ContainerEvent(this,
+                                                      ContainerEvent.COMPONENT_REMOVED,
+                                                      comp);
+                dispatchEvent(e);
+
+            }
+            comp.createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED, comp,
+                                       this, HierarchyEvent.PARENT_CHANGED,
+                                       Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+            if (peer != null && layoutMgr == null && isVisible()) {
+                updateCursorImmediately();
+            }
+        }
+        return needRemoveNotify;
+!!!1947138.java!!!	canContainFocusOwner(inout focusOwnerCandidate : Component) : boolean
+        if (!(isEnabled() && isDisplayable()
+              && isVisible() && isFocusable()))
+        {
+            return false;
+        }
+        if (isFocusCycleRoot()) {
+            FocusTraversalPolicy policy = getFocusTraversalPolicy();
+            if (policy instanceof DefaultFocusTraversalPolicy) {
+                if (!((DefaultFocusTraversalPolicy)policy).accept(focusOwnerCandidate)) {
+                    return false;
+                }
+            }
+        }
+        synchronized(getTreeLock()) {
+            if (parent != null) {
+                return parent.canContainFocusOwner(focusOwnerCandidate);
+            }
+        }
+        return true;
+!!!1947266.java!!!	hasHeavyweightDescendants() : boolean
+        checkTreeLock();
+        return numOfHWComponents > 0;
+!!!1947394.java!!!	hasLightweightDescendants() : boolean
+        checkTreeLock();
+        return numOfLWComponents > 0;
+!!!1947522.java!!!	getHeavyweightContainer() : Container
+        checkTreeLock();
+        if (peer != null && !(peer instanceof LightweightPeer)) {
+            return this;
+        } else {
+            return getNativeContainer();
+        }
+!!!1947650.java!!!	isRemoveNotifyNeeded(inout comp : Component, inout oldContainer : Container, inout newContainer : Container) : boolean
+        if (oldContainer == null) { // Component didn't have parent - no removeNotify
+            return false;
+        }
+        if (comp.peer == null) { // Component didn't have peer - no removeNotify
+            return false;
+        }
+        if (newContainer.peer == null) {
+            // Component has peer but new Container doesn't - call removeNotify
+            return true;
+        }
+
+        // If component is lightweight non-Container or lightweight Container with all but heavyweight
+        // children there is no need to call remove notify
+        if (comp.isLightweight()) {
+            boolean isContainer = comp instanceof Container;
+
+            if (!isContainer || (isContainer && !((Container)comp).hasHeavyweightDescendants())) {
+                return false;
+            }
+        }
+
+        // If this point is reached, then the comp is either a HW or a LW container with HW descendants.
+
+        // All three components have peers, check for peer change
+        Container newNativeContainer = oldContainer.getHeavyweightContainer();
+        Container oldNativeContainer = newContainer.getHeavyweightContainer();
+        if (newNativeContainer != oldNativeContainer) {
+            // Native containers change - check whether or not current platform supports
+            // changing of widget hierarchy on native level without recreation.
+            // The current implementation forbids reparenting of LW containers with HW descendants
+            // into another native container w/o destroying the peers. Actually such an operation
+            // is quite rare. If we ever need to save the peers, we'll have to slightly change the
+            // addDelicately() method in order to handle such LW containers recursively, reparenting
+            // each HW descendant independently.
+            return !comp.peer.isReparentSupported();
+        } else {
+            return false;
+        }
+!!!1947778.java!!!	setComponentZOrder(inout comp : Component, in index : int) : void
+         synchronized (getTreeLock()) {
+             // Store parent because remove will clear it
+             Container curParent = comp.parent;
+             int oldZindex = getComponentZOrder(comp);
+
+             if (curParent == this && index == oldZindex) {
+                 return;
+             }
+             checkAdding(comp, index);
+
+             boolean peerRecreated = (curParent != null) ?
+                 curParent.removeDelicately(comp, this, index) : false;
+
+             addDelicately(comp, curParent, index);
+
+             // If the oldZindex == -1, the component gets inserted,
+             // rather than it changes its z-order.
+             if (!peerRecreated && oldZindex != -1) {
+                 // The new 'index' cannot be == -1.
+                 // It gets checked at the checkAdding() method.
+                 // Therefore both oldZIndex and index denote
+                 // some existing positions at this point and
+                 // this is actually a Z-order changing.
+                 comp.mixOnZOrderChanging(oldZindex, index);
+             }
+         }
+!!!1947906.java!!!	reparentTraverse(inout parentPeer : ContainerPeer, inout child : Container) : void
+        checkTreeLock();
+
+        for (int i = 0; i < child.getComponentCount(); i++) {
+            Component comp = child.getComponent(i);
+            if (comp.isLightweight()) {
+                // If components is lightweight check if it is container
+                // If it is container it might contain heavyweight children we need to reparent
+                if (comp instanceof Container) {
+                    reparentTraverse(parentPeer, (Container)comp);
+                }
+            } else {
+                // Q: Need to update NativeInLightFixer?
+                comp.getPeer().reparent(parentPeer);
+            }
+        }
+!!!1948034.java!!!	reparentChild(inout comp : Component) : void
+        checkTreeLock();
+        if (comp == null) {
+            return;
+        }
+        if (comp.isLightweight()) {
+            // If component is lightweight container we need to reparent all its explicit  heavyweight children
+            if (comp instanceof Container) {
+                // Traverse component's tree till depth-first until encountering heavyweight component
+                reparentTraverse((ContainerPeer)getPeer(), (Container)comp);
+            }
+        } else {
+            comp.getPeer().reparent((ContainerPeer)getPeer());
+        }
+!!!1948162.java!!!	addDelicately(inout comp : Component, inout curParent : Container, in index : int) : void
+        checkTreeLock();
+
+        // Check if moving between containers
+        if (curParent != this) {
+            //index == -1 means add to the end.
+            if (index == -1) {
+                component.add(comp);
+            } else {
+                component.add(index, comp);
+            }
+            comp.parent = this;
+            comp.setGraphicsConfiguration(getGraphicsConfiguration());
+
+            adjustListeningChildren(AWTEvent.HIERARCHY_EVENT_MASK,
+                                    comp.numListening(AWTEvent.HIERARCHY_EVENT_MASK));
+            adjustListeningChildren(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK,
+                                    comp.numListening(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+            adjustDescendants(comp.countHierarchyMembers());
+        } else {
+            if (index < component.size()) {
+                component.set(index, comp);
+            }
+        }
+
+        invalidateIfValid();
+        if (peer != null) {
+            if (comp.peer == null) { // Remove notify was called or it didn't have peer - create new one
+                comp.addNotify();
+            } else { // Both container and child have peers, it means child peer should be reparented.
+                // In both cases we need to reparent native widgets.
+                Container newNativeContainer = getHeavyweightContainer();
+                Container oldNativeContainer = curParent.getHeavyweightContainer();
+                if (oldNativeContainer != newNativeContainer) {
+                    // Native container changed - need to reparent native widgets
+                    newNativeContainer.reparentChild(comp);
+                }
+                comp.updateZOrder();
+
+                if (!comp.isLightweight() && isLightweight()) {
+                    // If component is heavyweight and one of the containers is lightweight
+                    // the location of the component should be fixed.
+                    comp.relocateComponent();
+                }
+            }
+        }
+        if (curParent != this) {
+            /* Notify the layout manager of the added component. */
+            if (layoutMgr != null) {
+                if (layoutMgr instanceof LayoutManager2) {
+                    ((LayoutManager2)layoutMgr).addLayoutComponent(comp, null);
+                } else {
+                    layoutMgr.addLayoutComponent(null, comp);
+                }
+            }
+            if (containerListener != null ||
+                (eventMask & AWTEvent.CONTAINER_EVENT_MASK) != 0 ||
+                Toolkit.enabledOnToolkit(AWTEvent.CONTAINER_EVENT_MASK)) {
+                ContainerEvent e = new ContainerEvent(this,
+                                                      ContainerEvent.COMPONENT_ADDED,
+                                                      comp);
+                dispatchEvent(e);
+            }
+            comp.createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED, comp,
+                                       this, HierarchyEvent.PARENT_CHANGED,
+                                       Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+
+            // If component is focus owner or parent container of focus owner check that after reparenting
+            // focus owner moved out if new container prohibit this kind of focus owner.
+            if (comp.isFocusOwner() && !comp.canBeFocusOwnerRecursively()) {
+                comp.transferFocus();
+            } else if (comp instanceof Container) {
+                Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                if (focusOwner != null && isParentOf(focusOwner) && !focusOwner.canBeFocusOwnerRecursively()) {
+                    focusOwner.transferFocus();
+                }
+            }
+        } else {
+            comp.createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED, comp,
+                                       this, HierarchyEvent.HIERARCHY_CHANGED,
+                                       Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+        }
+
+        if (peer != null && layoutMgr == null && isVisible()) {
+            updateCursorImmediately();
+        }
+!!!1948290.java!!!	getComponentZOrder(inout comp : Component) : int
+        if (comp == null) {
+            return -1;
+        }
+        synchronized(getTreeLock()) {
+            // Quick check - container should be immediate parent of the component
+            if (comp.parent != this) {
+                return -1;
+            }
+            return component.indexOf(comp);
+        }
+!!!1948418.java!!!	add(inout comp : Component, inout constraints : Object) : void
+        addImpl(comp, constraints, -1);
+!!!1948546.java!!!	add(inout comp : Component, inout constraints : Object, in index : int) : void
+       addImpl(comp, constraints, index);
+!!!1948674.java!!!	addImpl(inout comp : Component, inout constraints : Object, in index : int) : void
+        synchronized (getTreeLock()) {
+            /* Check for correct arguments:  index in bounds,
+             * comp cannot be one of this container's parents,
+             * and comp cannot be a window.
+             * comp and container must be on the same GraphicsDevice.
+             * if comp is container, all sub-components must be on
+             * same GraphicsDevice.
+             */
+            GraphicsConfiguration thisGC = this.getGraphicsConfiguration();
+
+            if (index > component.size() || (index < 0 && index != -1)) {
+                throw new IllegalArgumentException(
+                          "illegal component position");
+            }
+            checkAddToSelf(comp);
+            checkNotAWindow(comp);
+            if (thisGC != null) {
+                comp.checkGD(thisGC.getDevice().getIDstring());
+            }
+
+            /* Reparent the component and tidy up the tree's state. */
+            if (comp.parent != null) {
+                comp.parent.remove(comp);
+                    if (index > component.size()) {
+                        throw new IllegalArgumentException("illegal component position");
+                    }
+            }
+
+            //index == -1 means add to the end.
+            if (index == -1) {
+                component.add(comp);
+            } else {
+                component.add(index, comp);
+            }
+            comp.parent = this;
+            comp.setGraphicsConfiguration(thisGC);
+
+            adjustListeningChildren(AWTEvent.HIERARCHY_EVENT_MASK,
+                comp.numListening(AWTEvent.HIERARCHY_EVENT_MASK));
+            adjustListeningChildren(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK,
+                comp.numListening(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+            adjustDescendants(comp.countHierarchyMembers());
+
+            invalidateIfValid();
+            if (peer != null) {
+                comp.addNotify();
+            }
+
+            /* Notify the layout manager of the added component. */
+            if (layoutMgr != null) {
+                if (layoutMgr instanceof LayoutManager2) {
+                    ((LayoutManager2)layoutMgr).addLayoutComponent(comp, constraints);
+                } else if (constraints instanceof String) {
+                    layoutMgr.addLayoutComponent((String)constraints, comp);
+                }
+            }
+            if (containerListener != null ||
+                (eventMask & AWTEvent.CONTAINER_EVENT_MASK) != 0 ||
+                Toolkit.enabledOnToolkit(AWTEvent.CONTAINER_EVENT_MASK)) {
+                ContainerEvent e = new ContainerEvent(this,
+                                     ContainerEvent.COMPONENT_ADDED,
+                                     comp);
+                dispatchEvent(e);
+            }
+
+            comp.createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED, comp,
+                                       this, HierarchyEvent.PARENT_CHANGED,
+                                       Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+            if (peer != null && layoutMgr == null && isVisible()) {
+                updateCursorImmediately();
+            }
+        }
+!!!1948802.java!!!	updateGraphicsData(inout gc : GraphicsConfiguration) : boolean
+        checkTreeLock();
+
+        boolean ret = super.updateGraphicsData(gc);
+
+        for (Component comp : component) {
+            if (comp != null) {
+                ret |= comp.updateGraphicsData(gc);
+            }
+        }
+        return ret;
+!!!1948930.java!!!	checkGD(inout stringID : String) : void
+        for (Component comp : component) {
+            if (comp != null) {
+                comp.checkGD(stringID);
+            }
+        }
+!!!1949058.java!!!	remove(in index : int) : void
+        synchronized (getTreeLock()) {
+            if (index < 0  || index >= component.size()) {
+                throw new ArrayIndexOutOfBoundsException(index);
+            }
+            Component comp = component.get(index);
+            if (peer != null) {
+                comp.removeNotify();
+            }
+            if (layoutMgr != null) {
+                layoutMgr.removeLayoutComponent(comp);
+            }
+
+            adjustListeningChildren(AWTEvent.HIERARCHY_EVENT_MASK,
+                -comp.numListening(AWTEvent.HIERARCHY_EVENT_MASK));
+            adjustListeningChildren(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK,
+                -comp.numListening(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+            adjustDescendants(-(comp.countHierarchyMembers()));
+
+            comp.parent = null;
+            component.remove(index);
+            comp.setGraphicsConfiguration(null);
+
+            invalidateIfValid();
+            if (containerListener != null ||
+                (eventMask & AWTEvent.CONTAINER_EVENT_MASK) != 0 ||
+                Toolkit.enabledOnToolkit(AWTEvent.CONTAINER_EVENT_MASK)) {
+                ContainerEvent e = new ContainerEvent(this,
+                                     ContainerEvent.COMPONENT_REMOVED,
+                                     comp);
+                dispatchEvent(e);
+            }
+
+            comp.createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED, comp,
+                                       this, HierarchyEvent.PARENT_CHANGED,
+                                       Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+            if (peer != null && layoutMgr == null && isVisible()) {
+                updateCursorImmediately();
+            }
+        }
+!!!1949186.java!!!	remove(inout comp : Component) : void
+        synchronized (getTreeLock()) {
+            if (comp.parent == this)  {
+                int index = component.indexOf(comp);
+                if (index >= 0) {
+                    remove(index);
+                }
+            }
+        }
+!!!1949314.java!!!	removeAll() : void
+        synchronized (getTreeLock()) {
+            adjustListeningChildren(AWTEvent.HIERARCHY_EVENT_MASK,
+                                    -listeningChildren);
+            adjustListeningChildren(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK,
+                                    -listeningBoundsChildren);
+            adjustDescendants(-descendantsCount);
+
+            while (!component.isEmpty()) {
+                Component comp = component.remove(component.size()-1);
+
+                if (peer != null) {
+                    comp.removeNotify();
+                }
+                if (layoutMgr != null) {
+                    layoutMgr.removeLayoutComponent(comp);
+                }
+                comp.parent = null;
+                comp.setGraphicsConfiguration(null);
+                if (containerListener != null ||
+                   (eventMask & AWTEvent.CONTAINER_EVENT_MASK) != 0 ||
+                    Toolkit.enabledOnToolkit(AWTEvent.CONTAINER_EVENT_MASK)) {
+                    ContainerEvent e = new ContainerEvent(this,
+                                     ContainerEvent.COMPONENT_REMOVED,
+                                     comp);
+                    dispatchEvent(e);
+                }
+
+                comp.createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED,
+                                           comp, this,
+                                           HierarchyEvent.PARENT_CHANGED,
+                                           Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+            }
+            if (peer != null && layoutMgr == null && isVisible()) {
+                updateCursorImmediately();
+            }
+            invalidateIfValid();
+        }
+!!!1949442.java!!!	numListening(in mask : long) : int
+        int superListening = super.numListening(mask);
+
+        if (mask == AWTEvent.HIERARCHY_EVENT_MASK) {
+            if (eventLog.isLoggable(PlatformLogger.Level.FINE)) {
+                // Verify listeningChildren is correct
+                int sum = 0;
+                for (Component comp : component) {
+                    sum += comp.numListening(mask);
+                }
+                if (listeningChildren != sum) {
+                    eventLog.fine("Assertion (listeningChildren == sum) failed");
+                }
+            }
+            return listeningChildren + superListening;
+        } else if (mask == AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK) {
+            if (eventLog.isLoggable(PlatformLogger.Level.FINE)) {
+                // Verify listeningBoundsChildren is correct
+                int sum = 0;
+                for (Component comp : component) {
+                    sum += comp.numListening(mask);
+                }
+                if (listeningBoundsChildren != sum) {
+                    eventLog.fine("Assertion (listeningBoundsChildren == sum) failed");
+                }
+            }
+            return listeningBoundsChildren + superListening;
+        } else {
+            // assert false;
+            if (eventLog.isLoggable(PlatformLogger.Level.FINE)) {
+                eventLog.fine("This code must never be reached");
+            }
+            return superListening;
+        }
+!!!1949570.java!!!	adjustListeningChildren(in mask : long, in num : int) : void
+        if (eventLog.isLoggable(PlatformLogger.Level.FINE)) {
+            boolean toAssert = (mask == AWTEvent.HIERARCHY_EVENT_MASK ||
+                                mask == AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK ||
+                                mask == (AWTEvent.HIERARCHY_EVENT_MASK |
+                                         AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+            if (!toAssert) {
+                eventLog.fine("Assertion failed");
+            }
+        }
+
+        if (num == 0)
+            return;
+
+        if ((mask & AWTEvent.HIERARCHY_EVENT_MASK) != 0) {
+            listeningChildren += num;
+        }
+        if ((mask & AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK) != 0) {
+            listeningBoundsChildren += num;
+        }
+
+        adjustListeningChildrenOnParent(mask, num);
+!!!1949698.java!!!	adjustDescendants(in num : int) : void
+        if (num == 0)
+            return;
+
+        descendantsCount += num;
+        adjustDecendantsOnParent(num);
+!!!1949826.java!!!	adjustDecendantsOnParent(in num : int) : void
+        if (parent != null) {
+            parent.adjustDescendants(num);
+        }
+!!!1949954.java!!!	countHierarchyMembers() : int
+        if (log.isLoggable(PlatformLogger.Level.FINE)) {
+            // Verify descendantsCount is correct
+            int sum = 0;
+            for (Component comp : component) {
+                sum += comp.countHierarchyMembers();
+            }
+            if (descendantsCount != sum) {
+                log.fine("Assertion (descendantsCount == sum) failed");
+            }
+        }
+        return descendantsCount + 1;
+!!!1950082.java!!!	getListenersCount(in id : int, inout enabledOnToolkit : boolean) : int
+        checkTreeLock();
+        if (enabledOnToolkit) {
+            return descendantsCount;
+        }
+        switch (id) {
+          case HierarchyEvent.HIERARCHY_CHANGED:
+            return listeningChildren;
+          case HierarchyEvent.ANCESTOR_MOVED:
+          case HierarchyEvent.ANCESTOR_RESIZED:
+            return listeningBoundsChildren;
+          default:
+            return 0;
+        }
+!!!1950210.java!!!	createHierarchyEvents(in id : int, inout changed : Component, inout changedParent : Container, in changeFlags : long, inout enabledOnToolkit : boolean) : int
+        checkTreeLock();
+        int listeners = getListenersCount(id, enabledOnToolkit);
+
+        for (int count = listeners, i = 0; count > 0; i++) {
+            count -= component.get(i).createHierarchyEvents(id, changed,
+                changedParent, changeFlags, enabledOnToolkit);
+        }
+        return listeners +
+            super.createHierarchyEvents(id, changed, changedParent,
+                                        changeFlags, enabledOnToolkit);
+!!!1950338.java!!!	createChildHierarchyEvents(in id : int, in changeFlags : long, inout enabledOnToolkit : boolean) : void
+        checkTreeLock();
+        if (component.isEmpty()) {
+            return;
+        }
+        int listeners = getListenersCount(id, enabledOnToolkit);
+
+        for (int count = listeners, i = 0; count > 0; i++) {
+            count -= component.get(i).createHierarchyEvents(id, this, parent,
+                changeFlags, enabledOnToolkit);
+        }
+!!!1950466.java!!!	getLayout() : LayoutManager
+        return layoutMgr;
+!!!1950594.java!!!	setLayout(inout mgr : LayoutManager) : void
+        layoutMgr = mgr;
+        invalidateIfValid();
+!!!1950722.java!!!	doLayout() : void
+        layout();
+!!!1950850.java!!!	layout() : void
+        LayoutManager layoutMgr = this.layoutMgr;
+        if (layoutMgr != null) {
+            layoutMgr.layoutContainer(this);
+        }
+!!!1950978.java!!!	isValidateRoot() : boolean
+        return false;
+!!!1951106.java!!!	invalidateParent() : void
+        if (!isJavaAwtSmartInvalidate || !isValidateRoot()) {
+            super.invalidateParent();
+        }
+!!!1951234.java!!!	invalidate() : void
+        LayoutManager layoutMgr = this.layoutMgr;
+        if (layoutMgr instanceof LayoutManager2) {
+            LayoutManager2 lm = (LayoutManager2) layoutMgr;
+            lm.invalidateLayout(this);
+        }
+        super.invalidate();
+!!!1951362.java!!!	validate() : void
+        boolean updateCur = false;
+        synchronized (getTreeLock()) {
+            if ((!isValid() || descendUnconditionallyWhenValidating)
+                    && peer != null)
+            {
+                ContainerPeer p = null;
+                if (peer instanceof ContainerPeer) {
+                    p = (ContainerPeer) peer;
+                }
+                if (p != null) {
+                    p.beginValidate();
+                }
+                validateTree();
+                if (p != null) {
+                    p.endValidate();
+                    // Avoid updating cursor if this is an internal call.
+                    // See validateUnconditionally() for details.
+                    if (!descendUnconditionallyWhenValidating) {
+                        updateCur = isVisible();
+                    }
+                }
+            }
+        }
+        if (updateCur) {
+            updateCursorImmediately();
+        }
+!!!1951490.java!!!	validateUnconditionally() : void
+        boolean updateCur = false;
+        synchronized (getTreeLock()) {
+            descendUnconditionallyWhenValidating = true;
+
+            validate();
+            if (peer instanceof ContainerPeer) {
+                updateCur = isVisible();
+            }
+
+            descendUnconditionallyWhenValidating = false;
+        }
+        if (updateCur) {
+            updateCursorImmediately();
+        }
+!!!1951618.java!!!	validateTree() : void
+        checkTreeLock();
+        if (!isValid() || descendUnconditionallyWhenValidating) {
+            if (peer instanceof ContainerPeer) {
+                ((ContainerPeer)peer).beginLayout();
+            }
+            if (!isValid()) {
+                doLayout();
+            }
+            for (int i = 0; i < component.size(); i++) {
+                Component comp = component.get(i);
+                if (   (comp instanceof Container)
+                       && !(comp instanceof Window)
+                       && (!comp.isValid() ||
+                           descendUnconditionallyWhenValidating))
+                {
+                    ((Container)comp).validateTree();
+                } else {
+                    comp.validate();
+                }
+            }
+            if (peer instanceof ContainerPeer) {
+                ((ContainerPeer)peer).endLayout();
+            }
+        }
+        super.validate();
+!!!1951746.java!!!	invalidateTree() : void
+        synchronized (getTreeLock()) {
+            for (int i = 0; i < component.size(); i++) {
+                Component comp = component.get(i);
+                if (comp instanceof Container) {
+                    ((Container)comp).invalidateTree();
+                }
+                else {
+                    comp.invalidateIfValid();
+                }
+            }
+            invalidateIfValid();
+        }
+!!!1951874.java!!!	setFont(inout f : Font) : void
+        boolean shouldinvalidate = false;
+
+        Font oldfont = getFont();
+        super.setFont(f);
+        Font newfont = getFont();
+        if (newfont != oldfont && (oldfont == null ||
+                                   !oldfont.equals(newfont))) {
+            invalidateTree();
+        }
+!!!1952002.java!!!	getPreferredSize() : Dimension
+        return preferredSize();
+!!!1952130.java!!!	preferredSize() : Dimension
+        /* Avoid grabbing the lock if a reasonable cached size value
+         * is available.
+         */
+        Dimension dim = prefSize;
+        if (dim == null || !(isPreferredSizeSet() || isValid())) {
+            synchronized (getTreeLock()) {
+                prefSize = (layoutMgr != null) ?
+                    layoutMgr.preferredLayoutSize(this) :
+                    super.preferredSize();
+                dim = prefSize;
+            }
+        }
+        if (dim != null){
+            return new Dimension(dim);
+        }
+        else{
+            return dim;
+        }
+!!!1952258.java!!!	getMinimumSize() : Dimension
+        return minimumSize();
+!!!1952386.java!!!	minimumSize() : Dimension
+        /* Avoid grabbing the lock if a reasonable cached size value
+         * is available.
+         */
+        Dimension dim = minSize;
+        if (dim == null || !(isMinimumSizeSet() || isValid())) {
+            synchronized (getTreeLock()) {
+                minSize = (layoutMgr != null) ?
+                    layoutMgr.minimumLayoutSize(this) :
+                    super.minimumSize();
+                dim = minSize;
+            }
+        }
+        if (dim != null){
+            return new Dimension(dim);
+        }
+        else{
+            return dim;
+        }
+!!!1952514.java!!!	getMaximumSize() : Dimension
+        /* Avoid grabbing the lock if a reasonable cached size value
+         * is available.
+         */
+        Dimension dim = maxSize;
+        if (dim == null || !(isMaximumSizeSet() || isValid())) {
+            synchronized (getTreeLock()) {
+               if (layoutMgr instanceof LayoutManager2) {
+                    LayoutManager2 lm = (LayoutManager2) layoutMgr;
+                    maxSize = lm.maximumLayoutSize(this);
+               } else {
+                    maxSize = super.getMaximumSize();
+               }
+               dim = maxSize;
+            }
+        }
+        if (dim != null){
+            return new Dimension(dim);
+        }
+        else{
+            return dim;
+        }
+!!!1952642.java!!!	getAlignmentX() : float
+        float xAlign;
+        if (layoutMgr instanceof LayoutManager2) {
+            synchronized (getTreeLock()) {
+                LayoutManager2 lm = (LayoutManager2) layoutMgr;
+                xAlign = lm.getLayoutAlignmentX(this);
+            }
+        } else {
+            xAlign = super.getAlignmentX();
+        }
+        return xAlign;
+!!!1952770.java!!!	getAlignmentY() : float
+        float yAlign;
+        if (layoutMgr instanceof LayoutManager2) {
+            synchronized (getTreeLock()) {
+                LayoutManager2 lm = (LayoutManager2) layoutMgr;
+                yAlign = lm.getLayoutAlignmentY(this);
+            }
+        } else {
+            yAlign = super.getAlignmentY();
+        }
+        return yAlign;
+!!!1952898.java!!!	paint(inout g : Graphics) : void
+        if (isShowing()) {
+            synchronized (getObjectLock()) {
+                if (printing) {
+                    if (printingThreads.contains(Thread.currentThread())) {
+                        return;
+                    }
+                }
+            }
+
+            // The container is showing on screen and
+            // this paint() is not called from print().
+            // Paint self and forward the paint to lightweight subcomponents.
+
+            // super.paint(); -- Don't bother, since it's a NOP.
+
+            GraphicsCallback.PaintCallback.getInstance().
+                runComponents(getComponentsSync(), g, GraphicsCallback.LIGHTWEIGHTS);
+        }
+!!!1953026.java!!!	update(inout g : Graphics) : void
+        if (isShowing()) {
+            if (! (peer instanceof LightweightPeer)) {
+                g.clearRect(0, 0, width, height);
+            }
+            paint(g);
+        }
+!!!1953154.java!!!	print(inout g : Graphics) : void
+        if (isShowing()) {
+            Thread t = Thread.currentThread();
+            try {
+                synchronized (getObjectLock()) {
+                    if (printingThreads == null) {
+                        printingThreads = new HashSet<>();
+                    }
+                    printingThreads.add(t);
+                    printing = true;
+                }
+                super.print(g);  // By default, Component.print() calls paint()
+            } finally {
+                synchronized (getObjectLock()) {
+                    printingThreads.remove(t);
+                    printing = !printingThreads.isEmpty();
+                }
+            }
+
+            GraphicsCallback.PrintCallback.getInstance().
+                runComponents(getComponentsSync(), g, GraphicsCallback.LIGHTWEIGHTS);
+        }
+!!!1953282.java!!!	paintComponents(inout g : Graphics) : void
+        if (isShowing()) {
+            GraphicsCallback.PaintAllCallback.getInstance().
+                runComponents(getComponentsSync(), g, GraphicsCallback.TWO_PASSES);
+        }
+!!!1953410.java!!!	lightweightPaint(inout g : Graphics) : void
+        super.lightweightPaint(g);
+        paintHeavyweightComponents(g);
+!!!1953538.java!!!	paintHeavyweightComponents(inout g : Graphics) : void
+        if (isShowing()) {
+            GraphicsCallback.PaintHeavyweightComponentsCallback.getInstance().
+                runComponents(getComponentsSync(), g,
+                              GraphicsCallback.LIGHTWEIGHTS | GraphicsCallback.HEAVYWEIGHTS);
+        }
+!!!1953666.java!!!	printComponents(inout g : Graphics) : void
+        if (isShowing()) {
+            GraphicsCallback.PrintAllCallback.getInstance().
+                runComponents(getComponentsSync(), g, GraphicsCallback.TWO_PASSES);
+        }
+!!!1953794.java!!!	lightweightPrint(inout g : Graphics) : void
+        super.lightweightPrint(g);
+        printHeavyweightComponents(g);
+!!!1953922.java!!!	printHeavyweightComponents(inout g : Graphics) : void
+        if (isShowing()) {
+            GraphicsCallback.PrintHeavyweightComponentsCallback.getInstance().
+                runComponents(getComponentsSync(), g,
+                              GraphicsCallback.LIGHTWEIGHTS | GraphicsCallback.HEAVYWEIGHTS);
+        }
+!!!1954050.java!!!	addContainerListener(inout l : ContainerListener) : void
+        if (l == null) {
+            return;
+        }
+        containerListener = AWTEventMulticaster.add(containerListener, l);
+        newEventsOnly = true;
+!!!1954178.java!!!	removeContainerListener(inout l : ContainerListener) : void
+        if (l == null) {
+            return;
+        }
+        containerListener = AWTEventMulticaster.remove(containerListener, l);
+!!!1954306.java!!!	getContainerListeners() : ContainerListener
+        return getListeners(ContainerListener.class);
+!!!1954434.java!!!	getListeners(inout listenerType : Class) : T
+        EventListener l = null;
+        if  (listenerType == ContainerListener.class) {
+            l = containerListener;
+        } else {
+            return super.getListeners(listenerType);
+        }
+        return AWTEventMulticaster.getListeners(l, listenerType);
+!!!1954562.java!!!	eventEnabled(inout e : AWTEvent) : boolean
+        int id = e.getID();
+
+        if (id == ContainerEvent.COMPONENT_ADDED ||
+            id == ContainerEvent.COMPONENT_REMOVED) {
+            if ((eventMask & AWTEvent.CONTAINER_EVENT_MASK) != 0 ||
+                containerListener != null) {
+                return true;
+            }
+            return false;
+        }
+        return super.eventEnabled(e);
+!!!1954690.java!!!	processEvent(inout e : AWTEvent) : void
+        if (e instanceof ContainerEvent) {
+            processContainerEvent((ContainerEvent)e);
+            return;
+        }
+        super.processEvent(e);
+!!!1954818.java!!!	processContainerEvent(inout e : ContainerEvent) : void
+        ContainerListener listener = containerListener;
+        if (listener != null) {
+            switch(e.getID()) {
+              case ContainerEvent.COMPONENT_ADDED:
+                listener.componentAdded(e);
+                break;
+              case ContainerEvent.COMPONENT_REMOVED:
+                listener.componentRemoved(e);
+                break;
+            }
+        }
+!!!1954946.java!!!	dispatchEventImpl(inout e : AWTEvent) : void
+        if ((dispatcher != null) && dispatcher.dispatchEvent(e)) {
+            // event was sent to a lightweight component.  The
+            // native-produced event sent to the native container
+            // must be properly disposed of by the peer, so it
+            // gets forwarded.  If the native host has been removed
+            // as a result of the sending the lightweight event,
+            // the peer reference will be null.
+            e.consume();
+            if (peer != null) {
+                peer.handleEvent(e);
+            }
+            return;
+        }
+
+        super.dispatchEventImpl(e);
+
+        synchronized (getTreeLock()) {
+            switch (e.getID()) {
+              case ComponentEvent.COMPONENT_RESIZED:
+                createChildHierarchyEvents(HierarchyEvent.ANCESTOR_RESIZED, 0,
+                                           Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+                break;
+              case ComponentEvent.COMPONENT_MOVED:
+                createChildHierarchyEvents(HierarchyEvent.ANCESTOR_MOVED, 0,
+                                       Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+                break;
+              default:
+                break;
+            }
+        }
+!!!1955074.java!!!	dispatchEventToSelf(inout e : AWTEvent) : void
+        super.dispatchEventImpl(e);
+!!!1955202.java!!!	getMouseEventTarget(in x : int, in y : int, inout includeSelf : boolean) : Component
+        return getMouseEventTarget(x, y, includeSelf,
+                                   MouseEventTargetFilter.FILTER,
+                                   !SEARCH_HEAVYWEIGHTS);
+!!!1955330.java!!!	getDropTargetEventTarget(in x : int, in y : int, inout includeSelf : boolean) : Component
+        return getMouseEventTarget(x, y, includeSelf,
+                                   DropTargetEventTargetFilter.FILTER,
+                                   SEARCH_HEAVYWEIGHTS);
+!!!1955458.java!!!	getMouseEventTarget(in x : int, in y : int, inout includeSelf : boolean, inout filter : Container::EventTargetFilter, inout searchHeavyweights : boolean) : Component
+        Component comp = null;
+        if (searchHeavyweights) {
+            comp = getMouseEventTargetImpl(x, y, includeSelf, filter,
+                                           SEARCH_HEAVYWEIGHTS,
+                                           searchHeavyweights);
+        }
+
+        if (comp == null || comp == this) {
+            comp = getMouseEventTargetImpl(x, y, includeSelf, filter,
+                                           !SEARCH_HEAVYWEIGHTS,
+                                           searchHeavyweights);
+        }
+
+        return comp;
+!!!1955586.java!!!	getMouseEventTargetImpl(in x : int, in y : int, inout includeSelf : boolean, inout filter : Container::EventTargetFilter, inout searchHeavyweightChildren : boolean, inout searchHeavyweightDescendants : boolean) : Component
+        synchronized (getTreeLock()) {
+
+            for (int i = 0; i < component.size(); i++) {
+                Component comp = component.get(i);
+                if (comp != null && comp.visible &&
+                    ((!searchHeavyweightChildren &&
+                      comp.peer instanceof LightweightPeer) ||
+                     (searchHeavyweightChildren &&
+                      !(comp.peer instanceof LightweightPeer))) &&
+                    comp.contains(x - comp.x, y - comp.y)) {
+
+                    // found a component that intersects the point, see if there
+                    // is a deeper possibility.
+                    if (comp instanceof Container) {
+                        Container child = (Container) comp;
+                        Component deeper = child.getMouseEventTarget(
+                                x - child.x,
+                                y - child.y,
+                                includeSelf,
+                                filter,
+                                searchHeavyweightDescendants);
+                        if (deeper != null) {
+                            return deeper;
+                        }
+                    } else {
+                        if (filter.accept(comp)) {
+                            // there isn't a deeper target, but this component
+                            // is a target
+                            return comp;
+                        }
+                    }
+                }
+            }
+
+            boolean isPeerOK;
+            boolean isMouseOverMe;
+
+            isPeerOK = (peer instanceof LightweightPeer) || includeSelf;
+            isMouseOverMe = contains(x,y);
+
+            // didn't find a child target, return this component if it's
+            // a possible target
+            if (isMouseOverMe && isPeerOK && filter.accept(this)) {
+                return this;
+            }
+            // no possible target
+            return null;
+        }
+!!!1956354.java!!!	proxyEnableEvents(in events : long) : void
+        if (peer instanceof LightweightPeer) {
+            // this container is lightweight.... continue sending it
+            // upward.
+            if (parent != null) {
+                parent.proxyEnableEvents(events);
+            }
+        } else {
+            // This is a native container, so it needs to host
+            // one of it's children.  If this function is called before
+            // a peer has been created we don't yet have a dispatcher
+            // because it has not yet been determined if this instance
+            // is lightweight.
+            if (dispatcher != null) {
+                dispatcher.enableEvents(events);
+            }
+        }
+!!!1956482.java!!!	deliverEvent(inout e : Event) : void
+        Component comp = getComponentAt(e.x, e.y);
+        if ((comp != null) && (comp != this)) {
+            e.translate(-comp.x, -comp.y);
+            comp.deliverEvent(e);
+        } else {
+            postEvent(e);
+        }
+!!!1956610.java!!!	getComponentAt(in x : int, in y : int) : Component
+        return locate(x, y);
+!!!1956738.java!!!	locate(in x : int, in y : int) : Component
+        if (!contains(x, y)) {
+            return null;
+        }
+        Component lightweight = null;
+        synchronized (getTreeLock()) {
+            // Optimized version of two passes:
+            // see comment in sun.awt.SunGraphicsCallback
+            for (final Component comp : component) {
+                if (comp.contains(x - comp.x, y - comp.y)) {
+                    if (!comp.isLightweight()) {
+                        // return heavyweight component as soon as possible
+                        return comp;
+                    }
+                    if (lightweight == null) {
+                        // save and return later the first lightweight component
+                        lightweight = comp;
+                    }
+                }
+            }
+        }
+        return lightweight != null ? lightweight : this;
+!!!1956866.java!!!	getComponentAt(inout p : Point) : Component
+        return getComponentAt(p.x, p.y);
+!!!1956994.java!!!	getMousePosition(inout allowChildren : boolean) : Point
+        if (GraphicsEnvironment.isHeadless()) {
+            throw new HeadlessException();
+        }
+        PointerInfo pi = java.security.AccessController.doPrivileged(
+            new java.security.PrivilegedAction<PointerInfo>() {
+                public PointerInfo run() {
+                    return MouseInfo.getPointerInfo();
+                }
+            }
+        );
+        synchronized (getTreeLock()) {
+            Component inTheSameWindow = findUnderMouseInWindow(pi);
+            if (isSameOrAncestorOf(inTheSameWindow, allowChildren)) {
+                return  pointRelativeToComponent(pi.getLocation());
+            }
+            return null;
+        }
+!!!1957122.java!!!	isSameOrAncestorOf(inout comp : Component, inout allowChildren : boolean) : boolean
+        return this == comp || (allowChildren && isParentOf(comp));
+!!!1957250.java!!!	findComponentAt(in x : int, in y : int) : Component
+        return findComponentAt(x, y, true);
+!!!1957378.java!!!	findComponentAt(in x : int, in y : int, inout ignoreEnabled : boolean) : Component
+        synchronized (getTreeLock()) {
+            if (isRecursivelyVisible()){
+                return findComponentAtImpl(x, y, ignoreEnabled);
+            }
+        }
+        return null;
+!!!1957506.java!!!	findComponentAtImpl(in x : int, in y : int, inout ignoreEnabled : boolean) : Component
+        // checkTreeLock(); commented for a performance reason
+
+        if (!(contains(x, y) && visible && (ignoreEnabled || enabled))) {
+            return null;
+        }
+        Component lightweight = null;
+        // Optimized version of two passes:
+        // see comment in sun.awt.SunGraphicsCallback
+        for (final Component comp : component) {
+            final int x1 = x - comp.x;
+            final int y1 = y - comp.y;
+            if (!comp.contains(x1, y1)) {
+                continue; // fast path
+            }
+            if (!comp.isLightweight()) {
+                final Component child = getChildAt(comp, x1, y1, ignoreEnabled);
+                if (child != null) {
+                    // return heavyweight component as soon as possible
+                    return child;
+                }
+            } else {
+                if (lightweight == null) {
+                    // save and return later the first lightweight component
+                    lightweight = getChildAt(comp, x1, y1, ignoreEnabled);
+                }
+            }
+        }
+        return lightweight != null ? lightweight : this;
+!!!1957634.java!!!	getChildAt(inout comp : Component, in x : int, in y : int, inout ignoreEnabled : boolean) : Component
+        if (comp instanceof Container) {
+            comp = ((Container) comp).findComponentAtImpl(x, y,
+                                                          ignoreEnabled);
+        } else {
+            comp = comp.getComponentAt(x, y);
+        }
+        if (comp != null && comp.visible &&
+                (ignoreEnabled || comp.enabled)) {
+            return comp;
+        }
+        return null;
+!!!1957762.java!!!	findComponentAt(inout p : Point) : Component
+        return findComponentAt(p.x, p.y);
+!!!1957890.java!!!	addNotify() : void
+        synchronized (getTreeLock()) {
+            // addNotify() on the children may cause proxy event enabling
+            // on this instance, so we first call super.addNotify() and
+            // possibly create an lightweight event dispatcher before calling
+            // addNotify() on the children which may be lightweight.
+            super.addNotify();
+            if (! (peer instanceof LightweightPeer)) {
+                dispatcher = new LightweightDispatcher(this);
+            }
+
+            // We shouldn't use iterator because of the Swing menu
+            // implementation specifics:
+            // the menu is being assigned as a child to JLayeredPane
+            // instead of particular component so always affect
+            // collection of component if menu is becoming shown or hidden.
+            for (int i = 0; i < component.size(); i++) {
+                component.get(i).addNotify();
+            }
+        }
+!!!1958018.java!!!	removeNotify() : void
+        synchronized (getTreeLock()) {
+            // We shouldn't use iterator because of the Swing menu
+            // implementation specifics:
+            // the menu is being assigned as a child to JLayeredPane
+            // instead of particular component so always affect
+            // collection of component if menu is becoming shown or hidden.
+            for (int i = component.size()-1 ; i >= 0 ; i--) {
+                Component comp = component.get(i);
+                if (comp != null) {
+                    // Fix for 6607170.
+                    // We want to suppress focus change on disposal
+                    // of the focused component. But because of focus
+                    // is asynchronous, we should suppress focus change
+                    // on every component in case it receives native focus
+                    // in the process of disposal.
+                    comp.setAutoFocusTransferOnDisposal(false);
+                    comp.removeNotify();
+                    comp.setAutoFocusTransferOnDisposal(true);
+                 }
+             }
+            // If some of the children had focus before disposal then it still has.
+            // Auto-transfer focus to the next (or previous) component if auto-transfer
+            // is enabled.
+            if (containsFocus() && KeyboardFocusManager.isAutoFocusTransferEnabledFor(this)) {
+                if (!transferFocus(false)) {
+                    transferFocusBackward(true);
+                }
+            }
+            if ( dispatcher != null ) {
+                dispatcher.dispose();
+                dispatcher = null;
+            }
+            super.removeNotify();
+        }
+!!!1958146.java!!!	isAncestorOf(inout c : Component) : boolean
+        Container p;
+        if (c == null || ((p = c.getParent()) == null)) {
+            return false;
+        }
+        while (p != null) {
+            if (p == this) {
+                return true;
+            }
+            p = p.getParent();
+        }
+        return false;
+!!!1958274.java!!!	startLWModal() : void
+        // Store the app context on which this component is being shown.
+        // Event dispatch thread of this app context will be sleeping until
+        // we wake it by any event from hideAndDisposeHandler().
+        modalAppContext = AppContext.getAppContext();
+
+        // keep the KeyEvents from being dispatched
+        // until the focus has been transfered
+        long time = Toolkit.getEventQueue().getMostRecentKeyEventTime();
+        Component predictedFocusOwner = (Component.isInstanceOf(this, "javax.swing.JInternalFrame")) ? ((javax.swing.JInternalFrame)(this)).getMostRecentFocusOwner() : null;
+        if (predictedFocusOwner != null) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                enqueueKeyEvents(time, predictedFocusOwner);
+        }
+        // We have two mechanisms for blocking: 1. If we're on the
+        // EventDispatchThread, start a new event pump. 2. If we're
+        // on any other thread, call wait() on the treelock.
+        final Container nativeContainer;
+        synchronized (getTreeLock()) {
+            nativeContainer = getHeavyweightContainer();
+            if (nativeContainer.modalComp != null) {
+                this.modalComp =  nativeContainer.modalComp;
+                nativeContainer.modalComp = this;
+                return;
+            }
+            else {
+                nativeContainer.modalComp = this;
+            }
+        }
+
+        Runnable pumpEventsForHierarchy = new Runnable() {
+            public void run() {
+                EventDispatchThread dispatchThread =
+                    (EventDispatchThread)Thread.currentThread();
+                dispatchThread.pumpEventsForHierarchy(
+                        new Conditional() {
+                        public boolean evaluate() {
+                        return ((windowClosingException == null) && (nativeContainer.modalComp != null)) ;
+                        }
+                        }, Container.this);
+            }
+        };
+
+        if (EventQueue.isDispatchThread()) {
+            SequencedEvent currentSequencedEvent =
+                KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                getCurrentSequencedEvent();
+            if (currentSequencedEvent != null) {
+                currentSequencedEvent.dispose();
+            }
+
+            pumpEventsForHierarchy.run();
+        } else {
+            synchronized (getTreeLock()) {
+                Toolkit.getEventQueue().
+                    postEvent(new PeerEvent(this,
+                                pumpEventsForHierarchy,
+                                PeerEvent.PRIORITY_EVENT));
+                while ((windowClosingException == null) &&
+                       (nativeContainer.modalComp != null))
+                {
+                    try {
+                        getTreeLock().wait();
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (windowClosingException != null) {
+            windowClosingException.fillInStackTrace();
+            throw windowClosingException;
+        }
+        if (predictedFocusOwner != null) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                dequeueKeyEvents(time, predictedFocusOwner);
+        }
+!!!1958402.java!!!	stopLWModal() : void
+        synchronized (getTreeLock()) {
+            if (modalAppContext != null) {
+                Container nativeContainer = getHeavyweightContainer();
+                if(nativeContainer != null) {
+                    if (this.modalComp !=  null) {
+                        nativeContainer.modalComp = this.modalComp;
+                        this.modalComp = null;
+                        return;
+                    }
+                    else {
+                        nativeContainer.modalComp = null;
+                    }
+                }
+                // Wake up event dispatch thread on which the dialog was
+                // initially shown
+                SunToolkit.postEvent(modalAppContext,
+                        new PeerEvent(this,
+                                new WakingRunnable(),
+                                PeerEvent.PRIORITY_EVENT));
+            }
+            EventQueue.invokeLater(new WakingRunnable());
+            getTreeLock().notifyAll();
+        }
+!!!1958658.java!!!	paramString() : String
+        String str = super.paramString();
+        LayoutManager layoutMgr = this.layoutMgr;
+        if (layoutMgr != null) {
+            str += ",layout=" + layoutMgr.getClass().getName();
+        }
+        return str;
+!!!1958786.java!!!	list(inout out : PrintStream, in indent : int) : void
+        super.list(out, indent);
+        synchronized(getTreeLock()) {
+            for (int i = 0; i < component.size(); i++) {
+                Component comp = component.get(i);
+                if (comp != null) {
+                    comp.list(out, indent+1);
+                }
+            }
+        }
+!!!1958914.java!!!	list(inout out : PrintWriter, in indent : int) : void
+        super.list(out, indent);
+        synchronized(getTreeLock()) {
+            for (int i = 0; i < component.size(); i++) {
+                Component comp = component.get(i);
+                if (comp != null) {
+                    comp.list(out, indent+1);
+                }
+            }
+        }
+!!!1959042.java!!!	setFocusTraversalKeys(in id : int, inout keystrokes : Set) : void
+        if (id < 0 || id >= KeyboardFocusManager.TRAVERSAL_KEY_LENGTH) {
+            throw new IllegalArgumentException("invalid focus traversal key identifier");
+        }
+
+        // Don't call super.setFocusTraversalKey. The Component parameter check
+        // does not allow DOWN_CYCLE_TRAVERSAL_KEYS, but we do.
+        setFocusTraversalKeys_NoIDCheck(id, keystrokes);
+!!!1959170.java!!!	getFocusTraversalKeys(in id : int) : Set
+        if (id < 0 || id >= KeyboardFocusManager.TRAVERSAL_KEY_LENGTH) {
+            throw new IllegalArgumentException("invalid focus traversal key identifier");
+        }
+
+        // Don't call super.getFocusTraversalKey. The Component parameter check
+        // does not allow DOWN_CYCLE_TRAVERSAL_KEY, but we do.
+        return getFocusTraversalKeys_NoIDCheck(id);
+!!!1959298.java!!!	areFocusTraversalKeysSet(in id : int) : boolean
+        if (id < 0 || id >= KeyboardFocusManager.TRAVERSAL_KEY_LENGTH) {
+            throw new IllegalArgumentException("invalid focus traversal key identifier");
+        }
+
+        return (focusTraversalKeys != null && focusTraversalKeys[id] != null);
+!!!1959426.java!!!	isFocusCycleRoot(inout container : Container) : boolean
+        if (isFocusCycleRoot() && container == this) {
+            return true;
+        } else {
+            return super.isFocusCycleRoot(container);
+        }
+!!!1959554.java!!!	findTraversalRoot() : Container
+        // I potentially have two roots, myself and my root parent
+        // If I am the current root, then use me
+        // If none of my parents are roots, then use me
+        // If my root parent is the current root, then use my root parent
+        // If neither I nor my root parent is the current root, then
+        // use my root parent (a guess)
+
+        Container currentFocusCycleRoot = KeyboardFocusManager.
+            getCurrentKeyboardFocusManager().getCurrentFocusCycleRoot();
+        Container root;
+
+        if (currentFocusCycleRoot == this) {
+            root = this;
+        } else {
+            root = getFocusCycleRootAncestor();
+            if (root == null) {
+                root = this;
+            }
+        }
+
+        if (root != currentFocusCycleRoot) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                setGlobalCurrentFocusCycleRootPriv(root);
+        }
+        return root;
+!!!1959682.java!!!	containsFocus() : boolean
+        final Component focusOwner = KeyboardFocusManager.
+            getCurrentKeyboardFocusManager().getFocusOwner();
+        return isParentOf(focusOwner);
+!!!1959810.java!!!	isParentOf(inout comp : Component) : boolean
+        synchronized(getTreeLock()) {
+            while (comp != null && comp != this && !(comp instanceof Window)) {
+                comp = comp.getParent();
+            }
+            return (comp == this);
+        }
+!!!1959938.java!!!	clearMostRecentFocusOwnerOnHide() : void
+        boolean reset = false;
+        Window window = null;
+
+        synchronized (getTreeLock()) {
+            window = getContainingWindow();
+            if (window != null) {
+                Component comp = KeyboardFocusManager.getMostRecentFocusOwner(window);
+                reset = ((comp == this) || isParentOf(comp));
+                // This synchronized should always be the second in a pair
+                // (tree lock, KeyboardFocusManager.class)
+                synchronized(KeyboardFocusManager.class) {
+                    Component storedComp = window.getTemporaryLostComponent();
+                    if (isParentOf(storedComp) || storedComp == this) {
+                        window.setTemporaryLostComponent(null);
+                    }
+                }
+            }
+        }
+
+        if (reset) {
+            KeyboardFocusManager.setMostRecentFocusOwner(window, null);
+        }
+!!!1960066.java!!!	clearCurrentFocusCycleRootOnHide() : void
+        KeyboardFocusManager kfm =
+            KeyboardFocusManager.getCurrentKeyboardFocusManager();
+        Container cont = kfm.getCurrentFocusCycleRoot();
+
+        if (cont == this || isParentOf(cont)) {
+            kfm.setGlobalCurrentFocusCycleRootPriv(null);
+        }
+!!!1960194.java!!!	getTraversalRoot() : Container
+        if (isFocusCycleRoot()) {
+            return findTraversalRoot();
+        }
+
+        return super.getTraversalRoot();
+!!!1960322.java!!!	setFocusTraversalPolicy(inout policy : FocusTraversalPolicy) : void
+        FocusTraversalPolicy oldPolicy;
+        synchronized (this) {
+            oldPolicy = this.focusTraversalPolicy;
+            this.focusTraversalPolicy = policy;
+        }
+        firePropertyChange("focusTraversalPolicy", oldPolicy, policy);
+!!!1960450.java!!!	getFocusTraversalPolicy() : FocusTraversalPolicy
+        if (!isFocusTraversalPolicyProvider() && !isFocusCycleRoot()) {
+            return null;
+        }
+
+        FocusTraversalPolicy policy = this.focusTraversalPolicy;
+        if (policy != null) {
+            return policy;
+        }
+
+        Container rootAncestor = getFocusCycleRootAncestor();
+        if (rootAncestor != null) {
+            return rootAncestor.getFocusTraversalPolicy();
+        } else {
+            return KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                getDefaultFocusTraversalPolicy();
+        }
+!!!1960578.java!!!	isFocusTraversalPolicySet() : boolean
+        return (focusTraversalPolicy != null);
+!!!1960706.java!!!	setFocusCycleRoot(inout focusCycleRoot : boolean) : void
+        boolean oldFocusCycleRoot;
+        synchronized (this) {
+            oldFocusCycleRoot = this.focusCycleRoot;
+            this.focusCycleRoot = focusCycleRoot;
+        }
+        firePropertyChange("focusCycleRoot", oldFocusCycleRoot,
+                           focusCycleRoot);
+!!!1960834.java!!!	isFocusCycleRoot() : boolean
+        return focusCycleRoot;
+!!!1960962.java!!!	setFocusTraversalPolicyProvider(inout provider : boolean) : void
+        boolean oldProvider;
+        synchronized(this) {
+            oldProvider = focusTraversalPolicyProvider;
+            focusTraversalPolicyProvider = provider;
+        }
+        firePropertyChange("focusTraversalPolicyProvider", oldProvider, provider);
+!!!1961090.java!!!	isFocusTraversalPolicyProvider() : boolean
+        return focusTraversalPolicyProvider;
+!!!1961218.java!!!	transferFocusDownCycle() : void
+        if (isFocusCycleRoot()) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                setGlobalCurrentFocusCycleRootPriv(this);
+            Component toFocus = getFocusTraversalPolicy().
+                getDefaultComponent(this);
+            if (toFocus != null) {
+                toFocus.requestFocus(CausedFocusEvent.Cause.TRAVERSAL_DOWN);
+            }
+        }
+!!!1961346.java!!!	preProcessKeyEvent(inout e : KeyEvent) : void
+        Container parent = this.parent;
+        if (parent != null) {
+            parent.preProcessKeyEvent(e);
+        }
+!!!1961474.java!!!	postProcessKeyEvent(inout e : KeyEvent) : void
+        Container parent = this.parent;
+        if (parent != null) {
+            parent.postProcessKeyEvent(e);
+        }
+!!!1961602.java!!!	postsOldMouseEvents() : boolean
+        return true;
+!!!1961730.java!!!	applyComponentOrientation(inout o : ComponentOrientation) : void
+        super.applyComponentOrientation(o);
+        synchronized (getTreeLock()) {
+            for (int i = 0; i < component.size(); i++) {
+                Component comp = component.get(i);
+                comp.applyComponentOrientation(o);
+            }
+        }
+!!!1961858.java!!!	addPropertyChangeListener(inout listener : PropertyChangeListener) : void
+        super.addPropertyChangeListener(listener);
+!!!1961986.java!!!	addPropertyChangeListener(inout propertyName : String, inout listener : PropertyChangeListener) : void
+        super.addPropertyChangeListener(propertyName, listener);
+!!!1962114.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        ObjectOutputStream.PutField f = s.putFields();
+        f.put("ncomponents", component.size());
+        f.put("component", component.toArray(EMPTY_ARRAY));
+        f.put("layoutMgr", layoutMgr);
+        f.put("dispatcher", dispatcher);
+        f.put("maxSize", maxSize);
+        f.put("focusCycleRoot", focusCycleRoot);
+        f.put("containerSerializedDataVersion", containerSerializedDataVersion);
+        f.put("focusTraversalPolicyProvider", focusTraversalPolicyProvider);
+        s.writeFields();
+
+        AWTEventMulticaster.save(s, containerListenerK, containerListener);
+        s.writeObject(null);
+
+        if (focusTraversalPolicy instanceof java.io.Serializable) {
+            s.writeObject(focusTraversalPolicy);
+        } else {
+            s.writeObject(null);
+        }
+!!!1962242.java!!!	readObject(inout s : ObjectInputStream) : void
+        ObjectInputStream.GetField f = s.readFields();
+        Component [] tmpComponent = (Component[])f.get("component", EMPTY_ARRAY);
+        int ncomponents = (Integer) f.get("ncomponents", 0);
+        component = new java.util.ArrayList<Component>(ncomponents);
+        for (int i = 0; i < ncomponents; ++i) {
+            component.add(tmpComponent[i]);
+        }
+        layoutMgr = (LayoutManager)f.get("layoutMgr", null);
+        dispatcher = (LightweightDispatcher)f.get("dispatcher", null);
+        // Old stream. Doesn't contain maxSize among Component's fields.
+        if (maxSize == null) {
+            maxSize = (Dimension)f.get("maxSize", null);
+        }
+        focusCycleRoot = f.get("focusCycleRoot", false);
+        containerSerializedDataVersion = f.get("containerSerializedDataVersion", 1);
+        focusTraversalPolicyProvider = f.get("focusTraversalPolicyProvider", false);
+        java.util.List<Component> component = this.component;
+        for(Component comp : component) {
+            comp.parent = this;
+            adjustListeningChildren(AWTEvent.HIERARCHY_EVENT_MASK,
+                                    comp.numListening(AWTEvent.HIERARCHY_EVENT_MASK));
+            adjustListeningChildren(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK,
+                                    comp.numListening(AWTEvent.HIERARCHY_BOUNDS_EVENT_MASK));
+            adjustDescendants(comp.countHierarchyMembers());
+        }
+
+        Object keyOrNull;
+        while(null != (keyOrNull = s.readObject())) {
+            String key = ((String)keyOrNull).intern();
+
+            if (containerListenerK == key) {
+                addContainerListener((ContainerListener)(s.readObject()));
+            } else {
+                // skip value for unrecognized key
+                s.readObject();
+            }
+        }
+
+        try {
+            Object policy = s.readObject();
+            if (policy instanceof FocusTraversalPolicy) {
+                focusTraversalPolicy = (FocusTraversalPolicy)policy;
+            }
+        } catch (java.io.OptionalDataException e) {
+            // JDK 1.1/1.2/1.3 instances will not have this optional data.
+            // e.eof will be true to indicate that there is no more data
+            // available for this object. If e.eof is not true, throw the
+            // exception as it might have been caused by reasons unrelated to
+            // focusTraversalPolicy.
+
+            if (!e.eof) {
+                throw e;
+            }
+        }
+!!!1963522.java!!!	getAccessibleAt(inout p : Point) : Accessible
+        synchronized (getTreeLock()) {
+            if (this instanceof Accessible) {
+                Accessible a = (Accessible)this;
+                AccessibleContext ac = a.getAccessibleContext();
+                if (ac != null) {
+                    AccessibleComponent acmp;
+                    Point location;
+                    int nchildren = ac.getAccessibleChildrenCount();
+                    for (int i=0; i < nchildren; i++) {
+                        a = ac.getAccessibleChild(i);
+                        if ((a != null)) {
+                            ac = a.getAccessibleContext();
+                            if (ac != null) {
+                                acmp = ac.getAccessibleComponent();
+                                if ((acmp != null) && (acmp.isShowing())) {
+                                    location = acmp.getLocation();
+                                    Point np = new Point(p.x-location.x,
+                                                         p.y-location.y);
+                                    if (acmp.contains(np)){
+                                        return a;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return (Accessible)this;
+            } else {
+                Component ret = this;
+                if (!this.contains(p.x,p.y)) {
+                    ret = null;
+                } else {
+                    int ncomponents = this.getComponentCount();
+                    for (int i=0; i < ncomponents; i++) {
+                        Component comp = this.getComponent(i);
+                        if ((comp != null) && comp.isShowing()) {
+                            Point location = comp.getLocation();
+                            if (comp.contains(p.x-location.x,p.y-location.y)) {
+                                ret = comp;
+                            }
+                        }
+                    }
+                }
+                if (ret instanceof Accessible) {
+                    return (Accessible) ret;
+                }
+            }
+            return null;
+        }
+!!!1963650.java!!!	getAccessibleChildrenCount() : int
+        synchronized (getTreeLock()) {
+            int count = 0;
+            Component[] children = this.getComponents();
+            for (int i = 0; i < children.length; i++) {
+                if (children[i] instanceof Accessible) {
+                    count++;
+                }
+            }
+            return count;
+        }
+!!!1963778.java!!!	getAccessibleChild(in i : int) : Accessible
+        synchronized (getTreeLock()) {
+            Component[] children = this.getComponents();
+            int count = 0;
+            for (int j = 0; j < children.length; j++) {
+                if (children[j] instanceof Accessible) {
+                    if (count == i) {
+                        return (Accessible) children[j];
+                    } else {
+                        count++;
+                    }
+                }
+            }
+            return null;
+        }
+!!!1963906.java!!!	increaseComponentCount(inout c : Component) : void
+        synchronized (getTreeLock()) {
+            if (!c.isDisplayable()) {
+                throw new IllegalStateException(
+                    "Peer does not exist while invoking the increaseComponentCount() method"
+                );
+            }
+
+            int addHW = 0;
+            int addLW = 0;
+
+            if (c instanceof Container) {
+                addLW = ((Container)c).numOfLWComponents;
+                addHW = ((Container)c).numOfHWComponents;
+            }
+            if (c.isLightweight()) {
+                addLW++;
+            } else {
+                addHW++;
+            }
+
+            for (Container cont = this; cont != null; cont = cont.getContainer()) {
+                cont.numOfLWComponents += addLW;
+                cont.numOfHWComponents += addHW;
+            }
+        }
+!!!1964034.java!!!	decreaseComponentCount(inout c : Component) : void
+        synchronized (getTreeLock()) {
+            if (!c.isDisplayable()) {
+                throw new IllegalStateException(
+                    "Peer does not exist while invoking the decreaseComponentCount() method"
+                );
+            }
+
+            int subHW = 0;
+            int subLW = 0;
+
+            if (c instanceof Container) {
+                subLW = ((Container)c).numOfLWComponents;
+                subHW = ((Container)c).numOfHWComponents;
+            }
+            if (c.isLightweight()) {
+                subLW++;
+            } else {
+                subHW++;
+            }
+
+            for (Container cont = this; cont != null; cont = cont.getContainer()) {
+                cont.numOfLWComponents -= subLW;
+                cont.numOfHWComponents -= subHW;
+            }
+        }
+!!!1964162.java!!!	getTopmostComponentIndex() : int
+        checkTreeLock();
+        if (getComponentCount() > 0) {
+            return 0;
+        }
+        return -1;
+!!!1964290.java!!!	getBottommostComponentIndex() : int
+        checkTreeLock();
+        if (getComponentCount() > 0) {
+            return getComponentCount() - 1;
+        }
+        return -1;
+!!!1964418.java!!!	getOpaqueShape() : Region
+        checkTreeLock();
+        if (isLightweight() && isNonOpaqueForMixing()
+                && hasLightweightDescendants())
+        {
+            Region s = Region.EMPTY_REGION;
+            for (int index = 0; index < getComponentCount(); index++) {
+                Component c = getComponent(index);
+                if (c.isLightweight() && c.isShowing()) {
+                    s = s.getUnion(c.getOpaqueShape());
+                }
+            }
+            return s.getIntersection(getNormalShape());
+        }
+        return super.getOpaqueShape();
+!!!1964546.java!!!	recursiveSubtractAndApplyShape(inout shape : Region) : void
+        recursiveSubtractAndApplyShape(shape, getTopmostComponentIndex(), getBottommostComponentIndex());
+!!!1964674.java!!!	recursiveSubtractAndApplyShape(inout shape : Region, in fromZorder : int) : void
+        recursiveSubtractAndApplyShape(shape, fromZorder, getBottommostComponentIndex());
+!!!1964802.java!!!	recursiveSubtractAndApplyShape(inout shape : Region, in fromZorder : int, in toZorder : int) : void
+        checkTreeLock();
+        if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+            mixingLog.fine("this = " + this +
+                "; shape=" + shape + "; fromZ=" + fromZorder + "; toZ=" + toZorder);
+        }
+        if (fromZorder == -1) {
+            return;
+        }
+        if (shape.isEmpty()) {
+            return;
+        }
+        // An invalid container with not-null layout should be ignored
+        // by the mixing code, the container will be validated later
+        // and the mixing code will be executed later.
+        if (getLayout() != null && !isValid()) {
+            return;
+        }
+        for (int index = fromZorder; index <= toZorder; index++) {
+            Component comp = getComponent(index);
+            if (!comp.isLightweight()) {
+                comp.subtractAndApplyShape(shape);
+            } else if (comp instanceof Container &&
+                    ((Container)comp).hasHeavyweightDescendants() && comp.isShowing()) {
+                ((Container)comp).recursiveSubtractAndApplyShape(shape);
+            }
+        }
+!!!1964930.java!!!	recursiveApplyCurrentShape() : void
+        recursiveApplyCurrentShape(getTopmostComponentIndex(), getBottommostComponentIndex());
+!!!1965058.java!!!	recursiveApplyCurrentShape(in fromZorder : int) : void
+        recursiveApplyCurrentShape(fromZorder, getBottommostComponentIndex());
+!!!1965186.java!!!	recursiveApplyCurrentShape(in fromZorder : int, in toZorder : int) : void
+        checkTreeLock();
+        if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+            mixingLog.fine("this = " + this +
+                "; fromZ=" + fromZorder + "; toZ=" + toZorder);
+        }
+        if (fromZorder == -1) {
+            return;
+        }
+        // An invalid container with not-null layout should be ignored
+        // by the mixing code, the container will be validated later
+        // and the mixing code will be executed later.
+        if (getLayout() != null && !isValid()) {
+            return;
+        }
+        for (int index = fromZorder; index <= toZorder; index++) {
+            Component comp = getComponent(index);
+            if (!comp.isLightweight()) {
+                comp.applyCurrentShape();
+            }
+            if (comp instanceof Container &&
+                    ((Container)comp).hasHeavyweightDescendants()) {
+                ((Container)comp).recursiveApplyCurrentShape();
+            }
+        }
+!!!1965314.java!!!	recursiveShowHeavyweightChildren() : void
+        if (!hasHeavyweightDescendants() || !isVisible()) {
+            return;
+        }
+        for (int index = 0; index < getComponentCount(); index++) {
+            Component comp = getComponent(index);
+            if (comp.isLightweight()) {
+                if  (comp instanceof Container) {
+                    ((Container)comp).recursiveShowHeavyweightChildren();
+                }
+            } else {
+                if (comp.isVisible()) {
+                    ComponentPeer peer = comp.getPeer();
+                    if (peer != null) {
+                        peer.setVisible(true);
+                    }
+                }
+            }
+        }
+!!!1965442.java!!!	recursiveHideHeavyweightChildren() : void
+        if (!hasHeavyweightDescendants()) {
+            return;
+        }
+        for (int index = 0; index < getComponentCount(); index++) {
+            Component comp = getComponent(index);
+            if (comp.isLightweight()) {
+                if  (comp instanceof Container) {
+                    ((Container)comp).recursiveHideHeavyweightChildren();
+                }
+            } else {
+                if (comp.isVisible()) {
+                    ComponentPeer peer = comp.getPeer();
+                    if (peer != null) {
+                        peer.setVisible(false);
+                    }
+                }
+            }
+        }
+!!!1965570.java!!!	recursiveRelocateHeavyweightChildren(inout origin : Point) : void
+        for (int index = 0; index < getComponentCount(); index++) {
+            Component comp = getComponent(index);
+            if (comp.isLightweight()) {
+                if  (comp instanceof Container &&
+                        ((Container)comp).hasHeavyweightDescendants())
+                {
+                    final Point newOrigin = new Point(origin);
+                    newOrigin.translate(comp.getX(), comp.getY());
+                    ((Container)comp).recursiveRelocateHeavyweightChildren(newOrigin);
+                }
+            } else {
+                ComponentPeer peer = comp.getPeer();
+                if (peer != null) {
+                    peer.setBounds(origin.x + comp.getX(), origin.y + comp.getY(),
+                            comp.getWidth(), comp.getHeight(),
+                            ComponentPeer.SET_LOCATION);
+                }
+            }
+        }
+!!!1965698.java!!!	isRecursivelyVisibleUpToHeavyweightContainer() : boolean
+        if (!isLightweight()) {
+            return true;
+        }
+
+        for (Container cont = this;
+                cont != null && cont.isLightweight();
+                cont = cont.getContainer())
+        {
+            if (!cont.isVisible()) {
+                return false;
+            }
+        }
+        return true;
+!!!1965826.java!!!	mixOnShowing() : void
+        synchronized (getTreeLock()) {
+            if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+                mixingLog.fine("this = " + this);
+            }
+
+            boolean isLightweight = isLightweight();
+
+            if (isLightweight && isRecursivelyVisibleUpToHeavyweightContainer()) {
+                recursiveShowHeavyweightChildren();
+            }
+
+            if (!isMixingNeeded()) {
+                return;
+            }
+
+            if (!isLightweight || (isLightweight && hasHeavyweightDescendants())) {
+                recursiveApplyCurrentShape();
+            }
+
+            super.mixOnShowing();
+        }
+!!!1965954.java!!!	mixOnHiding(inout isLightweight : boolean) : void
+        synchronized (getTreeLock()) {
+            if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+                mixingLog.fine("this = " + this +
+                        "; isLightweight=" + isLightweight);
+            }
+            if (isLightweight) {
+                recursiveHideHeavyweightChildren();
+            }
+            super.mixOnHiding(isLightweight);
+        }
+!!!1966082.java!!!	mixOnReshaping() : void
+        synchronized (getTreeLock()) {
+            if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+                mixingLog.fine("this = " + this);
+            }
+
+            boolean isMixingNeeded = isMixingNeeded();
+
+            if (isLightweight() && hasHeavyweightDescendants()) {
+                final Point origin = new Point(getX(), getY());
+                for (Container cont = getContainer();
+                        cont != null && cont.isLightweight();
+                        cont = cont.getContainer())
+                {
+                    origin.translate(cont.getX(), cont.getY());
+                }
+
+                recursiveRelocateHeavyweightChildren(origin);
+
+                if (!isMixingNeeded) {
+                    return;
+                }
+
+                recursiveApplyCurrentShape();
+            }
+
+            if (!isMixingNeeded) {
+                return;
+            }
+
+            super.mixOnReshaping();
+        }
+!!!1966210.java!!!	mixOnZOrderChanging(in oldZorder : int, in newZorder : int) : void
+        synchronized (getTreeLock()) {
+            if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+                mixingLog.fine("this = " + this +
+                    "; oldZ=" + oldZorder + "; newZ=" + newZorder);
+            }
+
+            if (!isMixingNeeded()) {
+                return;
+            }
+
+            boolean becameHigher = newZorder < oldZorder;
+
+            if (becameHigher && isLightweight() && hasHeavyweightDescendants()) {
+                recursiveApplyCurrentShape();
+            }
+            super.mixOnZOrderChanging(oldZorder, newZorder);
+        }
+!!!1966338.java!!!	mixOnValidating() : void
+        synchronized (getTreeLock()) {
+            if (mixingLog.isLoggable(PlatformLogger.Level.FINE)) {
+                mixingLog.fine("this = " + this);
+            }
+
+            if (!isMixingNeeded()) {
+                return;
+            }
+
+            if (hasHeavyweightDescendants()) {
+                recursiveApplyCurrentShape();
+            }
+
+            if (isLightweight() && isNonOpaqueForMixing()) {
+                subtractAndApplyShapeBelowMe();
+            }
+
+            super.mixOnValidating();
+        }

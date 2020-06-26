@@ -1,0 +1,388 @@
+class Reference
+!!!5439746.java!!!	Reference(inout doc : Document, inout baseURI : String, inout referenceURI : String, inout manifest : Manifest, inout transforms : Transforms, inout messageDigestAlgorithm : String)
+        super(doc);
+
+        XMLUtils.addReturnToElement(this.constructionElement);
+
+        this.baseURI = baseURI;
+        this.manifest = manifest;
+
+        this.setURI(referenceURI);
+
+        // important: The ds:Reference must be added to the associated ds:Manifest
+        //            or ds:SignedInfo _before_ the this.resolverResult() is called.
+        // this.manifest.appendChild(this.constructionElement);
+        // this.manifest.appendChild(this.doc.createTextNode("\n"));
+
+        if (transforms != null) {
+            this.transforms=transforms;
+            this.constructionElement.appendChild(transforms.getElement());
+            XMLUtils.addReturnToElement(this.constructionElement);
+        }
+        MessageDigestAlgorithm mda =
+            MessageDigestAlgorithm.getInstance(this.doc, messageDigestAlgorithm);
+
+        digestMethodElem = mda.getElement();
+        this.constructionElement.appendChild(digestMethodElem);
+        XMLUtils.addReturnToElement(this.constructionElement);
+
+        digestValueElement =
+            XMLUtils.createElementInSignatureSpace(this.doc, Constants._TAG_DIGESTVALUE);
+
+        this.constructionElement.appendChild(digestValueElement);
+        XMLUtils.addReturnToElement(this.constructionElement);
+!!!5439874.java!!!	Reference(inout element : Element, inout baseURI : String, inout manifest : Manifest)
+        this(element, baseURI, manifest, false);
+!!!5440002.java!!!	Reference(inout element : Element, inout baseURI : String, inout manifest : Manifest, inout secureValidation : boolean)
+        super(element, baseURI);
+        this.secureValidation = secureValidation;
+        this.baseURI = baseURI;
+        Element el = XMLUtils.getNextElement(element.getFirstChild());
+        if (Constants._TAG_TRANSFORMS.equals(el.getLocalName())
+            && Constants.SignatureSpecNS.equals(el.getNamespaceURI())) {
+            transforms = new Transforms(el, this.baseURI);
+            transforms.setSecureValidation(secureValidation);
+            if (secureValidation && transforms.getLength() > MAXIMUM_TRANSFORM_COUNT) {
+                Object exArgs[] = { transforms.getLength(), MAXIMUM_TRANSFORM_COUNT };
+
+                throw new XMLSecurityException("signature.tooManyTransforms", exArgs);
+            }
+            el = XMLUtils.getNextElement(el.getNextSibling());
+        }
+        digestMethodElem = el;
+        digestValueElement = XMLUtils.getNextElement(digestMethodElem.getNextSibling());
+        this.manifest = manifest;
+!!!5440130.java!!!	getMessageDigestAlgorithm() : MessageDigestAlgorithm
+        if (digestMethodElem == null) {
+            return null;
+        }
+
+        String uri = digestMethodElem.getAttributeNS(null, Constants._ATT_ALGORITHM);
+
+        if (uri == null) {
+            return null;
+        }
+
+        if (secureValidation && MessageDigestAlgorithm.ALGO_ID_DIGEST_NOT_RECOMMENDED_MD5.equals(uri)) {
+            Object exArgs[] = { uri };
+
+            throw new XMLSignatureException("signature.signatureAlgorithm", exArgs);
+        }
+
+        return MessageDigestAlgorithm.getInstance(this.doc, uri);
+!!!5440258.java!!!	setURI(inout uri : String) : void
+        if (uri != null) {
+            this.constructionElement.setAttributeNS(null, Constants._ATT_URI, uri);
+        }
+!!!5440386.java!!!	getURI() : String
+        return this.constructionElement.getAttributeNS(null, Constants._ATT_URI);
+!!!5440514.java!!!	setId(inout id : String) : void
+        if (id != null) {
+            this.constructionElement.setAttributeNS(null, Constants._ATT_ID, id);
+            this.constructionElement.setIdAttributeNS(null, Constants._ATT_ID, true);
+        }
+!!!5440642.java!!!	getId() : String
+        return this.constructionElement.getAttributeNS(null, Constants._ATT_ID);
+!!!5440770.java!!!	setType(inout type : String) : void
+        if (type != null) {
+            this.constructionElement.setAttributeNS(null, Constants._ATT_TYPE, type);
+        }
+!!!5440898.java!!!	getType() : String
+        return this.constructionElement.getAttributeNS(null, Constants._ATT_TYPE);
+!!!5441026.java!!!	typeIsReferenceToObject() : boolean
+        if (Reference.OBJECT_URI.equals(this.getType())) {
+            return true;
+        }
+
+        return false;
+!!!5441154.java!!!	typeIsReferenceToManifest() : boolean
+        if (Reference.MANIFEST_URI.equals(this.getType())) {
+            return true;
+        }
+
+        return false;
+!!!5441282.java!!!	setDigestValueElement(inout digestValue : byte [[]]) : void
+        Node n = digestValueElement.getFirstChild();
+        while (n != null) {
+            digestValueElement.removeChild(n);
+            n = n.getNextSibling();
+        }
+
+        String base64codedValue = Base64.encode(digestValue);
+        Text t = this.doc.createTextNode(base64codedValue);
+
+        digestValueElement.appendChild(t);
+!!!5441410.java!!!	generateDigestValue() : void
+        this.setDigestValueElement(this.calculateDigest(false));
+!!!5441538.java!!!	getContentsBeforeTransformation() : XMLSignatureInput
+        try {
+            Attr uriAttr =
+                this.constructionElement.getAttributeNodeNS(null, Constants._ATT_URI);
+
+            ResourceResolver resolver =
+                ResourceResolver.getInstance(
+                    uriAttr, this.baseURI, this.manifest.getPerManifestResolvers(), secureValidation
+                );
+            resolver.addProperties(this.manifest.getResolverProperties());
+
+            return resolver.resolve(uriAttr, this.baseURI, secureValidation);
+        }  catch (ResourceResolverException ex) {
+            throw new ReferenceNotInitializedException("empty", ex);
+        }
+!!!5441666.java!!!	getContentsAfterTransformation(inout input : XMLSignatureInput, inout os : OutputStream) : XMLSignatureInput
+        try {
+            Transforms transforms = this.getTransforms();
+            XMLSignatureInput output = null;
+
+            if (transforms != null) {
+                output = transforms.performTransforms(input, os);
+                this.transformsOutput = output;//new XMLSignatureInput(output.getBytes());
+
+                //this.transformsOutput.setSourceURI(output.getSourceURI());
+            } else {
+                output = input;
+            }
+
+            return output;
+        } catch (ResourceResolverException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (CanonicalizationException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (InvalidCanonicalizerException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (TransformationException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (XMLSecurityException ex) {
+            throw new XMLSignatureException("empty", ex);
+        }
+!!!5441794.java!!!	getContentsAfterTransformation() : XMLSignatureInput
+        XMLSignatureInput input = this.getContentsBeforeTransformation();
+        cacheDereferencedElement(input);
+
+        return this.getContentsAfterTransformation(input, null);
+!!!5441922.java!!!	getNodesetBeforeFirstCanonicalization() : XMLSignatureInput
+        try {
+            XMLSignatureInput input = this.getContentsBeforeTransformation();
+            cacheDereferencedElement(input);
+            XMLSignatureInput output = input;
+            Transforms transforms = this.getTransforms();
+
+            if (transforms != null) {
+                doTransforms: for (int i = 0; i < transforms.getLength(); i++) {
+                    Transform t = transforms.item(i);
+                    String uri = t.getURI();
+
+                    if (uri.equals(Transforms.TRANSFORM_C14N_EXCL_OMIT_COMMENTS)
+                        || uri.equals(Transforms.TRANSFORM_C14N_EXCL_WITH_COMMENTS)
+                        || uri.equals(Transforms.TRANSFORM_C14N_OMIT_COMMENTS)
+                        || uri.equals(Transforms.TRANSFORM_C14N_WITH_COMMENTS)) {
+                        break doTransforms;
+                    }
+
+                    output = t.performTransform(output, null);
+                }
+
+            output.setSourceURI(input.getSourceURI());
+            }
+            return output;
+        } catch (IOException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (ResourceResolverException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (CanonicalizationException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (InvalidCanonicalizerException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (TransformationException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (XMLSecurityException ex) {
+            throw new XMLSignatureException("empty", ex);
+        }
+!!!5442050.java!!!	getHTMLRepresentation() : String
+        try {
+            XMLSignatureInput nodes = this.getNodesetBeforeFirstCanonicalization();
+
+            Transforms transforms = this.getTransforms();
+            Transform c14nTransform = null;
+
+            if (transforms != null) {
+                doTransforms: for (int i = 0; i < transforms.getLength(); i++) {
+                    Transform t = transforms.item(i);
+                    String uri = t.getURI();
+
+                    if (uri.equals(Transforms.TRANSFORM_C14N_EXCL_OMIT_COMMENTS)
+                        || uri.equals(Transforms.TRANSFORM_C14N_EXCL_WITH_COMMENTS)) {
+                        c14nTransform = t;
+                        break doTransforms;
+                    }
+                }
+            }
+
+            Set<String> inclusiveNamespaces = new HashSet<String>();
+            if (c14nTransform != null
+                && (c14nTransform.length(
+                    InclusiveNamespaces.ExclusiveCanonicalizationNamespace,
+                    InclusiveNamespaces._TAG_EC_INCLUSIVENAMESPACES) == 1)) {
+
+                // there is one InclusiveNamespaces element
+                InclusiveNamespaces in =
+                    new InclusiveNamespaces(
+                        XMLUtils.selectNode(
+                            c14nTransform.getElement().getFirstChild(),
+                            InclusiveNamespaces.ExclusiveCanonicalizationNamespace,
+                            InclusiveNamespaces._TAG_EC_INCLUSIVENAMESPACES,
+                            0
+                        ), this.getBaseURI());
+
+                inclusiveNamespaces =
+                    InclusiveNamespaces.prefixStr2Set(in.getInclusiveNamespaces());
+            }
+
+            return nodes.getHTMLRepresentation(inclusiveNamespaces);
+        } catch (TransformationException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (InvalidTransformException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } catch (XMLSecurityException ex) {
+            throw new XMLSignatureException("empty", ex);
+        }
+!!!5442178.java!!!	getTransformsOutput() : XMLSignatureInput
+        return this.transformsOutput;
+!!!5442306.java!!!	getReferenceData() : ReferenceData
+        return referenceData;
+!!!5442434.java!!!	dereferenceURIandPerformTransforms(inout os : OutputStream) : XMLSignatureInput
+        try {
+            XMLSignatureInput input = this.getContentsBeforeTransformation();
+            cacheDereferencedElement(input);
+
+            XMLSignatureInput output = this.getContentsAfterTransformation(input, os);
+            this.transformsOutput = output;
+            return output;
+        } catch (XMLSecurityException ex) {
+            throw new ReferenceNotInitializedException("empty", ex);
+        }
+!!!5442562.java!!!	cacheDereferencedElement(inout input : XMLSignatureInput) : void
+        if (input.isNodeSet()) {
+            try {
+                final Set<Node> s = input.getNodeSet();
+                referenceData = new ReferenceNodeSetData() {
+                    public Iterator<Node> iterator() {
+                        return new Iterator<Node>() {
+
+                            Iterator<Node> sIterator = s.iterator();
+
+                            public boolean hasNext() {
+                                return sIterator.hasNext();
+                            }
+
+                            public Node next() {
+                                return sIterator.next();
+                            }
+
+                            public void remove() {
+                                throw new UnsupportedOperationException();
+                            }
+                        };
+                    }
+                };
+            } catch (Exception e) {
+                // log a warning
+                log.log(java.util.logging.Level.WARNING, "cannot cache dereferenced data: " + e);
+            }
+        } else if (input.isElement()) {
+            referenceData = new ReferenceSubTreeData
+                (input.getSubNode(), input.isExcludeComments());
+        } else if (input.isOctetStream() || input.isByteArray()) {
+            try {
+                referenceData = new ReferenceOctetStreamData
+                    (input.getOctetStream(), input.getSourceURI(),
+                        input.getMIMEType());
+            } catch (IOException ioe) {
+                // log a warning
+                log.log(java.util.logging.Level.WARNING, "cannot cache dereferenced data: " + ioe);
+            }
+        }
+!!!5442690.java!!!	getTransforms() : Transforms
+        return transforms;
+!!!5442818.java!!!	getReferencedBytes() : byte
+        try {
+            XMLSignatureInput output = this.dereferenceURIandPerformTransforms(null);
+            return output.getBytes();
+        } catch (IOException ex) {
+            throw new ReferenceNotInitializedException("empty", ex);
+        } catch (CanonicalizationException ex) {
+            throw new ReferenceNotInitializedException("empty", ex);
+        }
+!!!5442946.java!!!	calculateDigest(inout validating : boolean) : byte
+        OutputStream os = null;
+        try {
+            MessageDigestAlgorithm mda = this.getMessageDigestAlgorithm();
+
+            mda.reset();
+            DigesterOutputStream diOs = new DigesterOutputStream(mda);
+            os = new UnsyncBufferedOutputStream(diOs);
+            XMLSignatureInput output = this.dereferenceURIandPerformTransforms(os);
+            // if signing and c14n11 property == true explicitly add
+            // C14N11 transform if needed
+            if (Reference.useC14N11 && !validating && !output.isOutputStreamSet()
+                && !output.isOctetStream()) {
+                if (transforms == null) {
+                    transforms = new Transforms(this.doc);
+                    transforms.setSecureValidation(secureValidation);
+                    this.constructionElement.insertBefore(transforms.getElement(), digestMethodElem);
+                }
+                transforms.addTransform(Transforms.TRANSFORM_C14N11_OMIT_COMMENTS);
+                output.updateOutputStream(os, true);
+            } else {
+                output.updateOutputStream(os);
+            }
+            os.flush();
+
+            if (output.getOctetStreamReal() != null) {
+                output.getOctetStreamReal().close();
+            }
+
+            //this.getReferencedBytes(diOs);
+            //mda.update(data);
+
+            return diOs.getDigestValue();
+        } catch (XMLSecurityException ex) {
+            throw new ReferenceNotInitializedException("empty", ex);
+        } catch (IOException ex) {
+            throw new ReferenceNotInitializedException("empty", ex);
+        } finally {
+            if (os != null) {
+                try {
+                    os.close();
+                } catch (IOException ex) {
+                    throw new ReferenceNotInitializedException("empty", ex);
+                }
+            }
+        }
+!!!5443074.java!!!	getDigestValue() : byte
+        if (digestValueElement == null) {
+            // The required element is not in the XML!
+            Object[] exArgs ={ Constants._TAG_DIGESTVALUE, Constants.SignatureSpecNS };
+            throw new XMLSecurityException(
+                "signature.Verification.NoSignatureElement", exArgs
+            );
+        }
+        return Base64.decode(digestValueElement);
+!!!5443202.java!!!	verify() : boolean
+        byte[] elemDig = this.getDigestValue();
+        byte[] calcDig = this.calculateDigest(true);
+        boolean equal = MessageDigestAlgorithm.isEqual(elemDig, calcDig);
+
+        if (!equal) {
+            log.log(java.util.logging.Level.WARNING, "Verification failed for URI \"" + this.getURI() + "\"");
+            log.log(java.util.logging.Level.WARNING, "Expected Digest: " + Base64.encode(elemDig));
+            log.log(java.util.logging.Level.WARNING, "Actual Digest: " + Base64.encode(calcDig));
+        } else {
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "Verification successful for URI \"" + this.getURI() + "\"");
+            }
+        }
+
+        return equal;
+!!!5443330.java!!!	getBaseLocalName() : String
+        return Constants._TAG_REFERENCE;

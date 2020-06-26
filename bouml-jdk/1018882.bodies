@@ -1,0 +1,144 @@
+class KeyStoreSpi
+!!!7971586.java!!!	engineStore(inout param : KeyStore::LoadStoreParameter) : void
+        throw new UnsupportedOperationException();
+!!!7971842.java!!!	engineLoad(inout param : KeyStore::LoadStoreParameter) : void
+
+        if (param == null) {
+            engineLoad((InputStream)null, (char[])null);
+            return;
+        }
+
+        if (param instanceof KeyStore.SimpleLoadStoreParameter) {
+            ProtectionParameter protection = param.getProtectionParameter();
+            char[] password;
+            if (protection instanceof PasswordProtection) {
+                password = ((PasswordProtection)protection).getPassword();
+            } else if (protection instanceof CallbackHandlerProtection) {
+                CallbackHandler handler =
+                    ((CallbackHandlerProtection)protection).getCallbackHandler();
+                PasswordCallback callback =
+                    new PasswordCallback("Password: ", false);
+                try {
+                    handler.handle(new Callback[] {callback});
+                } catch (UnsupportedCallbackException e) {
+                    throw new NoSuchAlgorithmException
+                        ("Could not obtain password", e);
+                }
+                password = callback.getPassword();
+                callback.clearPassword();
+                if (password == null) {
+                    throw new NoSuchAlgorithmException
+                        ("No password provided");
+                }
+            } else {
+                throw new NoSuchAlgorithmException("ProtectionParameter must"
+                    + " be PasswordProtection or CallbackHandlerProtection");
+            }
+            engineLoad(null, password);
+            return;
+        }
+
+        throw new UnsupportedOperationException();
+!!!7971970.java!!!	engineGetEntry(inout alias : String, inout protParam : KeyStore::ProtectionParameter) : KeyStore::Entry
+
+        if (!engineContainsAlias(alias)) {
+            return null;
+        }
+
+        if (protParam == null) {
+            if (engineIsCertificateEntry(alias)) {
+                return new KeyStore.TrustedCertificateEntry
+                                (engineGetCertificate(alias));
+            } else {
+                throw new UnrecoverableKeyException
+                        ("requested entry requires a password");
+            }
+        }
+
+        if (protParam instanceof KeyStore.PasswordProtection) {
+            if (engineIsCertificateEntry(alias)) {
+                throw new UnsupportedOperationException
+                    ("trusted certificate entries are not password-protected");
+            } else if (engineIsKeyEntry(alias)) {
+                KeyStore.PasswordProtection pp =
+                        (KeyStore.PasswordProtection)protParam;
+                char[] password = pp.getPassword();
+
+                Key key = engineGetKey(alias, password);
+                if (key instanceof PrivateKey) {
+                    Certificate[] chain = engineGetCertificateChain(alias);
+                    return new KeyStore.PrivateKeyEntry((PrivateKey)key, chain);
+                } else if (key instanceof SecretKey) {
+                    return new KeyStore.SecretKeyEntry((SecretKey)key);
+                }
+            }
+        }
+
+        throw new UnsupportedOperationException();
+!!!7972098.java!!!	engineSetEntry(inout alias : String, inout entry : KeyStore::Entry, inout protParam : KeyStore::ProtectionParameter) : void
+
+        // get password
+        if (protParam != null &&
+            !(protParam instanceof KeyStore.PasswordProtection)) {
+            throw new KeyStoreException("unsupported protection parameter");
+        }
+        KeyStore.PasswordProtection pProtect = null;
+        if (protParam != null) {
+            pProtect = (KeyStore.PasswordProtection)protParam;
+        }
+
+        // set entry
+        if (entry instanceof KeyStore.TrustedCertificateEntry) {
+            if (protParam != null && pProtect.getPassword() != null) {
+                // pre-1.5 style setCertificateEntry did not allow password
+                throw new KeyStoreException
+                    ("trusted certificate entries are not password-protected");
+            } else {
+                KeyStore.TrustedCertificateEntry tce =
+                        (KeyStore.TrustedCertificateEntry)entry;
+                engineSetCertificateEntry(alias, tce.getTrustedCertificate());
+                return;
+            }
+        } else if (entry instanceof KeyStore.PrivateKeyEntry) {
+            if (pProtect == null || pProtect.getPassword() == null) {
+                // pre-1.5 style setKeyEntry required password
+                throw new KeyStoreException
+                    ("non-null password required to create PrivateKeyEntry");
+            } else {
+                engineSetKeyEntry
+                    (alias,
+                    ((KeyStore.PrivateKeyEntry)entry).getPrivateKey(),
+                    pProtect.getPassword(),
+                    ((KeyStore.PrivateKeyEntry)entry).getCertificateChain());
+                return;
+            }
+        } else if (entry instanceof KeyStore.SecretKeyEntry) {
+            if (pProtect == null || pProtect.getPassword() == null) {
+                // pre-1.5 style setKeyEntry required password
+                throw new KeyStoreException
+                    ("non-null password required to create SecretKeyEntry");
+            } else {
+                engineSetKeyEntry
+                    (alias,
+                    ((KeyStore.SecretKeyEntry)entry).getSecretKey(),
+                    pProtect.getPassword(),
+                    (Certificate[])null);
+                return;
+            }
+        }
+
+        throw new KeyStoreException
+                ("unsupported entry type: " + entry.getClass().getName());
+!!!7972226.java!!!	engineEntryInstanceOf(inout alias : String, inout entryClass : Class) : boolean
+        if (entryClass == KeyStore.TrustedCertificateEntry.class) {
+            return engineIsCertificateEntry(alias);
+        }
+        if (entryClass == KeyStore.PrivateKeyEntry.class) {
+            return engineIsKeyEntry(alias) &&
+                        engineGetCertificate(alias) != null;
+        }
+        if (entryClass == KeyStore.SecretKeyEntry.class) {
+            return engineIsKeyEntry(alias) &&
+                        engineGetCertificate(alias) == null;
+        }
+        return false;

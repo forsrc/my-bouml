@@ -1,0 +1,314 @@
+class TableView
+!!!11689346.java!!!	TableView(inout elem : Element)
+        super(elem, View.Y_AXIS);
+        rows = new Vector<TableRow>();
+        gridValid = false;
+!!!11689474.java!!!	createTableRow(inout elem : Element) : TableView::TableRow
+        return new TableRow(elem);
+!!!11689602.java!!!	createTableCell(inout elem : Element) : TableView::TableCell
+        return new TableCell(elem);
+!!!11689730.java!!!	getColumnCount() : int
+        return columnSpans.length;
+!!!11689858.java!!!	getColumnSpan(in col : int) : int
+        return columnSpans[col];
+!!!11689986.java!!!	getRowCount() : int
+        return rows.size();
+!!!11690114.java!!!	getRowSpan(in row : int) : int
+        View rv = getRow(row);
+        if (rv != null) {
+            return (int) rv.getPreferredSpan(Y_AXIS);
+        }
+        return 0;
+!!!11690242.java!!!	getRow(in row : int) : TableView::TableRow
+        if (row < rows.size()) {
+            return rows.elementAt(row);
+        }
+        return null;
+!!!11690370.java!!!	getColumnsOccupied(inout v : View) : int
+        // PENDING(prinz) this code should be in the html
+        // paragraph, but we can't add api to enable it.
+        AttributeSet a = v.getElement().getAttributes();
+        String s = (String) a.getAttribute(HTML.Attribute.COLSPAN);
+        if (s != null) {
+            try {
+                return Integer.parseInt(s);
+            } catch (NumberFormatException nfe) {
+                // fall through to one column
+            }
+        }
+
+        return 1;
+!!!11690498.java!!!	getRowsOccupied(inout v : View) : int
+        // PENDING(prinz) this code should be in the html
+        // paragraph, but we can't add api to enable it.
+        AttributeSet a = v.getElement().getAttributes();
+        String s = (String) a.getAttribute(HTML.Attribute.ROWSPAN);
+        if (s != null) {
+            try {
+                return Integer.parseInt(s);
+            } catch (NumberFormatException nfe) {
+                // fall through to one row
+            }
+        }
+
+        return 1;
+!!!11690626.java!!!	invalidateGrid() : void
+        gridValid = false;
+!!!11690754.java!!!	forwardUpdate(inout ec : DocumentEvent::ElementChange, inout e : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        super.forwardUpdate(ec, e, a, f);
+        // A change in any of the table cells usually effects the whole table,
+        // so redraw it all!
+        if (a != null) {
+            Component c = getContainer();
+            if (c != null) {
+                Rectangle alloc = (a instanceof Rectangle) ? (Rectangle)a :
+                                   a.getBounds();
+                c.repaint(alloc.x, alloc.y, alloc.width, alloc.height);
+            }
+        }
+!!!11690882.java!!!	replace(in offset : int, in length : int, inout views : View [[]]) : void
+        super.replace(offset, length, views);
+        invalidateGrid();
+!!!11691010.java!!!	updateGrid() : void
+        if (! gridValid) {
+            // determine which views are table rows and clear out
+            // grid points marked filled.
+            rows.removeAllElements();
+            int n = getViewCount();
+            for (int i = 0; i < n; i++) {
+                View v = getView(i);
+                if (v instanceof TableRow) {
+                    rows.addElement((TableRow) v);
+                    TableRow rv = (TableRow) v;
+                    rv.clearFilledColumns();
+                    rv.setRow(i);
+                }
+            }
+
+            int maxColumns = 0;
+            int nrows = rows.size();
+            for (int row = 0; row < nrows; row++) {
+                TableRow rv = getRow(row);
+                int col = 0;
+                for (int cell = 0; cell < rv.getViewCount(); cell++, col++) {
+                    View cv = rv.getView(cell);
+                    // advance to a free column
+                    for (; rv.isFilled(col); col++);
+                    int rowSpan = getRowsOccupied(cv);
+                    int colSpan = getColumnsOccupied(cv);
+                    if ((colSpan > 1) || (rowSpan > 1)) {
+                        // fill in the overflow entries for this cell
+                        int rowLimit = row + rowSpan;
+                        int colLimit = col + colSpan;
+                        for (int i = row; i < rowLimit; i++) {
+                            for (int j = col; j < colLimit; j++) {
+                                if (i != row || j != col) {
+                                    addFill(i, j);
+                                }
+                            }
+                        }
+                        if (colSpan > 1) {
+                            col += colSpan - 1;
+                        }
+                    }
+                }
+                maxColumns = Math.max(maxColumns, col);
+            }
+
+            // setup the column layout/requirements
+            columnSpans = new int[maxColumns];
+            columnOffsets = new int[maxColumns];
+            columnRequirements = new SizeRequirements[maxColumns];
+            for (int i = 0; i < maxColumns; i++) {
+                columnRequirements[i] = new SizeRequirements();
+            }
+            gridValid = true;
+        }
+!!!11691138.java!!!	addFill(in row : int, in col : int) : void
+        TableRow rv = getRow(row);
+        if (rv != null) {
+            rv.fillColumn(col);
+        }
+!!!11691266.java!!!	layoutColumns(in targetSpan : int, inout offsets : int [[]], inout spans : int [[]], inout reqs : SizeRequirements [[]]) : void
+        // allocate using the convenience method on SizeRequirements
+        SizeRequirements.calculateTiledPositions(targetSpan, null, reqs,
+                                                 offsets, spans);
+!!!11691394.java!!!	layoutMinorAxis(in targetSpan : int, in axis : int, inout offsets : int [[]], inout spans : int [[]]) : void
+        // make grid is properly represented
+        updateGrid();
+
+        // all of the row layouts are invalid, so mark them that way
+        int n = getRowCount();
+        for (int i = 0; i < n; i++) {
+            TableRow row = getRow(i);
+            row.layoutChanged(axis);
+        }
+
+        // calculate column spans
+        layoutColumns(targetSpan, columnOffsets, columnSpans, columnRequirements);
+
+        // continue normal layout
+        super.layoutMinorAxis(targetSpan, axis, offsets, spans);
+!!!11691522.java!!!	calculateMinorAxisRequirements(in axis : int, inout r : SizeRequirements) : SizeRequirements
+        updateGrid();
+
+        // calculate column requirements for each column
+        calculateColumnRequirements(axis);
+
+
+        // the requirements are the sum of the columns.
+        if (r == null) {
+            r = new SizeRequirements();
+        }
+        long min = 0;
+        long pref = 0;
+        long max = 0;
+        for (SizeRequirements req : columnRequirements) {
+            min += req.minimum;
+            pref += req.preferred;
+            max += req.maximum;
+        }
+        r.minimum = (int) min;
+        r.preferred = (int) pref;
+        r.maximum = (int) max;
+        r.alignment = 0;
+        return r;
+!!!11691650.java!!!	calculateColumnRequirements(in axis : int) : void
+        // pass 1 - single column cells
+        boolean hasMultiColumn = false;
+        int nrows = getRowCount();
+        for (int i = 0; i < nrows; i++) {
+            TableRow row = getRow(i);
+            int col = 0;
+            int ncells = row.getViewCount();
+            for (int cell = 0; cell < ncells; cell++, col++) {
+                View cv = row.getView(cell);
+                for (; row.isFilled(col); col++); // advance to a free column
+                int rowSpan = getRowsOccupied(cv);
+                int colSpan = getColumnsOccupied(cv);
+                if (colSpan == 1) {
+                    checkSingleColumnCell(axis, col, cv);
+                } else {
+                    hasMultiColumn = true;
+                    col += colSpan - 1;
+                }
+            }
+        }
+
+        // pass 2 - multi-column cells
+        if (hasMultiColumn) {
+            for (int i = 0; i < nrows; i++) {
+                TableRow row = getRow(i);
+                int col = 0;
+                int ncells = row.getViewCount();
+                for (int cell = 0; cell < ncells; cell++, col++) {
+                    View cv = row.getView(cell);
+                    for (; row.isFilled(col); col++); // advance to a free column
+                    int colSpan = getColumnsOccupied(cv);
+                    if (colSpan > 1) {
+                        checkMultiColumnCell(axis, col, colSpan, cv);
+                        col += colSpan - 1;
+                    }
+                }
+            }
+        }
+
+        /*
+        if (shouldTrace()) {
+            System.err.println("calc:");
+            for (int i = 0; i < columnRequirements.length; i++) {
+                System.err.println(" " + i + ": " + columnRequirements[i]);
+            }
+        }
+        */
+!!!11691778.java!!!	checkSingleColumnCell(in axis : int, in col : int, inout v : View) : void
+        SizeRequirements req = columnRequirements[col];
+        req.minimum = Math.max((int) v.getMinimumSpan(axis), req.minimum);
+        req.preferred = Math.max((int) v.getPreferredSpan(axis), req.preferred);
+        req.maximum = Math.max((int) v.getMaximumSpan(axis), req.maximum);
+!!!11691906.java!!!	checkMultiColumnCell(in axis : int, in col : int, in ncols : int, inout v : View) : void
+        // calculate the totals
+        long min = 0;
+        long pref = 0;
+        long max = 0;
+        for (int i = 0; i < ncols; i++) {
+            SizeRequirements req = columnRequirements[col + i];
+            min += req.minimum;
+            pref += req.preferred;
+            max += req.maximum;
+        }
+
+        // check if the minimum size needs adjustment.
+        int cmin = (int) v.getMinimumSpan(axis);
+        if (cmin > min) {
+            /*
+             * the columns that this cell spans need adjustment to fit
+             * this table cell.... calculate the adjustments.  The
+             * maximum for each cell is the maximum of the existing
+             * maximum or the amount needed by the cell.
+             */
+            SizeRequirements[] reqs = new SizeRequirements[ncols];
+            for (int i = 0; i < ncols; i++) {
+                SizeRequirements r = reqs[i] = columnRequirements[col + i];
+                r.maximum = Math.max(r.maximum, (int) v.getMaximumSpan(axis));
+            }
+            int[] spans = new int[ncols];
+            int[] offsets = new int[ncols];
+            SizeRequirements.calculateTiledPositions(cmin, null, reqs,
+                                                     offsets, spans);
+            // apply the adjustments
+            for (int i = 0; i < ncols; i++) {
+                SizeRequirements req = reqs[i];
+                req.minimum = Math.max(spans[i], req.minimum);
+                req.preferred = Math.max(req.minimum, req.preferred);
+                req.maximum = Math.max(req.preferred, req.maximum);
+            }
+        }
+
+        // check if the preferred size needs adjustment.
+        int cpref = (int) v.getPreferredSpan(axis);
+        if (cpref > pref) {
+            /*
+             * the columns that this cell spans need adjustment to fit
+             * this table cell.... calculate the adjustments.  The
+             * maximum for each cell is the maximum of the existing
+             * maximum or the amount needed by the cell.
+             */
+            SizeRequirements[] reqs = new SizeRequirements[ncols];
+            for (int i = 0; i < ncols; i++) {
+                SizeRequirements r = reqs[i] = columnRequirements[col + i];
+            }
+            int[] spans = new int[ncols];
+            int[] offsets = new int[ncols];
+            SizeRequirements.calculateTiledPositions(cpref, null, reqs,
+                                                     offsets, spans);
+            // apply the adjustments
+            for (int i = 0; i < ncols; i++) {
+                SizeRequirements req = reqs[i];
+                req.preferred = Math.max(spans[i], req.preferred);
+                req.maximum = Math.max(req.preferred, req.maximum);
+            }
+        }
+
+!!!11692034.java!!!	getViewAtPosition(in pos : int, inout a : Rectangle) : View
+        int n = getViewCount();
+        for (int i = 0; i < n; i++) {
+            View v = getView(i);
+            int p0 = v.getStartOffset();
+            int p1 = v.getEndOffset();
+            if ((pos >= p0) && (pos < p1)) {
+                // it's in this view.
+                if (a != null) {
+                    childAllocation(i, a);
+                }
+                return v;
+            }
+        }
+        if (pos == getEndOffset()) {
+            View v = getView(n - 1);
+            if (a != null) {
+                this.childAllocation(n - 1, a);
+            }
+            return v;
+        }
+        return null;

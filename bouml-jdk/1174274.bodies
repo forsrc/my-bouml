@@ -1,0 +1,575 @@
+class ImageIO
+!!!9644290.java!!!	scanForPlugins() : void
+        theRegistry.registerApplicationClasspathSpis();
+!!!9645314.java!!!	getCacheInfo() : ImageIO::CacheInfo
+        AppContext context = AppContext.getAppContext();
+        CacheInfo info = (CacheInfo)context.get(CacheInfo.class);
+        if (info == null) {
+            info = new CacheInfo();
+            context.put(CacheInfo.class, info);
+        }
+        return info;
+!!!9645442.java!!!	getTempDir() : String
+        GetPropertyAction a = new GetPropertyAction("java.io.tmpdir");
+        return (String)AccessController.doPrivileged(a);
+!!!9645570.java!!!	hasCachePermission() : boolean
+        Boolean hasPermission = getCacheInfo().getHasPermission();
+
+        if (hasPermission != null) {
+            return hasPermission.booleanValue();
+        } else {
+            try {
+                SecurityManager security = System.getSecurityManager();
+                if (security != null) {
+                    File cachedir = getCacheDirectory();
+                    String cachepath;
+
+                    if (cachedir != null) {
+                        cachepath = cachedir.getPath();
+                    } else {
+                        cachepath = getTempDir();
+
+                        if (cachepath == null || cachepath.isEmpty()) {
+                            getCacheInfo().setHasPermission(Boolean.FALSE);
+                            return false;
+                        }
+                    }
+
+                    // we have to check whether we can read, write,
+                    // and delete cache files.
+                    // So, compose cache file path and check it.
+                    String filepath = cachepath;
+                    if (!filepath.endsWith(File.separator)) {
+                        filepath += File.separator;
+                    }
+                    filepath += "*";
+
+                    security.checkPermission(new FilePermission(filepath, "read, write, delete"));
+                }
+            } catch (SecurityException e) {
+                getCacheInfo().setHasPermission(Boolean.FALSE);
+                return false;
+            }
+
+            getCacheInfo().setHasPermission(Boolean.TRUE);
+            return true;
+        }
+!!!9645698.java!!!	setUseCache(inout useCache : boolean) : void
+        getCacheInfo().setUseCache(useCache);
+!!!9645826.java!!!	getUseCache() : boolean
+        return getCacheInfo().getUseCache();
+!!!9645954.java!!!	setCacheDirectory(inout cacheDirectory : File) : void
+        if ((cacheDirectory != null) && !(cacheDirectory.isDirectory())) {
+            throw new IllegalArgumentException("Not a directory!");
+        }
+        getCacheInfo().setCacheDirectory(cacheDirectory);
+        getCacheInfo().setHasPermission(null);
+!!!9646082.java!!!	getCacheDirectory() : File
+        return getCacheInfo().getCacheDirectory();
+!!!9646210.java!!!	createImageInputStream(inout input : Object) : ImageInputStream
+        if (input == null) {
+            throw new IllegalArgumentException("input == null!");
+        }
+
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageInputStreamSpi.class,
+                                                   true);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+
+        boolean usecache = getUseCache() && hasCachePermission();
+
+        while (iter.hasNext()) {
+            ImageInputStreamSpi spi = (ImageInputStreamSpi)iter.next();
+            if (spi.getInputClass().isInstance(input)) {
+                try {
+                    return spi.createInputStreamInstance(input,
+                                                         usecache,
+                                                         getCacheDirectory());
+                } catch (IOException e) {
+                    throw new IIOException("Can't create cache file!", e);
+                }
+            }
+        }
+
+        return null;
+!!!9646338.java!!!	createImageOutputStream(inout output : Object) : ImageOutputStream
+        if (output == null) {
+            throw new IllegalArgumentException("output == null!");
+        }
+
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageOutputStreamSpi.class,
+                                                   true);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+
+        boolean usecache = getUseCache() && hasCachePermission();
+
+        while (iter.hasNext()) {
+            ImageOutputStreamSpi spi = (ImageOutputStreamSpi)iter.next();
+            if (spi.getOutputClass().isInstance(output)) {
+                try {
+                    return spi.createOutputStreamInstance(output,
+                                                          usecache,
+                                                          getCacheDirectory());
+                } catch (IOException e) {
+                    throw new IIOException("Can't create cache file!", e);
+                }
+            }
+        }
+
+        return null;
+!!!9646594.java!!!	getReaderWriterInfo(inout spiClass : Class, inout spiInfo : ImageIO::SpiInfo) : String
+        // Ensure category is present
+        Iterator<S> iter;
+        try {
+            iter = theRegistry.getServiceProviders(spiClass, true);
+        } catch (IllegalArgumentException e) {
+            return new String[0];
+        }
+
+        HashSet<String> s = new HashSet<String>();
+        while (iter.hasNext()) {
+            ImageReaderWriterSpi spi = iter.next();
+            Collections.addAll(s, spiInfo.info(spi));
+        }
+
+        return s.toArray(new String[s.size()]);
+!!!9646722.java!!!	getReaderFormatNames() : String
+        return getReaderWriterInfo(ImageReaderSpi.class,
+                                   SpiInfo.FORMAT_NAMES);
+!!!9646850.java!!!	getReaderMIMETypes() : String
+        return getReaderWriterInfo(ImageReaderSpi.class,
+                                   SpiInfo.MIME_TYPES);
+!!!9646978.java!!!	getReaderFileSuffixes() : String
+        return getReaderWriterInfo(ImageReaderSpi.class,
+                                   SpiInfo.FILE_SUFFIXES);
+!!!9652866.java!!!	getImageReaders(inout input : Object) : Iterator
+        if (input == null) {
+            throw new IllegalArgumentException("input == null!");
+        }
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageReaderSpi.class,
+                                              new CanDecodeInputFilter(input),
+                                              true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+
+        return new ImageReaderIterator(iter);
+!!!9652994.java!!!	getImageReadersByFormatName(inout formatName : String) : Iterator
+        if (formatName == null) {
+            throw new IllegalArgumentException("formatName == null!");
+        }
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageReaderSpi.class,
+                                    new ContainsFilter(readerFormatNamesMethod,
+                                                       formatName),
+                                                true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageReaderIterator(iter);
+!!!9653122.java!!!	getImageReadersBySuffix(inout fileSuffix : String) : Iterator
+        if (fileSuffix == null) {
+            throw new IllegalArgumentException("fileSuffix == null!");
+        }
+        // Ensure category is present
+        Iterator iter;
+        try {
+            iter = theRegistry.getServiceProviders(ImageReaderSpi.class,
+                                   new ContainsFilter(readerFileSuffixesMethod,
+                                                      fileSuffix),
+                                              true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageReaderIterator(iter);
+!!!9653250.java!!!	getImageReadersByMIMEType(inout MIMEType : String) : Iterator
+        if (MIMEType == null) {
+            throw new IllegalArgumentException("MIMEType == null!");
+        }
+        // Ensure category is present
+        Iterator iter;
+        try {
+            iter = theRegistry.getServiceProviders(ImageReaderSpi.class,
+                                      new ContainsFilter(readerMIMETypesMethod,
+                                                         MIMEType),
+                                              true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageReaderIterator(iter);
+!!!9653378.java!!!	getWriterFormatNames() : String
+        return getReaderWriterInfo(ImageWriterSpi.class,
+                                   SpiInfo.FORMAT_NAMES);
+!!!9653506.java!!!	getWriterMIMETypes() : String
+        return getReaderWriterInfo(ImageWriterSpi.class,
+                                   SpiInfo.MIME_TYPES);
+!!!9653634.java!!!	getWriterFileSuffixes() : String
+        return getReaderWriterInfo(ImageWriterSpi.class,
+                                   SpiInfo.FILE_SUFFIXES);
+!!!9654274.java!!!	contains(inout names : String [[]], inout name : String) : boolean
+        for (int i = 0; i < names.length; i++) {
+            if (name.equalsIgnoreCase(names[i])) {
+                return true;
+            }
+        }
+
+        return false;
+!!!9654402.java!!!	getImageWritersByFormatName(inout formatName : String) : Iterator
+        if (formatName == null) {
+            throw new IllegalArgumentException("formatName == null!");
+        }
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageWriterSpi.class,
+                                    new ContainsFilter(writerFormatNamesMethod,
+                                                       formatName),
+                                            true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageWriterIterator(iter);
+!!!9654530.java!!!	getImageWritersBySuffix(inout fileSuffix : String) : Iterator
+        if (fileSuffix == null) {
+            throw new IllegalArgumentException("fileSuffix == null!");
+        }
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageWriterSpi.class,
+                                   new ContainsFilter(writerFileSuffixesMethod,
+                                                      fileSuffix),
+                                            true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageWriterIterator(iter);
+!!!9654658.java!!!	getImageWritersByMIMEType(inout MIMEType : String) : Iterator
+        if (MIMEType == null) {
+            throw new IllegalArgumentException("MIMEType == null!");
+        }
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageWriterSpi.class,
+                                      new ContainsFilter(writerMIMETypesMethod,
+                                                         MIMEType),
+                                            true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageWriterIterator(iter);
+!!!9654786.java!!!	getImageWriter(inout reader : ImageReader) : ImageWriter
+        if (reader == null) {
+            throw new IllegalArgumentException("reader == null!");
+        }
+
+        ImageReaderSpi readerSpi = reader.getOriginatingProvider();
+        if (readerSpi == null) {
+            Iterator readerSpiIter;
+            // Ensure category is present
+            try {
+                readerSpiIter =
+                    theRegistry.getServiceProviders(ImageReaderSpi.class,
+                                                    false);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+
+            while (readerSpiIter.hasNext()) {
+                ImageReaderSpi temp = (ImageReaderSpi) readerSpiIter.next();
+                if (temp.isOwnReader(reader)) {
+                    readerSpi = temp;
+                    break;
+                }
+            }
+            if (readerSpi == null) {
+                return null;
+            }
+        }
+
+        String[] writerNames = readerSpi.getImageWriterSpiNames();
+        if (writerNames == null) {
+            return null;
+        }
+
+        Class writerSpiClass = null;
+        try {
+            writerSpiClass = Class.forName(writerNames[0], true,
+                                           ClassLoader.getSystemClassLoader());
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
+
+        ImageWriterSpi writerSpi = (ImageWriterSpi)
+            theRegistry.getServiceProviderByClass(writerSpiClass);
+        if (writerSpi == null) {
+            return null;
+        }
+
+        try {
+            return writerSpi.createWriterInstance();
+        } catch (IOException e) {
+            // Deregister the spi in this case, but only as a writerSpi
+            theRegistry.deregisterServiceProvider(writerSpi,
+                                                  ImageWriterSpi.class);
+            return null;
+        }
+!!!9654914.java!!!	getImageReader(inout writer : ImageWriter) : ImageReader
+        if (writer == null) {
+            throw new IllegalArgumentException("writer == null!");
+        }
+
+        ImageWriterSpi writerSpi = writer.getOriginatingProvider();
+        if (writerSpi == null) {
+            Iterator writerSpiIter;
+            // Ensure category is present
+            try {
+                writerSpiIter =
+                    theRegistry.getServiceProviders(ImageWriterSpi.class,
+                                                    false);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+
+            while (writerSpiIter.hasNext()) {
+                ImageWriterSpi temp = (ImageWriterSpi) writerSpiIter.next();
+                if (temp.isOwnWriter(writer)) {
+                    writerSpi = temp;
+                    break;
+                }
+            }
+            if (writerSpi == null) {
+                return null;
+            }
+        }
+
+        String[] readerNames = writerSpi.getImageReaderSpiNames();
+        if (readerNames == null) {
+            return null;
+        }
+
+        Class readerSpiClass = null;
+        try {
+            readerSpiClass = Class.forName(readerNames[0], true,
+                                           ClassLoader.getSystemClassLoader());
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
+
+        ImageReaderSpi readerSpi = (ImageReaderSpi)
+            theRegistry.getServiceProviderByClass(readerSpiClass);
+        if (readerSpi == null) {
+            return null;
+        }
+
+        try {
+            return readerSpi.createReaderInstance();
+        } catch (IOException e) {
+            // Deregister the spi in this case, but only as a readerSpi
+            theRegistry.deregisterServiceProvider(readerSpi,
+                                                  ImageReaderSpi.class);
+            return null;
+        }
+!!!9655042.java!!!	getImageWriters(inout type : ImageTypeSpecifier, inout formatName : String) : Iterator
+        if (type == null) {
+            throw new IllegalArgumentException("type == null!");
+        }
+        if (formatName == null) {
+            throw new IllegalArgumentException("formatName == null!");
+        }
+
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageWriterSpi.class,
+                                 new CanEncodeImageAndFormatFilter(type,
+                                                                   formatName),
+                                            true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+
+        return new ImageWriterIterator(iter);
+!!!9655938.java!!!	getImageTranscoders(inout reader : ImageReader, inout writer : ImageWriter) : Iterator
+        if (reader == null) {
+            throw new IllegalArgumentException("reader == null!");
+        }
+        if (writer == null) {
+            throw new IllegalArgumentException("writer == null!");
+        }
+        ImageReaderSpi readerSpi = reader.getOriginatingProvider();
+        ImageWriterSpi writerSpi = writer.getOriginatingProvider();
+        ServiceRegistry.Filter filter =
+            new TranscoderFilter(readerSpi, writerSpi);
+
+        Iterator iter;
+        // Ensure category is present
+        try {
+            iter = theRegistry.getServiceProviders(ImageTranscoderSpi.class,
+                                            filter, true);
+        } catch (IllegalArgumentException e) {
+            return Collections.emptyIterator();
+        }
+        return new ImageTranscoderIterator(iter);
+!!!9656066.java!!!	read(inout input : File) : BufferedImage
+        if (input == null) {
+            throw new IllegalArgumentException("input == null!");
+        }
+        if (!input.canRead()) {
+            throw new IIOException("Can't read input file!");
+        }
+
+        ImageInputStream stream = createImageInputStream(input);
+        if (stream == null) {
+            throw new IIOException("Can't create an ImageInputStream!");
+        }
+        BufferedImage bi = read(stream);
+        if (bi == null) {
+            stream.close();
+        }
+        return bi;
+!!!9656194.java!!!	read(inout input : InputStream) : BufferedImage
+        if (input == null) {
+            throw new IllegalArgumentException("input == null!");
+        }
+
+        ImageInputStream stream = createImageInputStream(input);
+        BufferedImage bi = read(stream);
+        if (bi == null) {
+            stream.close();
+        }
+        return bi;
+!!!9656322.java!!!	read(inout input : URL) : BufferedImage
+        if (input == null) {
+            throw new IllegalArgumentException("input == null!");
+        }
+
+        InputStream istream = null;
+        try {
+            istream = input.openStream();
+        } catch (IOException e) {
+            throw new IIOException("Can't get input stream from URL!", e);
+        }
+        ImageInputStream stream = createImageInputStream(istream);
+        BufferedImage bi;
+        try {
+            bi = read(stream);
+            if (bi == null) {
+                stream.close();
+            }
+        } finally {
+            istream.close();
+        }
+        return bi;
+!!!9656450.java!!!	read(inout stream : ImageInputStream) : BufferedImage
+        if (stream == null) {
+            throw new IllegalArgumentException("stream == null!");
+        }
+
+        Iterator iter = getImageReaders(stream);
+        if (!iter.hasNext()) {
+            return null;
+        }
+
+        ImageReader reader = (ImageReader)iter.next();
+        ImageReadParam param = reader.getDefaultReadParam();
+        reader.setInput(stream, true, true);
+        BufferedImage bi;
+        try {
+            bi = reader.read(0, param);
+        } finally {
+            reader.dispose();
+            stream.close();
+        }
+        return bi;
+!!!9656578.java!!!	write(inout im : RenderedImage, inout formatName : String, inout output : ImageOutputStream) : boolean
+        if (im == null) {
+            throw new IllegalArgumentException("im == null!");
+        }
+        if (formatName == null) {
+            throw new IllegalArgumentException("formatName == null!");
+        }
+        if (output == null) {
+            throw new IllegalArgumentException("output == null!");
+        }
+
+        return doWrite(im, getWriter(im, formatName), output);
+!!!9656706.java!!!	write(inout im : RenderedImage, inout formatName : String, inout output : File) : boolean
+        if (output == null) {
+            throw new IllegalArgumentException("output == null!");
+        }
+        ImageOutputStream stream = null;
+
+        ImageWriter writer = getWriter(im, formatName);
+        if (writer == null) {
+            /* Do not make changes in the file system if we have
+             * no appropriate writer.
+             */
+            return false;
+        }
+
+        try {
+            output.delete();
+            stream = createImageOutputStream(output);
+        } catch (IOException e) {
+            throw new IIOException("Can't create output stream!", e);
+        }
+
+        try {
+            return doWrite(im, writer, stream);
+        } finally {
+            stream.close();
+        }
+!!!9656834.java!!!	write(inout im : RenderedImage, inout formatName : String, inout output : OutputStream) : boolean
+        if (output == null) {
+            throw new IllegalArgumentException("output == null!");
+        }
+        ImageOutputStream stream = null;
+        try {
+            stream = createImageOutputStream(output);
+        } catch (IOException e) {
+            throw new IIOException("Can't create output stream!", e);
+        }
+
+        try {
+            return doWrite(im, getWriter(im, formatName), stream);
+        } finally {
+            stream.close();
+        }
+!!!9656962.java!!!	getWriter(inout im : RenderedImage, inout formatName : String) : ImageWriter
+        ImageTypeSpecifier type =
+            ImageTypeSpecifier.createFromRenderedImage(im);
+        Iterator<ImageWriter> iter = getImageWriters(type, formatName);
+
+        if (iter.hasNext()) {
+            return iter.next();
+        } else {
+            return null;
+        }
+!!!9657090.java!!!	doWrite(inout im : RenderedImage, inout writer : ImageWriter, inout output : ImageOutputStream) : boolean
+        if (writer == null) {
+            return false;
+        }
+        writer.setOutput(output);
+        try {
+            writer.write(im);
+        } finally {
+            writer.dispose();
+            output.flush();
+        }
+        return true;

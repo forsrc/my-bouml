@@ -1,0 +1,180 @@
+class NumberPrinterParser
+!!!8524418.java!!!	NumberPrinterParser(inout field : TemporalField, in minWidth : int, in maxWidth : int, inout signStyle : SignStyle)
+            // validated by caller
+            this.field = field;
+            this.minWidth = minWidth;
+            this.maxWidth = maxWidth;
+            this.signStyle = signStyle;
+            this.subsequentWidth = 0;
+!!!8524546.java!!!	NumberPrinterParser(inout field : TemporalField, in minWidth : int, in maxWidth : int, inout signStyle : SignStyle, in subsequentWidth : int)
+            // validated by caller
+            this.field = field;
+            this.minWidth = minWidth;
+            this.maxWidth = maxWidth;
+            this.signStyle = signStyle;
+            this.subsequentWidth = subsequentWidth;
+!!!8524674.java!!!	withFixedWidth() : DateTimeFormatterBuilder::NumberPrinterParser
+            if (subsequentWidth == -1) {
+                return this;
+            }
+            return new NumberPrinterParser(field, minWidth, maxWidth, signStyle, -1);
+!!!8524802.java!!!	withSubsequentWidth(in subsequentWidth : int) : DateTimeFormatterBuilder::NumberPrinterParser
+            return new NumberPrinterParser(field, minWidth, maxWidth, signStyle, this.subsequentWidth + subsequentWidth);
+!!!8524930.java!!!	format(inout context : DateTimePrintContext, inout buf : StringBuilder) : boolean
+            Long valueLong = context.getValue(field);
+            if (valueLong == null) {
+                return false;
+            }
+            long value = getValue(context, valueLong);
+            DecimalStyle decimalStyle = context.getDecimalStyle();
+            String str = (value == Long.MIN_VALUE ? "9223372036854775808" : Long.toString(Math.abs(value)));
+            if (str.length() > maxWidth) {
+                throw new DateTimeException("Field " + field +
+                    " cannot be printed as the value " + value +
+                    " exceeds the maximum print width of " + maxWidth);
+            }
+            str = decimalStyle.convertNumberToI18N(str);
+
+            if (value >= 0) {
+                switch (signStyle) {
+                    case EXCEEDS_PAD:
+                        if (minWidth < 19 && value >= EXCEED_POINTS[minWidth]) {
+                            buf.append(decimalStyle.getPositiveSign());
+                        }
+                        break;
+                    case ALWAYS:
+                        buf.append(decimalStyle.getPositiveSign());
+                        break;
+                }
+            } else {
+                switch (signStyle) {
+                    case NORMAL:
+                    case EXCEEDS_PAD:
+                    case ALWAYS:
+                        buf.append(decimalStyle.getNegativeSign());
+                        break;
+                    case NOT_NEGATIVE:
+                        throw new DateTimeException("Field " + field +
+                            " cannot be printed as the value " + value +
+                            " cannot be negative according to the SignStyle");
+                }
+            }
+            for (int i = 0; i < minWidth - str.length(); i++) {
+                buf.append(decimalStyle.getZeroDigit());
+            }
+            buf.append(str);
+            return true;
+!!!8525058.java!!!	getValue(inout context : DateTimePrintContext, in value : long) : long
+            return value;
+!!!8525186.java!!!	isFixedWidth(inout context : DateTimeParseContext) : boolean
+            return subsequentWidth == -1 ||
+                (subsequentWidth > 0 && minWidth == maxWidth && signStyle == SignStyle.NOT_NEGATIVE);
+!!!8525314.java!!!	parse(inout context : DateTimeParseContext, inout text : CharSequence, in position : int) : int
+            int length = text.length();
+            if (position == length) {
+                return ~position;
+            }
+            char sign = text.charAt(position);  // IOOBE if invalid position
+            boolean negative = false;
+            boolean positive = false;
+            if (sign == context.getDecimalStyle().getPositiveSign()) {
+                if (signStyle.parse(true, context.isStrict(), minWidth == maxWidth) == false) {
+                    return ~position;
+                }
+                positive = true;
+                position++;
+            } else if (sign == context.getDecimalStyle().getNegativeSign()) {
+                if (signStyle.parse(false, context.isStrict(), minWidth == maxWidth) == false) {
+                    return ~position;
+                }
+                negative = true;
+                position++;
+            } else {
+                if (signStyle == SignStyle.ALWAYS && context.isStrict()) {
+                    return ~position;
+                }
+            }
+            int effMinWidth = (context.isStrict() || isFixedWidth(context) ? minWidth : 1);
+            int minEndPos = position + effMinWidth;
+            if (minEndPos > length) {
+                return ~position;
+            }
+            int effMaxWidth = (context.isStrict() || isFixedWidth(context) ? maxWidth : 9) + Math.max(subsequentWidth, 0);
+            long total = 0;
+            BigInteger totalBig = null;
+            int pos = position;
+            for (int pass = 0; pass < 2; pass++) {
+                int maxEndPos = Math.min(pos + effMaxWidth, length);
+                while (pos < maxEndPos) {
+                    char ch = text.charAt(pos++);
+                    int digit = context.getDecimalStyle().convertToDigit(ch);
+                    if (digit < 0) {
+                        pos--;
+                        if (pos < minEndPos) {
+                            return ~position;  // need at least min width digits
+                        }
+                        break;
+                    }
+                    if ((pos - position) > 18) {
+                        if (totalBig == null) {
+                            totalBig = BigInteger.valueOf(total);
+                        }
+                        totalBig = totalBig.multiply(BigInteger.TEN).add(BigInteger.valueOf(digit));
+                    } else {
+                        total = total * 10 + digit;
+                    }
+                }
+                if (subsequentWidth > 0 && pass == 0) {
+                    // re-parse now we know the correct width
+                    int parseLen = pos - position;
+                    effMaxWidth = Math.max(effMinWidth, parseLen - subsequentWidth);
+                    pos = position;
+                    total = 0;
+                    totalBig = null;
+                } else {
+                    break;
+                }
+            }
+            if (negative) {
+                if (totalBig != null) {
+                    if (totalBig.equals(BigInteger.ZERO) && context.isStrict()) {
+                        return ~(position - 1);  // minus zero not allowed
+                    }
+                    totalBig = totalBig.negate();
+                } else {
+                    if (total == 0 && context.isStrict()) {
+                        return ~(position - 1);  // minus zero not allowed
+                    }
+                    total = -total;
+                }
+            } else if (signStyle == SignStyle.EXCEEDS_PAD && context.isStrict()) {
+                int parseLen = pos - position;
+                if (positive) {
+                    if (parseLen <= minWidth) {
+                        return ~(position - 1);  // '+' only parsed if minWidth exceeded
+                    }
+                } else {
+                    if (parseLen > minWidth) {
+                        return ~position;  // '+' must be parsed if minWidth exceeded
+                    }
+                }
+            }
+            if (totalBig != null) {
+                if (totalBig.bitLength() > 63) {
+                    // overflow, parse 1 less digit
+                    totalBig = totalBig.divide(BigInteger.TEN);
+                    pos--;
+                }
+                return setValue(context, totalBig.longValue(), position, pos);
+            }
+            return setValue(context, total, position, pos);
+!!!8525442.java!!!	setValue(inout context : DateTimeParseContext, in value : long, in errorPos : int, in successPos : int) : int
+            return context.setParsedField(field, value, errorPos, successPos);
+!!!8525570.java!!!	toString() : String
+            if (minWidth == 1 && maxWidth == 19 && signStyle == SignStyle.NORMAL) {
+                return "Value(" + field + ")";
+            }
+            if (minWidth == maxWidth && signStyle == SignStyle.NOT_NEGATIVE) {
+                return "Value(" + field + "," + minWidth + ")";
+            }
+            return "Value(" + field + "," + minWidth + "," + maxWidth + "," + signStyle + ")";

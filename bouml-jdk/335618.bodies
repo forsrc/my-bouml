@@ -1,0 +1,203 @@
+class WBMPImageReader
+!!!1868546.java!!!	WBMPImageReader(inout originator : ImageReaderSpi)
+        super(originator);
+!!!1868674.java!!!	setInput(inout input : Object, inout seekForwardOnly : boolean, inout ignoreMetadata : boolean) : void
+        super.setInput(input, seekForwardOnly, ignoreMetadata);
+        iis = (ImageInputStream) input; // Always works
+        gotHeader = false;
+!!!1868802.java!!!	getNumImages(inout allowSearch : boolean) : int
+        if (iis == null) {
+            throw new IllegalStateException(I18N.getString("GetNumImages0"));
+        }
+        if (seekForwardOnly && allowSearch) {
+            throw new IllegalStateException(I18N.getString("GetNumImages1"));
+        }
+        return 1;
+!!!1868930.java!!!	getWidth(in imageIndex : int) : int
+        checkIndex(imageIndex);
+        readHeader();
+        return width;
+!!!1869058.java!!!	getHeight(in imageIndex : int) : int
+        checkIndex(imageIndex);
+        readHeader();
+        return height;
+!!!1869186.java!!!	isRandomAccessEasy(in imageIndex : int) : boolean
+        checkIndex(imageIndex);
+        return true;
+!!!1869314.java!!!	checkIndex(in imageIndex : int) : void
+        if (imageIndex != 0) {
+            throw new IndexOutOfBoundsException(I18N.getString("WBMPImageReader0"));
+        }
+!!!1869442.java!!!	readHeader() : void
+        if (gotHeader)
+            return;
+
+        if (iis == null) {
+            throw new IllegalStateException("Input source not set!");
+        }
+
+        metadata = new WBMPMetadata();
+
+        wbmpType = iis.readByte();   // TypeField
+        byte fixHeaderField = iis.readByte();
+
+        // check for valid wbmp image
+        if (fixHeaderField != 0
+            || !isValidWbmpType(wbmpType))
+        {
+            throw new IIOException(I18N.getString("WBMPImageReader2"));
+        }
+
+        metadata.wbmpType = wbmpType;
+
+        // Read image width
+        width = ReaderUtil.readMultiByteInteger(iis);
+        metadata.width = width;
+
+        // Read image height
+        height = ReaderUtil.readMultiByteInteger(iis);
+        metadata.height = height;
+
+        gotHeader = true;
+!!!1869570.java!!!	getImageTypes(in imageIndex : int) : Iterator
+        checkIndex(imageIndex);
+        readHeader();
+
+        BufferedImage bi =
+            new BufferedImage(1, 1, BufferedImage.TYPE_BYTE_BINARY);
+        ArrayList list = new ArrayList(1);
+        list.add(new ImageTypeSpecifier(bi));
+        return list.iterator();
+!!!1869698.java!!!	getDefaultReadParam() : ImageReadParam
+        return new ImageReadParam();
+!!!1869826.java!!!	getImageMetadata(in imageIndex : int) : IIOMetadata
+        checkIndex(imageIndex);
+        if (metadata == null) {
+            readHeader();
+        }
+        return metadata;
+!!!1869954.java!!!	getStreamMetadata() : IIOMetadata
+        return null;
+!!!1870082.java!!!	read(in imageIndex : int, inout param : ImageReadParam) : BufferedImage
+
+        if (iis == null) {
+            throw new IllegalStateException(I18N.getString("WBMPImageReader1"));
+        }
+
+        checkIndex(imageIndex);
+        clearAbortRequest();
+        processImageStarted(imageIndex);
+        if (param == null)
+            param = getDefaultReadParam();
+
+        //read header
+        readHeader();
+
+        Rectangle sourceRegion = new Rectangle(0, 0, 0, 0);
+        Rectangle destinationRegion = new Rectangle(0, 0, 0, 0);
+
+        computeRegions(param, this.width, this.height,
+                       param.getDestination(),
+                       sourceRegion,
+                       destinationRegion);
+
+        int scaleX = param.getSourceXSubsampling();
+        int scaleY = param.getSourceYSubsampling();
+        int xOffset = param.getSubsamplingXOffset();
+        int yOffset = param.getSubsamplingYOffset();
+
+        // If the destination is provided, then use it.  Otherwise, create new one
+        BufferedImage bi = param.getDestination();
+
+        if (bi == null)
+            bi = new BufferedImage(destinationRegion.x + destinationRegion.width,
+                              destinationRegion.y + destinationRegion.height,
+                              BufferedImage.TYPE_BYTE_BINARY);
+
+        boolean noTransform =
+            destinationRegion.equals(new Rectangle(0, 0, width, height)) &&
+            destinationRegion.equals(new Rectangle(0, 0, bi.getWidth(), bi.getHeight()));
+
+        // Get the image data.
+        WritableRaster tile = bi.getWritableTile(0, 0);
+
+        // Get the SampleModel.
+        MultiPixelPackedSampleModel sm =
+            (MultiPixelPackedSampleModel)bi.getSampleModel();
+
+        if (noTransform) {
+            if (abortRequested()) {
+                processReadAborted();
+                return bi;
+            }
+
+            // If noTransform is necessary, read the data.
+            iis.read(((DataBufferByte)tile.getDataBuffer()).getData(),
+                     0, height*sm.getScanlineStride());
+            processImageUpdate(bi,
+                               0, 0,
+                               width, height, 1, 1,
+                               new int[]{0});
+            processImageProgress(100.0F);
+        } else {
+            int len = (this.width + 7) / 8;
+            byte[] buf = new byte[len];
+            byte[] data = ((DataBufferByte)tile.getDataBuffer()).getData();
+            int lineStride = sm.getScanlineStride();
+            iis.skipBytes(len * sourceRegion.y);
+            int skipLength = len * (scaleY - 1);
+
+            // cache the values to avoid duplicated computation
+            int[] srcOff = new int[destinationRegion.width];
+            int[] destOff = new int[destinationRegion.width];
+            int[] srcPos = new int[destinationRegion.width];
+            int[] destPos = new int[destinationRegion.width];
+
+            for (int i = destinationRegion.x, x = sourceRegion.x, j = 0;
+                i < destinationRegion.x + destinationRegion.width;
+                    i++, j++, x += scaleX) {
+                srcPos[j] = x >> 3;
+                srcOff[j] = 7 - (x & 7);
+                destPos[j] = i >> 3;
+                destOff[j] = 7 - (i & 7);
+            }
+
+            for (int j = 0, y = sourceRegion.y,
+                k = destinationRegion.y * lineStride;
+                j < destinationRegion.height; j++, y+=scaleY) {
+
+                if (abortRequested())
+                    break;
+                iis.read(buf, 0, len);
+                for (int i = 0; i < destinationRegion.width; i++) {
+                    //get the bit and assign to the data buffer of the raster
+                    int v = (buf[srcPos[i]] >> srcOff[i]) & 1;
+                    data[k + destPos[i]] |= v << destOff[i];
+                }
+
+                k += lineStride;
+                iis.skipBytes(skipLength);
+                        processImageUpdate(bi,
+                                           0, j,
+                                           destinationRegion.width, 1, 1, 1,
+                                           new int[]{0});
+                        processImageProgress(100.0F*j/destinationRegion.height);
+            }
+        }
+
+        if (abortRequested())
+            processReadAborted();
+        else
+            processImageComplete();
+        return bi;
+!!!1870210.java!!!	canReadRaster() : boolean
+        return true;
+!!!1870338.java!!!	readRaster(in imageIndex : int, inout param : ImageReadParam) : Raster
+        BufferedImage bi = read(imageIndex, param);
+        return bi.getData();
+!!!1870466.java!!!	reset() : void
+        super.reset();
+        iis = null;
+        gotHeader = false;
+!!!1870594.java!!!	isValidWbmpType(in type : int) : boolean
+        return type == 0;

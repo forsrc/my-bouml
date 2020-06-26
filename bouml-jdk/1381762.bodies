@@ -1,0 +1,134 @@
+class StringContent
+!!!11679746.java!!!	StringContent()
+        this(10);
+!!!11679874.java!!!	StringContent(in initialLength : int)
+        if (initialLength < 1) {
+            initialLength = 1;
+        }
+        data = new char[initialLength];
+        data[0] = '\n';
+        count = 1;
+!!!11680002.java!!!	length() : int
+        return count;
+!!!11680130.java!!!	insertString(in where : int, inout str : String) : UndoableEdit
+        if (where >= count || where < 0) {
+            throw new BadLocationException("Invalid location", count);
+        }
+        char[] chars = str.toCharArray();
+        replace(where, 0, chars, 0, chars.length);
+        if (marks != null) {
+            updateMarksForInsert(where, str.length());
+        }
+        return new InsertUndo(where, str.length());
+!!!11680258.java!!!	remove(in where : int, in nitems : int) : UndoableEdit
+        if (where + nitems >= count) {
+            throw new BadLocationException("Invalid range", count);
+        }
+        String removedString = getString(where, nitems);
+        UndoableEdit edit = new RemoveUndo(where, removedString);
+        replace(where, nitems, empty, 0, 0);
+        if (marks != null) {
+            updateMarksForRemove(where, nitems);
+        }
+        return edit;
+
+!!!11680386.java!!!	getString(in where : int, in len : int) : String
+        if (where + len > count) {
+            throw new BadLocationException("Invalid range", count);
+        }
+        return new String(data, where, len);
+!!!11680514.java!!!	getChars(in where : int, in len : int, inout chars : Segment) : void
+        if (where + len > count) {
+            throw new BadLocationException("Invalid location", count);
+        }
+        chars.array = data;
+        chars.offset = where;
+        chars.count = len;
+!!!11680642.java!!!	createPosition(in offset : int) : Position
+        // some small documents won't have any sticky positions
+        // at all, so the buffer is created lazily.
+        if (marks == null) {
+            marks = new Vector<PosRec>();
+        }
+        return new StickyPosition(offset);
+!!!11680770.java!!!	replace(in offset : int, in length : int, inout replArray : char [[]], in replOffset : int, in replLength : int) : void
+        int delta = replLength - length;
+        int src = offset + length;
+        int nmove = count - src;
+        int dest = src + delta;
+        if ((count + delta) >= data.length) {
+            // need to grow the array
+            int newLength = Math.max(2*data.length, count + delta);
+            char[] newData = new char[newLength];
+            System.arraycopy(data, 0, newData, 0, offset);
+            System.arraycopy(replArray, replOffset, newData, offset, replLength);
+            System.arraycopy(data, src, newData, dest, nmove);
+            data = newData;
+        } else {
+            // patch the existing array
+            System.arraycopy(data, src, data, dest, nmove);
+            System.arraycopy(replArray, replOffset, data, offset, replLength);
+        }
+        count = count + delta;
+!!!11680898.java!!!	resize(in ncount : int) : void
+        char[] ndata = new char[ncount];
+        System.arraycopy(data, 0, ndata, 0, Math.min(ncount, count));
+        data = ndata;
+!!!11681026.java!!!	updateMarksForInsert(in offset : int, in length : int) : void
+        if (offset == 0) {
+            // zero is a special case where we update only
+            // marks after it.
+            offset = 1;
+        }
+        int n = marks.size();
+        for (int i = 0; i < n; i++) {
+            PosRec mark = marks.elementAt(i);
+            if (mark.unused) {
+                // this record is no longer used, get rid of it
+                marks.removeElementAt(i);
+                i -= 1;
+                n -= 1;
+            } else if (mark.offset >= offset) {
+                mark.offset += length;
+            }
+        }
+!!!11681154.java!!!	updateMarksForRemove(in offset : int, in length : int) : void
+        int n = marks.size();
+        for (int i = 0; i < n; i++) {
+            PosRec mark = marks.elementAt(i);
+            if (mark.unused) {
+                // this record is no longer used, get rid of it
+                marks.removeElementAt(i);
+                i -= 1;
+                n -= 1;
+            } else if (mark.offset >= (offset + length)) {
+                mark.offset -= length;
+            } else if (mark.offset >= offset) {
+                mark.offset = offset;
+            }
+        }
+!!!11681282.java!!!	getPositionsInRange(inout v : Vector, in offset : int, in length : int) : Vector
+        int n = marks.size();
+        int end = offset + length;
+        Vector placeIn = (v == null) ? new Vector() : v;
+        for (int i = 0; i < n; i++) {
+            PosRec mark = marks.elementAt(i);
+            if (mark.unused) {
+                // this record is no longer used, get rid of it
+                marks.removeElementAt(i);
+                i -= 1;
+                n -= 1;
+            } else if(mark.offset >= offset && mark.offset <= end)
+                placeIn.addElement(new UndoPosRef(mark));
+        }
+        return placeIn;
+!!!11681410.java!!!	updateUndoPositions(inout positions : Vector) : void
+        for(int counter = positions.size() - 1; counter >= 0; counter--) {
+            UndoPosRef ref = (UndoPosRef)positions.elementAt(counter);
+            // Check if the Position is still valid.
+            if(ref.rec.unused) {
+                positions.removeElementAt(counter);
+            }
+            else
+                ref.resetLocation();
+        }

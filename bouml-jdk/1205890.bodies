@@ -1,0 +1,186 @@
+class RMIClientCommunicatorAdmin
+!!!9974146.java!!!	RMIClientCommunicatorAdmin(in period : long)
+            super(period);
+!!!9974274.java!!!	gotIOException(inout ioe : IOException) : void
+            if (ioe instanceof NoSuchObjectException) {
+                // need to restart
+                super.gotIOException(ioe);
+
+                return;
+            }
+
+            // check if the connection is broken
+            try {
+                connection.getDefaultDomain(null);
+            } catch (IOException ioexc) {
+                boolean toClose = false;
+
+                synchronized(this) {
+                    if (!terminated) {
+                        terminated = true;
+
+                        toClose = true;
+                    }
+                }
+
+                if (toClose) {
+                    // we should close the connection,
+                    // but send a failed notif at first
+                    final Notification failedNotif =
+                            new JMXConnectionNotification(
+                            JMXConnectionNotification.FAILED,
+                            this,
+                            connectionId,
+                            clientNotifSeqNo++,
+                            "Failed to communicate with the server: "+ioe.toString(),
+                            ioe);
+
+                    sendNotification(failedNotif);
+
+                    try {
+                        close(true);
+                    } catch (Exception e) {
+                        // OK.
+                        // We are closing
+                    }
+                }
+            }
+
+            // forward the exception
+            if (ioe instanceof ServerException) {
+                /* Need to unwrap the exception.
+                   Some user-thrown exception at server side will be wrapped by
+                   rmi into a ServerException.
+                   For example, a RMIConnnectorServer will wrap a
+                   ClassNotFoundException into a UnmarshalException, and rmi
+                   will throw a ServerException at client side which wraps this
+                   UnmarshalException.
+                   No failed notif here.
+                 */
+                Throwable tt = ((ServerException)ioe).detail;
+
+                if (tt instanceof IOException) {
+                    throw (IOException)tt;
+                } else if (tt instanceof RuntimeException) {
+                    throw (RuntimeException)tt;
+                }
+            }
+
+            throw ioe;
+!!!9974402.java!!!	reconnectNotificationListeners(inout old : ClientListenerInfo [[]]) : void
+            final int len  = old.length;
+            int i;
+
+            ClientListenerInfo[] clis = new ClientListenerInfo[len];
+
+            final Subject[] subjects = new Subject[len];
+            final ObjectName[] names = new ObjectName[len];
+            final NotificationListener[] listeners = new NotificationListener[len];
+            final NotificationFilter[] filters = new NotificationFilter[len];
+            final MarshalledObject<NotificationFilter>[] mFilters =
+                    Util.cast(new MarshalledObject<?>[len]);
+            final Object[] handbacks = new Object[len];
+
+            for (i=0;i<len;i++) {
+                subjects[i]  = old[i].getDelegationSubject();
+                names[i]     = old[i].getObjectName();
+                listeners[i] = old[i].getListener();
+                filters[i]   = old[i].getNotificationFilter();
+                mFilters[i]  = new MarshalledObject<NotificationFilter>(filters[i]);
+                handbacks[i] = old[i].getHandback();
+            }
+
+            try {
+                Integer[] ids = addListenersWithSubjects(names,mFilters,subjects,false);
+
+                for (i=0;i<len;i++) {
+                    clis[i] = new ClientListenerInfo(ids[i],
+                            names[i],
+                            listeners[i],
+                            filters[i],
+                            handbacks[i],
+                            subjects[i]);
+                }
+
+                rmiNotifClient.postReconnection(clis);
+
+                return;
+            } catch (InstanceNotFoundException infe) {
+                // OK, we will do one by one
+            }
+
+            int j = 0;
+            for (i=0;i<len;i++) {
+                try {
+                    Integer id = addListenerWithSubject(names[i],
+                            new MarshalledObject<NotificationFilter>(filters[i]),
+                            subjects[i],
+                            false);
+
+                    clis[j++] = new ClientListenerInfo(id,
+                            names[i],
+                            listeners[i],
+                            filters[i],
+                            handbacks[i],
+                            subjects[i]);
+                } catch (InstanceNotFoundException infe) {
+                    logger.warning("reconnectNotificationListeners",
+                            "Can't reconnect listener for " +
+                            names[i]);
+                }
+            }
+
+            if (j != len) {
+                ClientListenerInfo[] tmp = clis;
+                clis = new ClientListenerInfo[j];
+                System.arraycopy(tmp, 0, clis, 0, j);
+            }
+
+            rmiNotifClient.postReconnection(clis);
+!!!9974530.java!!!	checkConnection() : void
+            if (logger.debugOn())
+                logger.debug("RMIClientCommunicatorAdmin-checkConnection",
+                        "Calling the method getDefaultDomain.");
+
+            connection.getDefaultDomain(null);
+!!!9974658.java!!!	doStart() : void
+            // Get RMIServer stub from directory or URL encoding if needed.
+            RMIServer stub;
+            try {
+                stub = (rmiServer!=null)?rmiServer:
+                    findRMIServer(jmxServiceURL, env);
+            } catch (NamingException ne) {
+                throw new IOException("Failed to get a RMI stub: "+ne);
+            }
+
+            // Connect IIOP Stub if needed.
+            stub = connectStub(stub,env);
+
+            // Calling newClient on the RMIServer stub.
+            Object credentials = env.get(CREDENTIALS);
+            connection = stub.newClient(credentials);
+
+            // notif issues
+            final ClientListenerInfo[] old = rmiNotifClient.preReconnection();
+
+            reconnectNotificationListeners(old);
+
+            connectionId = getConnectionId();
+
+            Notification reconnectedNotif =
+                    new JMXConnectionNotification(JMXConnectionNotification.OPENED,
+                    this,
+                    connectionId,
+                    clientNotifSeqNo++,
+                    "Reconnected to server",
+                    null);
+            sendNotification(reconnectedNotif);
+
+!!!9974786.java!!!	doStop() : void
+            try {
+                close();
+            } catch (IOException ioe) {
+                logger.warning("RMIClientCommunicatorAdmin-doStop",
+                        "Failed to call the method close():" + ioe);
+                logger.debug("RMIClientCommunicatorAdmin-doStop",ioe);
+            }

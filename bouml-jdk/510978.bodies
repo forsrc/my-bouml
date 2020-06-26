@@ -1,0 +1,130 @@
+class MBeanServerFileAccessController
+!!!3045250.java!!!	MBeanServerFileAccessController(inout accessFileName : String)
+        super();
+        this.accessFileName = accessFileName;
+        Properties props = propertiesFromFile(accessFileName);
+        parseProperties(props);
+!!!3045378.java!!!	MBeanServerFileAccessController(inout accessFileName : String, inout mbs : MBeanServer)
+        this(accessFileName);
+        setMBeanServer(mbs);
+!!!3045506.java!!!	MBeanServerFileAccessController(inout accessFileProps : Properties)
+        super();
+        if (accessFileProps == null)
+            throw new IllegalArgumentException("Null properties");
+        originalProps = accessFileProps;
+        parseProperties(accessFileProps);
+!!!3045634.java!!!	MBeanServerFileAccessController(inout accessFileProps : Properties, inout mbs : MBeanServer)
+        this(accessFileProps);
+        setMBeanServer(mbs);
+!!!3045762.java!!!	checkRead() : void
+        checkAccess(AccessType.READ, null);
+!!!3045890.java!!!	checkWrite() : void
+        checkAccess(AccessType.WRITE, null);
+!!!3046018.java!!!	checkCreate(inout className : String) : void
+        checkAccess(AccessType.CREATE, className);
+!!!3046146.java!!!	checkUnregister(inout name : ObjectName) : void
+        checkAccess(AccessType.UNREGISTER, null);
+!!!3046274.java!!!	refresh() : void
+        Properties props;
+        if (accessFileName == null)
+            props = (Properties) originalProps;
+        else
+            props = propertiesFromFile(accessFileName);
+        parseProperties(props);
+!!!3046402.java!!!	propertiesFromFile(inout fname : String) : Properties
+        FileInputStream fin = new FileInputStream(fname);
+        try {
+            Properties p = new Properties();
+            p.load(fin);
+            return p;
+        } finally {
+            fin.close();
+        }
+!!!3046530.java!!!	checkAccess(inout requiredAccess : MBeanServerFileAccessController::AccessType, inout arg : String) : void
+        final AccessControlContext acc = AccessController.getContext();
+        final Subject s =
+            AccessController.doPrivileged(new PrivilegedAction<Subject>() {
+                    public Subject run() {
+                        return Subject.getSubject(acc);
+                    }
+                });
+        if (s == null) return; /* security has not been enabled */
+        final Set principals = s.getPrincipals();
+        String newPropertyValue = null;
+        for (Iterator i = principals.iterator(); i.hasNext(); ) {
+            final Principal p = (Principal) i.next();
+            Access access = accessMap.get(p.getName());
+            if (access != null) {
+                boolean ok;
+                switch (requiredAccess) {
+                    case READ:
+                        ok = true;  // all access entries imply read
+                        break;
+                    case WRITE:
+                        ok = access.write;
+                        break;
+                    case UNREGISTER:
+                        ok = access.unregister;
+                        if (!ok && access.write)
+                            newPropertyValue = "unregister";
+                        break;
+                    case CREATE:
+                        ok = checkCreateAccess(access, arg);
+                        if (!ok && access.write)
+                            newPropertyValue = "create " + arg;
+                        break;
+                    default:
+                        throw new AssertionError();
+                }
+                if (ok)
+                    return;
+            }
+        }
+        SecurityException se = new SecurityException("Access denied! Invalid " +
+                "access level for requested MBeanServer operation.");
+        // Add some more information to help people with deployments that
+        // worked before we required explicit create clauses. We're not giving
+        // any information to the bad guys, other than that the access control
+        // is based on a file, which they could have worked out from the stack
+        // trace anyway.
+        if (newPropertyValue != null) {
+            SecurityException se2 = new SecurityException("Access property " +
+                    "for this identity should be similar to: " + READWRITE +
+                    " " + newPropertyValue);
+            se.initCause(se2);
+        }
+        throw se;
+!!!3046658.java!!!	checkCreateAccess(inout access : MBeanServerFileAccessController::Access, inout className : String) : boolean
+        for (String classNamePattern : access.createPatterns) {
+            if (classNameMatch(classNamePattern, className))
+                return true;
+        }
+        return false;
+!!!3046786.java!!!	classNameMatch(inout pattern : String, inout className : String) : boolean
+        // We studiously avoided regexes when parsing the properties file,
+        // because that is done whenever the VM is started with the
+        // appropriate -Dcom.sun.management options, even if nobody ever
+        // creates an MBean.  We don't want to incur the overhead of loading
+        // all the regex code whenever those options are specified, but if we
+        // get as far as here then the VM is already running and somebody is
+        // doing the very unusual operation of remotely creating an MBean.
+        // Because that operation is so unusual, we don't try to optimize
+        // by hand-matching or by caching compiled Pattern objects.
+        StringBuilder sb = new StringBuilder();
+        StringTokenizer stok = new StringTokenizer(pattern, "*", true);
+        while (stok.hasMoreTokens()) {
+            String tok = stok.nextToken();
+            if (tok.equals("*"))
+                sb.append("[^.]*");
+            else
+                sb.append(Pattern.quote(tok));
+        }
+        return className.matches(sb.toString());
+!!!3046914.java!!!	parseProperties(inout props : Properties) : void
+        this.accessMap = new HashMap<String, Access>();
+        for (Map.Entry<Object, Object> entry : props.entrySet()) {
+            String identity = (String) entry.getKey();
+            String accessString = (String) entry.getValue();
+            Access access = Parser.parseAccess(identity, accessString);
+            accessMap.put(identity, access);
+        }

@@ -1,0 +1,400 @@
+class XSModelImpl
+!!!4723074.java!!!	XSModelImpl(inout grammars : SchemaGrammar [[]])
+        this(grammars, Constants.SCHEMA_VERSION_1_0);
+!!!4723202.java!!!	XSModelImpl(inout grammars : SchemaGrammar [[]], in s4sVersion : short)
+        // copy namespaces/grammars from the array to our arrays
+        int len = grammars.length;
+        final int initialSize = Math.max(len+1, 5);
+        String[] namespaces = new String[initialSize];
+        SchemaGrammar[] grammarList = new SchemaGrammar[initialSize];
+        boolean hasS4S = false;
+        for (int i = 0; i < len; i++) {
+            final SchemaGrammar sg = grammars[i];
+            final String tns = sg.getTargetNamespace();
+            namespaces[i] = tns;
+            grammarList[i] = sg;
+            if (tns == SchemaSymbols.URI_SCHEMAFORSCHEMA) {
+                hasS4S = true;
+            }
+        }
+        // If a schema for the schema namespace isn't included, include it here.
+        if (!hasS4S) {
+            namespaces[len] = SchemaSymbols.URI_SCHEMAFORSCHEMA;
+            grammarList[len++] = SchemaGrammar.getS4SGrammar(s4sVersion);
+        }
+
+        SchemaGrammar sg1, sg2;
+        Vector gs;
+        int i, j, k;
+        // and recursively get all imported grammars, add them to our arrays
+        for (i = 0; i < len; i++) {
+            // get the grammar
+            sg1 = grammarList[i];
+            gs = sg1.getImportedGrammars();
+            // for each imported grammar
+            for (j = gs == null ? -1 : gs.size() - 1; j >= 0; j--) {
+                sg2 = (SchemaGrammar)gs.elementAt(j);
+                // check whether this grammar is already in the list
+                for (k = 0; k < len; k++) {
+                    if (sg2 == grammarList[k]) {
+                        break;
+                    }
+                }
+                // if it's not, add it to the list
+                if (k == len) {
+                    // ensure the capacity of the arrays
+                    if (len == grammarList.length) {
+                        String[] newSA = new String[len*2];
+                        System.arraycopy(namespaces, 0, newSA, 0, len);
+                        namespaces = newSA;
+                        SchemaGrammar[] newGA = new SchemaGrammar[len*2];
+                        System.arraycopy(grammarList, 0, newGA, 0, len);
+                        grammarList = newGA;
+                    }
+                    namespaces[len] = sg2.getTargetNamespace();
+                    grammarList[len] = sg2;
+                    len++;
+                }
+            }
+        }
+
+        fNamespaces = namespaces;
+        fGrammarList = grammarList;
+
+        boolean hasIDC = false;
+        // establish the mapping from namespace to grammars
+        fGrammarMap = new SymbolHash(len*2);
+        for (i = 0; i < len; i++) {
+            fGrammarMap.put(null2EmptyString(fNamespaces[i]), fGrammarList[i]);
+            // update the idc field
+            if (fGrammarList[i].hasIDConstraints()) {
+                hasIDC = true;
+            }
+        }
+
+        fHasIDC = hasIDC;
+        fGrammarCount = len;
+        fGlobalComponents = new XSNamedMap[MAX_COMP_IDX+1];
+        fNSComponents = new XSNamedMap[len][MAX_COMP_IDX+1];
+        fNamespacesList = new StringListImpl(fNamespaces, fGrammarCount);
+
+        // build substitution groups
+        fSubGroupMap = buildSubGroups();
+!!!4723330.java!!!	buildSubGroups_Org() : SymbolHash
+        SubstitutionGroupHandler sgHandler = new SubstitutionGroupHandler(null);
+        for (int i = 0 ; i < fGrammarCount; i++) {
+            sgHandler.addSubstitutionGroup(fGrammarList[i].getSubstitutionGroups());
+        }
+
+        final XSNamedMap elements = getComponents(XSConstants.ELEMENT_DECLARATION);
+        final int len = elements.getLength();
+        final SymbolHash subGroupMap = new SymbolHash(len*2);
+        XSElementDecl head;
+        XSElementDeclaration[] subGroup;
+        for (int i = 0; i < len; i++) {
+            head = (XSElementDecl)elements.item(i);
+            subGroup = sgHandler.getSubstitutionGroup(head);
+            subGroupMap.put(head, subGroup.length > 0 ?
+                    new XSObjectListImpl(subGroup, subGroup.length) : XSObjectListImpl.EMPTY_LIST);
+        }
+        return subGroupMap;
+!!!4723458.java!!!	buildSubGroups() : SymbolHash
+        SubstitutionGroupHandler sgHandler = new SubstitutionGroupHandler(null);
+        for (int i = 0 ; i < fGrammarCount; i++) {
+            sgHandler.addSubstitutionGroup(fGrammarList[i].getSubstitutionGroups());
+        }
+
+        final XSObjectListImpl elements = getGlobalElements();
+        final int len = elements.getLength();
+        final SymbolHash subGroupMap = new SymbolHash(len*2);
+        XSElementDecl head;
+        XSElementDeclaration[] subGroup;
+        for (int i = 0; i < len; i++) {
+            head = (XSElementDecl)elements.item(i);
+            subGroup = sgHandler.getSubstitutionGroup(head);
+            subGroupMap.put(head, subGroup.length > 0 ?
+                    new XSObjectListImpl(subGroup, subGroup.length) : XSObjectListImpl.EMPTY_LIST);
+        }
+        return subGroupMap;
+!!!4723586.java!!!	getGlobalElements() : XSObjectListImpl
+        final SymbolHash[] tables = new SymbolHash[fGrammarCount];
+        int length = 0;
+
+        for (int i = 0; i < fGrammarCount; i++) {
+            tables[i] = fGrammarList[i].fAllGlobalElemDecls;
+            length += tables[i].getLength();
+        }
+
+        if (length == 0) {
+            return XSObjectListImpl.EMPTY_LIST;
+        }
+
+        final XSObject[] components = new XSObject[length];
+
+        int start = 0;
+        for (int i = 0; i < fGrammarCount; i++) {
+            tables[i].getValues(components, start);
+            start += tables[i].getLength();
+        }
+
+        return new XSObjectListImpl(components, length);
+!!!4723714.java!!!	getNamespaces() : StringList
+        return fNamespacesList;
+!!!4723842.java!!!	getNamespaceItems() : XSNamespaceItemList
+        return this;
+!!!4723970.java!!!	getComponents(in objectType : short) : XSNamedMap
+        if (objectType <= 0 || objectType > MAX_COMP_IDX ||
+            !GLOBAL_COMP[objectType]) {
+            return XSNamedMapImpl.EMPTY_MAP;
+        }
+
+        SymbolHash[] tables = new SymbolHash[fGrammarCount];
+        // get all hashtables from all namespaces for this type of components
+        if (fGlobalComponents[objectType] == null) {
+            for (int i = 0; i < fGrammarCount; i++) {
+                switch (objectType) {
+                case XSConstants.TYPE_DEFINITION:
+                case XSTypeDefinition.COMPLEX_TYPE:
+                case XSTypeDefinition.SIMPLE_TYPE:
+                    tables[i] = fGrammarList[i].fGlobalTypeDecls;
+                    break;
+                case XSConstants.ATTRIBUTE_DECLARATION:
+                    tables[i] = fGrammarList[i].fGlobalAttrDecls;
+                    break;
+                case XSConstants.ELEMENT_DECLARATION:
+                    tables[i] = fGrammarList[i].fGlobalElemDecls;
+                    break;
+                case XSConstants.ATTRIBUTE_GROUP:
+                    tables[i] = fGrammarList[i].fGlobalAttrGrpDecls;
+                    break;
+                case XSConstants.MODEL_GROUP_DEFINITION:
+                    tables[i] = fGrammarList[i].fGlobalGroupDecls;
+                    break;
+                case XSConstants.NOTATION_DECLARATION:
+                    tables[i] = fGrammarList[i].fGlobalNotationDecls;
+                    break;
+                }
+            }
+            // for complex/simple types, create a special implementation,
+            // which take specific types out of the hash table
+            if (objectType == XSTypeDefinition.COMPLEX_TYPE ||
+                objectType == XSTypeDefinition.SIMPLE_TYPE) {
+                fGlobalComponents[objectType] = new XSNamedMap4Types(fNamespaces, tables, fGrammarCount, objectType);
+            }
+            else {
+                fGlobalComponents[objectType] = new XSNamedMapImpl(fNamespaces, tables, fGrammarCount);
+            }
+        }
+
+        return fGlobalComponents[objectType];
+!!!4724098.java!!!	getComponentsByNamespace(in objectType : short, inout namespace : String) : XSNamedMap
+        if (objectType <= 0 || objectType > MAX_COMP_IDX ||
+            !GLOBAL_COMP[objectType]) {
+            return XSNamedMapImpl.EMPTY_MAP;
+        }
+
+        // try to find the grammar
+        int i = 0;
+        if (namespace != null) {
+            for (; i < fGrammarCount; ++i) {
+                if (namespace.equals(fNamespaces[i])) {
+                    break;
+                }
+            }
+        }
+        else {
+            for (; i < fGrammarCount; ++i) {
+                if (fNamespaces[i] == null) {
+                    break;
+                }
+            }
+        }
+        if (i == fGrammarCount) {
+            return XSNamedMapImpl.EMPTY_MAP;
+        }
+
+        // get the hashtable for this type of components
+        if (fNSComponents[i][objectType] == null) {
+            SymbolHash table = null;
+            switch (objectType) {
+            case XSConstants.TYPE_DEFINITION:
+            case XSTypeDefinition.COMPLEX_TYPE:
+            case XSTypeDefinition.SIMPLE_TYPE:
+                table = fGrammarList[i].fGlobalTypeDecls;
+                break;
+            case XSConstants.ATTRIBUTE_DECLARATION:
+                table = fGrammarList[i].fGlobalAttrDecls;
+                break;
+            case XSConstants.ELEMENT_DECLARATION:
+                table = fGrammarList[i].fGlobalElemDecls;
+                break;
+            case XSConstants.ATTRIBUTE_GROUP:
+                table = fGrammarList[i].fGlobalAttrGrpDecls;
+                break;
+            case XSConstants.MODEL_GROUP_DEFINITION:
+                table = fGrammarList[i].fGlobalGroupDecls;
+                break;
+            case XSConstants.NOTATION_DECLARATION:
+                table = fGrammarList[i].fGlobalNotationDecls;
+                break;
+            }
+
+            // for complex/simple types, create a special implementation,
+            // which take specific types out of the hash table
+            if (objectType == XSTypeDefinition.COMPLEX_TYPE ||
+                objectType == XSTypeDefinition.SIMPLE_TYPE) {
+                fNSComponents[i][objectType] = new XSNamedMap4Types(namespace, table, objectType);
+            }
+            else {
+                fNSComponents[i][objectType] = new XSNamedMapImpl(namespace, table);
+            }
+        }
+
+        return fNSComponents[i][objectType];
+!!!4724226.java!!!	getTypeDefinition(inout name : String, inout namespace : String) : XSTypeDefinition
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return (XSTypeDefinition)sg.fGlobalTypeDecls.get(name);
+!!!4724354.java!!!	getTypeDefinition(inout name : String, inout namespace : String, inout loc : String) : XSTypeDefinition
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return sg.getGlobalTypeDecl(name, loc);
+!!!4724482.java!!!	getAttributeDeclaration(inout name : String, inout namespace : String) : XSAttributeDeclaration
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return (XSAttributeDeclaration)sg.fGlobalAttrDecls.get(name);
+!!!4724610.java!!!	getAttributeDeclaration(inout name : String, inout namespace : String, inout loc : String) : XSAttributeDeclaration
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return sg.getGlobalAttributeDecl(name, loc);
+!!!4724738.java!!!	getElementDeclaration(inout name : String, inout namespace : String) : XSElementDeclaration
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return (XSElementDeclaration)sg.fGlobalElemDecls.get(name);
+!!!4724866.java!!!	getElementDeclaration(inout name : String, inout namespace : String, inout loc : String) : XSElementDeclaration
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return sg.getGlobalElementDecl(name, loc);
+!!!4724994.java!!!	getAttributeGroup(inout name : String, inout namespace : String) : XSAttributeGroupDefinition
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return (XSAttributeGroupDefinition)sg.fGlobalAttrGrpDecls.get(name);
+!!!4725122.java!!!	getAttributeGroup(inout name : String, inout namespace : String, inout loc : String) : XSAttributeGroupDefinition
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return sg.getGlobalAttributeGroupDecl(name, loc);
+!!!4725250.java!!!	getModelGroupDefinition(inout name : String, inout namespace : String) : XSModelGroupDefinition
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return (XSModelGroupDefinition)sg.fGlobalGroupDecls.get(name);
+!!!4725378.java!!!	getModelGroupDefinition(inout name : String, inout namespace : String, inout loc : String) : XSModelGroupDefinition
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return sg.getGlobalGroupDecl(name, loc);
+!!!4725506.java!!!	getNotationDeclaration(inout name : String, inout namespace : String) : XSNotationDeclaration
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return (XSNotationDeclaration)sg.fGlobalNotationDecls.get(name);
+!!!4725634.java!!!	getNotationDeclaration(inout name : String, inout namespace : String, inout loc : String) : XSNotationDeclaration
+        SchemaGrammar sg = (SchemaGrammar)fGrammarMap.get(null2EmptyString(namespace));
+        if (sg == null) {
+            return null;
+        }
+        return sg.getGlobalNotationDecl(name, loc);
+!!!4725762.java!!!	getAnnotations() : XSObjectList
+        if (fAnnotations != null) {
+            return fAnnotations;
+        }
+
+        // do this in two passes to avoid inaccurate array size
+        int totalAnnotations = 0;
+        for (int i = 0; i < fGrammarCount; i++) {
+            totalAnnotations += fGrammarList[i].fNumAnnotations;
+        }
+        if (totalAnnotations == 0) {
+            fAnnotations = XSObjectListImpl.EMPTY_LIST;
+            return fAnnotations;
+        }
+        XSAnnotationImpl [] annotations = new XSAnnotationImpl [totalAnnotations];
+        int currPos = 0;
+        for (int i = 0; i < fGrammarCount; i++) {
+            SchemaGrammar currGrammar = fGrammarList[i];
+            if (currGrammar.fNumAnnotations > 0) {
+                System.arraycopy(currGrammar.fAnnotations, 0, annotations, currPos, currGrammar.fNumAnnotations);
+                currPos += currGrammar.fNumAnnotations;
+            }
+        }
+        fAnnotations = new XSObjectListImpl(annotations, annotations.length);
+        return fAnnotations;
+!!!4725890.java!!!	null2EmptyString(inout str : String) : String
+        return str == null ? XMLSymbols.EMPTY_STRING : str;
+!!!4726018.java!!!	hasIDConstraints() : boolean
+        return fHasIDC;
+!!!4726146.java!!!	getSubstitutionGroup(inout head : XSElementDeclaration) : XSObjectList
+        return (XSObjectList)fSubGroupMap.get(head);
+!!!4726274.java!!!	getLength() : int
+        return fGrammarCount;
+!!!4726402.java!!!	item(in index : int) : XSNamespaceItem
+        if (index < 0 || index >= fGrammarCount) {
+            return null;
+        }
+        return fGrammarList[index];
+!!!4726530.java!!!	get(in index : int) : Object
+        if (index >= 0 && index < fGrammarCount) {
+            return fGrammarList[index];
+        }
+        throw new IndexOutOfBoundsException("Index: " + index);
+!!!4726658.java!!!	size() : int
+        return getLength();
+!!!4726786.java!!!	iterator() : Iterator
+        return listIterator0(0);
+!!!4726914.java!!!	listIterator() : ListIterator
+        return listIterator0(0);
+!!!4727042.java!!!	listIterator(in index : int) : ListIterator
+        if (index >= 0 && index < fGrammarCount) {
+            return listIterator0(index);
+        }
+        throw new IndexOutOfBoundsException("Index: " + index);
+!!!4727170.java!!!	listIterator0(in index : int) : ListIterator
+        return new XSNamespaceItemListIterator(index);
+!!!4727298.java!!!	toArray() : Object
+        Object[] a = new Object[fGrammarCount];
+        toArray0(a);
+        return a;
+!!!4727426.java!!!	toArray(inout a : Object [[]]) : Object
+        if (a.length < fGrammarCount) {
+            Class arrayClass = a.getClass();
+            Class componentType = arrayClass.getComponentType();
+            a = (Object[]) Array.newInstance(componentType, fGrammarCount);
+        }
+        toArray0(a);
+        if (a.length > fGrammarCount) {
+            a[fGrammarCount] = null;
+        }
+        return a;
+!!!4727554.java!!!	toArray0(inout a : Object [[]]) : void
+        if (fGrammarCount > 0) {
+            System.arraycopy(fGrammarList, 0, a, 0, fGrammarCount);
+        }

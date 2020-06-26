@@ -1,0 +1,229 @@
+class BCSSChild
+!!!6837122.java!!!	BCSSChild(inout bcc : Object, inout peer : Object)
+ super(bcc, peer);
+!!!6837250.java!!!	usingService(inout requestor : Object, inout service : Object, inout serviceClass : Class, inout bcsp : BeanContextServiceProvider, inout isDelegated : boolean, inout bcsrl : BeanContextServiceRevokedListener) : void
+
+            // first, process mapping from serviceClass to requestor(s)
+
+            BCSSCServiceClassRef serviceClassRef = null;
+
+            if (serviceClasses == null)
+                serviceClasses = new HashMap(1);
+            else
+                serviceClassRef = (BCSSCServiceClassRef)serviceClasses.get(serviceClass);
+
+            if (serviceClassRef == null) { // new service being used ...
+                serviceClassRef = new BCSSCServiceClassRef(serviceClass, bcsp, isDelegated);
+                serviceClasses.put(serviceClass, serviceClassRef);
+
+            } else { // existing service ...
+                serviceClassRef.verifyAndMaybeSetProvider(bcsp, isDelegated); // throws
+                serviceClassRef.verifyRequestor(requestor, bcsrl); // throws
+            }
+
+            serviceClassRef.addRequestor(requestor, bcsrl);
+            serviceClassRef.addRef(isDelegated);
+
+            // now handle mapping from requestor to service(s)
+
+            BCSSCServiceRef serviceRef = null;
+            Map             services   = null;
+
+            if (serviceRequestors == null) {
+                serviceRequestors = new HashMap(1);
+            } else {
+                services = (Map)serviceRequestors.get(requestor);
+            }
+
+            if (services == null) {
+                services = new HashMap(1);
+
+                serviceRequestors.put(requestor, services);
+            } else
+                serviceRef = (BCSSCServiceRef)services.get(service);
+
+            if (serviceRef == null) {
+                serviceRef = new BCSSCServiceRef(serviceClassRef, isDelegated);
+
+                services.put(service, serviceRef);
+            } else {
+                serviceRef.addRef();
+            }
+!!!6837378.java!!!	releaseService(inout requestor : Object, inout service : Object) : void
+            if (serviceRequestors == null) return;
+
+            Map services = (Map)serviceRequestors.get(requestor);
+
+            if (services == null) return; // oops its not there anymore!
+
+            BCSSCServiceRef serviceRef = (BCSSCServiceRef)services.get(service);
+
+            if (serviceRef == null) return; // oops its not there anymore!
+
+            BCSSCServiceClassRef serviceClassRef = serviceRef.getServiceClassRef();
+            boolean                    isDelegated = serviceRef.isDelegated();
+            BeanContextServiceProvider bcsp        = isDelegated ? serviceClassRef.getDelegateProvider() : serviceClassRef.getServiceProvider();
+
+            bcsp.releaseService(BeanContextServicesSupport.this.getBeanContextServicesPeer(), requestor, service);
+
+            serviceClassRef.releaseRef(isDelegated);
+            serviceClassRef.removeRequestor(requestor);
+
+            if (serviceRef.release() == 0) {
+
+                services.remove(service);
+
+                if (services.isEmpty()) {
+                    serviceRequestors.remove(requestor);
+                    serviceClassRef.removeRequestor(requestor);
+                }
+
+                if (serviceRequestors.isEmpty()) {
+                    serviceRequestors = null;
+                }
+
+                if (serviceClassRef.isEmpty()) {
+                    serviceClasses.remove(serviceClassRef.getServiceClass());
+                }
+
+                if (serviceClasses.isEmpty())
+                    serviceClasses = null;
+            }
+!!!6837506.java!!!	revokeService(inout serviceClass : Class, inout isDelegated : boolean, inout revokeNow : boolean) : void
+            if (serviceClasses == null) return;
+
+            BCSSCServiceClassRef serviceClassRef = (BCSSCServiceClassRef)serviceClasses.get(serviceClass);
+
+            if (serviceClassRef == null) return;
+
+            Iterator i = serviceClassRef.cloneOfEntries();
+
+            BeanContextServiceRevokedEvent bcsre       = new BeanContextServiceRevokedEvent(BeanContextServicesSupport.this.getBeanContextServicesPeer(), serviceClass, revokeNow);
+            boolean                        noMoreRefs  = false;
+
+            while (i.hasNext() && serviceRequestors != null) {
+                Map.Entry                         entry    = (Map.Entry)i.next();
+                BeanContextServiceRevokedListener listener = (BeanContextServiceRevokedListener)entry.getValue();
+
+                if (revokeNow) {
+                    Object  requestor = entry.getKey();
+                    Map     services  = (Map)serviceRequestors.get(requestor);
+
+                    if (services != null) {
+                        Iterator i1 = services.entrySet().iterator();
+
+                        while (i1.hasNext()) {
+                            Map.Entry       tmp        = (Map.Entry)i1.next();
+
+                            BCSSCServiceRef serviceRef = (BCSSCServiceRef)tmp.getValue();
+                            if (serviceRef.getServiceClassRef().equals(serviceClassRef) && isDelegated == serviceRef.isDelegated()) {
+                                i1.remove();
+                            }
+                        }
+
+                        if (noMoreRefs = services.isEmpty()) {
+                            serviceRequestors.remove(requestor);
+                        }
+                    }
+
+                    if (noMoreRefs) serviceClassRef.removeRequestor(requestor);
+                }
+
+                listener.serviceRevoked(bcsre);
+            }
+
+            if (revokeNow && serviceClasses != null) {
+                if (serviceClassRef.isEmpty())
+                    serviceClasses.remove(serviceClass);
+
+                if (serviceClasses.isEmpty())
+                    serviceClasses = null;
+            }
+
+            if (serviceRequestors != null && serviceRequestors.isEmpty())
+                serviceRequestors = null;
+!!!6837634.java!!!	cleanupReferences() : void
+
+            if (serviceRequestors == null) return;
+
+            Iterator requestors = serviceRequestors.entrySet().iterator();
+
+            while(requestors.hasNext()) {
+                Map.Entry            tmp       = (Map.Entry)requestors.next();
+                Object               requestor = tmp.getKey();
+                Iterator             services  = ((Map)tmp.getValue()).entrySet().iterator();
+
+                requestors.remove();
+
+                while (services.hasNext()) {
+                    Map.Entry       entry   = (Map.Entry)services.next();
+                    Object          service = entry.getKey();
+                    BCSSCServiceRef sref    = (BCSSCServiceRef)entry.getValue();
+
+                    BCSSCServiceClassRef       scref = sref.getServiceClassRef();
+
+                    BeanContextServiceProvider bcsp  = sref.isDelegated() ? scref.getDelegateProvider() : scref.getServiceProvider();
+
+                    scref.removeRequestor(requestor);
+                    services.remove();
+
+                    while (sref.release() >= 0) {
+                        bcsp.releaseService(BeanContextServicesSupport.this.getBeanContextServicesPeer(), requestor, service);
+                    }
+                }
+            }
+
+            serviceRequestors = null;
+            serviceClasses    = null;
+!!!6837762.java!!!	revokeAllDelegatedServicesNow() : void
+            if (serviceClasses == null) return;
+
+            Iterator serviceClassRefs  =
+                new HashSet(serviceClasses.values()).iterator();
+
+            while (serviceClassRefs.hasNext()) {
+                BCSSCServiceClassRef serviceClassRef = (BCSSCServiceClassRef)serviceClassRefs.next();
+
+                if (!serviceClassRef.isDelegated()) continue;
+
+                Iterator i = serviceClassRef.cloneOfEntries();
+                BeanContextServiceRevokedEvent bcsre       = new BeanContextServiceRevokedEvent(BeanContextServicesSupport.this.getBeanContextServicesPeer(), serviceClassRef.getServiceClass(), true);
+                boolean                        noMoreRefs  = false;
+
+                while (i.hasNext()) {
+                    Map.Entry                         entry     = (Map.Entry)i.next();
+                    BeanContextServiceRevokedListener listener  = (BeanContextServiceRevokedListener)entry.getValue();
+
+                    Object                            requestor = entry.getKey();
+                    Map                               services  = (Map)serviceRequestors.get(requestor);
+
+                    if (services != null) {
+                        Iterator i1 = services.entrySet().iterator();
+
+                        while (i1.hasNext()) {
+                            Map.Entry       tmp        = (Map.Entry)i1.next();
+
+                            BCSSCServiceRef serviceRef = (BCSSCServiceRef)tmp.getValue();
+                            if (serviceRef.getServiceClassRef().equals(serviceClassRef) && serviceRef.isDelegated()) {
+                                i1.remove();
+                            }
+                        }
+
+                        if (noMoreRefs = services.isEmpty()) {
+                            serviceRequestors.remove(requestor);
+                        }
+                    }
+
+                    if (noMoreRefs) serviceClassRef.removeRequestor(requestor);
+
+                    listener.serviceRevoked(bcsre);
+
+                    if (serviceClassRef.isEmpty())
+                        serviceClasses.remove(serviceClassRef.getServiceClass());
+                }
+            }
+
+            if (serviceClasses.isEmpty()) serviceClasses = null;
+
+            if (serviceRequestors != null && serviceRequestors.isEmpty())
+                serviceRequestors = null;

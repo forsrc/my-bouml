@@ -1,0 +1,114 @@
+class POAFactory
+!!!1110530.java!!!	getWrapper() : POASystemException
+        return wrapper ;
+!!!1110658.java!!!	POAFactory()
+        poaManagers = Collections.synchronizedSet(new HashSet(4));
+        poaManagerId = 0 ;
+        poaId = 0 ;
+        rootPOA = null ;
+        delegateImpl = null ;
+        orb = null ;
+!!!1110786.java!!!	lookupPOA(inout servant : Servant) : POA
+        return (POA)exportedServantsToPOA.get(servant);
+!!!1110914.java!!!	registerPOAForServant(inout poa : POA, inout servant : Servant) : void
+        exportedServantsToPOA.put(servant, poa);
+!!!1111042.java!!!	unregisterPOAForServant(inout poa : POA, inout servant : Servant) : void
+        exportedServantsToPOA.remove(servant);
+!!!1111170.java!!!	init(inout orb : ORB) : void
+        this.orb = orb ;
+        wrapper = POASystemException.get( orb,
+            CORBALogDomains.OA_LIFECYCLE ) ;
+        omgWrapper = OMGSystemException.get( orb,
+            CORBALogDomains.OA_LIFECYCLE ) ;
+        delegateImpl = new DelegateImpl( orb, this ) ;
+        registerRootPOA() ;
+
+        POACurrent poaCurrent = new POACurrent(orb);
+        orb.getLocalResolver().register( ORBConstants.POA_CURRENT_NAME,
+            ClosureFactory.makeConstant( poaCurrent ) ) ;
+!!!1111298.java!!!	find(inout oaid : ObjectAdapterId) : ObjectAdapter
+        POA poa=null;
+        try {
+            boolean first = true ;
+            Iterator iter = oaid.iterator() ;
+            poa = getRootPOA();
+            while (iter.hasNext()) {
+                String name = (String)(iter.next()) ;
+
+                if (first) {
+                    if (!name.equals( ORBConstants.ROOT_POA_NAME ))
+                        throw wrapper.makeFactoryNotPoa( name ) ;
+                    first = false ;
+                } else {
+                    poa = poa.find_POA( name, true ) ;
+                }
+            }
+        } catch ( org.omg.PortableServer.POAPackage.AdapterNonExistent ex ){
+            throw omgWrapper.noObjectAdaptor( ex ) ;
+        } catch ( OBJECT_NOT_EXIST ex ) {
+            throw ex;
+        } catch ( TRANSIENT ex ) {
+            throw ex;
+        } catch ( Exception ex ) {
+            throw wrapper.poaLookupError( ex ) ;
+        }
+
+        if ( poa == null )
+            throw wrapper.poaLookupError() ;
+
+        return (ObjectAdapter)poa;
+!!!1111426.java!!!	shutdown(inout waitForCompletion : boolean) : void
+        // It is important to copy the list of POAManagers first because
+        // pm.deactivate removes itself from poaManagers!
+        Iterator managers = null ;
+        synchronized (this) {
+            isShuttingDown = true ;
+            managers = (new HashSet(poaManagers)).iterator();
+        }
+
+        while ( managers.hasNext() ) {
+            try {
+                ((POAManager)managers.next()).deactivate(true, waitForCompletion);
+            } catch ( org.omg.PortableServer.POAManagerPackage.AdapterInactive e ) {}
+        }
+!!!1111554.java!!!	removePoaManager(inout manager : POAManager) : void
+        poaManagers.remove(manager);
+!!!1111682.java!!!	addPoaManager(inout manager : POAManager) : void
+        poaManagers.add(manager);
+!!!1111810.java!!!	newPOAManagerId() : int
+        return poaManagerId++ ;
+!!!1111938.java!!!	registerRootPOA() : void
+        // We delay the evaluation of makeRootPOA until
+        // a call to resolve_initial_references( "RootPOA" ).
+        // The Future guarantees that makeRootPOA is only called once.
+        Closure rpClosure = new Closure() {
+            public Object evaluate() {
+                return POAImpl.makeRootPOA( orb ) ;
+            }
+        } ;
+
+        orb.getLocalResolver().register( ORBConstants.ROOT_POA_NAME,
+            ClosureFactory.makeFuture( rpClosure ) ) ;
+!!!1112066.java!!!	getRootPOA() : POA
+        if (rootPOA == null) {
+            // See if we are trying to getRootPOA while shutting down the ORB.
+            if (isShuttingDown) {
+                throw omgWrapper.noObjectAdaptor( ) ;
+            }
+
+            try {
+                Object obj = orb.resolve_initial_references(
+                    ORBConstants.ROOT_POA_NAME ) ;
+                rootPOA = (POAImpl)obj ;
+            } catch (InvalidName inv) {
+                throw wrapper.cantResolveRootPoa( inv ) ;
+            }
+        }
+
+        return rootPOA;
+!!!1112194.java!!!	getDelegateImpl() : Delegate
+        return delegateImpl ;
+!!!1112322.java!!!	newPOAId() : int
+        return poaId++ ;
+!!!1112450.java!!!	getORB() : ORB
+        return orb ;

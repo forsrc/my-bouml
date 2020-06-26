@@ -1,0 +1,106 @@
+class SerialJavaObject
+!!!10386690.java!!!	SerialJavaObject(inout obj : Object)
+
+        // if any static fields are found, an exception
+        // should be thrown
+
+
+        // get Class. Object instance should always be available
+        Class<?> c = obj.getClass();
+
+        // determine if object implements Serializable i/f
+        if (!(obj instanceof java.io.Serializable)) {
+            setWarning(new RowSetWarning("Warning, the object passed to the constructor does not implement Serializable"));
+        }
+
+        // can only determine public fields (obviously). If
+        // any of these are static, this should invalidate
+        // the action of attempting to persist these fields
+        // in a serialized form
+        fields = c.getFields();
+
+        if (hasStaticFields(fields)) {
+            throw new SerialException("Located static fields in " +
+                "object instance. Cannot serialize");
+        }
+
+        this.obj = obj;
+!!!10386818.java!!!	getObject() : Object
+        return this.obj;
+!!!10386946.java!!!	getFields() : Field
+        if (fields != null) {
+            Class<?> c = this.obj.getClass();
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                /*
+                 * Check if the caller is allowed to access the specified class's package.
+                 * If access is denied, throw a SecurityException.
+                 */
+                Class<?> caller = sun.reflect.Reflection.getCallerClass();
+                if (ReflectUtil.needsPackageAccessCheck(caller.getClassLoader(),
+                                                        c.getClassLoader())) {
+                    ReflectUtil.checkPackageAccess(c);
+                }
+            }
+            return c.getFields();
+        } else {
+            throw new SerialException("SerialJavaObject does not contain" +
+                " a serialized object instance");
+        }
+!!!10387074.java!!!	equals(inout o : Object) : boolean
+        if (this == o) {
+            return true;
+        }
+        if (o instanceof SerialJavaObject) {
+            SerialJavaObject sjo = (SerialJavaObject) o;
+            return obj.equals(sjo.obj);
+        }
+        return false;
+!!!10387202.java!!!	hashCode() : int
+        return 31 + obj.hashCode();
+!!!10387330.java!!!	clone() : Object
+        try {
+            SerialJavaObject sjo = (SerialJavaObject) super.clone();
+            sjo.fields = Arrays.copyOf(fields, fields.length);
+            if (chain != null)
+                sjo.chain = new Vector<>(chain);
+            return sjo;
+        } catch (CloneNotSupportedException ex) {
+            // this shouldn't happen, since we are Cloneable
+            throw new InternalError();
+        }
+!!!10387458.java!!!	setWarning(inout e : RowSetWarning) : void
+        if (chain == null) {
+            chain = new Vector<>();
+        }
+        chain.add(e);
+!!!10387586.java!!!	readObject(inout s : ObjectInputStream) : void
+
+        ObjectInputStream.GetField fields1 = s.readFields();
+        @SuppressWarnings("unchecked")
+        Vector<RowSetWarning> tmp = (Vector<RowSetWarning>)fields1.get("chain", null);
+        if (tmp != null)
+            chain = new Vector<>(tmp);
+
+        obj = fields1.get("obj", null);
+        if (obj != null) {
+            fields = obj.getClass().getFields();
+            if(hasStaticFields(fields))
+                throw new IOException("Located static fields in " +
+                "object instance. Cannot serialize");
+        } else {
+            throw new IOException("Object cannot be null!");
+        }
+
+!!!10387714.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        ObjectOutputStream.PutField fields = s.putFields();
+        fields.put("obj", obj);
+        fields.put("chain", chain);
+        s.writeFields();
+!!!10387842.java!!!	hasStaticFields(inout fields : Field [[]]) : boolean
+        for (Field field : fields) {
+            if ( field.getModifiers() == Modifier.STATIC) {
+                return true;
+            }
+        }
+        return false;

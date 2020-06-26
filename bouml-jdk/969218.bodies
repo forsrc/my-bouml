@@ -1,0 +1,169 @@
+class Attributes
+!!!9327618.java!!!	Attributes()
+        this(11);
+!!!9327746.java!!!	Attributes(in size : int)
+        map = new HashMap<>(size);
+!!!9327874.java!!!	Attributes(inout attr : Attributes)
+        map = new HashMap<>(attr);
+!!!9328002.java!!!	get(inout name : Object) : Object
+        return map.get(name);
+!!!9328130.java!!!	getValue(inout name : String) : String
+        return (String)get(new Attributes.Name(name));
+!!!9328258.java!!!	getValue(inout name : Attributes::Name) : String
+        return (String)get(name);
+!!!9328386.java!!!	put(inout name : Object, inout value : Object) : Object
+        return map.put((Attributes.Name)name, (String)value);
+!!!9328514.java!!!	putValue(inout name : String, inout value : String) : String
+        return (String)put(new Name(name), value);
+!!!9328642.java!!!	remove(inout name : Object) : Object
+        return map.remove(name);
+!!!9328770.java!!!	containsValue(inout value : Object) : boolean
+        return map.containsValue(value);
+!!!9328898.java!!!	containsKey(inout name : Object) : boolean
+        return map.containsKey(name);
+!!!9329026.java!!!	putAll(inout attr : Map) : void
+        // ## javac bug?
+        if (!Attributes.class.isInstance(attr))
+            throw new ClassCastException();
+        for (Map.Entry<?,?> me : (attr).entrySet())
+            put(me.getKey(), me.getValue());
+!!!9329154.java!!!	clear() : void
+        map.clear();
+!!!9329282.java!!!	size() : int
+        return map.size();
+!!!9329410.java!!!	isEmpty() : boolean
+        return map.isEmpty();
+!!!9329538.java!!!	keySet() : Set
+        return map.keySet();
+!!!9329666.java!!!	values() : Collection
+        return map.values();
+!!!9329794.java!!!	entrySet() : Set
+        return map.entrySet();
+!!!9329922.java!!!	equals(inout o : Object) : boolean
+        return map.equals(o);
+!!!9330050.java!!!	hashCode() : int
+        return map.hashCode();
+!!!9330178.java!!!	clone() : Object
+        return new Attributes(this);
+!!!9330306.java!!!	write(inout os : DataOutputStream) : void
+        Iterator<Map.Entry<Object, Object>> it = entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Object, Object> e = it.next();
+            StringBuffer buffer = new StringBuffer(
+                                        ((Name)e.getKey()).toString());
+            buffer.append(": ");
+
+            String value = (String)e.getValue();
+            if (value != null) {
+                byte[] vb = value.getBytes("UTF8");
+                value = new String(vb, 0, 0, vb.length);
+            }
+            buffer.append(value);
+
+            buffer.append("\r\n");
+            Manifest.make72Safe(buffer);
+            os.writeBytes(buffer.toString());
+        }
+        os.writeBytes("\r\n");
+!!!9330434.java!!!	writeMain(inout out : DataOutputStream) : void
+        // write out the *-Version header first, if it exists
+        String vername = Name.MANIFEST_VERSION.toString();
+        String version = getValue(vername);
+        if (version == null) {
+            vername = Name.SIGNATURE_VERSION.toString();
+            version = getValue(vername);
+        }
+
+        if (version != null) {
+            out.writeBytes(vername+": "+version+"\r\n");
+        }
+
+        // write out all attributes except for the version
+        // we wrote out earlier
+        Iterator<Map.Entry<Object, Object>> it = entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Object, Object> e = it.next();
+            String name = ((Name)e.getKey()).toString();
+            if ((version != null) && ! (name.equalsIgnoreCase(vername))) {
+
+                StringBuffer buffer = new StringBuffer(name);
+                buffer.append(": ");
+
+                String value = (String)e.getValue();
+                if (value != null) {
+                    byte[] vb = value.getBytes("UTF8");
+                    value = new String(vb, 0, 0, vb.length);
+                }
+                buffer.append(value);
+
+                buffer.append("\r\n");
+                Manifest.make72Safe(buffer);
+                out.writeBytes(buffer.toString());
+            }
+        }
+        out.writeBytes("\r\n");
+!!!9330562.java!!!	read(inout is : Manifest::FastInputStream, inout lbuf : byte [[]]) : void
+        String name = null, value = null;
+        byte[] lastline = null;
+
+        int len;
+        while ((len = is.readLine(lbuf)) != -1) {
+            boolean lineContinued = false;
+            if (lbuf[--len] != '\n') {
+                throw new IOException("line too long");
+            }
+            if (len > 0 && lbuf[len-1] == '\r') {
+                --len;
+            }
+            if (len == 0) {
+                break;
+            }
+            int i = 0;
+            if (lbuf[0] == ' ') {
+                // continuation of previous line
+                if (name == null) {
+                    throw new IOException("misplaced continuation line");
+                }
+                lineContinued = true;
+                byte[] buf = new byte[lastline.length + len - 1];
+                System.arraycopy(lastline, 0, buf, 0, lastline.length);
+                System.arraycopy(lbuf, 1, buf, lastline.length, len - 1);
+                if (is.peek() == ' ') {
+                    lastline = buf;
+                    continue;
+                }
+                value = new String(buf, 0, buf.length, "UTF8");
+                lastline = null;
+            } else {
+                while (lbuf[i++] != ':') {
+                    if (i >= len) {
+                        throw new IOException("invalid header field");
+                    }
+                }
+                if (lbuf[i++] != ' ') {
+                    throw new IOException("invalid header field");
+                }
+                name = new String(lbuf, 0, 0, i - 2);
+                if (is.peek() == ' ') {
+                    lastline = new byte[len - i];
+                    System.arraycopy(lbuf, i, lastline, 0, len - i);
+                    continue;
+                }
+                value = new String(lbuf, i, len - i, "UTF8");
+            }
+            try {
+                if ((putValue(name, value) != null) && (!lineContinued)) {
+                    PlatformLogger.getLogger("java.util.jar").warning(
+                                     "Duplicate name in Manifest: " + name
+                                     + ".\n"
+                                     + "Ensure that the manifest does not "
+                                     + "have duplicate entries, and\n"
+                                     + "that blank lines separate "
+                                     + "individual sections in both your\n"
+                                     + "manifest and in the META-INF/MANIFEST.MF "
+                                     + "entry in the jar file.");
+                }
+            } catch (IllegalArgumentException e) {
+                throw new IOException("invalid header field name: " + name);
+            }
+        }

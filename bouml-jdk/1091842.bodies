@@ -1,0 +1,602 @@
+class SimpleTimeZone
+!!!8903170.java!!!	SimpleTimeZone(in rawOffset : int, inout ID : String)
+        this.rawOffset = rawOffset;
+        setID (ID);
+        dstSavings = millisPerHour; // In case user sets rules later
+!!!8903298.java!!!	SimpleTimeZone(in rawOffset : int, inout ID : String, in startMonth : int, in startDay : int, in startDayOfWeek : int, in startTime : int, in endMonth : int, in endDay : int, in endDayOfWeek : int, in endTime : int)
+        this(rawOffset, ID,
+             startMonth, startDay, startDayOfWeek, startTime, WALL_TIME,
+             endMonth, endDay, endDayOfWeek, endTime, WALL_TIME,
+             millisPerHour);
+!!!8903426.java!!!	SimpleTimeZone(in rawOffset : int, inout ID : String, in startMonth : int, in startDay : int, in startDayOfWeek : int, in startTime : int, in endMonth : int, in endDay : int, in endDayOfWeek : int, in endTime : int, in dstSavings : int)
+        this(rawOffset, ID,
+             startMonth, startDay, startDayOfWeek, startTime, WALL_TIME,
+             endMonth, endDay, endDayOfWeek, endTime, WALL_TIME,
+             dstSavings);
+!!!8903554.java!!!	SimpleTimeZone(in rawOffset : int, inout ID : String, in startMonth : int, in startDay : int, in startDayOfWeek : int, in startTime : int, in startTimeMode : int, in endMonth : int, in endDay : int, in endDayOfWeek : int, in endTime : int, in endTimeMode : int, in dstSavings : int)
+
+        setID(ID);
+        this.rawOffset      = rawOffset;
+        this.startMonth     = startMonth;
+        this.startDay       = startDay;
+        this.startDayOfWeek = startDayOfWeek;
+        this.startTime      = startTime;
+        this.startTimeMode  = startTimeMode;
+        this.endMonth       = endMonth;
+        this.endDay         = endDay;
+        this.endDayOfWeek   = endDayOfWeek;
+        this.endTime        = endTime;
+        this.endTimeMode    = endTimeMode;
+        this.dstSavings     = dstSavings;
+
+        // this.useDaylight is set by decodeRules
+        decodeRules();
+        if (dstSavings <= 0) {
+            throw new IllegalArgumentException("Illegal daylight saving value: " + dstSavings);
+        }
+!!!8903682.java!!!	setStartYear(in year : int) : void
+        startYear = year;
+        invalidateCache();
+!!!8903810.java!!!	setStartRule(in startMonth : int, in startDay : int, in startDayOfWeek : int, in startTime : int) : void
+        this.startMonth = startMonth;
+        this.startDay = startDay;
+        this.startDayOfWeek = startDayOfWeek;
+        this.startTime = startTime;
+        startTimeMode = WALL_TIME;
+        decodeStartRule();
+        invalidateCache();
+!!!8903938.java!!!	setStartRule(in startMonth : int, in startDay : int, in startTime : int) : void
+        setStartRule(startMonth, startDay, 0, startTime);
+!!!8904066.java!!!	setStartRule(in startMonth : int, in startDay : int, in startDayOfWeek : int, in startTime : int, inout after : boolean) : void
+        // TODO: this method doesn't check the initial values of dayOfMonth or dayOfWeek.
+        if (after) {
+            setStartRule(startMonth, startDay, -startDayOfWeek, startTime);
+        } else {
+            setStartRule(startMonth, -startDay, -startDayOfWeek, startTime);
+        }
+!!!8904194.java!!!	setEndRule(in endMonth : int, in endDay : int, in endDayOfWeek : int, in endTime : int) : void
+        this.endMonth = endMonth;
+        this.endDay = endDay;
+        this.endDayOfWeek = endDayOfWeek;
+        this.endTime = endTime;
+        this.endTimeMode = WALL_TIME;
+        decodeEndRule();
+        invalidateCache();
+!!!8904322.java!!!	setEndRule(in endMonth : int, in endDay : int, in endTime : int) : void
+        setEndRule(endMonth, endDay, 0, endTime);
+!!!8904450.java!!!	setEndRule(in endMonth : int, in endDay : int, in endDayOfWeek : int, in endTime : int, inout after : boolean) : void
+        if (after) {
+            setEndRule(endMonth, endDay, -endDayOfWeek, endTime);
+        } else {
+            setEndRule(endMonth, -endDay, -endDayOfWeek, endTime);
+        }
+!!!8904578.java!!!	getOffset(in date : long) : int
+        return getOffsets(date, null);
+!!!8904706.java!!!	getOffsets(in date : long, inout offsets : int [[]]) : int
+        int offset = rawOffset;
+
+      computeOffset:
+        if (useDaylight) {
+            synchronized (this) {
+                if (cacheStart != 0) {
+                    if (date >= cacheStart && date < cacheEnd) {
+                        offset += dstSavings;
+                        break computeOffset;
+                    }
+                }
+            }
+            BaseCalendar cal = date >= GregorianCalendar.DEFAULT_GREGORIAN_CUTOVER ?
+                gcal : (BaseCalendar) CalendarSystem.forName("julian");
+            BaseCalendar.Date cdate = (BaseCalendar.Date) cal.newCalendarDate(TimeZone.NO_TIMEZONE);
+            // Get the year in local time
+            cal.getCalendarDate(date + rawOffset, cdate);
+            int year = cdate.getNormalizedYear();
+            if (year >= startYear) {
+                // Clear time elements for the transition calculations
+                cdate.setTimeOfDay(0, 0, 0, 0);
+                offset = getOffset(cal, cdate, year, date);
+            }
+        }
+
+        if (offsets != null) {
+            offsets[0] = rawOffset;
+            offsets[1] = offset - rawOffset;
+        }
+        return offset;
+!!!8904834.java!!!	getOffset(in era : int, in year : int, in month : int, in day : int, in dayOfWeek : int, in millis : int) : int
+        if (era != GregorianCalendar.AD && era != GregorianCalendar.BC) {
+            throw new IllegalArgumentException("Illegal era " + era);
+        }
+
+        int y = year;
+        if (era == GregorianCalendar.BC) {
+            // adjust y with the GregorianCalendar-style year numbering.
+            y = 1 - y;
+        }
+
+        // If the year isn't representable with the 64-bit long
+        // integer in milliseconds, convert the year to an
+        // equivalent year. This is required to pass some JCK test cases
+        // which are actually useless though because the specified years
+        // can't be supported by the Java time system.
+        if (y >= 292278994) {
+            y = 2800 + y % 2800;
+        } else if (y <= -292269054) {
+            // y %= 28 also produces an equivalent year, but positive
+            // year numbers would be convenient to use the UNIX cal
+            // command.
+            y = (int) CalendarUtils.mod((long) y, 28);
+        }
+
+        // convert year to its 1-based month value
+        int m = month + 1;
+
+        // First, calculate time as a Gregorian date.
+        BaseCalendar cal = gcal;
+        BaseCalendar.Date cdate = (BaseCalendar.Date) cal.newCalendarDate(TimeZone.NO_TIMEZONE);
+        cdate.setDate(y, m, day);
+        long time = cal.getTime(cdate); // normalize cdate
+        time += millis - rawOffset; // UTC time
+
+        // If the time value represents a time before the default
+        // Gregorian cutover, recalculate time using the Julian
+        // calendar system. For the Julian calendar system, the
+        // normalized year numbering is ..., -2 (BCE 2), -1 (BCE 1),
+        // 1, 2 ... which is different from the GregorianCalendar
+        // style year numbering (..., -1, 0 (BCE 1), 1, 2, ...).
+        if (time < GregorianCalendar.DEFAULT_GREGORIAN_CUTOVER) {
+            cal = (BaseCalendar) CalendarSystem.forName("julian");
+            cdate = (BaseCalendar.Date) cal.newCalendarDate(TimeZone.NO_TIMEZONE);
+            cdate.setNormalizedDate(y, m, day);
+            time = cal.getTime(cdate) + millis - rawOffset;
+        }
+
+        if ((cdate.getNormalizedYear() != y)
+            || (cdate.getMonth() != m)
+            || (cdate.getDayOfMonth() != day)
+            // The validation should be cdate.getDayOfWeek() ==
+            // dayOfWeek. However, we don't check dayOfWeek for
+            // compatibility.
+            || (dayOfWeek < Calendar.SUNDAY || dayOfWeek > Calendar.SATURDAY)
+            || (millis < 0 || millis >= (24*60*60*1000))) {
+            throw new IllegalArgumentException();
+        }
+
+        if (!useDaylight || year < startYear || era != GregorianCalendar.CE) {
+            return rawOffset;
+        }
+
+        return getOffset(cal, cdate, y, time);
+!!!8904962.java!!!	getOffset(inout cal : BaseCalendar, inout cdate : BaseCalendar.Date, in year : int, in time : long) : int
+        synchronized (this) {
+            if (cacheStart != 0) {
+                if (time >= cacheStart && time < cacheEnd) {
+                    return rawOffset + dstSavings;
+                }
+                if (year == cacheYear) {
+                    return rawOffset;
+                }
+            }
+        }
+
+        long start = getStart(cal, cdate, year);
+        long end = getEnd(cal, cdate, year);
+        int offset = rawOffset;
+        if (start <= end) {
+            if (time >= start && time < end) {
+                offset += dstSavings;
+            }
+            synchronized (this) {
+                cacheYear = year;
+                cacheStart = start;
+                cacheEnd = end;
+            }
+        } else {
+            if (time < end) {
+                // TODO: support Gregorian cutover. The previous year
+                // may be in the other calendar system.
+                start = getStart(cal, cdate, year - 1);
+                if (time >= start) {
+                    offset += dstSavings;
+                }
+            } else if (time >= start) {
+                // TODO: support Gregorian cutover. The next year
+                // may be in the other calendar system.
+                end = getEnd(cal, cdate, year + 1);
+                if (time < end) {
+                    offset += dstSavings;
+                }
+            }
+            if (start <= end) {
+                synchronized (this) {
+                    // The start and end transitions are in multiple years.
+                    cacheYear = (long) startYear - 1;
+                    cacheStart = start;
+                    cacheEnd = end;
+                }
+            }
+        }
+        return offset;
+!!!8905090.java!!!	getStart(inout cal : BaseCalendar, inout cdate : BaseCalendar.Date, in year : int) : long
+        int time = startTime;
+        if (startTimeMode != UTC_TIME) {
+            time -= rawOffset;
+        }
+        return getTransition(cal, cdate, startMode, year, startMonth, startDay,
+                             startDayOfWeek, time);
+!!!8905218.java!!!	getEnd(inout cal : BaseCalendar, inout cdate : BaseCalendar.Date, in year : int) : long
+        int time = endTime;
+        if (endTimeMode != UTC_TIME) {
+            time -= rawOffset;
+        }
+        if (endTimeMode == WALL_TIME) {
+            time -= dstSavings;
+        }
+        return getTransition(cal, cdate, endMode, year, endMonth, endDay,
+                                        endDayOfWeek, time);
+!!!8905346.java!!!	getTransition(inout cal : BaseCalendar, inout cdate : BaseCalendar.Date, in mode : int, in year : int, in month : int, in dayOfMonth : int, in dayOfWeek : int, in timeOfDay : int) : long
+        cdate.setNormalizedYear(year);
+        cdate.setMonth(month + 1);
+        switch (mode) {
+        case DOM_MODE:
+            cdate.setDayOfMonth(dayOfMonth);
+            break;
+
+        case DOW_IN_MONTH_MODE:
+            cdate.setDayOfMonth(1);
+            if (dayOfMonth < 0) {
+                cdate.setDayOfMonth(cal.getMonthLength(cdate));
+            }
+            cdate = (BaseCalendar.Date) cal.getNthDayOfWeek(dayOfMonth, dayOfWeek, cdate);
+            break;
+
+        case DOW_GE_DOM_MODE:
+            cdate.setDayOfMonth(dayOfMonth);
+            cdate = (BaseCalendar.Date) cal.getNthDayOfWeek(1, dayOfWeek, cdate);
+            break;
+
+        case DOW_LE_DOM_MODE:
+            cdate.setDayOfMonth(dayOfMonth);
+            cdate = (BaseCalendar.Date) cal.getNthDayOfWeek(-1, dayOfWeek, cdate);
+            break;
+        }
+        return cal.getTime(cdate) + timeOfDay;
+!!!8905474.java!!!	getRawOffset() : int
+        // The given date will be taken into account while
+        // we have the historical time zone data in place.
+        return rawOffset;
+!!!8905602.java!!!	setRawOffset(in offsetMillis : int) : void
+        this.rawOffset = offsetMillis;
+!!!8905730.java!!!	setDSTSavings(in millisSavedDuringDST : int) : void
+        if (millisSavedDuringDST <= 0) {
+            throw new IllegalArgumentException("Illegal daylight saving value: "
+                                               + millisSavedDuringDST);
+        }
+        dstSavings = millisSavedDuringDST;
+!!!8905858.java!!!	getDSTSavings() : int
+        return useDaylight ? dstSavings : 0;
+!!!8905986.java!!!	useDaylightTime() : boolean
+        return useDaylight;
+!!!8906114.java!!!	observesDaylightTime() : boolean
+        return useDaylightTime();
+!!!8906242.java!!!	inDaylightTime(inout date : Date) : boolean
+        return (getOffset(date.getTime()) != rawOffset);
+!!!8906370.java!!!	clone() : Object
+        return super.clone();
+!!!8906498.java!!!	hashCode() : int
+        return startMonth ^ startDay ^ startDayOfWeek ^ startTime ^
+            endMonth ^ endDay ^ endDayOfWeek ^ endTime ^ rawOffset;
+!!!8906626.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof SimpleTimeZone)) {
+            return false;
+        }
+
+        SimpleTimeZone that = (SimpleTimeZone) obj;
+
+        return getID().equals(that.getID()) &&
+            hasSameRules(that);
+!!!8906754.java!!!	hasSameRules(inout other : TimeZone) : boolean
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof SimpleTimeZone)) {
+            return false;
+        }
+        SimpleTimeZone that = (SimpleTimeZone) other;
+        return rawOffset == that.rawOffset &&
+            useDaylight == that.useDaylight &&
+            (!useDaylight
+             // Only check rules if using DST
+             || (dstSavings == that.dstSavings &&
+                 startMode == that.startMode &&
+                 startMonth == that.startMonth &&
+                 startDay == that.startDay &&
+                 startDayOfWeek == that.startDayOfWeek &&
+                 startTime == that.startTime &&
+                 startTimeMode == that.startTimeMode &&
+                 endMode == that.endMode &&
+                 endMonth == that.endMonth &&
+                 endDay == that.endDay &&
+                 endDayOfWeek == that.endDayOfWeek &&
+                 endTime == that.endTime &&
+                 endTimeMode == that.endTimeMode &&
+                 startYear == that.startYear));
+!!!8906882.java!!!	toString() : String
+        return getClass().getName() +
+            "[id=" + getID() +
+            ",offset=" + rawOffset +
+            ",dstSavings=" + dstSavings +
+            ",useDaylight=" + useDaylight +
+            ",startYear=" + startYear +
+            ",startMode=" + startMode +
+            ",startMonth=" + startMonth +
+            ",startDay=" + startDay +
+            ",startDayOfWeek=" + startDayOfWeek +
+            ",startTime=" + startTime +
+            ",startTimeMode=" + startTimeMode +
+            ",endMode=" + endMode +
+            ",endMonth=" + endMonth +
+            ",endDay=" + endDay +
+            ",endDayOfWeek=" + endDayOfWeek +
+            ",endTime=" + endTime +
+            ",endTimeMode=" + endTimeMode + ']';
+!!!8907010.java!!!	invalidateCache() : void
+        cacheYear = startYear - 1;
+        cacheStart = cacheEnd = 0;
+!!!8907138.java!!!	decodeRules() : void
+        decodeStartRule();
+        decodeEndRule();
+!!!8907266.java!!!	decodeStartRule() : void
+        useDaylight = (startDay != 0) && (endDay != 0);
+        if (startDay != 0) {
+            if (startMonth < Calendar.JANUARY || startMonth > Calendar.DECEMBER) {
+                throw new IllegalArgumentException(
+                        "Illegal start month " + startMonth);
+            }
+            if (startTime < 0 || startTime > millisPerDay) {
+                throw new IllegalArgumentException(
+                        "Illegal start time " + startTime);
+            }
+            if (startDayOfWeek == 0) {
+                startMode = DOM_MODE;
+            } else {
+                if (startDayOfWeek > 0) {
+                    startMode = DOW_IN_MONTH_MODE;
+                } else {
+                    startDayOfWeek = -startDayOfWeek;
+                    if (startDay > 0) {
+                        startMode = DOW_GE_DOM_MODE;
+                    } else {
+                        startDay = -startDay;
+                        startMode = DOW_LE_DOM_MODE;
+                    }
+                }
+                if (startDayOfWeek > Calendar.SATURDAY) {
+                    throw new IllegalArgumentException(
+                           "Illegal start day of week " + startDayOfWeek);
+                }
+            }
+            if (startMode == DOW_IN_MONTH_MODE) {
+                if (startDay < -5 || startDay > 5) {
+                    throw new IllegalArgumentException(
+                            "Illegal start day of week in month " + startDay);
+                }
+            } else if (startDay < 1 || startDay > staticMonthLength[startMonth]) {
+                throw new IllegalArgumentException(
+                        "Illegal start day " + startDay);
+            }
+        }
+!!!8907394.java!!!	decodeEndRule() : void
+        useDaylight = (startDay != 0) && (endDay != 0);
+        if (endDay != 0) {
+            if (endMonth < Calendar.JANUARY || endMonth > Calendar.DECEMBER) {
+                throw new IllegalArgumentException(
+                        "Illegal end month " + endMonth);
+            }
+            if (endTime < 0 || endTime > millisPerDay) {
+                throw new IllegalArgumentException(
+                        "Illegal end time " + endTime);
+            }
+            if (endDayOfWeek == 0) {
+                endMode = DOM_MODE;
+            } else {
+                if (endDayOfWeek > 0) {
+                    endMode = DOW_IN_MONTH_MODE;
+                } else {
+                    endDayOfWeek = -endDayOfWeek;
+                    if (endDay > 0) {
+                        endMode = DOW_GE_DOM_MODE;
+                    } else {
+                        endDay = -endDay;
+                        endMode = DOW_LE_DOM_MODE;
+                    }
+                }
+                if (endDayOfWeek > Calendar.SATURDAY) {
+                    throw new IllegalArgumentException(
+                           "Illegal end day of week " + endDayOfWeek);
+                }
+            }
+            if (endMode == DOW_IN_MONTH_MODE) {
+                if (endDay < -5 || endDay > 5) {
+                    throw new IllegalArgumentException(
+                            "Illegal end day of week in month " + endDay);
+                }
+            } else if (endDay < 1 || endDay > staticMonthLength[endMonth]) {
+                throw new IllegalArgumentException(
+                        "Illegal end day " + endDay);
+            }
+        }
+!!!8907522.java!!!	makeRulesCompatible() : void
+        switch (startMode) {
+        case DOM_MODE:
+            startDay = 1 + (startDay / 7);
+            startDayOfWeek = Calendar.SUNDAY;
+            break;
+
+        case DOW_GE_DOM_MODE:
+            // A day-of-month of 1 is equivalent to DOW_IN_MONTH_MODE
+            // that is, Sun>=1 == firstSun.
+            if (startDay != 1) {
+                startDay = 1 + (startDay / 7);
+            }
+            break;
+
+        case DOW_LE_DOM_MODE:
+            if (startDay >= 30) {
+                startDay = -1;
+            } else {
+                startDay = 1 + (startDay / 7);
+            }
+            break;
+        }
+
+        switch (endMode) {
+        case DOM_MODE:
+            endDay = 1 + (endDay / 7);
+            endDayOfWeek = Calendar.SUNDAY;
+            break;
+
+        case DOW_GE_DOM_MODE:
+            // A day-of-month of 1 is equivalent to DOW_IN_MONTH_MODE
+            // that is, Sun>=1 == firstSun.
+            if (endDay != 1) {
+                endDay = 1 + (endDay / 7);
+            }
+            break;
+
+        case DOW_LE_DOM_MODE:
+            if (endDay >= 30) {
+                endDay = -1;
+            } else {
+                endDay = 1 + (endDay / 7);
+            }
+            break;
+        }
+
+        /*
+         * Adjust the start and end times to wall time.  This works perfectly
+         * well unless it pushes into the next or previous day.  If that
+         * happens, we attempt to adjust the day rule somewhat crudely.  The day
+         * rules have been forced into DOW_IN_MONTH mode already, so we change
+         * the day of week to move forward or back by a day.  It's possible to
+         * make a more refined adjustment of the original rules first, but in
+         * most cases this extra effort will go to waste once we adjust the day
+         * rules anyway.
+         */
+        switch (startTimeMode) {
+        case UTC_TIME:
+            startTime += rawOffset;
+            break;
+        }
+        while (startTime < 0) {
+            startTime += millisPerDay;
+            startDayOfWeek = 1 + ((startDayOfWeek+5) % 7); // Back 1 day
+        }
+        while (startTime >= millisPerDay) {
+            startTime -= millisPerDay;
+            startDayOfWeek = 1 + (startDayOfWeek % 7); // Forward 1 day
+        }
+
+        switch (endTimeMode) {
+        case UTC_TIME:
+            endTime += rawOffset + dstSavings;
+            break;
+        case STANDARD_TIME:
+            endTime += dstSavings;
+        }
+        while (endTime < 0) {
+            endTime += millisPerDay;
+            endDayOfWeek = 1 + ((endDayOfWeek+5) % 7); // Back 1 day
+        }
+        while (endTime >= millisPerDay) {
+            endTime -= millisPerDay;
+            endDayOfWeek = 1 + (endDayOfWeek % 7); // Forward 1 day
+        }
+!!!8907650.java!!!	packRules() : byte
+        byte[] rules = new byte[6];
+        rules[0] = (byte)startDay;
+        rules[1] = (byte)startDayOfWeek;
+        rules[2] = (byte)endDay;
+        rules[3] = (byte)endDayOfWeek;
+
+        // As of serial version 2, include time modes
+        rules[4] = (byte)startTimeMode;
+        rules[5] = (byte)endTimeMode;
+
+        return rules;
+!!!8907778.java!!!	unpackRules(inout rules : byte [[]]) : void
+        startDay       = rules[0];
+        startDayOfWeek = rules[1];
+        endDay         = rules[2];
+        endDayOfWeek   = rules[3];
+
+        // As of serial version 2, include time modes
+        if (rules.length >= 6) {
+            startTimeMode = rules[4];
+            endTimeMode   = rules[5];
+        }
+!!!8907906.java!!!	packTimes() : int
+        int[] times = new int[2];
+        times[0] = startTime;
+        times[1] = endTime;
+        return times;
+!!!8908034.java!!!	unpackTimes(inout times : int [[]]) : void
+        startTime = times[0];
+        endTime = times[1];
+!!!8908162.java!!!	writeObject(inout stream : ObjectOutputStream) : void
+        // Construct a binary rule
+        byte[] rules = packRules();
+        int[] times = packTimes();
+
+        // Convert to 1.1 FCS rules.  This step may cause us to lose information.
+        makeRulesCompatible();
+
+        // Write out the 1.1 FCS rules
+        stream.defaultWriteObject();
+
+        // Write out the binary rules in the optional data area of the stream.
+        stream.writeInt(rules.length);
+        stream.write(rules);
+        stream.writeObject(times);
+
+        // Recover the original rules.  This recovers the information lost
+        // by makeRulesCompatible.
+        unpackRules(rules);
+        unpackTimes(times);
+!!!8908290.java!!!	readObject(inout stream : ObjectInputStream) : void
+        stream.defaultReadObject();
+
+        if (serialVersionOnStream < 1) {
+            // Fix a bug in the 1.1 SimpleTimeZone code -- namely,
+            // startDayOfWeek and endDayOfWeek were usually uninitialized.  We can't do
+            // too much, so we assume SUNDAY, which actually works most of the time.
+            if (startDayOfWeek == 0) {
+                startDayOfWeek = Calendar.SUNDAY;
+            }
+            if (endDayOfWeek == 0) {
+                endDayOfWeek = Calendar.SUNDAY;
+            }
+
+            // The variables dstSavings, startMode, and endMode are post-1.1, so they
+            // won't be present if we're reading from a 1.1 stream.  Fix them up.
+            startMode = endMode = DOW_IN_MONTH_MODE;
+            dstSavings = millisPerHour;
+        } else {
+            // For 1.1.4, in addition to the 3 new instance variables, we also
+            // store the actual rules (which have not be made compatible with 1.1)
+            // in the optional area.  Read them in here and parse them.
+            int length = stream.readInt();
+            byte[] rules = new byte[length];
+            stream.readFully(rules);
+            unpackRules(rules);
+        }
+
+        if (serialVersionOnStream >= 2) {
+            int[] times = (int[]) stream.readObject();
+            unpackTimes(times);
+        }
+
+        serialVersionOnStream = currentSerialVersion;

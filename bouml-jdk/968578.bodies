@@ -1,0 +1,253 @@
+class InMemoryCookieStore
+!!!7502466.java!!!	InMemoryCookieStore()
+        cookieJar = new ArrayList<HttpCookie>();
+        domainIndex = new HashMap<String, List<HttpCookie>>();
+        uriIndex = new HashMap<URI, List<HttpCookie>>();
+
+        lock = new ReentrantLock(false);
+!!!7502594.java!!!	add(inout uri : URI, inout cookie : HttpCookie) : void
+        // pre-condition : argument can't be null
+        if (cookie == null) {
+            throw new NullPointerException("cookie is null");
+        }
+
+
+        lock.lock();
+        try {
+            // remove the ole cookie if there has had one
+            cookieJar.remove(cookie);
+
+            // add new cookie if it has a non-zero max-age
+            if (cookie.getMaxAge() != 0) {
+                cookieJar.add(cookie);
+                // and add it to domain index
+                if (cookie.getDomain() != null) {
+                    addIndex(domainIndex, cookie.getDomain(), cookie);
+                }
+                if (uri != null) {
+                    // add it to uri index, too
+                    addIndex(uriIndex, getEffectiveURI(uri), cookie);
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+!!!7502722.java!!!	get(inout uri : URI) : List
+        // argument can't be null
+        if (uri == null) {
+            throw new NullPointerException("uri is null");
+        }
+
+        List<HttpCookie> cookies = new ArrayList<HttpCookie>();
+        boolean secureLink = "https".equalsIgnoreCase(uri.getScheme());
+        lock.lock();
+        try {
+            // check domainIndex first
+            getInternal1(cookies, domainIndex, uri.getHost(), secureLink);
+            // check uriIndex then
+            getInternal2(cookies, uriIndex, getEffectiveURI(uri), secureLink);
+        } finally {
+            lock.unlock();
+        }
+
+        return cookies;
+!!!7502850.java!!!	getCookies() : List
+        List<HttpCookie> rt;
+
+        lock.lock();
+        try {
+            Iterator<HttpCookie> it = cookieJar.iterator();
+            while (it.hasNext()) {
+                if (it.next().hasExpired()) {
+                    it.remove();
+                }
+            }
+        } finally {
+            rt = Collections.unmodifiableList(cookieJar);
+            lock.unlock();
+        }
+
+        return rt;
+!!!7502978.java!!!	getURIs() : List
+        List<URI> uris = new ArrayList<URI>();
+
+        lock.lock();
+        try {
+            Iterator<URI> it = uriIndex.keySet().iterator();
+            while (it.hasNext()) {
+                URI uri = it.next();
+                List<HttpCookie> cookies = uriIndex.get(uri);
+                if (cookies == null || cookies.size() == 0) {
+                    // no cookies list or an empty list associated with
+                    // this uri entry, delete it
+                    it.remove();
+                }
+            }
+        } finally {
+            uris.addAll(uriIndex.keySet());
+            lock.unlock();
+        }
+
+        return uris;
+!!!7503106.java!!!	remove(inout uri : URI, inout ck : HttpCookie) : boolean
+        // argument can't be null
+        if (ck == null) {
+            throw new NullPointerException("cookie is null");
+        }
+
+        boolean modified = false;
+        lock.lock();
+        try {
+            modified = cookieJar.remove(ck);
+        } finally {
+            lock.unlock();
+        }
+
+        return modified;
+!!!7503234.java!!!	removeAll() : boolean
+        lock.lock();
+        try {
+            if (cookieJar.isEmpty()) {
+                return false;
+            }
+            cookieJar.clear();
+            domainIndex.clear();
+            uriIndex.clear();
+        } finally {
+            lock.unlock();
+        }
+
+        return true;
+!!!7503362.java!!!	netscapeDomainMatches(inout domain : String, inout host : String) : boolean
+        if (domain == null || host == null) {
+            return false;
+        }
+
+        // if there's no embedded dot in domain and domain is not .local
+        boolean isLocalDomain = ".local".equalsIgnoreCase(domain);
+        int embeddedDotInDomain = domain.indexOf('.');
+        if (embeddedDotInDomain == 0) {
+            embeddedDotInDomain = domain.indexOf('.', 1);
+        }
+        if (!isLocalDomain && (embeddedDotInDomain == -1 || embeddedDotInDomain == domain.length() - 1)) {
+            return false;
+        }
+
+        // if the host name contains no dot and the domain name is .local
+        int firstDotInHost = host.indexOf('.');
+        if (firstDotInHost == -1 && isLocalDomain) {
+            return true;
+        }
+
+        int domainLength = domain.length();
+        int lengthDiff = host.length() - domainLength;
+        if (lengthDiff == 0) {
+            // if the host name and the domain name are just string-compare euqal
+            return host.equalsIgnoreCase(domain);
+        } else if (lengthDiff > 0) {
+            // need to check H & D component
+            String H = host.substring(0, lengthDiff);
+            String D = host.substring(lengthDiff);
+
+            return (D.equalsIgnoreCase(domain));
+        } else if (lengthDiff == -1) {
+            // if domain is actually .host
+            return (domain.charAt(0) == '.' &&
+                    host.equalsIgnoreCase(domain.substring(1)));
+        }
+
+        return false;
+!!!7503490.java!!!	getInternal1(inout cookies : List, inout cookieIndex : Map, inout host : String, inout secureLink : boolean) : void
+        // Use a separate list to handle cookies that need to be removed so
+        // that there is no conflict with iterators.
+        ArrayList<HttpCookie> toRemove = new ArrayList<HttpCookie>();
+        for (Map.Entry<String, List<HttpCookie>> entry : cookieIndex.entrySet()) {
+            String domain = entry.getKey();
+            List<HttpCookie> lst = entry.getValue();
+            for (HttpCookie c : lst) {
+                if ((c.getVersion() == 0 && netscapeDomainMatches(domain, host)) ||
+                        (c.getVersion() == 1 && HttpCookie.domainMatches(domain, host))) {
+                    if ((cookieJar.indexOf(c) != -1)) {
+                        // the cookie still in main cookie store
+                        if (!c.hasExpired()) {
+                            // don't add twice and make sure it's the proper
+                            // security level
+                            if ((secureLink || !c.getSecure()) &&
+                                    !cookies.contains(c)) {
+                                cookies.add(c);
+                            }
+                        } else {
+                            toRemove.add(c);
+                        }
+                    } else {
+                        // the cookie has beed removed from main store,
+                        // so also remove it from domain indexed store
+                        toRemove.add(c);
+                    }
+                }
+            }
+            // Clear up the cookies that need to be removed
+            for (HttpCookie c : toRemove) {
+                lst.remove(c);
+                cookieJar.remove(c);
+
+            }
+            toRemove.clear();
+        }
+!!!7503618.java!!!	getInternal2(inout cookies : List, inout cookieIndex : Map, inout comparator : Comparable, inout secureLink : boolean) : void
+        for (T index : cookieIndex.keySet()) {
+            if (comparator.compareTo(index) == 0) {
+                List<HttpCookie> indexedCookies = cookieIndex.get(index);
+                // check the list of cookies associated with this domain
+                if (indexedCookies != null) {
+                    Iterator<HttpCookie> it = indexedCookies.iterator();
+                    while (it.hasNext()) {
+                        HttpCookie ck = it.next();
+                        if (cookieJar.indexOf(ck) != -1) {
+                            // the cookie still in main cookie store
+                            if (!ck.hasExpired()) {
+                                // don't add twice
+                                if ((secureLink || !ck.getSecure()) &&
+                                        !cookies.contains(ck))
+                                    cookies.add(ck);
+                            } else {
+                                it.remove();
+                                cookieJar.remove(ck);
+                            }
+                        } else {
+                            // the cookie has beed removed from main store,
+                            // so also remove it from domain indexed store
+                            it.remove();
+                        }
+                    }
+                } // end of indexedCookies != null
+            } // end of comparator.compareTo(index) == 0
+        } // end of cookieIndex iteration
+!!!7503746.java!!!	addIndex(inout indexStore : Map, inout index : T, inout cookie : HttpCookie) : void
+        if (index != null) {
+            List<HttpCookie> cookies = indexStore.get(index);
+            if (cookies != null) {
+                // there may already have the same cookie, so remove it first
+                cookies.remove(cookie);
+
+                cookies.add(cookie);
+            } else {
+                cookies = new ArrayList<HttpCookie>();
+                cookies.add(cookie);
+                indexStore.put(index, cookies);
+            }
+        }
+!!!7503874.java!!!	getEffectiveURI(inout uri : URI) : URI
+        URI effectiveURI = null;
+        try {
+            effectiveURI = new URI("http",
+                                   uri.getHost(),
+                                   null,  // path component
+                                   null,  // query component
+                                   null   // fragment component
+                                  );
+        } catch (URISyntaxException ignored) {
+            effectiveURI = uri;
+        }
+
+        return effectiveURI;

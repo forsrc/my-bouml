@@ -1,0 +1,82 @@
+class JavaBTCConverter
+!!!398594.java!!!	JavaBTCConverter(inout codeset : OSFCodeSetRegistry::Entry)
+
+            // Obtain a Decoder
+            btc = this.getConverter(codeset.getName());
+
+            this.codeset = codeset;
+!!!398722.java!!!	isFixedWidthEncoding() : boolean
+            return codeset.isFixedWidth();
+!!!398850.java!!!	getFixedCharWidth() : int
+            return codeset.getMaxBytesPerChar();
+!!!398978.java!!!	getNumChars() : int
+            return resultingNumChars;
+!!!399106.java!!!	getChars(inout bytes : byte [[]], in offset : int, in numBytes : int) : char
+
+            // Possible optimization of reading directly from the CDR
+            // byte buffer.  The sun.io converter supposedly can handle
+            // incremental conversions in which a char is broken across
+            // two convert calls.
+            //
+            // Basic tests didn't show more than a 1 ms increase
+            // worst case.  It's less than a factor of 2 increase.
+            // Also makes the interface more difficult.
+
+
+            try {
+
+                ByteBuffer byteBuf = ByteBuffer.wrap(bytes, offset, numBytes);
+                CharBuffer charBuf = btc.decode(byteBuf);
+
+                // CharBuffer returned by the decoder will set its limit
+                // to byte immediately after the last written byte.
+                resultingNumChars = charBuf.limit();
+
+                // IMPORTANT - It's possible the underlying char[] in the
+                //             CharBuffer returned by btc.decode(byteBuf)
+                //             is longer in length than the number of characters
+                //             decoded. Hence, the check below to ensure the
+                //             char[] returned contains all the chars that have
+                //             been decoded and no more.
+                if (charBuf.limit() == charBuf.capacity()) {
+                    buffer = charBuf.array();
+                } else {
+                    buffer = new char[charBuf.limit()];
+                    charBuf.get(buffer, 0, charBuf.limit()).position(0);
+                }
+
+                return buffer;
+
+            } catch (IllegalStateException ile) {
+                // There were a decoding operation already in progress
+                throw wrapper.btcConverterFailure( ile ) ;
+            } catch (MalformedInputException mie) {
+                // There were illegal Unicode char pairs
+                throw wrapper.badUnicodePair( mie ) ;
+            } catch (UnmappableCharacterException uce) {
+                // A character doesn't map to the desired code set.
+                // CORBA formal 00-11-03.
+                throw omgWrapper.charNotInCodeset( uce ) ;
+            } catch (CharacterCodingException cce) {
+                // If this happens, then a character decoding error occured.
+                throw wrapper.btcConverterFailure( cce ) ;
+            }
+!!!399234.java!!!	getConverter(inout javaCodeSetName : String) : CharsetDecoder
+
+            CharsetDecoder result = null;
+            try {
+                result = cache.getByteToCharConverter(javaCodeSetName);
+
+                if (result == null) {
+                    Charset tmpCharset = Charset.forName(javaCodeSetName);
+                    result = tmpCharset.newDecoder();
+                    cache.setConverter(javaCodeSetName, result);
+                }
+
+            } catch(IllegalCharsetNameException icne) {
+                // This can only happen if one of our charset entries has
+                // an illegal name.
+                throw wrapper.invalidBtcConverterName( icne, javaCodeSetName ) ;
+            }
+
+            return result;

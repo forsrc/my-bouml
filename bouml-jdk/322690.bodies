@@ -1,0 +1,200 @@
+class WritableRaster
+!!!6700418.java!!!	WritableRaster(inout sampleModel : SampleModel, inout origin : Point)
+        this(sampleModel,
+             sampleModel.createDataBuffer(),
+             new Rectangle(origin.x,
+                           origin.y,
+                           sampleModel.getWidth(),
+                           sampleModel.getHeight()),
+             origin,
+             null);
+!!!6700546.java!!!	WritableRaster(inout sampleModel : SampleModel, inout dataBuffer : DataBuffer, inout origin : Point)
+        this(sampleModel,
+             dataBuffer,
+             new Rectangle(origin.x,
+                           origin.y,
+                           sampleModel.getWidth(),
+                           sampleModel.getHeight()),
+             origin,
+             null);
+!!!6700674.java!!!	WritableRaster(inout sampleModel : SampleModel, inout dataBuffer : DataBuffer, inout aRegion : Rectangle, inout sampleModelTranslate : Point, inout parent : WritableRaster)
+        super(sampleModel,dataBuffer,aRegion,sampleModelTranslate,parent);
+!!!6700802.java!!!	getWritableParent() : WritableRaster
+        return (WritableRaster)parent;
+!!!6700930.java!!!	createWritableTranslatedChild(in childMinX : int, in childMinY : int) : WritableRaster
+        return createWritableChild(minX,minY,width,height,
+                                   childMinX,childMinY,null);
+!!!6701058.java!!!	createWritableChild(in parentX : int, in parentY : int, in w : int, in h : int, in childMinX : int, in childMinY : int, inout bandList : int [[]]) : WritableRaster
+        if (parentX < this.minX) {
+            throw new RasterFormatException("parentX lies outside raster");
+        }
+        if (parentY < this.minY) {
+            throw new RasterFormatException("parentY lies outside raster");
+        }
+        if ((parentX+w < parentX) || (parentX+w > this.width + this.minX)) {
+            throw new RasterFormatException("(parentX + width) is outside raster");
+        }
+        if ((parentY+h < parentY) || (parentY+h > this.height + this.minY)) {
+            throw new RasterFormatException("(parentY + height) is outside raster");
+        }
+
+        SampleModel sm;
+        // Note: the SampleModel for the child Raster should have the same
+        // width and height as that for the parent, since it represents
+        // the physical layout of the pixel data.  The child Raster's width
+        // and height represent a "virtual" view of the pixel data, so
+        // they may be different than those of the SampleModel.
+        if (bandList != null) {
+            sm = sampleModel.createSubsetSampleModel(bandList);
+        }
+        else {
+            sm = sampleModel;
+        }
+
+        int deltaX = childMinX - parentX;
+        int deltaY = childMinY - parentY;
+
+        return new WritableRaster(sm,
+                                  getDataBuffer(),
+                                  new Rectangle(childMinX,childMinY,
+                                                w, h),
+                                  new Point(sampleModelTranslateX+deltaX,
+                                            sampleModelTranslateY+deltaY),
+                                  this);
+!!!6701186.java!!!	setDataElements(in x : int, in y : int, inout inData : Object) : void
+        sampleModel.setDataElements(x-sampleModelTranslateX,
+                                    y-sampleModelTranslateY,
+                                    inData, dataBuffer);
+!!!6701314.java!!!	setDataElements(in x : int, in y : int, inout inRaster : Raster) : void
+        int dstOffX = x+inRaster.getMinX();
+        int dstOffY = y+inRaster.getMinY();
+        int width  = inRaster.getWidth();
+        int height = inRaster.getHeight();
+        if ((dstOffX < this.minX) || (dstOffY < this.minY) ||
+            (dstOffX + width > this.minX + this.width) ||
+            (dstOffY + height > this.minY + this.height)) {
+            throw new ArrayIndexOutOfBoundsException
+                ("Coordinate out of bounds!");
+        }
+
+        int srcOffX = inRaster.getMinX();
+        int srcOffY = inRaster.getMinY();
+        Object tdata = null;
+
+        for (int startY=0; startY < height; startY++) {
+            tdata = inRaster.getDataElements(srcOffX, srcOffY+startY,
+                                             width, 1, tdata);
+            setDataElements(dstOffX, dstOffY+startY,
+                            width, 1, tdata);
+        }
+!!!6701442.java!!!	setDataElements(in x : int, in y : int, in w : int, in h : int, inout inData : Object) : void
+        sampleModel.setDataElements(x-sampleModelTranslateX,
+                                    y-sampleModelTranslateY,
+                                    w,h,inData,dataBuffer);
+!!!6701570.java!!!	setRect(inout srcRaster : Raster) : void
+        setRect(0,0,srcRaster);
+!!!6701698.java!!!	setRect(in dx : int, in dy : int, inout srcRaster : Raster) : void
+        int width  = srcRaster.getWidth();
+        int height = srcRaster.getHeight();
+        int srcOffX = srcRaster.getMinX();
+        int srcOffY = srcRaster.getMinY();
+        int dstOffX = dx+srcOffX;
+        int dstOffY = dy+srcOffY;
+
+        // Clip to this raster
+        if (dstOffX < this.minX) {
+            int skipX = this.minX - dstOffX;
+            width -= skipX;
+            srcOffX += skipX;
+            dstOffX = this.minX;
+        }
+        if (dstOffY < this.minY) {
+            int skipY = this.minY - dstOffY;
+            height -= skipY;
+            srcOffY += skipY;
+            dstOffY = this.minY;
+        }
+        if (dstOffX+width > this.minX+this.width) {
+            width = this.minX + this.width - dstOffX;
+        }
+        if (dstOffY+height > this.minY+this.height) {
+            height = this.minY + this.height - dstOffY;
+        }
+
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+
+        switch (srcRaster.getSampleModel().getDataType()) {
+        case DataBuffer.TYPE_BYTE:
+        case DataBuffer.TYPE_SHORT:
+        case DataBuffer.TYPE_USHORT:
+        case DataBuffer.TYPE_INT:
+            int[] iData = null;
+            for (int startY=0; startY < height; startY++) {
+                // Grab one scanline at a time
+                iData =
+                    srcRaster.getPixels(srcOffX, srcOffY+startY, width, 1,
+                                        iData);
+                setPixels(dstOffX, dstOffY+startY, width, 1, iData);
+            }
+            break;
+
+        case DataBuffer.TYPE_FLOAT:
+            float[] fData = null;
+            for (int startY=0; startY < height; startY++) {
+                fData =
+                    srcRaster.getPixels(srcOffX, srcOffY+startY, width, 1,
+                                        fData);
+                setPixels(dstOffX, dstOffY+startY, width, 1, fData);
+            }
+            break;
+
+        case DataBuffer.TYPE_DOUBLE:
+            double[] dData = null;
+            for (int startY=0; startY < height; startY++) {
+                // Grab one scanline at a time
+                dData =
+                    srcRaster.getPixels(srcOffX, srcOffY+startY, width, 1,
+                                        dData);
+                setPixels(dstOffX, dstOffY+startY, width, 1, dData);
+            }
+            break;
+        }
+!!!6701826.java!!!	setPixel(in x : int, in y : int, inout iArray : int [[]]) : void
+        sampleModel.setPixel(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                             iArray,dataBuffer);
+!!!6701954.java!!!	setPixel(in x : int, in y : int, inout fArray : float [[]]) : void
+        sampleModel.setPixel(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                             fArray,dataBuffer);
+!!!6702082.java!!!	setPixel(in x : int, in y : int, inout dArray : double [[]]) : void
+        sampleModel.setPixel(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                             dArray,dataBuffer);
+!!!6702210.java!!!	setPixels(in x : int, in y : int, in w : int, in h : int, inout iArray : int [[]]) : void
+        sampleModel.setPixels(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                              w,h,iArray,dataBuffer);
+!!!6702338.java!!!	setPixels(in x : int, in y : int, in w : int, in h : int, inout fArray : float [[]]) : void
+        sampleModel.setPixels(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                              w,h,fArray,dataBuffer);
+!!!6702466.java!!!	setPixels(in x : int, in y : int, in w : int, in h : int, inout dArray : double [[]]) : void
+        sampleModel.setPixels(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                              w,h,dArray,dataBuffer);
+!!!6702594.java!!!	setSample(in x : int, in y : int, in b : int, in s : int) : void
+        sampleModel.setSample(x-sampleModelTranslateX,
+                              y-sampleModelTranslateY, b, s,
+                              dataBuffer);
+!!!6702722.java!!!	setSample(in x : int, in y : int, in b : int, in s : float) : void
+        sampleModel.setSample(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                              b,s,dataBuffer);
+!!!6702850.java!!!	setSample(in x : int, in y : int, in b : int, in s : double) : void
+        sampleModel.setSample(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                                    b,s,dataBuffer);
+!!!6702978.java!!!	setSamples(in x : int, in y : int, in w : int, in h : int, in b : int, inout iArray : int [[]]) : void
+        sampleModel.setSamples(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                               w,h,b,iArray,dataBuffer);
+!!!6703106.java!!!	setSamples(in x : int, in y : int, in w : int, in h : int, in b : int, inout fArray : float [[]]) : void
+        sampleModel.setSamples(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                               w,h,b,fArray,dataBuffer);
+!!!6703234.java!!!	setSamples(in x : int, in y : int, in w : int, in h : int, in b : int, inout dArray : double [[]]) : void
+        sampleModel.setSamples(x-sampleModelTranslateX,y-sampleModelTranslateY,
+                              w,h,b,dArray,dataBuffer);

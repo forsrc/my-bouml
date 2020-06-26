@@ -1,0 +1,93 @@
+class CoroutineManager
+!!!5184514.java!!!	co_joinCoroutineSet(in coroutineID : int) : int
+    if(coroutineID>=0)
+      {
+        if(coroutineID>=m_unreasonableId || m_activeIDs.get(coroutineID))
+          return -1;
+      }
+    else
+      {
+        // What I want is "Find first clear bit". That doesn't exist.
+        // JDK1.2 added "find last set bit", but that doesn't help now.
+        coroutineID=0;
+        while(coroutineID<m_unreasonableId)
+          {
+            if(m_activeIDs.get(coroutineID))
+              ++coroutineID;
+            else
+              break;
+          }
+        if(coroutineID>=m_unreasonableId)
+          return -1;
+      }
+
+    m_activeIDs.set(coroutineID);
+    return coroutineID;
+!!!5184642.java!!!	co_entry_pause(in thisCoroutine : int) : Object
+    if(!m_activeIDs.get(thisCoroutine))
+      throw new java.lang.NoSuchMethodException();
+
+    while(m_nextCoroutine != thisCoroutine)
+      {
+        try
+          {
+            wait();
+          }
+        catch(java.lang.InterruptedException e)
+          {
+            // %TBD% -- Declare? Encapsulate? Ignore? Or
+            // dance widdershins about the instruction cache?
+          }
+      }
+
+    return m_yield;
+!!!5184770.java!!!	co_resume(inout arg_object : Object, in thisCoroutine : int, in toCoroutine : int) : Object
+    if(!m_activeIDs.get(toCoroutine))
+      throw new java.lang.NoSuchMethodException(XMLMessages.createXMLMessage(XMLErrorResources.ER_COROUTINE_NOT_AVAIL, new Object[]{Integer.toString(toCoroutine)})); //"Coroutine not available, id="+toCoroutine);
+
+    // We expect these values to be overwritten during the notify()/wait()
+    // periods, as other coroutines in this set get their opportunity to run.
+    m_yield=arg_object;
+    m_nextCoroutine=toCoroutine;
+
+    notify();
+    while(m_nextCoroutine != thisCoroutine || m_nextCoroutine==ANYBODY || m_nextCoroutine==NOBODY)
+      {
+        try
+          {
+            // System.out.println("waiting...");
+            wait();
+          }
+        catch(java.lang.InterruptedException e)
+          {
+            // %TBD% -- Declare? Encapsulate? Ignore? Or
+            // dance deasil about the program counter?
+          }
+      }
+
+    if(m_nextCoroutine==NOBODY)
+      {
+        // Pass it along
+        co_exit(thisCoroutine);
+        // And inform this coroutine that its partners are Going Away
+        // %REVIEW% Should this throw/return something more useful?
+        throw new java.lang.NoSuchMethodException(XMLMessages.createXMLMessage(XMLErrorResources.ER_COROUTINE_CO_EXIT, null)); //"CoroutineManager recieved co_exit() request");
+      }
+
+    return m_yield;
+!!!5184898.java!!!	co_exit(in thisCoroutine : int) : void
+    m_activeIDs.clear(thisCoroutine);
+    m_nextCoroutine=NOBODY; // %REVIEW%
+    notify();
+!!!5185026.java!!!	co_exit_to(inout arg_object : Object, in thisCoroutine : int, in toCoroutine : int) : void
+    if(!m_activeIDs.get(toCoroutine))
+      throw new java.lang.NoSuchMethodException(XMLMessages.createXMLMessage(XMLErrorResources.ER_COROUTINE_NOT_AVAIL, new Object[]{Integer.toString(toCoroutine)})); //"Coroutine not available, id="+toCoroutine);
+
+    // We expect these values to be overwritten during the notify()/wait()
+    // periods, as other coroutines in this set get their opportunity to run.
+    m_yield=arg_object;
+    m_nextCoroutine=toCoroutine;
+
+    m_activeIDs.clear(thisCoroutine);
+
+    notify();

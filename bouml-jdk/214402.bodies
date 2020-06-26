@@ -1,0 +1,114 @@
+class CorbaContactInfoListIteratorImpl
+!!!733698.java!!!	CorbaContactInfoListIteratorImpl(inout orb : ORB, inout corbaContactInfoList : CorbaContactInfoList, inout primaryContactInfo : ContactInfo, inout listOfContactInfos : List)
+        this.orb = orb;
+        this.contactInfoList = corbaContactInfoList;
+        this.primaryContactInfo = primaryContactInfo;
+        if (listOfContactInfos != null) {
+            // listOfContactInfos is null when used by the legacy
+            // socket factory.  In that case this iterator is NOT used.
+            this.effectiveTargetIORIterator = listOfContactInfos.iterator();
+        }
+        // List is immutable so no need to synchronize access.
+        this.listOfContactInfos = listOfContactInfos;
+
+        this.previousContactInfo = null;
+        this.isAddrDispositionRetry = false;
+
+        this.successContactInfo = null;
+        this.failureContactInfo = null;
+        this.failureException = null;
+
+        primaryToContactInfo = orb.getORBData().getIIOPPrimaryToContactInfo();
+!!!733826.java!!!	hasNext() : boolean
+        // REVISIT: Implement as internal closure iterator which would
+        // wraps sticky or default.  Then hasNext and next just call
+        // the closure.
+
+        if (isAddrDispositionRetry) {
+            return true;
+        }
+
+        boolean result;
+
+        if (primaryToContactInfo != null) {
+            result = primaryToContactInfo.hasNext(primaryContactInfo,
+                                                  previousContactInfo,
+                                                  listOfContactInfos);
+        } else {
+            result = effectiveTargetIORIterator.hasNext();
+        }
+
+        return result;
+!!!733954.java!!!	next() : Object
+        if (isAddrDispositionRetry) {
+            isAddrDispositionRetry = false;
+            return previousContactInfo;
+        }
+
+        // We hold onto the last in case we get an addressing
+        // disposition retry.  Then we use it again.
+
+        // We also hold onto it for the sticky manager.
+
+        if (primaryToContactInfo != null) {
+            previousContactInfo = (CorbaContactInfo)
+                primaryToContactInfo.next(primaryContactInfo,
+                                          previousContactInfo,
+                                          listOfContactInfos);
+        } else {
+            previousContactInfo = (CorbaContactInfo)
+                effectiveTargetIORIterator.next();
+        }
+
+        return previousContactInfo;
+!!!734082.java!!!	remove() : void
+        throw new UnsupportedOperationException();
+!!!734210.java!!!	getContactInfoList() : ContactInfoList
+        return contactInfoList;
+!!!734338.java!!!	reportSuccess(inout contactInfo : ContactInfo) : void
+        this.successContactInfo = (CorbaContactInfo)contactInfo;
+!!!734466.java!!!	reportException(inout contactInfo : ContactInfo, inout ex : RuntimeException) : boolean
+        this.failureContactInfo = (CorbaContactInfo)contactInfo;
+        this.failureException = ex;
+        if (ex instanceof COMM_FAILURE) {
+            SystemException se = (SystemException) ex;
+            if (se.completed == CompletionStatus.COMPLETED_NO) {
+                if (hasNext()) {
+                    return true;
+                }
+                if (contactInfoList.getEffectiveTargetIOR() !=
+                    contactInfoList.getTargetIOR())
+                {
+                    // retry from root ior
+                    updateEffectiveTargetIOR(contactInfoList.getTargetIOR());
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!734594.java!!!	getFailureException() : RuntimeException
+        if (failureException == null) {
+            return
+                ORBUtilSystemException.get( orb,
+                                            CORBALogDomains.RPC_TRANSPORT )
+                    .invalidContactInfoListIteratorFailureException();
+        } else {
+            return failureException;
+        }
+!!!734722.java!!!	reportAddrDispositionRetry(inout contactInfo : CorbaContactInfo, in disposition : short) : void
+        previousContactInfo.setAddressingDisposition(disposition);
+        isAddrDispositionRetry = true;
+!!!734850.java!!!	reportRedirect(inout contactInfo : CorbaContactInfo, inout forwardedIOR : IOR) : void
+        updateEffectiveTargetIOR(forwardedIOR);
+!!!734978.java!!!	updateEffectiveTargetIOR(inout newIOR : IOR) : void
+        contactInfoList.setEffectiveTargetIOR(newIOR);
+        // If we report the exception in _request (i.e., beginRequest
+        // we cannot throw RemarshalException to the stub because _request
+        // does not declare that exception.
+        // To keep the two-level dispatching (first level chooses ContactInfo,
+        // second level is specific to that ContactInfo/EPT) we need to
+        // ensure that the request dispatchers get their iterator from the
+        // InvocationStack (i.e., ThreadLocal). That way if the list iterator
+        // needs a complete update it happens right here.
+        ((CorbaInvocationInfo)orb.getInvocationInfo())
+            .setContactInfoListIterator(contactInfoList.iterator());

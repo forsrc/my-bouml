@@ -1,0 +1,366 @@
+class GaugeMonitor
+!!!9860226.java!!!	start() : void
+        if (isActive()) {
+            MONITOR_LOGGER.logp(Level.FINER, GaugeMonitor.class.getName(),
+                    "start", "the monitor is already active");
+            return;
+        }
+        // Reset values.
+        //
+        for (ObservedObject o : observedObjects) {
+            final GaugeMonitorObservedObject gmo =
+                (GaugeMonitorObservedObject) o;
+            gmo.setStatus(RISING_OR_FALLING);
+            gmo.setPreviousScanGauge(null);
+        }
+        doStart();
+!!!9860354.java!!!	stop() : void
+        doStop();
+!!!9860482.java!!!	getDerivedGauge(inout object : ObjectName) : Number
+        return (Number) super.getDerivedGauge(object);
+!!!9860610.java!!!	getDerivedGaugeTimeStamp(inout object : ObjectName) : long
+        return super.getDerivedGaugeTimeStamp(object);
+!!!9860738.java!!!	getDerivedGauge() : Number
+        if (observedObjects.isEmpty()) {
+            return null;
+        } else {
+            return (Number) observedObjects.get(0).getDerivedGauge();
+        }
+!!!9860866.java!!!	getDerivedGaugeTimeStamp() : long
+        if (observedObjects.isEmpty()) {
+            return 0;
+        } else {
+            return observedObjects.get(0).getDerivedGaugeTimeStamp();
+        }
+!!!9860994.java!!!	getHighThreshold() : Number
+        return highThreshold;
+!!!9861122.java!!!	getLowThreshold() : Number
+        return lowThreshold;
+!!!9861250.java!!!	setThresholds(inout highValue : Number, inout lowValue : Number) : void
+
+        if ((highValue == null) || (lowValue == null)) {
+            throw new IllegalArgumentException("Null threshold value");
+        }
+
+        if (highValue.getClass() != lowValue.getClass()) {
+            throw new IllegalArgumentException("Different type " +
+                                               "threshold values");
+        }
+
+        if (isFirstStrictlyGreaterThanLast(lowValue, highValue,
+                                           highValue.getClass().getName())) {
+            throw new IllegalArgumentException("High threshold less than " +
+                                               "low threshold");
+        }
+
+        if (highThreshold.equals(highValue) && lowThreshold.equals(lowValue))
+            return;
+        highThreshold = highValue;
+        lowThreshold = lowValue;
+
+        // Reset values.
+        //
+        int index = 0;
+        for (ObservedObject o : observedObjects) {
+            resetAlreadyNotified(o, index++, THRESHOLD_ERROR_NOTIFIED);
+            final GaugeMonitorObservedObject gmo =
+                (GaugeMonitorObservedObject) o;
+            gmo.setStatus(RISING_OR_FALLING);
+        }
+!!!9861378.java!!!	getNotifyHigh() : boolean
+        return notifyHigh;
+!!!9861506.java!!!	setNotifyHigh(inout value : boolean) : void
+        if (notifyHigh == value)
+            return;
+        notifyHigh = value;
+!!!9861634.java!!!	getNotifyLow() : boolean
+        return notifyLow;
+!!!9861762.java!!!	setNotifyLow(inout value : boolean) : void
+        if (notifyLow == value)
+            return;
+        notifyLow = value;
+!!!9861890.java!!!	getDifferenceMode() : boolean
+        return differenceMode;
+!!!9862018.java!!!	setDifferenceMode(inout value : boolean) : void
+        if (differenceMode == value)
+            return;
+        differenceMode = value;
+
+        // Reset values.
+        //
+        for (ObservedObject o : observedObjects) {
+            final GaugeMonitorObservedObject gmo =
+                (GaugeMonitorObservedObject) o;
+            gmo.setStatus(RISING_OR_FALLING);
+            gmo.setPreviousScanGauge(null);
+        }
+!!!9862146.java!!!	getNotificationInfo() : MBeanNotificationInfo
+        return notifsInfo.clone();
+!!!9862274.java!!!	updateDerivedGauge(inout scanGauge : Object, inout o : GaugeMonitor::GaugeMonitorObservedObject) : boolean
+
+        boolean is_derived_gauge_valid;
+
+        // The gauge difference mode is used.
+        //
+        if (differenceMode) {
+
+            // The previous scan gauge has been initialized.
+            //
+            if (o.getPreviousScanGauge() != null) {
+                setDerivedGaugeWithDifference((Number)scanGauge, o);
+                is_derived_gauge_valid = true;
+            }
+            // The previous scan gauge has not been initialized.
+            // We cannot update the derived gauge...
+            //
+            else {
+                is_derived_gauge_valid = false;
+            }
+            o.setPreviousScanGauge((Number)scanGauge);
+        }
+        // The gauge difference mode is not used.
+        //
+        else {
+            o.setDerivedGauge((Number)scanGauge);
+            is_derived_gauge_valid = true;
+        }
+
+        return is_derived_gauge_valid;
+!!!9862402.java!!!	updateNotifications(inout o : GaugeMonitor::GaugeMonitorObservedObject) : MonitorNotification
+
+        MonitorNotification n = null;
+
+        // Send high notification if notifyHigh is true.
+        // Send low notification if notifyLow is true.
+        //
+        if (o.getStatus() == RISING_OR_FALLING) {
+            if (isFirstGreaterThanLast((Number)o.getDerivedGauge(),
+                                       highThreshold,
+                                       o.getType())) {
+                if (notifyHigh) {
+                    n = new MonitorNotification(
+                            THRESHOLD_HIGH_VALUE_EXCEEDED,
+                            this,
+                            0,
+                            0,
+                            "",
+                            null,
+                            null,
+                            null,
+                            highThreshold);
+                }
+                o.setStatus(FALLING);
+            } else if (isFirstGreaterThanLast(lowThreshold,
+                                              (Number)o.getDerivedGauge(),
+                                              o.getType())) {
+                if (notifyLow) {
+                    n = new MonitorNotification(
+                            THRESHOLD_LOW_VALUE_EXCEEDED,
+                            this,
+                            0,
+                            0,
+                            "",
+                            null,
+                            null,
+                            null,
+                            lowThreshold);
+                }
+                o.setStatus(RISING);
+            }
+        } else {
+            if (o.getStatus() == RISING) {
+                if (isFirstGreaterThanLast((Number)o.getDerivedGauge(),
+                                           highThreshold,
+                                           o.getType())) {
+                    if (notifyHigh) {
+                        n = new MonitorNotification(
+                                THRESHOLD_HIGH_VALUE_EXCEEDED,
+                                this,
+                                0,
+                                0,
+                                "",
+                                null,
+                                null,
+                                null,
+                                highThreshold);
+                    }
+                    o.setStatus(FALLING);
+                }
+            } else if (o.getStatus() == FALLING) {
+                if (isFirstGreaterThanLast(lowThreshold,
+                                           (Number)o.getDerivedGauge(),
+                                           o.getType())) {
+                    if (notifyLow) {
+                        n = new MonitorNotification(
+                                THRESHOLD_LOW_VALUE_EXCEEDED,
+                                this,
+                                0,
+                                0,
+                                "",
+                                null,
+                                null,
+                                null,
+                                lowThreshold);
+                    }
+                    o.setStatus(RISING);
+                }
+            }
+        }
+
+        return n;
+!!!9862530.java!!!	setDerivedGaugeWithDifference(inout scanGauge : Number, inout o : GaugeMonitor::GaugeMonitorObservedObject) : void
+        Number prev = o.getPreviousScanGauge();
+        Number der;
+        switch (o.getType()) {
+        case INTEGER:
+            der = Integer.valueOf(((Integer)scanGauge).intValue() -
+                                  ((Integer)prev).intValue());
+            break;
+        case BYTE:
+            der = Byte.valueOf((byte)(((Byte)scanGauge).byteValue() -
+                                      ((Byte)prev).byteValue()));
+            break;
+        case SHORT:
+            der = Short.valueOf((short)(((Short)scanGauge).shortValue() -
+                                        ((Short)prev).shortValue()));
+            break;
+        case LONG:
+            der = Long.valueOf(((Long)scanGauge).longValue() -
+                               ((Long)prev).longValue());
+            break;
+        case FLOAT:
+            der = Float.valueOf(((Float)scanGauge).floatValue() -
+                                ((Float)prev).floatValue());
+            break;
+        case DOUBLE:
+            der = Double.valueOf(((Double)scanGauge).doubleValue() -
+                                 ((Double)prev).doubleValue());
+            break;
+        default:
+            // Should never occur...
+            MONITOR_LOGGER.logp(Level.FINEST, GaugeMonitor.class.getName(),
+                    "setDerivedGaugeWithDifference",
+                    "the threshold type is invalid");
+            return;
+        }
+        o.setDerivedGauge(der);
+!!!9862658.java!!!	isFirstGreaterThanLast(inout greater : Number, inout less : Number, inout type : Monitor::NumericalType) : boolean
+
+        switch (type) {
+        case INTEGER:
+        case BYTE:
+        case SHORT:
+        case LONG:
+            return (greater.longValue() >= less.longValue());
+        case FLOAT:
+        case DOUBLE:
+            return (greater.doubleValue() >= less.doubleValue());
+        default:
+            // Should never occur...
+            MONITOR_LOGGER.logp(Level.FINEST, GaugeMonitor.class.getName(),
+                    "isFirstGreaterThanLast",
+                    "the threshold type is invalid");
+            return false;
+        }
+!!!9862786.java!!!	isFirstStrictlyGreaterThanLast(inout greater : Number, inout less : Number, inout className : String) : boolean
+
+        if (className.equals("java.lang.Integer") ||
+            className.equals("java.lang.Byte") ||
+            className.equals("java.lang.Short") ||
+            className.equals("java.lang.Long")) {
+
+            return (greater.longValue() > less.longValue());
+        }
+        else if (className.equals("java.lang.Float") ||
+                 className.equals("java.lang.Double")) {
+
+            return (greater.doubleValue() > less.doubleValue());
+        }
+        else {
+            // Should never occur...
+            MONITOR_LOGGER.logp(Level.FINEST, GaugeMonitor.class.getName(),
+                    "isFirstStrictlyGreaterThanLast",
+                    "the threshold type is invalid");
+            return false;
+        }
+!!!9862914.java!!!	createObservedObject(inout object : ObjectName) : Monitor::ObservedObject
+        final GaugeMonitorObservedObject gmo =
+            new GaugeMonitorObservedObject(object);
+        gmo.setStatus(RISING_OR_FALLING);
+        gmo.setPreviousScanGauge(null);
+        return gmo;
+!!!9863042.java!!!	isComparableTypeValid(inout object : ObjectName, inout attribute : String, inout value : Comparable) : boolean
+        final GaugeMonitorObservedObject o =
+            (GaugeMonitorObservedObject) getObservedObject(object);
+        if (o == null)
+            return false;
+
+        // Check that the observed attribute is either of type
+        // "Integer" or "Float".
+        //
+        if (value instanceof Integer) {
+            o.setType(INTEGER);
+        } else if (value instanceof Byte) {
+            o.setType(BYTE);
+        } else if (value instanceof Short) {
+            o.setType(SHORT);
+        } else if (value instanceof Long) {
+            o.setType(LONG);
+        } else if (value instanceof Float) {
+            o.setType(FLOAT);
+        } else if (value instanceof Double) {
+            o.setType(DOUBLE);
+        } else {
+            return false;
+        }
+        return true;
+!!!9863170.java!!!	getDerivedGaugeFromComparable(inout object : ObjectName, inout attribute : String, inout value : Comparable) : Comparable
+        final GaugeMonitorObservedObject o =
+            (GaugeMonitorObservedObject) getObservedObject(object);
+        if (o == null)
+            return null;
+
+        // Update the derived gauge attributes and check the
+        // validity of the new value. The derived gauge value
+        // is invalid when the differenceMode flag is set to
+        // true and it is the first notification, i.e. we
+        // haven't got 2 consecutive values to update the
+        // derived gauge.
+        //
+        o.setDerivedGaugeValid(updateDerivedGauge(value, o));
+
+        return (Comparable<?>) o.getDerivedGauge();
+!!!9863298.java!!!	onErrorNotification(inout notification : MonitorNotification) : void
+        final GaugeMonitorObservedObject o = (GaugeMonitorObservedObject)
+            getObservedObject(notification.getObservedObject());
+        if (o == null)
+            return;
+
+        // Reset values.
+        //
+        o.setStatus(RISING_OR_FALLING);
+        o.setPreviousScanGauge(null);
+!!!9863426.java!!!	buildAlarmNotification(inout object : ObjectName, inout attribute : String, inout value : Comparable) : MonitorNotification
+        final GaugeMonitorObservedObject o =
+            (GaugeMonitorObservedObject) getObservedObject(object);
+        if (o == null)
+            return null;
+
+        // Notify the listeners if the updated derived
+        // gauge value is valid.
+        //
+        final MonitorNotification alarm;
+        if (o.getDerivedGaugeValid())
+            alarm = updateNotifications(o);
+        else
+            alarm = null;
+        return alarm;
+!!!9863554.java!!!	isThresholdTypeValid(inout object : ObjectName, inout attribute : String, inout value : Comparable) : boolean
+        final GaugeMonitorObservedObject o =
+            (GaugeMonitorObservedObject) getObservedObject(object);
+        if (o == null)
+            return false;
+
+        Class<? extends Number> c = classForType(o.getType());
+        return (isValidForType(highThreshold, c) &&
+                isValidForType(lowThreshold, c));

@@ -1,0 +1,89 @@
+class CDREncapsCodec
+!!!482434.java!!!	CDREncapsCodec(inout orb : ORB, in major : int, in minor : int)
+        this.orb = orb;
+        wrapper = ORBUtilSystemException.get(
+            (com.sun.corba.se.spi.orb.ORB)orb, CORBALogDomains.RPC_PROTOCOL ) ;
+
+        giopVersion = GIOPVersion.getInstance( (byte)major, (byte)minor );
+!!!482562.java!!!	encode(inout data : Any) : byte
+        if ( data == null )
+            throw wrapper.nullParam() ;
+        return encodeImpl( data, true );
+!!!482690.java!!!	decode(inout data : byte [[]]) : Any
+        if( data == null )
+            throw wrapper.nullParam() ;
+        return decodeImpl( data, null );
+!!!482818.java!!!	encode_value(inout data : Any) : byte
+        if( data == null )
+            throw wrapper.nullParam() ;
+        return encodeImpl( data, false );
+!!!482946.java!!!	decode_value(inout data : byte [[]], inout tc : TypeCode) : Any
+        if( data == null )
+            throw wrapper.nullParam() ;
+        if( tc == null )
+            throw  wrapper.nullParam() ;
+        return decodeImpl( data, tc );
+!!!483074.java!!!	encodeImpl(inout data : Any, inout sendTypeCode : boolean) : byte
+        if( data == null )
+            throw wrapper.nullParam() ;
+
+        // _REVISIT_ Note that InvalidTypeForEncoding is never thrown in
+        // the body of this method.  This is due to the fact that CDR*Stream
+        // will never throw an exception if the encoding is invalid.  To
+        // fix this, the CDROutputStream must know the version of GIOP it
+        // is encoding for and it must check to ensure that, for example,
+        // wstring cannot be encoded in GIOP 1.0.
+        //
+        // As part of the GIOP 1.2 work, the CDRInput and OutputStream will
+        // be versioned.  This can be handled once this work is complete.
+
+        // Create output stream with default endianness.
+        EncapsOutputStream cdrOut =
+            sun.corba.OutputStreamFactory.newEncapsOutputStream(
+            (com.sun.corba.se.spi.orb.ORB)orb, giopVersion );
+
+        // This is an encapsulation, so put out the endian:
+        cdrOut.putEndian();
+
+        // Sometimes encode type code:
+        if( sendTypeCode ) {
+            cdrOut.write_TypeCode( data.type() );
+        }
+
+        // Encode value and return.
+        data.write_value( cdrOut );
+
+        return cdrOut.toByteArray();
+!!!483202.java!!!	decodeImpl(inout data : byte [[]], inout tc : TypeCode) : Any
+        if( data == null )
+            throw wrapper.nullParam() ;
+
+        AnyImpl any = null;  // return value
+
+        // _REVISIT_ Currently there is no way for us to distinguish between
+        // a FormatMismatch and a TypeMismatch because we cannot get this
+        // information from the CDRInputStream.  If a RuntimeException occurs,
+        // it is turned into a FormatMismatch exception.
+
+        try {
+            EncapsInputStream cdrIn = EncapsInputStreamFactory.newEncapsInputStream( orb, data,
+                    data.length, giopVersion );
+
+
+            cdrIn.consumeEndian();
+
+            // If type code not specified, read it from octet stream:
+            if( tc == null ) {
+                tc = cdrIn.read_TypeCode();
+            }
+
+            // Create a new Any object:
+            any = new AnyImpl( (com.sun.corba.se.spi.orb.ORB)orb );
+            any.read_value( cdrIn, tc );
+        }
+        catch( RuntimeException e ) {
+            // See above note.
+            throw new FormatMismatch();
+        }
+
+        return any;

@@ -1,0 +1,556 @@
+class TableView
+!!!11808258.java!!!	TableView(inout elem : Element)
+        super(elem, View.Y_AXIS);
+        rows = new Vector<RowView>();
+        gridValid = false;
+        captionIndex = -1;
+        totalColumnRequirements = new SizeRequirements();
+!!!11808386.java!!!	createTableRow(inout elem : Element) : TableView::RowView
+        // PENDING(prinz) need to add support for some of the other
+        // elements, but for now just ignore anything that is not
+        // a TR.
+        Object o = elem.getAttributes().getAttribute(StyleConstants.NameAttribute);
+        if (o == HTML.Tag.TR) {
+            return new RowView(elem);
+        }
+        return null;
+!!!11808514.java!!!	getColumnCount() : int
+        return columnSpans.length;
+!!!11808642.java!!!	getColumnSpan(in col : int) : int
+        if (col < columnSpans.length) {
+            return columnSpans[col];
+        }
+        return 0;
+!!!11808770.java!!!	getRowCount() : int
+        return rows.size();
+!!!11808898.java!!!	getMultiRowSpan(in row0 : int, in row1 : int) : int
+        RowView rv0 = getRow(row0);
+        RowView rv1 = getRow(row1);
+        if ((rv0 != null) && (rv1 != null)) {
+            int index0 = rv0.viewIndex;
+            int index1 = rv1.viewIndex;
+            int span = getOffset(Y_AXIS, index1) - getOffset(Y_AXIS, index0) +
+                getSpan(Y_AXIS, index1);
+            return span;
+        }
+        return 0;
+!!!11809026.java!!!	getRowSpan(in row : int) : int
+        RowView rv = getRow(row);
+        if (rv != null) {
+            return getSpan(Y_AXIS, rv.viewIndex);
+        }
+        return 0;
+!!!11809154.java!!!	getRow(in row : int) : TableView::RowView
+        if (row < rows.size()) {
+            return rows.elementAt(row);
+        }
+        return null;
+!!!11809282.java!!!	getViewAtPoint(in x : int, in y : int, inout alloc : Rectangle) : View
+        int n = getViewCount();
+        View v;
+        Rectangle allocation = new Rectangle();
+        for (int i = 0; i < n; i++) {
+            allocation.setBounds(alloc);
+            childAllocation(i, allocation);
+            v = getView(i);
+            if (v instanceof RowView) {
+                v = ((RowView)v).findViewAtPoint(x, y, allocation);
+                if (v != null) {
+                    alloc.setBounds(allocation);
+                    return v;
+                }
+            }
+        }
+        return super.getViewAtPoint(x, y, alloc);
+!!!11809410.java!!!	getColumnsOccupied(inout v : View) : int
+        AttributeSet a = v.getElement().getAttributes();
+
+        if (a.isDefined(HTML.Attribute.COLSPAN)) {
+            String s = (String) a.getAttribute(HTML.Attribute.COLSPAN);
+            if (s != null) {
+                try {
+                    return Integer.parseInt(s);
+                } catch (NumberFormatException nfe) {
+                    // fall through to one column
+                }
+            }
+        }
+
+        return 1;
+!!!11809538.java!!!	getRowsOccupied(inout v : View) : int
+        AttributeSet a = v.getElement().getAttributes();
+
+        if (a.isDefined(HTML.Attribute.ROWSPAN)) {
+            String s = (String) a.getAttribute(HTML.Attribute.ROWSPAN);
+            if (s != null) {
+                try {
+                    return Integer.parseInt(s);
+                } catch (NumberFormatException nfe) {
+                    // fall through to one row
+                }
+            }
+        }
+
+        return 1;
+!!!11809666.java!!!	invalidateGrid() : void
+        gridValid = false;
+!!!11809794.java!!!	getStyleSheet() : StyleSheet
+        HTMLDocument doc = (HTMLDocument) getDocument();
+        return doc.getStyleSheet();
+!!!11809922.java!!!	updateInsets() : void
+        short top = (short) painter.getInset(TOP, this);
+        short bottom = (short) painter.getInset(BOTTOM, this);
+        if (captionIndex != -1) {
+            View caption = getView(captionIndex);
+            short h = (short) caption.getPreferredSpan(Y_AXIS);
+            AttributeSet a = caption.getAttributes();
+            Object align = a.getAttribute(CSS.Attribute.CAPTION_SIDE);
+            if ((align != null) && (align.equals("bottom"))) {
+                bottom += h;
+            } else {
+                top += h;
+            }
+        }
+        setInsets(top, (short) painter.getInset(LEFT, this),
+                  bottom, (short) painter.getInset(RIGHT, this));
+!!!11810050.java!!!	setPropertiesFromAttributes() : void
+        StyleSheet sheet = getStyleSheet();
+        attr = sheet.getViewAttributes(this);
+        painter = sheet.getBoxPainter(attr);
+        if (attr != null) {
+            setInsets((short) painter.getInset(TOP, this),
+                      (short) painter.getInset(LEFT, this),
+                          (short) painter.getInset(BOTTOM, this),
+                      (short) painter.getInset(RIGHT, this));
+
+            CSS.LengthValue lv = (CSS.LengthValue)
+                attr.getAttribute(CSS.Attribute.BORDER_SPACING);
+            if (lv != null) {
+                cellSpacing = (int) lv.getValue();
+            } else {
+                // Default cell spacing equals 2
+                cellSpacing = 2;
+            }
+            lv = (CSS.LengthValue)
+                    attr.getAttribute(CSS.Attribute.BORDER_TOP_WIDTH);
+            if (lv != null) {
+                    borderWidth = (int) lv.getValue();
+            } else {
+                    borderWidth = 0;
+            }
+        }
+!!!11810178.java!!!	updateGrid() : void
+        if (! gridValid) {
+            relativeCells = false;
+            multiRowCells = false;
+
+            // determine which views are table rows and clear out
+            // grid points marked filled.
+            captionIndex = -1;
+            rows.removeAllElements();
+            int n = getViewCount();
+            for (int i = 0; i < n; i++) {
+                View v = getView(i);
+                if (v instanceof RowView) {
+                    rows.addElement((RowView) v);
+                    RowView rv = (RowView) v;
+                    rv.clearFilledColumns();
+                    rv.rowIndex = rows.size() - 1;
+                    rv.viewIndex = i;
+                } else {
+                    Object o = v.getElement().getAttributes().getAttribute(StyleConstants.NameAttribute);
+                    if (o instanceof HTML.Tag) {
+                        HTML.Tag kind = (HTML.Tag) o;
+                        if (kind == HTML.Tag.CAPTION) {
+                            captionIndex = i;
+                        }
+                    }
+                }
+            }
+
+            int maxColumns = 0;
+            int nrows = rows.size();
+            for (int row = 0; row < nrows; row++) {
+                RowView rv = getRow(row);
+                int col = 0;
+                for (int cell = 0; cell < rv.getViewCount(); cell++, col++) {
+                    View cv = rv.getView(cell);
+                    if (! relativeCells) {
+                        AttributeSet a = cv.getAttributes();
+                        CSS.LengthValue lv = (CSS.LengthValue)
+                            a.getAttribute(CSS.Attribute.WIDTH);
+                        if ((lv != null) && (lv.isPercentage())) {
+                            relativeCells = true;
+                        }
+                    }
+                    // advance to a free column
+                    for (; rv.isFilled(col); col++);
+                    int rowSpan = getRowsOccupied(cv);
+                    if (rowSpan > 1) {
+                        multiRowCells = true;
+                    }
+                    int colSpan = getColumnsOccupied(cv);
+                    if ((colSpan > 1) || (rowSpan > 1)) {
+                        // fill in the overflow entries for this cell
+                        int rowLimit = row + rowSpan;
+                        int colLimit = col + colSpan;
+                        for (int i = row; i < rowLimit; i++) {
+                            for (int j = col; j < colLimit; j++) {
+                                if (i != row || j != col) {
+                                    addFill(i, j);
+                                }
+                            }
+                        }
+                        if (colSpan > 1) {
+                            col += colSpan - 1;
+                        }
+                    }
+                }
+                maxColumns = Math.max(maxColumns, col);
+            }
+
+            // setup the column layout/requirements
+            columnSpans = new int[maxColumns];
+            columnOffsets = new int[maxColumns];
+            columnRequirements = new SizeRequirements[maxColumns];
+            for (int i = 0; i < maxColumns; i++) {
+                columnRequirements[i] = new SizeRequirements();
+                columnRequirements[i].maximum = Integer.MAX_VALUE;
+            }
+            gridValid = true;
+        }
+!!!11810306.java!!!	addFill(in row : int, in col : int) : void
+        RowView rv = getRow(row);
+        if (rv != null) {
+            rv.fillColumn(col);
+        }
+!!!11810434.java!!!	layoutColumns(in targetSpan : int, inout offsets : int [[]], inout spans : int [[]], inout reqs : SizeRequirements [[]]) : void
+        //clean offsets and spans
+        Arrays.fill(offsets, 0);
+        Arrays.fill(spans, 0);
+        colIterator.setLayoutArrays(offsets, spans, targetSpan);
+        CSS.calculateTiledLayout(colIterator, targetSpan);
+!!!11810562.java!!!	calculateColumnRequirements(in axis : int) : void
+        // clean columnRequirements
+        for (SizeRequirements req : columnRequirements) {
+            req.minimum = 0;
+            req.preferred = 0;
+            req.maximum = Integer.MAX_VALUE;
+        }
+        Container host = getContainer();
+        if (host != null) {
+            if (host instanceof JTextComponent) {
+                skipComments = !((JTextComponent)host).isEditable();
+            } else {
+                skipComments = true;
+            }
+        }
+        // pass 1 - single column cells
+        boolean hasMultiColumn = false;
+        int nrows = getRowCount();
+        for (int i = 0; i < nrows; i++) {
+            RowView row = getRow(i);
+            int col = 0;
+            int ncells = row.getViewCount();
+            for (int cell = 0; cell < ncells; cell++) {
+                View cv = row.getView(cell);
+                if (skipComments && !(cv instanceof CellView)) {
+                    continue;
+                }
+                for (; row.isFilled(col); col++); // advance to a free column
+                int rowSpan = getRowsOccupied(cv);
+                int colSpan = getColumnsOccupied(cv);
+                if (colSpan == 1) {
+                    checkSingleColumnCell(axis, col, cv);
+                } else {
+                    hasMultiColumn = true;
+                    col += colSpan - 1;
+                }
+                col++;
+            }
+        }
+
+        // pass 2 - multi-column cells
+        if (hasMultiColumn) {
+            for (int i = 0; i < nrows; i++) {
+                RowView row = getRow(i);
+                int col = 0;
+                int ncells = row.getViewCount();
+                for (int cell = 0; cell < ncells; cell++) {
+                    View cv = row.getView(cell);
+                    if (skipComments && !(cv instanceof CellView)) {
+                        continue;
+                    }
+                    for (; row.isFilled(col); col++); // advance to a free column
+                    int colSpan = getColumnsOccupied(cv);
+                    if (colSpan > 1) {
+                        checkMultiColumnCell(axis, col, colSpan, cv);
+                        col += colSpan - 1;
+                    }
+                    col++;
+                }
+            }
+        }
+!!!11810690.java!!!	checkSingleColumnCell(in axis : int, in col : int, inout v : View) : void
+        SizeRequirements req = columnRequirements[col];
+        req.minimum = Math.max((int) v.getMinimumSpan(axis), req.minimum);
+        req.preferred = Math.max((int) v.getPreferredSpan(axis), req.preferred);
+!!!11810818.java!!!	checkMultiColumnCell(in axis : int, in col : int, in ncols : int, inout v : View) : void
+        // calculate the totals
+        long min = 0;
+        long pref = 0;
+        long max = 0;
+        for (int i = 0; i < ncols; i++) {
+            SizeRequirements req = columnRequirements[col + i];
+            min += req.minimum;
+            pref += req.preferred;
+            max += req.maximum;
+        }
+
+        // check if the minimum size needs adjustment.
+        int cmin = (int) v.getMinimumSpan(axis);
+        if (cmin > min) {
+            /*
+             * the columns that this cell spans need adjustment to fit
+             * this table cell.... calculate the adjustments.
+             */
+            SizeRequirements[] reqs = new SizeRequirements[ncols];
+            for (int i = 0; i < ncols; i++) {
+                reqs[i] = columnRequirements[col + i];
+            }
+            int[] spans = new int[ncols];
+            int[] offsets = new int[ncols];
+            SizeRequirements.calculateTiledPositions(cmin, null, reqs,
+                                                     offsets, spans);
+            // apply the adjustments
+            for (int i = 0; i < ncols; i++) {
+                SizeRequirements req = reqs[i];
+                req.minimum = Math.max(spans[i], req.minimum);
+                req.preferred = Math.max(req.minimum, req.preferred);
+                req.maximum = Math.max(req.preferred, req.maximum);
+            }
+        }
+
+        // check if the preferred size needs adjustment.
+        int cpref = (int) v.getPreferredSpan(axis);
+        if (cpref > pref) {
+            /*
+             * the columns that this cell spans need adjustment to fit
+             * this table cell.... calculate the adjustments.
+             */
+            SizeRequirements[] reqs = new SizeRequirements[ncols];
+            for (int i = 0; i < ncols; i++) {
+                reqs[i] = columnRequirements[col + i];
+            }
+            int[] spans = new int[ncols];
+            int[] offsets = new int[ncols];
+            SizeRequirements.calculateTiledPositions(cpref, null, reqs,
+                                                     offsets, spans);
+            // apply the adjustments
+            for (int i = 0; i < ncols; i++) {
+                SizeRequirements req = reqs[i];
+                req.preferred = Math.max(spans[i], req.preferred);
+                req.maximum = Math.max(req.preferred, req.maximum);
+            }
+        }
+
+!!!11810946.java!!!	calculateMinorAxisRequirements(in axis : int, inout r : SizeRequirements) : SizeRequirements
+        updateGrid();
+
+        // calculate column requirements for each column
+        calculateColumnRequirements(axis);
+
+
+        // the requirements are the sum of the columns.
+        if (r == null) {
+            r = new SizeRequirements();
+        }
+        long min = 0;
+        long pref = 0;
+        int n = columnRequirements.length;
+        for (int i = 0; i < n; i++) {
+            SizeRequirements req = columnRequirements[i];
+            min += req.minimum;
+            pref += req.preferred;
+        }
+        int adjust = (n + 1) * cellSpacing + 2 * borderWidth;
+        min += adjust;
+        pref += adjust;
+        r.minimum = (int) min;
+        r.preferred = (int) pref;
+        r.maximum = (int) pref;
+
+
+        AttributeSet attr = getAttributes();
+        CSS.LengthValue cssWidth = (CSS.LengthValue)attr.getAttribute(
+                                                    CSS.Attribute.WIDTH);
+
+        if (BlockView.spanSetFromAttributes(axis, r, cssWidth, null)) {
+            if (r.minimum < (int)min) {
+                // The user has requested a smaller size than is needed to
+                // show the table, override it.
+                r.maximum = r.minimum = r.preferred = (int) min;
+            }
+        }
+        totalColumnRequirements.minimum = r.minimum;
+        totalColumnRequirements.preferred = r.preferred;
+        totalColumnRequirements.maximum = r.maximum;
+
+        // set the alignment
+        Object o = attr.getAttribute(CSS.Attribute.TEXT_ALIGN);
+        if (o != null) {
+            // set horizontal alignment
+            String ta = o.toString();
+            if (ta.equals("left")) {
+                r.alignment = 0;
+            } else if (ta.equals("center")) {
+                r.alignment = 0.5f;
+            } else if (ta.equals("right")) {
+                r.alignment = 1;
+            } else {
+                r.alignment = 0;
+            }
+        } else {
+            r.alignment = 0;
+        }
+
+        return r;
+!!!11811074.java!!!	calculateMajorAxisRequirements(in axis : int, inout r : SizeRequirements) : SizeRequirements
+        updateInsets();
+        rowIterator.updateAdjustments();
+        r = CSS.calculateTiledRequirements(rowIterator, r);
+        r.maximum = r.preferred;
+        return r;
+!!!11811202.java!!!	layoutMinorAxis(in targetSpan : int, in axis : int, inout offsets : int [[]], inout spans : int [[]]) : void
+        // make grid is properly represented
+        updateGrid();
+
+        // all of the row layouts are invalid, so mark them that way
+        int n = getRowCount();
+        for (int i = 0; i < n; i++) {
+            RowView row = getRow(i);
+            row.layoutChanged(axis);
+        }
+
+        // calculate column spans
+        layoutColumns(targetSpan, columnOffsets, columnSpans, columnRequirements);
+
+        // continue normal layout
+        super.layoutMinorAxis(targetSpan, axis, offsets, spans);
+!!!11811330.java!!!	layoutMajorAxis(in targetSpan : int, in axis : int, inout offsets : int [[]], inout spans : int [[]]) : void
+        rowIterator.setLayoutArrays(offsets, spans);
+        CSS.calculateTiledLayout(rowIterator, targetSpan);
+
+        if (captionIndex != -1) {
+            // place the caption
+            View caption = getView(captionIndex);
+            int h = (int) caption.getPreferredSpan(Y_AXIS);
+            spans[captionIndex] = h;
+            short boxBottom = (short) painter.getInset(BOTTOM, this);
+            if (boxBottom != getBottomInset()) {
+                offsets[captionIndex] = targetSpan + boxBottom;
+            } else {
+                offsets[captionIndex] = - getTopInset();
+            }
+        }
+!!!11811458.java!!!	getViewAtPosition(in pos : int, inout a : Rectangle) : View
+        int n = getViewCount();
+        for (int i = 0; i < n; i++) {
+            View v = getView(i);
+            int p0 = v.getStartOffset();
+            int p1 = v.getEndOffset();
+            if ((pos >= p0) && (pos < p1)) {
+                // it's in this view.
+                if (a != null) {
+                    childAllocation(i, a);
+                }
+                return v;
+            }
+        }
+        if (pos == getEndOffset()) {
+            View v = getView(n - 1);
+            if (a != null) {
+                this.childAllocation(n - 1, a);
+            }
+            return v;
+        }
+        return null;
+!!!11811586.java!!!	getAttributes() : AttributeSet
+        if (attr == null) {
+            StyleSheet sheet = getStyleSheet();
+            attr = sheet.getViewAttributes(this);
+        }
+        return attr;
+!!!11811714.java!!!	paint(inout g : Graphics, inout allocation : Shape) : void
+        // paint the border
+        Rectangle a = allocation.getBounds();
+        setSize(a.width, a.height);
+        if (captionIndex != -1) {
+            // adjust the border for the caption
+            short top = (short) painter.getInset(TOP, this);
+            short bottom = (short) painter.getInset(BOTTOM, this);
+            if (top != getTopInset()) {
+                int h = getTopInset() - top;
+                a.y += h;
+                a.height -= h;
+            } else {
+                a.height -= getBottomInset() - bottom;
+            }
+        }
+        painter.paint(g, a.x, a.y, a.width, a.height, this);
+        // paint interior
+        int n = getViewCount();
+        for (int i = 0; i < n; i++) {
+            View v = getView(i);
+            v.paint(g, getChildAllocation(i, allocation));
+        }
+        //super.paint(g, a);
+!!!11811842.java!!!	setParent(inout parent : View) : void
+        super.setParent(parent);
+        if (parent != null) {
+            setPropertiesFromAttributes();
+        }
+!!!11811970.java!!!	getViewFactory() : ViewFactory
+        return this;
+!!!11812098.java!!!	insertUpdate(inout e : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        super.insertUpdate(e, a, this);
+!!!11812226.java!!!	removeUpdate(inout e : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        super.removeUpdate(e, a, this);
+!!!11812354.java!!!	changedUpdate(inout e : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        super.changedUpdate(e, a, this);
+!!!11812482.java!!!	forwardUpdate(inout ec : DocumentEvent::ElementChange, inout e : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        super.forwardUpdate(ec, e, a, f);
+        // A change in any of the table cells usually effects the whole table,
+        // so redraw it all!
+        if (a != null) {
+            Component c = getContainer();
+            if (c != null) {
+                Rectangle alloc = (a instanceof Rectangle) ? (Rectangle)a :
+                                   a.getBounds();
+                c.repaint(alloc.x, alloc.y, alloc.width, alloc.height);
+            }
+        }
+!!!11812610.java!!!	replace(in offset : int, in length : int, inout views : View [[]]) : void
+        super.replace(offset, length, views);
+        invalidateGrid();
+!!!11812738.java!!!	create(inout elem : Element) : View
+        Object o = elem.getAttributes().getAttribute(StyleConstants.NameAttribute);
+        if (o instanceof HTML.Tag) {
+            HTML.Tag kind = (HTML.Tag) o;
+            if (kind == HTML.Tag.TR) {
+                return createTableRow(elem);
+            } else if ((kind == HTML.Tag.TD) || (kind == HTML.Tag.TH)) {
+                return new CellView(elem);
+            } else if (kind == HTML.Tag.CAPTION) {
+                return new javax.swing.text.html.ParagraphView(elem);
+            }
+        }
+        // default is to delegate to the normal factory
+        View p = getParent();
+        if (p != null) {
+            ViewFactory f = p.getViewFactory();
+            if (f != null) {
+                return f.create(elem);
+            }
+        }
+        return null;

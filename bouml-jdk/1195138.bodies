@@ -1,0 +1,698 @@
+class Monitor
+!!!9842178.java!!!	preRegister(inout server : MBeanServer, inout name : ObjectName) : ObjectName
+
+        MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                "preRegister(MBeanServer, ObjectName)",
+                "initialize the reference on the MBean server");
+
+        this.server = server;
+        return name;
+!!!9842434.java!!!	preDeregister() : void
+
+        MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                "preDeregister()", "stop the monitor");
+
+        // Stop the Monitor.
+        //
+        stop();
+!!!9842946.java!!!	getObservedObject() : ObjectName
+        if (observedObjects.isEmpty()) {
+            return null;
+        } else {
+            return observedObjects.get(0).getObservedObject();
+        }
+!!!9843074.java!!!	setObservedObject(inout object : ObjectName) : void
+        if (object == null)
+            throw new IllegalArgumentException("Null observed object");
+        if (observedObjects.size() == 1 && containsObservedObject(object))
+            return;
+        observedObjects.clear();
+        addObservedObject(object);
+!!!9843202.java!!!	addObservedObject(inout object : ObjectName) : void
+
+        if (object == null) {
+            throw new IllegalArgumentException("Null observed object");
+        }
+
+        // Check that the specified object is not already contained.
+        //
+        if (containsObservedObject(object))
+            return;
+
+        // Add the specified object in the list.
+        //
+        ObservedObject o = createObservedObject(object);
+        o.setAlreadyNotified(RESET_FLAGS_ALREADY_NOTIFIED);
+        o.setDerivedGauge(INTEGER_ZERO);
+        o.setDerivedGaugeTimeStamp(System.currentTimeMillis());
+        observedObjects.add(o);
+
+        // Update legacy protected stuff.
+        //
+        createAlreadyNotified();
+!!!9843330.java!!!	removeObservedObject(inout object : ObjectName) : void
+        // Check for null object.
+        //
+        if (object == null)
+            return;
+
+        final ObservedObject o = getObservedObject(object);
+        if (o != null) {
+            // Remove the specified object from the list.
+            //
+            observedObjects.remove(o);
+            // Update legacy protected stuff.
+            //
+            createAlreadyNotified();
+        }
+!!!9843458.java!!!	containsObservedObject(inout object : ObjectName) : boolean
+        return getObservedObject(object) != null;
+!!!9843586.java!!!	getObservedObjects() : ObjectName
+        ObjectName[] names = new ObjectName[observedObjects.size()];
+        for (int i = 0; i < names.length; i++)
+            names[i] = observedObjects.get(i).getObservedObject();
+        return names;
+!!!9843714.java!!!	getObservedAttribute() : String
+        return observedAttribute;
+!!!9843842.java!!!	setObservedAttribute(inout attribute : String) : void
+
+        if (attribute == null) {
+            throw new IllegalArgumentException("Null observed attribute");
+        }
+
+        // Update alreadyNotified array.
+        //
+        synchronized (this) {
+            if (observedAttribute != null &&
+                observedAttribute.equals(attribute))
+                return;
+            observedAttribute = attribute;
+
+            // Reset the complex type attribute information
+            // such that it is recalculated again.
+            //
+            cleanupIsComplexTypeAttribute();
+
+            int index = 0;
+            for (ObservedObject o : observedObjects) {
+                resetAlreadyNotified(o, index++,
+                                     OBSERVED_ATTRIBUTE_ERROR_NOTIFIED |
+                                     OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED);
+            }
+        }
+!!!9843970.java!!!	getGranularityPeriod() : long
+        return granularityPeriod;
+!!!9844098.java!!!	setGranularityPeriod(in period : long) : void
+
+        if (period <= 0) {
+            throw new IllegalArgumentException("Nonpositive granularity " +
+                                               "period");
+        }
+
+        if (granularityPeriod == period)
+            return;
+        granularityPeriod = period;
+
+        // Reschedule the scheduler task if the monitor is active.
+        //
+        if (isActive()) {
+            cleanupFutures();
+            schedulerFuture = scheduler.schedule(schedulerTask,
+                                                 period,
+                                                 TimeUnit.MILLISECONDS);
+        }
+!!!9844226.java!!!	isActive() : boolean
+        return isActive;
+!!!9844354.java!!!	doStart() : void
+            MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                "doStart()", "start the monitor");
+
+        synchronized (this) {
+            if (isActive()) {
+                MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                        "doStart()", "the monitor is already active");
+                return;
+            }
+
+            isActive = true;
+
+            // Reset the complex type attribute information
+            // such that it is recalculated again.
+            //
+            cleanupIsComplexTypeAttribute();
+
+            // Cache the AccessControlContext of the Monitor.start() caller.
+            // The monitor tasks will be executed within this context.
+            //
+            acc = AccessController.getContext();
+
+            // Start the scheduler.
+            //
+            cleanupFutures();
+            schedulerTask.setMonitorTask(new MonitorTask());
+            schedulerFuture = scheduler.schedule(schedulerTask,
+                                                 getGranularityPeriod(),
+                                                 TimeUnit.MILLISECONDS);
+        }
+!!!9844482.java!!!	doStop() : void
+        MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                "doStop()", "stop the monitor");
+
+        synchronized (this) {
+            if (!isActive()) {
+                MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                        "doStop()", "the monitor is not active");
+                return;
+            }
+
+            isActive = false;
+
+            // Cancel the scheduler task associated with the
+            // scheduler and its associated monitor task.
+            //
+            cleanupFutures();
+
+            // Reset the AccessControlContext.
+            //
+            acc = noPermissionsACC;
+
+            // Reset the complex type attribute information
+            // such that it is recalculated again.
+            //
+            cleanupIsComplexTypeAttribute();
+        }
+!!!9844610.java!!!	getDerivedGauge(inout object : ObjectName) : Object
+        final ObservedObject o = getObservedObject(object);
+        return o == null ? null : o.getDerivedGauge();
+!!!9844738.java!!!	getDerivedGaugeTimeStamp(inout object : ObjectName) : long
+        final ObservedObject o = getObservedObject(object);
+        return o == null ? 0 : o.getDerivedGaugeTimeStamp();
+!!!9844866.java!!!	getAttribute(inout mbsc : MBeanServerConnection, inout object : ObjectName, inout attribute : String) : Object
+        // Check for "ObservedAttribute" replacement.
+        // This could happen if a thread A called setObservedAttribute()
+        // while other thread B was in the middle of the monitor() method
+        // and received the old observed attribute value.
+        //
+        final boolean lookupMBeanInfo;
+        synchronized (this) {
+            if (!isActive())
+                throw new IllegalArgumentException(
+                    "The monitor has been stopped");
+            if (!attribute.equals(getObservedAttribute()))
+                throw new IllegalArgumentException(
+                    "The observed attribute has been changed");
+            lookupMBeanInfo =
+                (firstAttribute == null && attribute.indexOf('.') != -1);
+        }
+
+        // Look up MBeanInfo if needed
+        //
+        final MBeanInfo mbi;
+        if (lookupMBeanInfo) {
+            try {
+                mbi = mbsc.getMBeanInfo(object);
+            } catch (IntrospectionException e) {
+                throw new IllegalArgumentException(e);
+            }
+        } else {
+            mbi = null;
+        }
+
+        // Check for complex type attribute
+        //
+        final String fa;
+        synchronized (this) {
+            if (!isActive())
+                throw new IllegalArgumentException(
+                    "The monitor has been stopped");
+            if (!attribute.equals(getObservedAttribute()))
+                throw new IllegalArgumentException(
+                    "The observed attribute has been changed");
+            if (firstAttribute == null) {
+                if (attribute.indexOf('.') != -1) {
+                    MBeanAttributeInfo mbaiArray[] = mbi.getAttributes();
+                    for (MBeanAttributeInfo mbai : mbaiArray) {
+                        if (attribute.equals(mbai.getName())) {
+                            firstAttribute = attribute;
+                            break;
+                        }
+                    }
+                    if (firstAttribute == null) {
+                        String tokens[] = attribute.split("\\.", -1);
+                        firstAttribute = tokens[0];
+                        for (int i = 1; i < tokens.length; i++)
+                            remainingAttributes.add(tokens[i]);
+                        isComplexTypeAttribute = true;
+                    }
+                } else {
+                    firstAttribute = attribute;
+                }
+            }
+            fa = firstAttribute;
+        }
+        return mbsc.getAttribute(object, fa);
+!!!9844994.java!!!	getComparableFromAttribute(inout object : ObjectName, inout attribute : String, inout value : Object) : Comparable
+        if (isComplexTypeAttribute) {
+            Object v = value;
+            for (String attr : remainingAttributes)
+                v = Introspector.elementFromComplex(v, attr);
+            return (Comparable<?>) v;
+        } else {
+            return (Comparable<?>) value;
+        }
+!!!9845122.java!!!	isComparableTypeValid(inout object : ObjectName, inout attribute : String, inout value : Comparable) : boolean
+        return true;
+!!!9845250.java!!!	buildErrorNotification(inout object : ObjectName, inout attribute : String, inout value : Comparable) : String
+        return null;
+!!!9845506.java!!!	getDerivedGaugeFromComparable(inout object : ObjectName, inout attribute : String, inout value : Comparable) : Comparable
+        return (Comparable<?>) value;
+!!!9845634.java!!!	buildAlarmNotification(inout object : ObjectName, inout attribute : String, inout value : Comparable) : MonitorNotification
+        return null;
+!!!9845762.java!!!	isThresholdTypeValid(inout object : ObjectName, inout attribute : String, inout value : Comparable) : boolean
+        return true;
+!!!9845890.java!!!	classForType(inout type : Monitor::NumericalType) : Class
+        switch (type) {
+            case BYTE:
+                return Byte.class;
+            case SHORT:
+                return Short.class;
+            case INTEGER:
+                return Integer.class;
+            case LONG:
+                return Long.class;
+            case FLOAT:
+                return Float.class;
+            case DOUBLE:
+                return Double.class;
+            default:
+                throw new IllegalArgumentException(
+                    "Unsupported numerical type");
+        }
+!!!9846018.java!!!	isValidForType(inout value : Object, inout c : Class) : boolean
+        return ((value == INTEGER_ZERO) || c.isInstance(value));
+!!!9846146.java!!!	getObservedObject(inout object : ObjectName) : Monitor::ObservedObject
+        for (ObservedObject o : observedObjects)
+            if (o.getObservedObject().equals(object))
+                return o;
+        return null;
+!!!9846274.java!!!	createObservedObject(inout object : ObjectName) : Monitor::ObservedObject
+        return new ObservedObject(object);
+!!!9846402.java!!!	createAlreadyNotified() : void
+        // Update elementCount.
+        //
+        elementCount = observedObjects.size();
+
+        // Update arrays.
+        //
+        alreadyNotifieds = new int[elementCount];
+        for (int i = 0; i < elementCount; i++) {
+            alreadyNotifieds[i] = observedObjects.get(i).getAlreadyNotified();
+        }
+        updateDeprecatedAlreadyNotified();
+!!!9846530.java!!!	updateDeprecatedAlreadyNotified() : void
+        if (elementCount > 0)
+            alreadyNotified = alreadyNotifieds[0];
+        else
+            alreadyNotified = 0;
+!!!9846658.java!!!	updateAlreadyNotified(inout o : Monitor::ObservedObject, in index : int) : void
+        alreadyNotifieds[index] = o.getAlreadyNotified();
+        if (index == 0)
+            updateDeprecatedAlreadyNotified();
+!!!9846786.java!!!	isAlreadyNotified(inout o : Monitor::ObservedObject, in mask : int) : boolean
+        return ((o.getAlreadyNotified() & mask) != 0);
+!!!9846914.java!!!	setAlreadyNotified(inout o : Monitor::ObservedObject, in index : int, in mask : int, inout an : int [[]]) : void
+        final int i = computeAlreadyNotifiedIndex(o, index, an);
+        if (i == -1)
+            return;
+        o.setAlreadyNotified(o.getAlreadyNotified() | mask);
+        updateAlreadyNotified(o, i);
+!!!9847042.java!!!	resetAlreadyNotified(inout o : Monitor::ObservedObject, in index : int, in mask : int) : void
+        o.setAlreadyNotified(o.getAlreadyNotified() & ~mask);
+        updateAlreadyNotified(o, index);
+!!!9847170.java!!!	resetAllAlreadyNotified(inout o : Monitor::ObservedObject, in index : int, inout an : int [[]]) : void
+        final int i = computeAlreadyNotifiedIndex(o, index, an);
+        if (i == -1)
+            return;
+        o.setAlreadyNotified(RESET_FLAGS_ALREADY_NOTIFIED);
+        updateAlreadyNotified(o, index);
+!!!9847298.java!!!	computeAlreadyNotifiedIndex(inout o : Monitor::ObservedObject, in index : int, inout an : int [[]]) : int
+        if (an == alreadyNotifieds) {
+            return index;
+        } else {
+            return observedObjects.indexOf(o);
+        }
+!!!9847426.java!!!	sendNotification(inout type : String, in timeStamp : long, inout msg : String, inout derGauge : Object, inout trigger : Object, inout object : ObjectName, inout onError : boolean) : void
+        if (!isActive())
+            return;
+
+        if (MONITOR_LOGGER.isLoggable(Level.FINER)) {
+            MONITOR_LOGGER.logp(Level.FINER, Monitor.class.getName(),
+                    "sendNotification", "send notification: " +
+                    "\n\tNotification observed object = " + object +
+                    "\n\tNotification observed attribute = " + observedAttribute +
+                    "\n\tNotification derived gauge = " + derGauge);
+        }
+
+        long seqno = sequenceNumber.getAndIncrement();
+
+        MonitorNotification mn =
+            new MonitorNotification(type,
+                                    this,
+                                    seqno,
+                                    timeStamp,
+                                    msg,
+                                    object,
+                                    observedAttribute,
+                                    derGauge,
+                                    trigger);
+        if (onError)
+            onErrorNotification(mn);
+        sendNotification(mn);
+!!!9847554.java!!!	monitor(inout o : Monitor::ObservedObject, in index : int, inout an : int [[]]) : void
+
+        String attribute;
+        String notifType = null;
+        String msg = null;
+        Object derGauge = null;
+        Object trigger = null;
+        ObjectName object;
+        Comparable<?> value = null;
+        MonitorNotification alarm = null;
+
+        if (!isActive())
+            return;
+
+        // Check that neither the observed object nor the
+        // observed attribute are null.  If the observed
+        // object or observed attribute is null, this means
+        // that the monitor started before a complete
+        // initialization and nothing is done.
+        //
+        synchronized (this) {
+            object = o.getObservedObject();
+            attribute = getObservedAttribute();
+            if (object == null || attribute == null) {
+                return;
+            }
+        }
+
+        // Check that the observed object is registered in the
+        // MBean server and that the observed attribute
+        // belongs to the observed object.
+        //
+        Object attributeValue = null;
+        try {
+            attributeValue = getAttribute(server, object, attribute);
+            if (attributeValue == null)
+                if (isAlreadyNotified(
+                        o, OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED))
+                    return;
+                else {
+                    notifType = OBSERVED_ATTRIBUTE_TYPE_ERROR;
+                    setAlreadyNotified(
+                        o, index, OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED, an);
+                    msg = "The observed attribute value is null.";
+                    MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                            "monitor", msg);
+                }
+        } catch (NullPointerException np_ex) {
+            if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED))
+                return;
+            else {
+                notifType = RUNTIME_ERROR;
+                setAlreadyNotified(o, index, RUNTIME_ERROR_NOTIFIED, an);
+                msg =
+                    "The monitor must be registered in the MBean " +
+                    "server or an MBeanServerConnection must be " +
+                    "explicitly supplied.";
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", np_ex.toString());
+            }
+        } catch (InstanceNotFoundException inf_ex) {
+            if (isAlreadyNotified(o, OBSERVED_OBJECT_ERROR_NOTIFIED))
+                return;
+            else {
+                notifType = OBSERVED_OBJECT_ERROR;
+                setAlreadyNotified(
+                    o, index, OBSERVED_OBJECT_ERROR_NOTIFIED, an);
+                msg =
+                    "The observed object must be accessible in " +
+                    "the MBeanServerConnection.";
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", inf_ex.toString());
+            }
+        } catch (AttributeNotFoundException anf_ex) {
+            if (isAlreadyNotified(o, OBSERVED_ATTRIBUTE_ERROR_NOTIFIED))
+                return;
+            else {
+                notifType = OBSERVED_ATTRIBUTE_ERROR;
+                setAlreadyNotified(
+                    o, index, OBSERVED_ATTRIBUTE_ERROR_NOTIFIED, an);
+                msg =
+                    "The observed attribute must be accessible in " +
+                    "the observed object.";
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", anf_ex.toString());
+            }
+        } catch (MBeanException mb_ex) {
+            if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED))
+                return;
+            else {
+                notifType = RUNTIME_ERROR;
+                setAlreadyNotified(o, index, RUNTIME_ERROR_NOTIFIED, an);
+                msg = mb_ex.getMessage() == null ? "" : mb_ex.getMessage();
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", mb_ex.toString());
+            }
+        } catch (ReflectionException ref_ex) {
+            if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED)) {
+                return;
+            } else {
+                notifType = RUNTIME_ERROR;
+                setAlreadyNotified(o, index, RUNTIME_ERROR_NOTIFIED, an);
+                msg = ref_ex.getMessage() == null ? "" : ref_ex.getMessage();
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", ref_ex.toString());
+            }
+        } catch (IOException io_ex) {
+            if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED))
+                return;
+            else {
+                notifType = RUNTIME_ERROR;
+                setAlreadyNotified(o, index, RUNTIME_ERROR_NOTIFIED, an);
+                msg = io_ex.getMessage() == null ? "" : io_ex.getMessage();
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", io_ex.toString());
+            }
+        } catch (RuntimeException rt_ex) {
+            if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED))
+                return;
+            else {
+                notifType = RUNTIME_ERROR;
+                setAlreadyNotified(o, index, RUNTIME_ERROR_NOTIFIED, an);
+                msg = rt_ex.getMessage() == null ? "" : rt_ex.getMessage();
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", msg);
+                MONITOR_LOGGER.logp(Level.FINEST, Monitor.class.getName(),
+                        "monitor", rt_ex.toString());
+            }
+        }
+
+        synchronized (this) {
+
+            // Check if the monitor has been stopped.
+            //
+            if (!isActive())
+                return;
+
+            // Check if the observed attribute has been changed.
+            //
+            // Avoid race condition where mbs.getAttribute() succeeded but
+            // another thread replaced the observed attribute meanwhile.
+            //
+            // Avoid setting computed derived gauge on erroneous attribute.
+            //
+            if (!attribute.equals(getObservedAttribute()))
+                return;
+
+            // Derive a Comparable object from the ObservedAttribute value
+            // if the type of the ObservedAttribute value is a complex type.
+            //
+            if (msg == null) {
+                try {
+                    value = getComparableFromAttribute(object,
+                                                       attribute,
+                                                       attributeValue);
+                } catch (ClassCastException e) {
+                    if (isAlreadyNotified(
+                            o, OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED))
+                        return;
+                    else {
+                        notifType = OBSERVED_ATTRIBUTE_TYPE_ERROR;
+                        setAlreadyNotified(o, index,
+                            OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED, an);
+                        msg =
+                            "The observed attribute value does not " +
+                            "implement the Comparable interface.";
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", msg);
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", e.toString());
+                    }
+                } catch (AttributeNotFoundException e) {
+                    if (isAlreadyNotified(o, OBSERVED_ATTRIBUTE_ERROR_NOTIFIED))
+                        return;
+                    else {
+                        notifType = OBSERVED_ATTRIBUTE_ERROR;
+                        setAlreadyNotified(
+                            o, index, OBSERVED_ATTRIBUTE_ERROR_NOTIFIED, an);
+                        msg =
+                            "The observed attribute must be accessible in " +
+                            "the observed object.";
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", msg);
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", e.toString());
+                    }
+                } catch (RuntimeException e) {
+                    if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED))
+                        return;
+                    else {
+                        notifType = RUNTIME_ERROR;
+                        setAlreadyNotified(o, index,
+                            RUNTIME_ERROR_NOTIFIED, an);
+                        msg = e.getMessage() == null ? "" : e.getMessage();
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", msg);
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", e.toString());
+                    }
+                }
+            }
+
+            // Check that the observed attribute type is supported by this
+            // monitor.
+            //
+            if (msg == null) {
+                if (!isComparableTypeValid(object, attribute, value)) {
+                    if (isAlreadyNotified(
+                            o, OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED))
+                        return;
+                    else {
+                        notifType = OBSERVED_ATTRIBUTE_TYPE_ERROR;
+                        setAlreadyNotified(o, index,
+                            OBSERVED_ATTRIBUTE_TYPE_ERROR_NOTIFIED, an);
+                        msg = "The observed attribute type is not valid.";
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", msg);
+                    }
+                }
+            }
+
+            // Check that threshold type is supported by this monitor.
+            //
+            if (msg == null) {
+                if (!isThresholdTypeValid(object, attribute, value)) {
+                    if (isAlreadyNotified(o, THRESHOLD_ERROR_NOTIFIED))
+                        return;
+                    else {
+                        notifType = THRESHOLD_ERROR;
+                        setAlreadyNotified(o, index,
+                            THRESHOLD_ERROR_NOTIFIED, an);
+                        msg = "The threshold type is not valid.";
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", msg);
+                    }
+                }
+            }
+
+            // Let someone subclassing the monitor to perform additional
+            // monitor consistency checks and report errors if necessary.
+            //
+            if (msg == null) {
+                msg = buildErrorNotification(object, attribute, value);
+                if (msg != null) {
+                    if (isAlreadyNotified(o, RUNTIME_ERROR_NOTIFIED))
+                        return;
+                    else {
+                        notifType = RUNTIME_ERROR;
+                        setAlreadyNotified(o, index,
+                            RUNTIME_ERROR_NOTIFIED, an);
+                        MONITOR_LOGGER.logp(Level.FINEST,
+                                Monitor.class.getName(), "monitor", msg);
+                    }
+                }
+            }
+
+            // If no errors were found then clear all error flags and
+            // let the monitor decide if a notification must be sent.
+            //
+            if (msg == null) {
+                // Clear all already notified flags.
+                //
+                resetAllAlreadyNotified(o, index, an);
+
+                // Get derived gauge from comparable value.
+                //
+                derGauge = getDerivedGaugeFromComparable(object,
+                                                         attribute,
+                                                         value);
+
+                o.setDerivedGauge(derGauge);
+                o.setDerivedGaugeTimeStamp(System.currentTimeMillis());
+
+                // Check if an alarm must be fired.
+                //
+                alarm = buildAlarmNotification(object,
+                                               attribute,
+                                               (Comparable<?>) derGauge);
+            }
+
+        }
+
+        // Notify monitor errors
+        //
+        if (msg != null)
+            sendNotification(notifType,
+                             System.currentTimeMillis(),
+                             msg,
+                             derGauge,
+                             trigger,
+                             object,
+                             true);
+
+        // Notify monitor alarms
+        //
+        if (alarm != null && alarm.getType() != null)
+            sendNotification(alarm.getType(),
+                             System.currentTimeMillis(),
+                             alarm.getMessage(),
+                             derGauge,
+                             alarm.getTrigger(),
+                             object,
+                             false);
+!!!9847682.java!!!	cleanupFutures() : void
+        if (schedulerFuture != null) {
+            schedulerFuture.cancel(false);
+            schedulerFuture = null;
+        }
+        if (monitorFuture != null) {
+            monitorFuture.cancel(false);
+            monitorFuture = null;
+        }
+!!!9847810.java!!!	cleanupIsComplexTypeAttribute() : void
+        firstAttribute = null;
+        remainingAttributes.clear();
+        isComplexTypeAttribute = false;

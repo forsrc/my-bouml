@@ -1,0 +1,225 @@
+class UNIXProcess
+!!!7140354.java!!!	toCString(inout s : String) : byte
+        if (s == null)
+            return null;
+        byte[] bytes = s.getBytes();
+        byte[] result = new byte[bytes.length + 1];
+        System.arraycopy(bytes, 0,
+                         result, 0,
+                         bytes.length);
+        result[result.length-1] = (byte)0;
+        return result;
+!!!7140738.java!!!	UNIXProcess(in prog : byte [[]], in argBlock : byte [[]], in argc : int, in envBlock : byte [[]], in envc : int, in dir : byte [[]], in fds : int [[]], in redirectErrorStream : boolean)
+
+        pid = forkAndExec(launchMechanism.ordinal() + 1,
+                          helperpath,
+                          prog,
+                          argBlock, argc,
+                          envBlock, envc,
+                          dir,
+                          fds,
+                          redirectErrorStream);
+
+        try {
+            doPrivileged((PrivilegedExceptionAction<Void>) () -> {
+                initStreams(fds);
+                return null;
+            });
+        } catch (PrivilegedActionException ex) {
+            throw (IOException) ex.getException();
+        }
+!!!7140866.java!!!	newFileDescriptor(in fd : int) : FileDescriptor
+        FileDescriptor fileDescriptor = new FileDescriptor();
+        fdAccess.set(fileDescriptor, fd);
+        return fileDescriptor;
+!!!7140994.java!!!	initStreams(inout fds : int [[]]) : void
+        switch (platform) {
+            case LINUX:
+            case BSD:
+                stdin = (fds[0] == -1) ?
+                        ProcessBuilder.NullOutputStream.INSTANCE :
+                        new ProcessPipeOutputStream(fds[0]);
+
+                stdout = (fds[1] == -1) ?
+                         ProcessBuilder.NullInputStream.INSTANCE :
+                         new ProcessPipeInputStream(fds[1]);
+
+                stderr = (fds[2] == -1) ?
+                         ProcessBuilder.NullInputStream.INSTANCE :
+                         new ProcessPipeInputStream(fds[2]);
+
+                processReaperExecutor.execute(() -> {
+                    int exitcode = waitForProcessExit(pid);
+
+                    synchronized (this) {
+                        this.exitcode = exitcode;
+                        this.hasExited = true;
+                        this.notifyAll();
+                    }
+
+                    if (stdout instanceof ProcessPipeInputStream)
+                        ((ProcessPipeInputStream) stdout).processExited();
+
+                    if (stderr instanceof ProcessPipeInputStream)
+                        ((ProcessPipeInputStream) stderr).processExited();
+
+                    if (stdin instanceof ProcessPipeOutputStream)
+                        ((ProcessPipeOutputStream) stdin).processExited();
+                });
+                break;
+
+            case SOLARIS:
+                stdin = (fds[0] == -1) ?
+                        ProcessBuilder.NullOutputStream.INSTANCE :
+                        new BufferedOutputStream(
+                            new FileOutputStream(newFileDescriptor(fds[0])));
+
+                stdout = (fds[1] == -1) ?
+                         ProcessBuilder.NullInputStream.INSTANCE :
+                         new BufferedInputStream(
+                             stdout_inner_stream =
+                                 new DeferredCloseInputStream(
+                                     newFileDescriptor(fds[1])));
+
+                stderr = (fds[2] == -1) ?
+                         ProcessBuilder.NullInputStream.INSTANCE :
+                         new DeferredCloseInputStream(newFileDescriptor(fds[2]));
+
+                /*
+                 * For each subprocess forked a corresponding reaper task
+                 * is submitted.  That task is the only thread which waits
+                 * for the subprocess to terminate and it doesn't hold any
+                 * locks while doing so.  This design allows waitFor() and
+                 * exitStatus() to be safely executed in parallel (and they
+                 * need no native code).
+                 */
+                processReaperExecutor.execute(() -> {
+                    int exitcode = waitForProcessExit(pid);
+
+                    synchronized (this) {
+                        this.exitcode = exitcode;
+                        this.hasExited = true;
+                        this.notifyAll();
+                    }
+                });
+                break;
+
+            case AIX:
+                stdin = (fds[0] == -1) ?
+                        ProcessBuilder.NullOutputStream.INSTANCE :
+                        new ProcessPipeOutputStream(fds[0]);
+
+                stdout = (fds[1] == -1) ?
+                         ProcessBuilder.NullInputStream.INSTANCE :
+                         new DeferredCloseProcessPipeInputStream(fds[1]);
+
+                stderr = (fds[2] == -1) ?
+                         ProcessBuilder.NullInputStream.INSTANCE :
+                         new DeferredCloseProcessPipeInputStream(fds[2]);
+
+                processReaperExecutor.execute(() -> {
+                    int exitcode = waitForProcessExit(pid);
+
+                    synchronized (this) {
+                        this.exitcode = exitcode;
+                        this.hasExited = true;
+                        this.notifyAll();
+                    }
+
+                    if (stdout instanceof DeferredCloseProcessPipeInputStream)
+                        ((DeferredCloseProcessPipeInputStream) stdout).processExited();
+
+                    if (stderr instanceof DeferredCloseProcessPipeInputStream)
+                        ((DeferredCloseProcessPipeInputStream) stderr).processExited();
+
+                    if (stdin instanceof ProcessPipeOutputStream)
+                        ((ProcessPipeOutputStream) stdin).processExited();
+                });
+                break;
+
+            default: throw new AssertionError("Unsupported platform: " + platform);
+        }
+!!!7141122.java!!!	getOutputStream() : OutputStream
+        return stdin;
+!!!7141250.java!!!	getInputStream() : InputStream
+        return stdout;
+!!!7141378.java!!!	getErrorStream() : InputStream
+        return stderr;
+!!!7141506.java!!!	waitFor() : int
+        while (!hasExited) {
+            wait();
+        }
+        return exitcode;
+!!!7141634.java!!!	waitFor(in timeout : long, inout unit : TimeUnit) : boolean
+        if (hasExited) return true;
+        if (timeout <= 0) return false;
+
+        long remainingNanos = unit.toNanos(timeout);
+        long deadline = System.nanoTime() + remainingNanos;
+
+        do {
+            // Round up to next millisecond
+            wait(TimeUnit.NANOSECONDS.toMillis(remainingNanos + 999_999L));
+            if (hasExited) {
+                return true;
+            }
+            remainingNanos = deadline - System.nanoTime();
+        } while (remainingNanos > 0);
+        return hasExited;
+!!!7141762.java!!!	exitValue() : int
+        if (!hasExited) {
+            throw new IllegalThreadStateException("process hasn't exited");
+        }
+        return exitcode;
+!!!7142018.java!!!	destroy(inout force : boolean) : void
+        switch (platform) {
+            case LINUX:
+            case BSD:
+            case AIX:
+                // There is a risk that pid will be recycled, causing us to
+                // kill the wrong process!  So we only terminate processes
+                // that appear to still be running.  Even with this check,
+                // there is an unavoidable race condition here, but the window
+                // is very small, and OSes try hard to not recycle pids too
+                // soon, so this is quite safe.
+                synchronized (this) {
+                    if (!hasExited)
+                        destroyProcess(pid, force);
+                }
+                try { stdin.close();  } catch (IOException ignored) {}
+                try { stdout.close(); } catch (IOException ignored) {}
+                try { stderr.close(); } catch (IOException ignored) {}
+                break;
+
+            case SOLARIS:
+                // There is a risk that pid will be recycled, causing us to
+                // kill the wrong process!  So we only terminate processes
+                // that appear to still be running.  Even with this check,
+                // there is an unavoidable race condition here, but the window
+                // is very small, and OSes try hard to not recycle pids too
+                // soon, so this is quite safe.
+                synchronized (this) {
+                    if (!hasExited)
+                        destroyProcess(pid, force);
+                    try {
+                        stdin.close();
+                        if (stdout_inner_stream != null)
+                            stdout_inner_stream.closeDeferred(stdout);
+                        if (stderr instanceof DeferredCloseInputStream)
+                            ((DeferredCloseInputStream) stderr)
+                                .closeDeferred(stderr);
+                    } catch (IOException e) {
+                        // ignore
+                    }
+                }
+                break;
+
+            default: throw new AssertionError("Unsupported platform: " + platform);
+        }
+!!!7142146.java!!!	destroy() : void
+        destroy(false);
+!!!7142274.java!!!	destroyForcibly() : Process
+        destroy(true);
+        return this;
+!!!7142402.java!!!	isAlive() : boolean
+        return !hasExited;

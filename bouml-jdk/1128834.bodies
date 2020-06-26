@@ -1,0 +1,110 @@
+class AtomicReferenceFieldUpdaterImpl
+!!!9280002.java!!!	AtomicReferenceFieldUpdaterImpl(in tclass : Class, in vclass : Class, in fieldName : String, in caller : Class)
+            final Field field;
+            final Class<?> fieldClass;
+            final int modifiers;
+            try {
+                field = AccessController.doPrivileged(
+                    new PrivilegedExceptionAction<Field>() {
+                        public Field run() throws NoSuchFieldException {
+                            return tclass.getDeclaredField(fieldName);
+                        }
+                    });
+                modifiers = field.getModifiers();
+                sun.reflect.misc.ReflectUtil.ensureMemberAccess(
+                    caller, tclass, null, modifiers);
+                ClassLoader cl = tclass.getClassLoader();
+                ClassLoader ccl = caller.getClassLoader();
+                if ((ccl != null) && (ccl != cl) &&
+                    ((cl == null) || !isAncestor(cl, ccl))) {
+                    sun.reflect.misc.ReflectUtil.checkPackageAccess(tclass);
+                }
+                fieldClass = field.getType();
+            } catch (PrivilegedActionException pae) {
+                throw new RuntimeException(pae.getException());
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+
+            if (vclass != fieldClass)
+                throw new ClassCastException();
+            if (vclass.isPrimitive())
+                throw new IllegalArgumentException("Must be reference type");
+
+            if (!Modifier.isVolatile(modifiers))
+                throw new IllegalArgumentException("Must be volatile type");
+
+            // Access to protected field members is restricted to receivers only
+            // of the accessing class, or one of its subclasses, and the
+            // accessing class must in turn be a subclass (or package sibling)
+            // of the protected member's defining class.
+            // If the updater refers to a protected field of a declaring class
+            // outside the current package, the receiver argument will be
+            // narrowed to the type of the accessing class.
+            this.cclass = (Modifier.isProtected(modifiers) &&
+                           tclass.isAssignableFrom(caller) &&
+                           !isSamePackage(tclass, caller))
+                          ? caller : tclass;
+            this.tclass = tclass;
+            this.vclass = vclass;
+            this.offset = U.objectFieldOffset(field);
+!!!9280130.java!!!	isAncestor(inout first : ClassLoader, inout second : ClassLoader) : boolean
+            ClassLoader acl = first;
+            do {
+                acl = acl.getParent();
+                if (second == acl) {
+                    return true;
+                }
+            } while (acl != null);
+            return false;
+!!!9280258.java!!!	isSamePackage(inout class1 : Class, inout class2 : Class) : boolean
+            return class1.getClassLoader() == class2.getClassLoader()
+                   && Objects.equals(getPackageName(class1), getPackageName(class2));
+!!!9280386.java!!!	getPackageName(inout cls : Class) : String
+            String cn = cls.getName();
+            int dot = cn.lastIndexOf('.');
+            return (dot != -1) ? cn.substring(0, dot) : "";
+!!!9280514.java!!!	accessCheck(inout obj : T) : void
+            if (!cclass.isInstance(obj))
+                throwAccessCheckException(obj);
+!!!9280642.java!!!	throwAccessCheckException(inout obj : T) : void
+            if (cclass == tclass)
+                throw new ClassCastException();
+            else
+                throw new RuntimeException(
+                    new IllegalAccessException(
+                        "Class " +
+                        cclass.getName() +
+                        " can not access a protected member of class " +
+                        tclass.getName() +
+                        " using an instance of " +
+                        obj.getClass().getName()));
+!!!9280770.java!!!	valueCheck(inout v : V) : void
+            if (v != null && !(vclass.isInstance(v)))
+                throwCCE();
+!!!9280898.java!!!	throwCCE() : void
+            throw new ClassCastException();
+!!!9281026.java!!!	compareAndSet(inout obj : T, inout expect : V, inout update : V) : boolean
+            accessCheck(obj);
+            valueCheck(update);
+            return U.compareAndSwapObject(obj, offset, expect, update);
+!!!9281154.java!!!	weakCompareAndSet(inout obj : T, inout expect : V, inout update : V) : boolean
+            // same implementation as strong form for now
+            accessCheck(obj);
+            valueCheck(update);
+            return U.compareAndSwapObject(obj, offset, expect, update);
+!!!9281282.java!!!	set(inout obj : T, inout newValue : V) : void
+            accessCheck(obj);
+            valueCheck(newValue);
+            U.putObjectVolatile(obj, offset, newValue);
+!!!9281410.java!!!	lazySet(inout obj : T, inout newValue : V) : void
+            accessCheck(obj);
+            valueCheck(newValue);
+            U.putOrderedObject(obj, offset, newValue);
+!!!9281538.java!!!	get(inout obj : T) : V
+            accessCheck(obj);
+            return (V)U.getObjectVolatile(obj, offset);
+!!!9281666.java!!!	getAndSet(inout obj : T, inout newValue : V) : V
+            accessCheck(obj);
+            valueCheck(newValue);
+            return (V)U.getAndSetObject(obj, offset, newValue);

@@ -1,0 +1,656 @@
+class JEditorPane
+!!!10579330.java!!!	JEditorPane()
+        super();
+        setFocusCycleRoot(true);
+        setFocusTraversalPolicy(new LayoutFocusTraversalPolicy() {
+                public Component getComponentAfter(Container focusCycleRoot,
+                                                   Component aComponent) {
+                    if (focusCycleRoot != JEditorPane.this ||
+                        (!isEditable() && getComponentCount() > 0)) {
+                        return super.getComponentAfter(focusCycleRoot,
+                                                       aComponent);
+                    } else {
+                        Container rootAncestor = getFocusCycleRootAncestor();
+                        return (rootAncestor != null)
+                            ? rootAncestor.getFocusTraversalPolicy().
+                                  getComponentAfter(rootAncestor,
+                                                    JEditorPane.this)
+                            : null;
+                    }
+                }
+                public Component getComponentBefore(Container focusCycleRoot,
+                                                    Component aComponent) {
+                    if (focusCycleRoot != JEditorPane.this ||
+                        (!isEditable() && getComponentCount() > 0)) {
+                        return super.getComponentBefore(focusCycleRoot,
+                                                        aComponent);
+                    } else {
+                        Container rootAncestor = getFocusCycleRootAncestor();
+                        return (rootAncestor != null)
+                            ? rootAncestor.getFocusTraversalPolicy().
+                                  getComponentBefore(rootAncestor,
+                                                     JEditorPane.this)
+                            : null;
+                    }
+                }
+                public Component getDefaultComponent(Container focusCycleRoot)
+                {
+                    return (focusCycleRoot != JEditorPane.this ||
+                            (!isEditable() && getComponentCount() > 0))
+                        ? super.getDefaultComponent(focusCycleRoot)
+                        : null;
+                }
+                protected boolean accept(Component aComponent) {
+                    return (aComponent != JEditorPane.this)
+                        ? super.accept(aComponent)
+                        : false;
+                }
+            });
+        LookAndFeel.installProperty(this,
+                                    "focusTraversalKeysForward",
+                                    JComponent.
+                                    getManagingFocusForwardTraversalKeys());
+        LookAndFeel.installProperty(this,
+                                    "focusTraversalKeysBackward",
+                                    JComponent.
+                                    getManagingFocusBackwardTraversalKeys());
+!!!10579458.java!!!	JEditorPane(inout initialPage : URL)
+        this();
+        setPage(initialPage);
+!!!10579586.java!!!	JEditorPane(inout url : String)
+        this();
+        setPage(url);
+!!!10579714.java!!!	JEditorPane(inout type : String, inout text : String)
+        this();
+        setContentType(type);
+        setText(text);
+!!!10579842.java!!!	addHyperlinkListener(inout listener : HyperlinkListener) : void
+        listenerList.add(HyperlinkListener.class, listener);
+!!!10579970.java!!!	removeHyperlinkListener(inout listener : HyperlinkListener) : void
+        listenerList.remove(HyperlinkListener.class, listener);
+!!!10580098.java!!!	getHyperlinkListeners() : HyperlinkListener
+        return listenerList.getListeners(javax.swing.event.HyperlinkListener.class);
+!!!10580226.java!!!	fireHyperlinkUpdate(inout e : HyperlinkEvent) : void
+        // Guaranteed to return a non-null array
+        Object[] listeners = listenerList.getListenerList();
+        // Process the listeners last to first, notifying
+        // those that are interested in this event
+        for (int i = listeners.length-2; i>=0; i-=2) {
+            if (listeners[i]==HyperlinkListener.class) {
+                ((HyperlinkListener)listeners[i+1]).hyperlinkUpdate(e);
+            }
+        }
+!!!10580354.java!!!	setPage(inout page : URL) : void
+        if (page == null) {
+            throw new IOException("invalid url");
+        }
+        URL loaded = getPage();
+
+
+        // reset scrollbar
+        if (!page.equals(loaded) && page.getRef() == null) {
+            scrollRectToVisible(new Rectangle(0,0,1,1));
+        }
+        boolean reloaded = false;
+        Object postData = getPostData();
+        if ((loaded == null) || !loaded.sameFile(page) || (postData != null)) {
+            // different url or POST method, load the new content
+
+            int p = getAsynchronousLoadPriority(getDocument());
+            if (p < 0) {
+                // open stream synchronously
+                InputStream in = getStream(page);
+                if (kit != null) {
+                    Document doc = initializeModel(kit, page);
+
+                    // At this point, one could either load up the model with no
+                    // view notifications slowing it down (i.e. best synchronous
+                    // behavior) or set the model and start to feed it on a separate
+                    // thread (best asynchronous behavior).
+                    p = getAsynchronousLoadPriority(doc);
+                    if (p >= 0) {
+                        // load asynchronously
+                        setDocument(doc);
+                        synchronized(this) {
+                            pageLoader = new PageLoader(doc, in, loaded, page);
+                            pageLoader.execute();
+                        }
+                        return;
+                    }
+                    read(in, doc);
+                    setDocument(doc);
+                    reloaded = true;
+                }
+            } else {
+                // we may need to cancel background loading
+                if (pageLoader != null) {
+                    pageLoader.cancel(true);
+                }
+
+                // Do everything in a background thread.
+                // Model initialization is deferred to that thread, too.
+                pageLoader = new PageLoader(null, null, loaded, page);
+                pageLoader.execute();
+                return;
+            }
+        }
+        final String reference = page.getRef();
+        if (reference != null) {
+            if (!reloaded) {
+                scrollToReference(reference);
+            }
+            else {
+                // Have to scroll after painted.
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        scrollToReference(reference);
+                    }
+                });
+            }
+            getDocument().putProperty(Document.StreamDescriptionProperty, page);
+        }
+        firePropertyChange("page", loaded, page);
+!!!10580482.java!!!	initializeModel(inout kit : EditorKit, inout page : URL) : Document
+        Document doc = kit.createDefaultDocument();
+        if (pageProperties != null) {
+            // transfer properties discovered in stream to the
+            // document property collection.
+            for (Enumeration<String> e = pageProperties.keys(); e.hasMoreElements() ;) {
+                String key = e.nextElement();
+                doc.putProperty(key, pageProperties.get(key));
+            }
+            pageProperties.clear();
+        }
+        if (doc.getProperty(Document.StreamDescriptionProperty) == null) {
+            doc.putProperty(Document.StreamDescriptionProperty, page);
+        }
+        return doc;
+!!!10580610.java!!!	getAsynchronousLoadPriority(inout doc : Document) : int
+        return (doc instanceof AbstractDocument ?
+            ((AbstractDocument) doc).getAsynchronousLoadPriority() : -1);
+!!!10580738.java!!!	read(inout in : InputStream, inout desc : Object) : void
+
+        if (desc instanceof HTMLDocument &&
+            kit instanceof HTMLEditorKit) {
+            HTMLDocument hdoc = (HTMLDocument) desc;
+            setDocument(hdoc);
+            read(in, hdoc);
+        } else {
+            String charset = (String) getClientProperty("charset");
+            Reader r = (charset != null) ? new InputStreamReader(in, charset) :
+                new InputStreamReader(in);
+            super.read(r, desc);
+        }
+!!!10580866.java!!!	read(inout in : InputStream, inout doc : Document) : void
+        if (! Boolean.TRUE.equals(doc.getProperty("IgnoreCharsetDirective"))) {
+            final int READ_LIMIT = 1024 * 10;
+            in = new BufferedInputStream(in, READ_LIMIT);
+            in.mark(READ_LIMIT);
+        }
+        try {
+            String charset = (String) getClientProperty("charset");
+            Reader r = (charset != null) ? new InputStreamReader(in, charset) :
+                new InputStreamReader(in);
+            kit.read(r, doc, 0);
+        } catch (BadLocationException e) {
+            throw new IOException(e.getMessage());
+        } catch (ChangedCharSetException changedCharSetException) {
+            String charSetSpec = changedCharSetException.getCharSetSpec();
+            if (changedCharSetException.keyEqualsCharSet()) {
+                putClientProperty("charset", charSetSpec);
+            } else {
+                setCharsetFromContentTypeParameters(charSetSpec);
+            }
+            try {
+                in.reset();
+            } catch (IOException exception) {
+                //mark was invalidated
+                in.close();
+                URL url = (URL)doc.getProperty(Document.StreamDescriptionProperty);
+                if (url != null) {
+                    URLConnection conn = url.openConnection();
+                    in = conn.getInputStream();
+                } else {
+                    //there is nothing we can do to recover stream
+                    throw changedCharSetException;
+                }
+            }
+            try {
+                doc.remove(0, doc.getLength());
+            } catch (BadLocationException e) {}
+            doc.putProperty("IgnoreCharsetDirective", Boolean.valueOf(true));
+            read(in, doc);
+        }
+!!!10584834.java!!!	getStream(inout page : URL) : InputStream
+        final URLConnection conn = page.openConnection();
+        if (conn instanceof HttpURLConnection) {
+            HttpURLConnection hconn = (HttpURLConnection) conn;
+            hconn.setInstanceFollowRedirects(false);
+            Object postData = getPostData();
+            if (postData != null) {
+                handlePostData(hconn, postData);
+            }
+            int response = hconn.getResponseCode();
+            boolean redirect = (response >= 300 && response <= 399);
+
+            /*
+             * In the case of a redirect, we want to actually change the URL
+             * that was input to the new, redirected URL
+             */
+            if (redirect) {
+                String loc = conn.getHeaderField("Location");
+                if (loc.startsWith("http", 0)) {
+                    page = new URL(loc);
+                } else {
+                    page = new URL(page, loc);
+                }
+                return getStream(page);
+            }
+        }
+
+        // Connection properties handler should be forced to run on EDT,
+        // as it instantiates the EditorKit.
+        if (SwingUtilities.isEventDispatchThread()) {
+            handleConnectionProperties(conn);
+        } else {
+            try {
+                SwingUtilities.invokeAndWait(new Runnable() {
+                    public void run() {
+                        handleConnectionProperties(conn);
+                    }
+                });
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            } catch (InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return conn.getInputStream();
+!!!10584962.java!!!	handleConnectionProperties(inout conn : URLConnection) : void
+        if (pageProperties == null) {
+            pageProperties = new Hashtable<String, Object>();
+        }
+        String type = conn.getContentType();
+        if (type != null) {
+            setContentType(type);
+            pageProperties.put("content-type", type);
+        }
+        pageProperties.put(Document.StreamDescriptionProperty, conn.getURL());
+        String enc = conn.getContentEncoding();
+        if (enc != null) {
+            pageProperties.put("content-encoding", enc);
+        }
+!!!10585090.java!!!	getPostData() : Object
+        return getDocument().getProperty(PostDataProperty);
+!!!10585218.java!!!	handlePostData(inout conn : HttpURLConnection, inout postData : Object) : void
+        conn.setDoOutput(true);
+        DataOutputStream os = null;
+        try {
+            conn.setRequestProperty("Content-Type",
+                    "application/x-www-form-urlencoded");
+            os = new DataOutputStream(conn.getOutputStream());
+            os.writeBytes((String) postData);
+        } finally {
+            if (os != null) {
+                os.close();
+            }
+        }
+!!!10585346.java!!!	scrollToReference(inout reference : String) : void
+        Document d = getDocument();
+        if (d instanceof HTMLDocument) {
+            HTMLDocument doc = (HTMLDocument) d;
+            HTMLDocument.Iterator iter = doc.getIterator(HTML.Tag.A);
+            for (; iter.isValid(); iter.next()) {
+                AttributeSet a = iter.getAttributes();
+                String nm = (String) a.getAttribute(HTML.Attribute.NAME);
+                if ((nm != null) && nm.equals(reference)) {
+                    // found a matching reference in the document.
+                    try {
+                        int pos = iter.getStartOffset();
+                        Rectangle r = modelToView(pos);
+                        if (r != null) {
+                            // the view is visible, scroll it to the
+                            // center of the current visible area.
+                            Rectangle vis = getVisibleRect();
+                            //r.y -= (vis.height / 2);
+                            r.height = vis.height;
+                            scrollRectToVisible(r);
+                            setCaretPosition(pos);
+                        }
+                    } catch (BadLocationException ble) {
+                        UIManager.getLookAndFeel().provideErrorFeedback(JEditorPane.this);
+                    }
+                }
+            }
+        }
+!!!10585474.java!!!	getPage() : URL
+        return (URL) getDocument().getProperty(Document.StreamDescriptionProperty);
+!!!10585602.java!!!	setPage(inout url : String) : void
+        if (url == null) {
+            throw new IOException("invalid url");
+        }
+        URL page = new URL(url);
+        setPage(page);
+!!!10585730.java!!!	getUIClassID() : String
+        return uiClassID;
+!!!10585858.java!!!	createDefaultEditorKit() : EditorKit
+        return new PlainEditorKit();
+!!!10585986.java!!!	getEditorKit() : EditorKit
+        if (kit == null) {
+            kit = createDefaultEditorKit();
+            isUserSetEditorKit = false;
+        }
+        return kit;
+!!!10586114.java!!!	getContentType() : String
+        return (kit != null) ? kit.getContentType() : null;
+!!!10586242.java!!!	setContentType(inout type : String) : void
+        // The type could have optional info is part of it,
+        // for example some charset info.  We need to strip that
+        // of and save it.
+        int parm = type.indexOf(";");
+        if (parm > -1) {
+            // Save the paramList.
+            String paramList = type.substring(parm);
+            // update the content type string.
+            type = type.substring(0, parm).trim();
+            if (type.toLowerCase().startsWith("text/")) {
+                setCharsetFromContentTypeParameters(paramList);
+            }
+        }
+        if ((kit == null) || (! type.equals(kit.getContentType()))
+                || !isUserSetEditorKit) {
+            EditorKit k = getEditorKitForContentType(type);
+            if (k != null && k != kit) {
+                setEditorKit(k);
+                isUserSetEditorKit = false;
+            }
+        }
+
+!!!10586370.java!!!	setCharsetFromContentTypeParameters(inout paramlist : String) : void
+        String charset;
+        try {
+            // paramlist is handed to us with a leading ';', strip it.
+            int semi = paramlist.indexOf(';');
+            if (semi > -1 && semi < paramlist.length()-1) {
+                paramlist = paramlist.substring(semi + 1);
+            }
+
+            if (paramlist.length() > 0) {
+                // parse the paramlist into attr-value pairs & get the
+                // charset pair's value
+                HeaderParser hdrParser = new HeaderParser(paramlist);
+                charset = hdrParser.findValue("charset");
+                if (charset != null) {
+                    putClientProperty("charset", charset);
+                }
+            }
+        }
+        catch (IndexOutOfBoundsException e) {
+            // malformed parameter list, use charset we have
+        }
+        catch (NullPointerException e) {
+            // malformed parameter list, use charset we have
+        }
+        catch (Exception e) {
+            // malformed parameter list, use charset we have; but complain
+            System.err.println("JEditorPane.getCharsetFromContentTypeParameters failed on: " + paramlist);
+            e.printStackTrace();
+        }
+!!!10586498.java!!!	setEditorKit(inout kit : EditorKit) : void
+        EditorKit old = this.kit;
+        isUserSetEditorKit = true;
+        if (old != null) {
+            old.deinstall(this);
+        }
+        this.kit = kit;
+        if (this.kit != null) {
+            this.kit.install(this);
+            setDocument(this.kit.createDefaultDocument());
+        }
+        firePropertyChange("editorKit", old, kit);
+!!!10586626.java!!!	getEditorKitForContentType(inout type : String) : EditorKit
+        if (typeHandlers == null) {
+            typeHandlers = new Hashtable<String, EditorKit>(3);
+        }
+        EditorKit k = typeHandlers.get(type);
+        if (k == null) {
+            k = createEditorKitForContentType(type);
+            if (k != null) {
+                setEditorKitForContentType(type, k);
+            }
+        }
+        if (k == null) {
+            k = createDefaultEditorKit();
+        }
+        return k;
+!!!10586754.java!!!	setEditorKitForContentType(inout type : String, inout k : EditorKit) : void
+        if (typeHandlers == null) {
+            typeHandlers = new Hashtable<String, EditorKit>(3);
+        }
+        typeHandlers.put(type, k);
+!!!10586882.java!!!	replaceSelection(inout content : String) : void
+        if (! isEditable()) {
+            UIManager.getLookAndFeel().provideErrorFeedback(JEditorPane.this);
+            return;
+        }
+        EditorKit kit = getEditorKit();
+        if(kit instanceof StyledEditorKit) {
+            try {
+                Document doc = getDocument();
+                Caret caret = getCaret();
+                boolean composedTextSaved = saveComposedText(caret.getDot());
+                int p0 = Math.min(caret.getDot(), caret.getMark());
+                int p1 = Math.max(caret.getDot(), caret.getMark());
+                if (doc instanceof AbstractDocument) {
+                    ((AbstractDocument)doc).replace(p0, p1 - p0, content,
+                              ((StyledEditorKit)kit).getInputAttributes());
+                }
+                else {
+                    if (p0 != p1) {
+                        doc.remove(p0, p1 - p0);
+                    }
+                    if (content != null && content.length() > 0) {
+                        doc.insertString(p0, content, ((StyledEditorKit)kit).
+                                         getInputAttributes());
+                    }
+                }
+                if (composedTextSaved) {
+                    restoreComposedText();
+                }
+            } catch (BadLocationException e) {
+                UIManager.getLookAndFeel().provideErrorFeedback(JEditorPane.this);
+            }
+        }
+        else {
+            super.replaceSelection(content);
+        }
+!!!10587010.java!!!	createEditorKitForContentType(inout type : String) : EditorKit
+        Hashtable<String, EditorKit> kitRegistry = getKitRegisty();
+        EditorKit k = kitRegistry.get(type);
+        if (k == null) {
+            // try to dynamically load the support
+            String classname = getKitTypeRegistry().get(type);
+            ClassLoader loader = getKitLoaderRegistry().get(type);
+            try {
+                Class c;
+                if (loader != null) {
+                    c = loader.loadClass(classname);
+                } else {
+                    // Will only happen if developer has invoked
+                    // registerEditorKitForContentType(type, class, null).
+                    c = Class.forName(classname, true, Thread.currentThread().
+                                      getContextClassLoader());
+                }
+                k = (EditorKit) c.newInstance();
+                kitRegistry.put(type, k);
+            } catch (Throwable e) {
+                k = null;
+            }
+        }
+
+        // create a copy of the prototype or null if there
+        // is no prototype.
+        if (k != null) {
+            return (EditorKit) k.clone();
+        }
+        return null;
+!!!10587138.java!!!	registerEditorKitForContentType(inout type : String, inout classname : String) : void
+        registerEditorKitForContentType(type, classname,Thread.currentThread().
+                                        getContextClassLoader());
+!!!10587266.java!!!	registerEditorKitForContentType(inout type : String, inout classname : String, inout loader : ClassLoader) : void
+        getKitTypeRegistry().put(type, classname);
+        if (loader != null) {
+            getKitLoaderRegistry().put(type, loader);
+        } else {
+            getKitLoaderRegistry().remove(type);
+        }
+        getKitRegisty().remove(type);
+!!!10587394.java!!!	getEditorKitClassNameForContentType(inout type : String) : String
+        return getKitTypeRegistry().get(type);
+!!!10587522.java!!!	getKitTypeRegistry() : Hashtable
+        loadDefaultKitsIfNecessary();
+        return (Hashtable)SwingUtilities.appContextGet(kitTypeRegistryKey);
+!!!10587650.java!!!	getKitLoaderRegistry() : Hashtable
+        loadDefaultKitsIfNecessary();
+        return (Hashtable)SwingUtilities.appContextGet(kitLoaderRegistryKey);
+!!!10587778.java!!!	getKitRegisty() : Hashtable
+        Hashtable ht = (Hashtable)SwingUtilities.appContextGet(kitRegistryKey);
+        if (ht == null) {
+            ht = new Hashtable(3);
+            SwingUtilities.appContextPut(kitRegistryKey, ht);
+        }
+        return ht;
+!!!10587906.java!!!	loadDefaultKitsIfNecessary() : void
+        if (SwingUtilities.appContextGet(kitTypeRegistryKey) == null) {
+            synchronized(defaultEditorKitMap) {
+                if (defaultEditorKitMap.size() == 0) {
+                    defaultEditorKitMap.put("text/plain",
+                                            "javax.swing.JEditorPane$PlainEditorKit");
+                    defaultEditorKitMap.put("text/html",
+                                            "javax.swing.text.html.HTMLEditorKit");
+                    defaultEditorKitMap.put("text/rtf",
+                                            "javax.swing.text.rtf.RTFEditorKit");
+                    defaultEditorKitMap.put("application/rtf",
+                                            "javax.swing.text.rtf.RTFEditorKit");
+                }
+            }
+            Hashtable ht = new Hashtable();
+            SwingUtilities.appContextPut(kitTypeRegistryKey, ht);
+            ht = new Hashtable();
+            SwingUtilities.appContextPut(kitLoaderRegistryKey, ht);
+            for (String key : defaultEditorKitMap.keySet()) {
+                registerEditorKitForContentType(key,defaultEditorKitMap.get(key));
+            }
+
+        }
+!!!10588034.java!!!	getPreferredSize() : Dimension
+        Dimension d = super.getPreferredSize();
+        Container parent = SwingUtilities.getUnwrappedParent(this);
+        if (parent instanceof JViewport) {
+            JViewport port = (JViewport) parent;
+            TextUI ui = getUI();
+            int prefWidth = d.width;
+            int prefHeight = d.height;
+            if (! getScrollableTracksViewportWidth()) {
+                int w = port.getWidth();
+                Dimension min = ui.getMinimumSize(this);
+                if (w != 0 && w < min.width) {
+                    // Only adjust to min if we have a valid size
+                    prefWidth = min.width;
+                }
+            }
+            if (! getScrollableTracksViewportHeight()) {
+                int h = port.getHeight();
+                Dimension min = ui.getMinimumSize(this);
+                if (h != 0 && h < min.height) {
+                    // Only adjust to min if we have a valid size
+                    prefHeight = min.height;
+                }
+            }
+            if (prefWidth != d.width || prefHeight != d.height) {
+                d = new Dimension(prefWidth, prefHeight);
+            }
+        }
+        return d;
+!!!10588162.java!!!	setText(inout t : String) : void
+        try {
+            Document doc = getDocument();
+            doc.remove(0, doc.getLength());
+            if (t == null || t.equals("")) {
+                return;
+            }
+            Reader r = new StringReader(t);
+            EditorKit kit = getEditorKit();
+            kit.read(r, doc, 0);
+        } catch (IOException ioe) {
+            UIManager.getLookAndFeel().provideErrorFeedback(JEditorPane.this);
+        } catch (BadLocationException ble) {
+            UIManager.getLookAndFeel().provideErrorFeedback(JEditorPane.this);
+        }
+!!!10588290.java!!!	getText() : String
+        String txt;
+        try {
+            StringWriter buf = new StringWriter();
+            write(buf);
+            txt = buf.toString();
+        } catch (IOException ioe) {
+            txt = null;
+        }
+        return txt;
+!!!10588418.java!!!	getScrollableTracksViewportWidth() : boolean
+        Container parent = SwingUtilities.getUnwrappedParent(this);
+        if (parent instanceof JViewport) {
+            JViewport port = (JViewport) parent;
+            TextUI ui = getUI();
+            int w = port.getWidth();
+            Dimension min = ui.getMinimumSize(this);
+            Dimension max = ui.getMaximumSize(this);
+            if ((w >= min.width) && (w <= max.width)) {
+                return true;
+            }
+        }
+        return false;
+!!!10588546.java!!!	getScrollableTracksViewportHeight() : boolean
+        Container parent = SwingUtilities.getUnwrappedParent(this);
+        if (parent instanceof JViewport) {
+            JViewport port = (JViewport) parent;
+            TextUI ui = getUI();
+            int h = port.getHeight();
+            Dimension min = ui.getMinimumSize(this);
+            if (h >= min.height) {
+                Dimension max = ui.getMaximumSize(this);
+                if (h <= max.height) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!10588674.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        s.defaultWriteObject();
+        if (getUIClassID().equals(uiClassID)) {
+            byte count = JComponent.getWriteObjCounter(this);
+            JComponent.setWriteObjCounter(this, --count);
+            if (count == 0 && ui != null) {
+                ui.installUI(this);
+            }
+        }
+!!!10588802.java!!!	paramString() : String
+        String kitString = (kit != null ?
+                            kit.toString() : "");
+        String typeHandlersString = (typeHandlers != null ?
+                                     typeHandlers.toString() : "");
+
+        return super.paramString() +
+        ",kit=" + kitString +
+        ",typeHandlers=" + typeHandlersString;
+!!!10588930.java!!!	getAccessibleContext() : AccessibleContext
+        if (getEditorKit() instanceof HTMLEditorKit) {
+            if (accessibleContext == null || accessibleContext.getClass() !=
+                    AccessibleJEditorPaneHTML.class) {
+                accessibleContext = new AccessibleJEditorPaneHTML();
+            }
+        } else if (accessibleContext == null || accessibleContext.getClass() !=
+                       AccessibleJEditorPane.class) {
+            accessibleContext = new AccessibleJEditorPane();
+        }
+        return accessibleContext;

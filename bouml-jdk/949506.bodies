@@ -1,0 +1,270 @@
+class MethodTypeForm
+!!!7290882.java!!!	erasedType() : MethodType
+        return erasedType;
+!!!7291010.java!!!	basicType() : MethodType
+        return basicType;
+!!!7291138.java!!!	assertIsBasicType() : boolean
+        // primitives must be flattened also
+        assert(erasedType == basicType)
+                : "erasedType: " + erasedType + " != basicType: " + basicType;
+        return true;
+!!!7291266.java!!!	cachedMethodHandle(in which : int) : MethodHandle
+        assert(assertIsBasicType());
+        SoftReference<MethodHandle> entry = methodHandles[which];
+        return (entry != null) ? entry.get() : null;
+!!!7291394.java!!!	setCachedMethodHandle(in which : int, inout mh : MethodHandle) : MethodHandle
+        // Simulate a CAS, to avoid racy duplication of results.
+        SoftReference<MethodHandle> entry = methodHandles[which];
+        if (entry != null) {
+            MethodHandle prev = entry.get();
+            if (prev != null) {
+                return prev;
+            }
+        }
+        methodHandles[which] = new SoftReference<>(mh);
+        return mh;
+!!!7291522.java!!!	cachedLambdaForm(in which : int) : LambdaForm
+        assert(assertIsBasicType());
+        SoftReference<LambdaForm> entry = lambdaForms[which];
+        return (entry != null) ? entry.get() : null;
+!!!7291650.java!!!	setCachedLambdaForm(in which : int, inout form : LambdaForm) : LambdaForm
+        // Simulate a CAS, to avoid racy duplication of results.
+        SoftReference<LambdaForm> entry = lambdaForms[which];
+        if (entry != null) {
+            LambdaForm prev = entry.get();
+            if (prev != null) {
+                return prev;
+            }
+        }
+        lambdaForms[which] = new SoftReference<>(form);
+        return form;
+!!!7291778.java!!!	MethodTypeForm(inout erasedType : MethodType)
+        this.erasedType = erasedType;
+
+        Class<?>[] ptypes = erasedType.ptypes();
+        int ptypeCount = ptypes.length;
+        int pslotCount = ptypeCount;            // temp. estimate
+        int rtypeCount = 1;                     // temp. estimate
+        int rslotCount = 1;                     // temp. estimate
+
+        int[] argToSlotTab = null, slotToArgTab = null;
+
+        // Walk the argument types, looking for primitives.
+        int pac = 0, lac = 0, prc = 0, lrc = 0;
+        Class<?>[] epts = ptypes;
+        Class<?>[] bpts = epts;
+        for (int i = 0; i < epts.length; i++) {
+            Class<?> pt = epts[i];
+            if (pt != Object.class) {
+                ++pac;
+                Wrapper w = Wrapper.forPrimitiveType(pt);
+                if (w.isDoubleWord())  ++lac;
+                if (w.isSubwordOrInt() && pt != int.class) {
+                    if (bpts == epts)
+                        bpts = bpts.clone();
+                    bpts[i] = int.class;
+                }
+            }
+        }
+        pslotCount += lac;                  // #slots = #args + #longs
+        Class<?> rt = erasedType.returnType();
+        Class<?> bt = rt;
+        if (rt != Object.class) {
+            ++prc;          // even void.class counts as a prim here
+            Wrapper w = Wrapper.forPrimitiveType(rt);
+            if (w.isDoubleWord())  ++lrc;
+            if (w.isSubwordOrInt() && rt != int.class)
+                bt = int.class;
+            // adjust #slots, #args
+            if (rt == void.class)
+                rtypeCount = rslotCount = 0;
+            else
+                rslotCount += lrc;
+        }
+        if (epts == bpts && bt == rt) {
+            this.basicType = erasedType;
+        } else {
+            this.basicType = MethodType.makeImpl(bt, bpts, true);
+            // fill in rest of data from the basic type:
+            MethodTypeForm that = this.basicType.form();
+            assert(this != that);
+            this.primCounts = that.primCounts;
+            this.argCounts = that.argCounts;
+            this.argToSlotTable = that.argToSlotTable;
+            this.slotToArgTable = that.slotToArgTable;
+            this.methodHandles = null;
+            this.lambdaForms = null;
+            return;
+        }
+        if (lac != 0) {
+            int slot = ptypeCount + lac;
+            slotToArgTab = new int[slot+1];
+            argToSlotTab = new int[1+ptypeCount];
+            argToSlotTab[0] = slot;  // argument "-1" is past end of slots
+            for (int i = 0; i < epts.length; i++) {
+                Class<?> pt = epts[i];
+                Wrapper w = Wrapper.forBasicType(pt);
+                if (w.isDoubleWord())  --slot;
+                --slot;
+                slotToArgTab[slot] = i+1; // "+1" see argSlotToParameter note
+                argToSlotTab[1+i]  = slot;
+            }
+            assert(slot == 0);  // filled the table
+        } else if (pac != 0) {
+            // have primitives but no long primitives; share slot counts with generic
+            assert(ptypeCount == pslotCount);
+            MethodTypeForm that = MethodType.genericMethodType(ptypeCount).form();
+            assert(this != that);
+            slotToArgTab = that.slotToArgTable;
+            argToSlotTab = that.argToSlotTable;
+        } else {
+            int slot = ptypeCount; // first arg is deepest in stack
+            slotToArgTab = new int[slot+1];
+            argToSlotTab = new int[1+ptypeCount];
+            argToSlotTab[0] = slot;  // argument "-1" is past end of slots
+            for (int i = 0; i < ptypeCount; i++) {
+                --slot;
+                slotToArgTab[slot] = i+1; // "+1" see argSlotToParameter note
+                argToSlotTab[1+i]  = slot;
+            }
+        }
+        this.primCounts = pack(lrc, prc, lac, pac);
+        this.argCounts = pack(rslotCount, rtypeCount, pslotCount, ptypeCount);
+        this.argToSlotTable = argToSlotTab;
+        this.slotToArgTable = slotToArgTab;
+
+        if (pslotCount >= 256)  throw newIllegalArgumentException("too many arguments");
+
+        // Initialize caches, but only for basic types
+        assert(basicType == erasedType);
+        this.lambdaForms   = new SoftReference[LF_LIMIT];
+        this.methodHandles = new SoftReference[MH_LIMIT];
+!!!7291906.java!!!	pack(in a : int, in b : int, in c : int, in d : int) : long
+        assert(((a|b|c|d) & ~0xFFFF) == 0);
+        long hw = ((a << 16) | b), lw = ((c << 16) | d);
+        return (hw << 32) | lw;
+!!!7292034.java!!!	unpack(in packed : long, in word : int) : char
+ // word==0 => return a, ==3 => return d
+        assert(word <= 3);
+        return (char)(packed >> ((3-word) * 16));
+!!!7292162.java!!!	parameterCount() : int
+                      // # outgoing values
+        return unpack(argCounts, 3);
+!!!7292290.java!!!	parameterSlotCount() : int
+                  // # outgoing interpreter slots
+        return unpack(argCounts, 2);
+!!!7292418.java!!!	returnCount() : int
+                         // = 0 (V), or 1
+        return unpack(argCounts, 1);
+!!!7292546.java!!!	returnSlotCount() : int
+                     // = 0 (V), 2 (J/D), or 1
+        return unpack(argCounts, 0);
+!!!7292674.java!!!	primitiveParameterCount() : int
+        return unpack(primCounts, 3);
+!!!7292802.java!!!	longPrimitiveParameterCount() : int
+        return unpack(primCounts, 2);
+!!!7292930.java!!!	primitiveReturnCount() : int
+                // = 0 (obj), or 1
+        return unpack(primCounts, 1);
+!!!7293058.java!!!	longPrimitiveReturnCount() : int
+            // = 1 (J/D), or 0
+        return unpack(primCounts, 0);
+!!!7293186.java!!!	hasPrimitives() : boolean
+        return primCounts != 0;
+!!!7293314.java!!!	hasNonVoidPrimitives() : boolean
+        if (primCounts == 0)  return false;
+        if (primitiveParameterCount() != 0)  return true;
+        return (primitiveReturnCount() != 0 && returnCount() != 0);
+!!!7293442.java!!!	hasLongPrimitives() : boolean
+        return (longPrimitiveParameterCount() | longPrimitiveReturnCount()) != 0;
+!!!7293570.java!!!	parameterToArgSlot(in i : int) : int
+        return argToSlotTable[1+i];
+!!!7293698.java!!!	argSlotToParameter(in argSlot : int) : int
+        // Note:  Empty slots are represented by zero in this table.
+        // Valid arguments slots contain incremented entries, so as to be non-zero.
+        // We return -1 the caller to mean an empty slot.
+        return slotToArgTable[argSlot] - 1;
+!!!7293826.java!!!	findForm(inout mt : MethodType) : MethodTypeForm
+        MethodType erased = canonicalize(mt, ERASE, ERASE);
+        if (erased == null) {
+            // It is already erased.  Make a new MethodTypeForm.
+            return new MethodTypeForm(mt);
+        } else {
+            // Share the MethodTypeForm with the erased version.
+            return erased.form();
+        }
+!!!7293954.java!!!	canonicalize(inout mt : MethodType, in howRet : int, in howArgs : int) : MethodType
+        Class<?>[] ptypes = mt.ptypes();
+        Class<?>[] ptc = MethodTypeForm.canonicalizeAll(ptypes, howArgs);
+        Class<?> rtype = mt.returnType();
+        Class<?> rtc = MethodTypeForm.canonicalize(rtype, howRet);
+        if (ptc == null && rtc == null) {
+            // It is already canonical.
+            return null;
+        }
+        // Find the erased version of the method type:
+        if (rtc == null)  rtc = rtype;
+        if (ptc == null)  ptc = ptypes;
+        return MethodType.makeImpl(rtc, ptc, true);
+!!!7294082.java!!!	canonicalize(inout t : Class, in how : int) : Class
+        Class<?> ct;
+        if (t == Object.class) {
+            // no change, ever
+        } else if (!t.isPrimitive()) {
+            switch (how) {
+                case UNWRAP:
+                    ct = Wrapper.asPrimitiveType(t);
+                    if (ct != t)  return ct;
+                    break;
+                case RAW_RETURN:
+                case ERASE:
+                    return Object.class;
+            }
+        } else if (t == void.class) {
+            // no change, usually
+            switch (how) {
+                case RAW_RETURN:
+                    return int.class;
+                case WRAP:
+                    return Void.class;
+            }
+        } else {
+            // non-void primitive
+            switch (how) {
+                case WRAP:
+                    return Wrapper.asWrapperType(t);
+                case INTS:
+                    if (t == int.class || t == long.class)
+                        return null;  // no change
+                    if (t == double.class)
+                        return long.class;
+                    return int.class;
+                case LONGS:
+                    if (t == long.class)
+                        return null;  // no change
+                    return long.class;
+                case RAW_RETURN:
+                    if (t == int.class || t == long.class ||
+                        t == float.class || t == double.class)
+                        return null;  // no change
+                    // everything else returns as an int
+                    return int.class;
+            }
+        }
+        // no change; return null to signify
+        return null;
+!!!7294210.java!!!	canonicalizeAll(inout ts : Class [[]], in how : int) : Class
+        Class<?>[] cs = null;
+        for (int imax = ts.length, i = 0; i < imax; i++) {
+            Class<?> c = canonicalize(ts[i], how);
+            if (c == void.class)
+                c = null;  // a Void parameter was unwrapped to void; ignore
+            if (c != null) {
+                if (cs == null)
+                    cs = ts.clone();
+                cs[i] = c;
+            }
+        }
+        return cs;
+!!!7294338.java!!!	toString() : String
+        return "Form"+erasedType;

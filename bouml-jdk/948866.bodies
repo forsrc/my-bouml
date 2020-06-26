@@ -1,0 +1,159 @@
+class TypeConvertingMethodAdapter
+!!!7181698.java!!!	TypeConvertingMethodAdapter(inout mv : MethodVisitor)
+        super(Opcodes.ASM5, mv);
+!!!7181826.java!!!	initWidening(inout to : Wrapper, in opcode : int, inout  : Wrapper...from) : void
+        for (Wrapper f : from) {
+            wideningOpcodes[f.ordinal()][to.ordinal()] = opcode;
+        }
+!!!7181954.java!!!	hashWrapperName(inout xn : String) : int
+        if (xn.length() < 3) {
+            return 0;
+        }
+        return (3 * xn.charAt(1) + xn.charAt(2)) % 16;
+!!!7182082.java!!!	wrapperOrNullFromDescriptor(inout desc : String) : Wrapper
+        if (!desc.startsWith(WRAPPER_PREFIX)) {
+            // Not a class type (array or method), so not a boxed type
+            // or not in the right package
+            return null;
+        }
+        // Pare it down to the simple class name
+        String cname = desc.substring(WRAPPER_PREFIX.length(), desc.length() - 1);
+        // Hash to a Wrapper
+        Wrapper w = FROM_WRAPPER_NAME[hashWrapperName(cname)];
+        if (w == null || w.wrapperSimpleName().equals(cname)) {
+            return w;
+        } else {
+            return null;
+        }
+!!!7182210.java!!!	wrapperName(inout w : Wrapper) : String
+        return "java/lang/" + w.wrapperSimpleName();
+!!!7182338.java!!!	unboxMethod(inout w : Wrapper) : String
+        return w.primitiveSimpleName() + "Value";
+!!!7182466.java!!!	boxingDescriptor(inout w : Wrapper) : String
+        return String.format("(%s)L%s;", w.basicTypeChar(), wrapperName(w));
+!!!7182594.java!!!	unboxingDescriptor(inout w : Wrapper) : String
+        return "()" + w.basicTypeChar();
+!!!7182722.java!!!	boxIfTypePrimitive(inout t : ProcessBuilder::Redirect::Type) : void
+        Wrapper w = FROM_TYPE_SORT[t.getSort()];
+        if (w != null) {
+            box(w);
+        }
+!!!7182850.java!!!	widen(inout ws : Wrapper, inout wt : Wrapper) : void
+        if (ws != wt) {
+            int opcode = wideningOpcodes[ws.ordinal()][wt.ordinal()];
+            if (opcode != Opcodes.NOP) {
+                visitInsn(opcode);
+            }
+        }
+!!!7182978.java!!!	box(inout w : Wrapper) : void
+        visitMethodInsn(Opcodes.INVOKESTATIC,
+                wrapperName(w),
+                NAME_BOX_METHOD,
+                boxingDescriptor(w), false);
+!!!7183106.java!!!	unbox(inout sname : String, inout wt : Wrapper) : void
+        visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                sname,
+                unboxMethod(wt),
+                unboxingDescriptor(wt), false);
+!!!7183234.java!!!	descriptorToName(inout desc : String) : String
+        int last = desc.length() - 1;
+        if (desc.charAt(0) == 'L' && desc.charAt(last) == ';') {
+            // In descriptor form
+            return desc.substring(1, last);
+        } else {
+            // Already in internal name form
+            return desc;
+        }
+!!!7183362.java!!!	cast(inout ds : String, inout dt : String) : void
+        String ns = descriptorToName(ds);
+        String nt = descriptorToName(dt);
+        if (!nt.equals(ns) && !nt.equals(NAME_OBJECT)) {
+            visitTypeInsn(Opcodes.CHECKCAST, nt);
+        }
+!!!7183490.java!!!	isPrimitive(inout w : Wrapper) : boolean
+        return w != OBJECT;
+!!!7183618.java!!!	toWrapper(inout desc : String) : Wrapper
+        char first = desc.charAt(0);
+        if (first == '[' || first == '(') {
+            first = 'L';
+        }
+        return Wrapper.forBasicType(first);
+!!!7183746.java!!!	convertType(inout arg : Class, inout target : Class, inout functional : Class) : void
+        if (arg.equals(target) && arg.equals(functional)) {
+            return;
+        }
+        if (arg == Void.TYPE || target == Void.TYPE) {
+            return;
+        }
+        if (arg.isPrimitive()) {
+            Wrapper wArg = Wrapper.forPrimitiveType(arg);
+            if (target.isPrimitive()) {
+                // Both primitives: widening
+                widen(wArg, Wrapper.forPrimitiveType(target));
+            } else {
+                // Primitive argument to reference target
+                String dTarget = BytecodeDescriptor.unparse(target);
+                Wrapper wPrimTarget = wrapperOrNullFromDescriptor(dTarget);
+                if (wPrimTarget != null) {
+                    // The target is a boxed primitive type, widen to get there before boxing
+                    widen(wArg, wPrimTarget);
+                    box(wPrimTarget);
+                } else {
+                    // Otherwise, box and cast
+                    box(wArg);
+                    cast(wrapperName(wArg), dTarget);
+                }
+            }
+        } else {
+            String dArg = BytecodeDescriptor.unparse(arg);
+            String dSrc;
+            if (functional.isPrimitive()) {
+                dSrc = dArg;
+            } else {
+                // Cast to convert to possibly more specific type, and generate CCE for invalid arg
+                dSrc = BytecodeDescriptor.unparse(functional);
+                cast(dArg, dSrc);
+            }
+            String dTarget = BytecodeDescriptor.unparse(target);
+            if (target.isPrimitive()) {
+                Wrapper wTarget = toWrapper(dTarget);
+                // Reference argument to primitive target
+                Wrapper wps = wrapperOrNullFromDescriptor(dSrc);
+                if (wps != null) {
+                    if (wps.isSigned() || wps.isFloating()) {
+                        // Boxed number to primitive
+                        unbox(wrapperName(wps), wTarget);
+                    } else {
+                        // Character or Boolean
+                        unbox(wrapperName(wps), wps);
+                        widen(wps, wTarget);
+                    }
+                } else {
+                    // Source type is reference type, but not boxed type,
+                    // assume it is super type of target type
+                    String intermediate;
+                    if (wTarget.isSigned() || wTarget.isFloating()) {
+                        // Boxed number to primitive
+                        intermediate = "java/lang/Number";
+                    } else {
+                        // Character or Boolean
+                        intermediate = wrapperName(wTarget);
+                    }
+                    cast(dSrc, intermediate);
+                    unbox(intermediate, wTarget);
+                }
+            } else {
+                // Both reference types: just case to target type
+                cast(dSrc, dTarget);
+            }
+        }
+!!!7183874.java!!!	iconst(in cst : int) : void
+        if (cst >= -1 && cst <= 5) {
+            mv.visitInsn(Opcodes.ICONST_0 + cst);
+        } else if (cst >= Byte.MIN_VALUE && cst <= Byte.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.BIPUSH, cst);
+        } else if (cst >= Short.MIN_VALUE && cst <= Short.MAX_VALUE) {
+            mv.visitIntInsn(Opcodes.SIPUSH, cst);
+        } else {
+            mv.visitLdcInsn(cst);
+        }

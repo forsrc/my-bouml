@@ -1,0 +1,42 @@
+class CountingWrapper
+!!!7250050.java!!!	CountingWrapper(inout target : MethodHandle, inout lform : LambdaForm, inout countingFromProducer : Function, inout nonCountingFormProducer : Function, in count : int)
+            super(target.type(), lform);
+            this.target = target;
+            this.count = count;
+            this.countingFormProducer = countingFromProducer;
+            this.nonCountingFormProducer = nonCountingFormProducer;
+            this.isCounting = (count > 0);
+!!!7250178.java!!!	getTarget() : MethodHandle
+            return target;
+!!!7250306.java!!!	asTypeUncached(inout newType : MethodType) : MethodHandle
+            MethodHandle newTarget = target.asType(newType);
+            MethodHandle wrapper;
+            if (isCounting) {
+                LambdaForm lform;
+                lform = countingFormProducer.apply(newTarget);
+                wrapper = new CountingWrapper(newTarget, lform, countingFormProducer, nonCountingFormProducer, DONT_INLINE_THRESHOLD);
+            } else {
+                wrapper = newTarget; // no need for a counting wrapper anymore
+            }
+            return (asTypeCache = wrapper);
+!!!7250434.java!!!	countDown() : boolean
+            if (count <= 0) {
+                // Try to limit number of updates. MethodHandle.updateForm() doesn't guarantee LF update visibility.
+                if (isCounting) {
+                    isCounting = false;
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                --count;
+                return false;
+            }
+!!!7250562.java!!!	maybeStopCounting(inout o1 : Object) : void
+             CountingWrapper wrapper = (CountingWrapper) o1;
+             if (wrapper.countDown()) {
+                 // Reached invocation threshold. Replace counting behavior with a non-counting one.
+                 LambdaForm lform = wrapper.nonCountingFormProducer.apply(wrapper.target);
+                 lform.compileToBytecode(); // speed up warmup by avoiding LF interpretation again after transition
+                 wrapper.updateForm(lform);
+             }

@@ -1,0 +1,70 @@
+class BitFile
+!!!1740546.java!!!	BitFile(inout output : ImageOutputStream, inout blocks : boolean)
+        this.output = output;
+        this.blocks = blocks;
+        buffer = new byte[256];
+        index = 0;
+        bitsLeft = 8;
+!!!1740674.java!!!	flush() : void
+        int numBytes = index + (bitsLeft == 8 ? 0 : 1);
+        if (numBytes > 0) {
+            if (blocks) {
+                output.write(numBytes);
+            }
+            output.write(buffer, 0, numBytes);
+            buffer[0] = 0;
+            index = 0;
+            bitsLeft = 8;
+        }
+!!!1740802.java!!!	writeBits(in bits : int, in numbits : int) : void
+        int bitsWritten = 0;
+        int numBytes = 255;  // gif block count
+        do {
+            // This handles the GIF block count stuff
+            if ((index == 254 && bitsLeft == 0) || index > 254) {
+                if (blocks) {
+                    output.write(numBytes);
+                }
+
+                output.write(buffer, 0, numBytes);
+
+                buffer[0] = 0;
+                index = 0;
+                bitsLeft = 8;
+            }
+
+            if (numbits <= bitsLeft) { // bits contents fit in current index byte
+                if (blocks) { // GIF
+                    buffer[index] |= (bits & ((1 << numbits) - 1)) << (8 - bitsLeft);
+                    bitsWritten += numbits;
+                    bitsLeft -= numbits;
+                    numbits = 0;
+                } else {
+                    buffer[index] |= (bits & ((1 << numbits) - 1)) << (bitsLeft - numbits);
+                    bitsWritten += numbits;
+                    bitsLeft -= numbits;
+                    numbits = 0;
+                }
+            } else { // bits overflow from current byte to next.
+                if (blocks) { // GIF
+                    // if bits  > space left in current byte then the lowest order bits
+                    // of code are taken and put in current byte and rest put in next.
+                    buffer[index] |= (bits & ((1 << bitsLeft) - 1)) << (8 - bitsLeft);
+                    bitsWritten += bitsLeft;
+                    bits >>= bitsLeft;
+                    numbits -= bitsLeft;
+                    buffer[++index] = 0;
+                    bitsLeft = 8;
+                } else {
+                    // if bits  > space left in current byte then the highest order bits
+                    // of code are taken and put in current byte and rest put in next.
+                    // at highest order bit location !!
+                    int topbits = (bits >>> (numbits - bitsLeft)) & ((1 << bitsLeft) - 1);
+                    buffer[index] |= topbits;
+                    numbits -= bitsLeft;  // ok this many bits gone off the top
+                    bitsWritten += bitsLeft;
+                    buffer[++index] = 0;  // next index
+                    bitsLeft = 8;
+                }
+            }
+        } while (numbits != 0);

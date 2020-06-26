@@ -1,0 +1,65 @@
+class ReferenceQueue
+!!!7325826.java!!!	enqueue(inout r : Reference) : boolean
+ /* Called only by Reference class */
+        synchronized (lock) {
+            // Check that since getting the lock this reference hasn't already been
+            // enqueued (and even then removed)
+            ReferenceQueue<?> queue = r.queue;
+            if ((queue == NULL) || (queue == ENQUEUED)) {
+                return false;
+            }
+            assert queue == this;
+            r.queue = ENQUEUED;
+            r.next = (head == null) ? r : head;
+            head = r;
+            queueLength++;
+            if (r instanceof FinalReference) {
+                sun.misc.VM.addFinalRefCount(1);
+            }
+            lock.notifyAll();
+            return true;
+        }
+!!!7325954.java!!!	reallyPoll() : Reference
+       /* Must hold lock */
+        Reference<? extends T> r = head;
+        if (r != null) {
+            head = (r.next == r) ?
+                null :
+                r.next; // Unchecked due to the next field having a raw type in Reference
+            r.queue = NULL;
+            r.next = r;
+            queueLength--;
+            if (r instanceof FinalReference) {
+                sun.misc.VM.addFinalRefCount(-1);
+            }
+            return r;
+        }
+        return null;
+!!!7326082.java!!!	poll() : Reference
+        if (head == null)
+            return null;
+        synchronized (lock) {
+            return reallyPoll();
+        }
+!!!7326210.java!!!	remove(in timeout : long) : Reference
+        if (timeout < 0) {
+            throw new IllegalArgumentException("Negative timeout value");
+        }
+        synchronized (lock) {
+            Reference<? extends T> r = reallyPoll();
+            if (r != null) return r;
+            long start = (timeout == 0) ? 0 : System.nanoTime();
+            for (;;) {
+                lock.wait(timeout);
+                r = reallyPoll();
+                if (r != null) return r;
+                if (timeout != 0) {
+                    long end = System.nanoTime();
+                    timeout -= (end - start) / 1000_000;
+                    if (timeout <= 0) return null;
+                    start = end;
+                }
+            }
+        }
+!!!7326338.java!!!	remove() : Reference
+        return remove(0);

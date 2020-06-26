@@ -1,0 +1,364 @@
+class InstructionFactory
+!!!3537154.java!!!	InstructionFactory(inout cg : ClassGen, inout cp : ConstantPoolGen)
+    this.cg = cg;
+    this.cp = cp;
+!!!3537282.java!!!	InstructionFactory(inout cg : ClassGen)
+    this(cg, cg.getConstantPool());
+!!!3537410.java!!!	InstructionFactory(inout cp : ConstantPoolGen)
+    this(null, cp);
+!!!3537538.java!!!	createInvoke(inout class_name : String, inout name : String, inout ret_type : Type, inout arg_types : Type [[]], in kind : short) : InvokeInstruction
+    int    index;
+    int    nargs      = 0;
+    String signature  = Type.getMethodSignature(ret_type, arg_types);
+
+    for(int i=0; i < arg_types.length; i++) // Count size of arguments
+      nargs += arg_types[i].getSize();
+
+    if(kind == Constants.INVOKEINTERFACE)
+      index = cp.addInterfaceMethodref(class_name, name, signature);
+    else
+      index = cp.addMethodref(class_name, name, signature);
+
+    switch(kind) {
+    case Constants.INVOKESPECIAL:   return new INVOKESPECIAL(index);
+    case Constants.INVOKEVIRTUAL:   return new INVOKEVIRTUAL(index);
+    case Constants.INVOKESTATIC:    return new INVOKESTATIC(index);
+    case Constants.INVOKEINTERFACE: return new INVOKEINTERFACE(index, nargs + 1);
+    default:
+      throw new RuntimeException("Oops: Unknown invoke kind:" + kind);
+    }
+!!!3537666.java!!!	createPrintln(inout s : String) : InstructionList
+    InstructionList il      = new InstructionList();
+    int             out     = cp.addFieldref("java.lang.System", "out",
+                                             "Ljava/io/PrintStream;");
+    int             println = cp.addMethodref("java.io.PrintStream", "println",
+                                              "(Ljava/lang/String;)V");
+
+    il.append(new GETSTATIC(out));
+    il.append(new PUSH(cp, s));
+    il.append(new INVOKEVIRTUAL(println));
+
+    return il;
+!!!3537794.java!!!	createConstant(inout value : Object) : Instruction
+    PUSH push;
+
+    if(value instanceof Number)
+      push = new PUSH(cp, (Number)value);
+    else if(value instanceof String)
+      push = new PUSH(cp, (String)value);
+    else if(value instanceof Boolean)
+      push = new PUSH(cp, (Boolean)value);
+    else if(value instanceof Character)
+      push = new PUSH(cp, (Character)value);
+    else
+      throw new ClassGenException("Illegal type: " + value.getClass());
+
+    return push.getInstruction();
+!!!3538050.java!!!	createInvoke(inout m : InstructionFactory::MethodObject, in kind : short) : InvokeInstruction
+    return createInvoke(m.class_name, m.name, m.result_type, m.arg_types, kind);
+!!!3538178.java!!!	isString(inout type : Type) : boolean
+    return ((type instanceof ObjectType) &&
+            ((ObjectType)type).getClassName().equals("java.lang.String"));
+!!!3538306.java!!!	createAppend(inout type : Type) : Instruction
+    byte t = type.getType();
+
+    if(isString(type))
+      return createInvoke(append_mos[0], Constants.INVOKEVIRTUAL);
+
+    switch(t) {
+    case Constants.T_BOOLEAN:
+    case Constants.T_CHAR:
+    case Constants.T_FLOAT:
+    case Constants.T_DOUBLE:
+    case Constants.T_BYTE:
+    case Constants.T_SHORT:
+    case Constants.T_INT:
+    case Constants.T_LONG
+      :   return createInvoke(append_mos[t], Constants.INVOKEVIRTUAL);
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT:
+      return createInvoke(append_mos[1], Constants.INVOKEVIRTUAL);
+    default:
+      throw new RuntimeException("Oops: No append for this type? " + type);
+    }
+!!!3538434.java!!!	createFieldAccess(inout class_name : String, inout name : String, inout type : Type, in kind : short) : FieldInstruction
+    int    index;
+    String signature  = type.getSignature();
+
+    index = cp.addFieldref(class_name, name, signature);
+
+    switch(kind) {
+    case Constants.GETFIELD:  return new GETFIELD(index);
+    case Constants.PUTFIELD:  return new PUTFIELD(index);
+    case Constants.GETSTATIC: return new GETSTATIC(index);
+    case Constants.PUTSTATIC: return new PUTSTATIC(index);
+
+    default:
+      throw new RuntimeException("Oops: Unknown getfield kind:" + kind);
+    }
+!!!3538562.java!!!	createThis() : Instruction
+    return new ALOAD(0);
+!!!3538690.java!!!	createReturn(inout type : Type) : ReturnInstruction
+    switch(type.getType()) {
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT:  return ARETURN;
+    case Constants.T_INT:
+    case Constants.T_SHORT:
+    case Constants.T_BOOLEAN:
+    case Constants.T_CHAR:
+    case Constants.T_BYTE:    return IRETURN;
+    case Constants.T_FLOAT:   return FRETURN;
+    case Constants.T_DOUBLE:  return DRETURN;
+    case Constants.T_LONG:    return LRETURN;
+    case Constants.T_VOID:    return RETURN;
+
+    default:
+      throw new RuntimeException("Invalid type: " + type);
+    }
+!!!3538818.java!!!	createBinaryIntOp(in first : char, inout op : String) : ArithmeticInstruction
+    switch(first) {
+    case '-' : return ISUB;
+    case '+' : return IADD;
+    case '%' : return IREM;
+    case '*' : return IMUL;
+    case '/' : return IDIV;
+    case '&' : return IAND;
+    case '|' : return IOR;
+    case '^' : return IXOR;
+    case '<' : return ISHL;
+    case '>' : return op.equals(">>>")? (ArithmeticInstruction)IUSHR :
+      (ArithmeticInstruction)ISHR;
+    default: throw new RuntimeException("Invalid operand " + op);
+    }
+!!!3538946.java!!!	createBinaryLongOp(in first : char, inout op : String) : ArithmeticInstruction
+    switch(first) {
+    case '-' : return LSUB;
+    case '+' : return LADD;
+    case '%' : return LREM;
+    case '*' : return LMUL;
+    case '/' : return LDIV;
+    case '&' : return LAND;
+    case '|' : return LOR;
+    case '^' : return LXOR;
+    case '<' : return LSHL;
+    case '>' : return op.equals(">>>")? (ArithmeticInstruction)LUSHR :
+      (ArithmeticInstruction)LSHR;
+    default: throw new RuntimeException("Invalid operand " + op);
+    }
+!!!3539074.java!!!	createBinaryFloatOp(in op : char) : ArithmeticInstruction
+    switch(op) {
+    case '-' : return FSUB;
+    case '+' : return FADD;
+    case '*' : return FMUL;
+    case '/' : return FDIV;
+    default: throw new RuntimeException("Invalid operand " + op);
+    }
+!!!3539202.java!!!	createBinaryDoubleOp(in op : char) : ArithmeticInstruction
+    switch(op) {
+    case '-' : return DSUB;
+    case '+' : return DADD;
+    case '*' : return DMUL;
+    case '/' : return DDIV;
+    default: throw new RuntimeException("Invalid operand " + op);
+    }
+!!!3539330.java!!!	createBinaryOperation(inout op : String, inout type : Type) : ArithmeticInstruction
+    char first = op.toCharArray()[0];
+
+    switch(type.getType()) {
+    case Constants.T_BYTE:
+    case Constants.T_SHORT:
+    case Constants.T_INT:
+    case Constants.T_CHAR:    return createBinaryIntOp(first, op);
+    case Constants.T_LONG:    return createBinaryLongOp(first, op);
+    case Constants.T_FLOAT:   return createBinaryFloatOp(first);
+    case Constants.T_DOUBLE:  return createBinaryDoubleOp(first);
+    default:        throw new RuntimeException("Invalid type " + type);
+    }
+!!!3539458.java!!!	createPop(in size : int) : StackInstruction
+    return (size == 2)? (StackInstruction)POP2 :
+      (StackInstruction)POP;
+!!!3539586.java!!!	createDup(in size : int) : StackInstruction
+    return (size == 2)? (StackInstruction)DUP2 :
+      (StackInstruction)DUP;
+!!!3539714.java!!!	createDup_2(in size : int) : StackInstruction
+    return (size == 2)? (StackInstruction)DUP2_X2 :
+      (StackInstruction)DUP_X2;
+!!!3539842.java!!!	createDup_1(in size : int) : StackInstruction
+    return (size == 2)? (StackInstruction)DUP2_X1 :
+      (StackInstruction)DUP_X1;
+!!!3539970.java!!!	createStore(inout type : Type, in index : int) : LocalVariableInstruction
+    switch(type.getType()) {
+    case Constants.T_BOOLEAN:
+    case Constants.T_CHAR:
+    case Constants.T_BYTE:
+    case Constants.T_SHORT:
+    case Constants.T_INT:    return new ISTORE(index);
+    case Constants.T_FLOAT:  return new FSTORE(index);
+    case Constants.T_DOUBLE: return new DSTORE(index);
+    case Constants.T_LONG:   return new LSTORE(index);
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT: return new ASTORE(index);
+    default:       throw new RuntimeException("Invalid type " + type);
+    }
+!!!3540098.java!!!	createLoad(inout type : Type, in index : int) : LocalVariableInstruction
+    switch(type.getType()) {
+    case Constants.T_BOOLEAN:
+    case Constants.T_CHAR:
+    case Constants.T_BYTE:
+    case Constants.T_SHORT:
+    case Constants.T_INT:    return new ILOAD(index);
+    case Constants.T_FLOAT:  return new FLOAD(index);
+    case Constants.T_DOUBLE: return new DLOAD(index);
+    case Constants.T_LONG:   return new LLOAD(index);
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT: return new ALOAD(index);
+    default:       throw new RuntimeException("Invalid type " + type);
+    }
+!!!3540226.java!!!	createArrayLoad(inout type : Type) : ArrayInstruction
+    switch(type.getType()) {
+    case Constants.T_BOOLEAN:
+    case Constants.T_BYTE:   return BALOAD;
+    case Constants.T_CHAR:   return CALOAD;
+    case Constants.T_SHORT:  return SALOAD;
+    case Constants.T_INT:    return IALOAD;
+    case Constants.T_FLOAT:  return FALOAD;
+    case Constants.T_DOUBLE: return DALOAD;
+    case Constants.T_LONG:   return LALOAD;
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT: return AALOAD;
+    default:       throw new RuntimeException("Invalid type " + type);
+    }
+!!!3540354.java!!!	createArrayStore(inout type : Type) : ArrayInstruction
+    switch(type.getType()) {
+    case Constants.T_BOOLEAN:
+    case Constants.T_BYTE:   return BASTORE;
+    case Constants.T_CHAR:   return CASTORE;
+    case Constants.T_SHORT:  return SASTORE;
+    case Constants.T_INT:    return IASTORE;
+    case Constants.T_FLOAT:  return FASTORE;
+    case Constants.T_DOUBLE: return DASTORE;
+    case Constants.T_LONG:   return LASTORE;
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT: return AASTORE;
+    default:       throw new RuntimeException("Invalid type " + type);
+    }
+!!!3540482.java!!!	createCast(inout src_type : Type, inout dest_type : Type) : Instruction
+    if((src_type instanceof BasicType) && (dest_type instanceof BasicType)) {
+      byte dest = dest_type.getType();
+      byte src  = src_type.getType();
+
+      if(dest == Constants.T_LONG && (src == Constants.T_CHAR || src == Constants.T_BYTE ||
+                                      src == Constants.T_SHORT))
+        src = Constants.T_INT;
+
+      String[] short_names = { "C", "F", "D", "B", "S", "I", "L" };
+
+      String name = "com.sun.org.apache.bcel.internal.generic." + short_names[src - Constants.T_CHAR] +
+        "2" + short_names[dest - Constants.T_CHAR];
+
+      Instruction i = null;
+      try {
+        i = (Instruction)java.lang.Class.forName(name).newInstance();
+      } catch(Exception e) {
+        throw new RuntimeException("Could not find instruction: " + name);
+      }
+
+      return i;
+    } else if((src_type instanceof ReferenceType) && (dest_type instanceof ReferenceType)) {
+      if(dest_type instanceof ArrayType)
+        return new CHECKCAST(cp.addArrayClass((ArrayType)dest_type));
+      else
+        return new CHECKCAST(cp.addClass(((ObjectType)dest_type).getClassName()));
+    }
+    else
+      throw new RuntimeException("Can not cast " + src_type + " to " + dest_type);
+!!!3540610.java!!!	createGetField(inout class_name : String, inout name : String, inout t : Type) : GETFIELD
+    return new GETFIELD(cp.addFieldref(class_name, name, t.getSignature()));
+!!!3540738.java!!!	createGetStatic(inout class_name : String, inout name : String, inout t : Type) : GETSTATIC
+    return new GETSTATIC(cp.addFieldref(class_name, name, t.getSignature()));
+!!!3540866.java!!!	createPutField(inout class_name : String, inout name : String, inout t : Type) : PUTFIELD
+    return new PUTFIELD(cp.addFieldref(class_name, name, t.getSignature()));
+!!!3540994.java!!!	createPutStatic(inout class_name : String, inout name : String, inout t : Type) : PUTSTATIC
+    return new PUTSTATIC(cp.addFieldref(class_name, name, t.getSignature()));
+!!!3541122.java!!!	createCheckCast(inout t : ReferenceType) : CHECKCAST
+    if(t instanceof ArrayType)
+      return new CHECKCAST(cp.addArrayClass((ArrayType)t));
+    else
+      return new CHECKCAST(cp.addClass((ObjectType)t));
+!!!3541250.java!!!	createInstanceOf(inout t : ReferenceType) : INSTANCEOF
+    if(t instanceof ArrayType)
+      return new INSTANCEOF(cp.addArrayClass((ArrayType)t));
+    else
+      return new INSTANCEOF(cp.addClass((ObjectType)t));
+!!!3541378.java!!!	createNew(inout t : ObjectType) : NEW
+    return new NEW(cp.addClass(t));
+!!!3541506.java!!!	createNew(inout s : String) : NEW
+    return createNew(new ObjectType(s));
+!!!3541634.java!!!	createNewArray(inout t : Type, in dim : short) : Instruction
+    if(dim == 1) {
+      if(t instanceof ObjectType)
+        return new ANEWARRAY(cp.addClass((ObjectType)t));
+      else if(t instanceof ArrayType)
+        return new ANEWARRAY(cp.addArrayClass((ArrayType)t));
+      else
+        return new NEWARRAY(((BasicType)t).getType());
+    } else {
+      ArrayType at;
+
+      if(t instanceof ArrayType)
+        at = (ArrayType)t;
+      else
+        at = new ArrayType(t, dim);
+
+      return new MULTIANEWARRAY(cp.addArrayClass(at), dim);
+    }
+!!!3541762.java!!!	createNull(inout type : Type) : Instruction
+    switch(type.getType()) {
+    case Constants.T_ARRAY:
+    case Constants.T_OBJECT:  return ACONST_NULL;
+    case Constants.T_INT:
+    case Constants.T_SHORT:
+    case Constants.T_BOOLEAN:
+    case Constants.T_CHAR:
+    case Constants.T_BYTE:    return ICONST_0;
+    case Constants.T_FLOAT:   return FCONST_0;
+    case Constants.T_DOUBLE:  return DCONST_0;
+    case Constants.T_LONG:    return LCONST_0;
+    case Constants.T_VOID:    return NOP;
+
+    default:
+      throw new RuntimeException("Invalid type: " + type);
+    }
+!!!3541890.java!!!	createBranchInstruction(in opcode : short, inout target : InstructionHandle) : BranchInstruction
+    switch(opcode) {
+    case Constants.IFEQ:      return new IFEQ(target);
+    case Constants.IFNE:      return new IFNE(target);
+    case Constants.IFLT:      return new IFLT(target);
+    case Constants.IFGE:      return new IFGE(target);
+    case Constants.IFGT:      return new IFGT(target);
+    case Constants.IFLE:      return new IFLE(target);
+    case Constants.IF_ICMPEQ: return new IF_ICMPEQ(target);
+    case Constants.IF_ICMPNE: return new IF_ICMPNE(target);
+    case Constants.IF_ICMPLT: return new IF_ICMPLT(target);
+    case Constants.IF_ICMPGE: return new IF_ICMPGE(target);
+    case Constants.IF_ICMPGT: return new IF_ICMPGT(target);
+    case Constants.IF_ICMPLE: return new IF_ICMPLE(target);
+    case Constants.IF_ACMPEQ: return new IF_ACMPEQ(target);
+    case Constants.IF_ACMPNE: return new IF_ACMPNE(target);
+    case Constants.GOTO:      return new GOTO(target);
+    case Constants.JSR:       return new JSR(target);
+    case Constants.IFNULL:    return new IFNULL(target);
+    case Constants.IFNONNULL: return new IFNONNULL(target);
+    case Constants.GOTO_W:    return new GOTO_W(target);
+    case Constants.JSR_W:     return new JSR_W(target);
+    default:
+        throw new RuntimeException("Invalid opcode: " + opcode);
+    }
+!!!3542018.java!!!	setClassGen(inout c : ClassGen) : void
+ cg = c;
+!!!3542146.java!!!	getClassGen() : ClassGen
+ return cg;
+!!!3542274.java!!!	setConstantPool(inout c : ConstantPoolGen) : void
+ cp = c;
+!!!3542402.java!!!	getConstantPool() : ConstantPoolGen
+ return cp;

@@ -1,0 +1,192 @@
+class SourceTreeManager
+!!!5777282.java!!!	reset() : void
+    m_sourceTree = new Vector();
+!!!5777410.java!!!	setURIResolver(inout resolver : URIResolver) : void
+    m_uriResolver = resolver;
+!!!5777538.java!!!	getURIResolver() : URIResolver
+    return m_uriResolver;
+!!!5777666.java!!!	findURIFromDoc(in owner : int) : String
+    int n = m_sourceTree.size();
+
+    for (int i = 0; i < n; i++)
+    {
+      SourceTree sTree = (SourceTree) m_sourceTree.elementAt(i);
+
+      if (owner == sTree.m_root)
+        return sTree.m_url;
+    }
+
+    return null;
+!!!5777794.java!!!	resolveURI(inout base : String, inout urlString : String, inout locator : SourceLocator) : Source
+
+    Source source = null;
+
+    if (null != m_uriResolver)
+    {
+      source = m_uriResolver.resolve(urlString, base);
+    }
+
+    if (null == source)
+    {
+      String uri = SystemIDResolver.getAbsoluteURI(urlString, base);
+
+      source = new StreamSource(uri);
+    }
+
+    return source;
+!!!5777922.java!!!	removeDocumentFromCache(in n : int) : void
+    if(DTM.NULL ==n)
+      return;
+    for(int i=m_sourceTree.size()-1;i>=0;--i)
+    {
+      SourceTree st=(SourceTree)m_sourceTree.elementAt(i);
+      if(st!=null && st.m_root==n)
+      {
+        m_sourceTree.removeElementAt(i);
+        return;
+      }
+    }
+!!!5778050.java!!!	putDocumentInCache(in n : int, inout source : Source) : void
+
+    int cachedNode = getNode(source);
+
+    if (DTM.NULL != cachedNode)
+    {
+      if (!(cachedNode == n))
+        throw new RuntimeException(
+          "Programmer's Error!  "
+          + "putDocumentInCache found reparse of doc: "
+          + source.getSystemId());
+      return;
+    }
+    if (null != source.getSystemId())
+    {
+      m_sourceTree.addElement(new SourceTree(n, source.getSystemId()));
+    }
+!!!5778178.java!!!	getNode(inout source : Source) : int
+
+//    if (source instanceof DOMSource)
+//      return ((DOMSource) source).getNode();
+
+    // TODO: Not sure if the BaseID is really the same thing as the ID.
+    String url = source.getSystemId();
+
+    if (null == url)
+      return DTM.NULL;
+
+    int n = m_sourceTree.size();
+
+    // System.out.println("getNode: "+n);
+    for (int i = 0; i < n; i++)
+    {
+      SourceTree sTree = (SourceTree) m_sourceTree.elementAt(i);
+
+      // System.out.println("getNode -         url: "+url);
+      // System.out.println("getNode - sTree.m_url: "+sTree.m_url);
+      if (url.equals(sTree.m_url))
+        return sTree.m_root;
+    }
+
+    // System.out.println("getNode - returning: "+node);
+    return DTM.NULL;
+!!!5778306.java!!!	getSourceTree(inout base : String, inout urlString : String, inout locator : SourceLocator, inout xctxt : XPathContext) : int
+
+    // System.out.println("getSourceTree");
+    try
+    {
+      Source source = this.resolveURI(base, urlString, locator);
+
+      // System.out.println("getSourceTree - base: "+base+", urlString: "+urlString+", source: "+source.getSystemId());
+      return getSourceTree(source, locator, xctxt);
+    }
+    catch (IOException ioe)
+    {
+      throw new TransformerException(ioe.getMessage(), locator, ioe);
+    }
+
+    /* catch (TransformerException te)
+     {
+       throw new TransformerException(te.getMessage(), locator, te);
+     }*/
+!!!5778434.java!!!	getSourceTree(inout source : Source, inout locator : SourceLocator, inout xctxt : XPathContext) : int
+
+    int n = getNode(source);
+
+    if (DTM.NULL != n)
+      return n;
+
+    n = parseToNode(source, locator, xctxt);
+
+    if (DTM.NULL != n)
+      putDocumentInCache(n, source);
+
+    return n;
+!!!5778562.java!!!	parseToNode(inout source : Source, inout locator : SourceLocator, inout xctxt : XPathContext) : int
+
+    try
+    {
+      Object xowner = xctxt.getOwnerObject();
+      DTM dtm;
+      if(null != xowner && xowner instanceof com.sun.org.apache.xml.internal.dtm.DTMWSFilter)
+      {
+        dtm = xctxt.getDTM(source, false,
+                          (com.sun.org.apache.xml.internal.dtm.DTMWSFilter)xowner, false, true);
+      }
+      else
+      {
+        dtm = xctxt.getDTM(source, false, null, false, true);
+      }
+      return dtm.getDocument();
+    }
+    catch (Exception e)
+    {
+      //e.printStackTrace();
+      throw new TransformerException(e.getMessage(), locator, e);
+    }
+
+!!!5778690.java!!!	getXMLReader(inout inputSource : Source, inout locator : SourceLocator) : XMLReader
+
+    try
+    {
+      XMLReader reader = (inputSource instanceof SAXSource)
+                         ? ((SAXSource) inputSource).getXMLReader() : null;
+
+      if (null == reader)
+      {
+        try {
+          javax.xml.parsers.SAXParserFactory factory=
+              javax.xml.parsers.SAXParserFactory.newInstance();
+          factory.setNamespaceAware( true );
+          javax.xml.parsers.SAXParser jaxpParser=
+              factory.newSAXParser();
+          reader=jaxpParser.getXMLReader();
+
+        } catch( javax.xml.parsers.ParserConfigurationException ex ) {
+          throw new org.xml.sax.SAXException( ex );
+        } catch( javax.xml.parsers.FactoryConfigurationError ex1 ) {
+            throw new org.xml.sax.SAXException( ex1.toString() );
+        } catch( NoSuchMethodError ex2 ) {
+        }
+        catch (AbstractMethodError ame){}
+        if(null == reader)
+          reader = XMLReaderFactory.createXMLReader();
+      }
+
+      try
+      {
+        reader.setFeature("http://xml.org/sax/features/namespace-prefixes",
+                          true);
+      }
+      catch (org.xml.sax.SAXException se)
+      {
+
+        // What can we do?
+        // TODO: User diagnostics.
+      }
+
+      return reader;
+    }
+    catch (org.xml.sax.SAXException se)
+    {
+      throw new TransformerException(se.getMessage(), locator, se);
+    }

@@ -1,0 +1,81 @@
+class ImageCache
+!!!11257218.java!!!	getInstance() : ImageCache
+        return instance;
+!!!11257346.java!!!	ImageCache()
+        this.maxPixelCount = (8 * 1024 * 1024) / 4; // 8Mb of pixels
+        this.maxSingleImagePixelSize = 300 * 300;
+!!!11257474.java!!!	ImageCache(in maxPixelCount : int, in maxSingleImagePixelSize : int)
+        this.maxPixelCount = maxPixelCount;
+        this.maxSingleImagePixelSize = maxSingleImagePixelSize;
+!!!11257602.java!!!	flush() : void
+        lock.readLock().lock();
+        try {
+            map.clear();
+        } finally {
+            lock.readLock().unlock();
+        }
+!!!11257730.java!!!	isImageCachable(in w : int, in h : int) : boolean
+        return (w * h) < maxSingleImagePixelSize;
+!!!11257858.java!!!	getImage(inout config : GraphicsConfiguration, in w : int, in h : int, inout  : Object...args) : Image
+        lock.readLock().lock();
+        try {
+            PixelCountSoftReference ref = map.get(hash(config, w, h, args));
+            // check reference has not been lost and the key truly matches, in case of false positive hash match
+            if (ref != null && ref.equals(config,w, h, args)) {
+                return ref.get();
+            } else {
+                return null;
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+!!!11257986.java!!!	setImage(inout image : Image, inout config : GraphicsConfiguration, in w : int, in h : int, inout  : Object...args) : boolean
+        if (!isImageCachable(w, h)) return false;
+        int hash = hash(config, w, h, args);
+        lock.writeLock().lock();
+        try {
+            PixelCountSoftReference ref = map.get(hash);
+            // check if currently in map
+            if (ref != null && ref.get() == image) {
+                return true;
+            }
+            // clear out old
+            if (ref != null) {
+                currentPixelCount -= ref.pixelCount;
+                map.remove(hash);
+            }
+            // add new image to pixel count
+            int newPixelCount = image.getWidth(null) * image.getHeight(null);
+            currentPixelCount += newPixelCount;
+            // clean out lost references if not enough space
+            if (currentPixelCount > maxPixelCount) {
+                while ((ref = (PixelCountSoftReference)referenceQueue.poll()) != null){
+                    //reference lost
+                    map.remove(ref.hash);
+                    currentPixelCount -= ref.pixelCount;
+                }
+            }
+            // remove old items till there is enough free space
+            if (currentPixelCount > maxPixelCount) {
+                Iterator<Map.Entry<Integer, PixelCountSoftReference>> mapIter = map.entrySet().iterator();
+                while ((currentPixelCount > maxPixelCount) && mapIter.hasNext()) {
+                    Map.Entry<Integer, PixelCountSoftReference> entry = mapIter.next();
+                    mapIter.remove();
+                    Image img = entry.getValue().get();
+                    if (img != null) img.flush();
+                    currentPixelCount -= entry.getValue().pixelCount;
+                }
+            }
+            // finaly put new in map
+            map.put(hash, new PixelCountSoftReference(image, referenceQueue, newPixelCount,hash, config, w, h, args));
+            return true;
+        } finally {
+            lock.writeLock().unlock();
+        }
+!!!11258114.java!!!	hash(inout config : GraphicsConfiguration, in w : int, in h : int, inout args : Object) : int
+        int hash;
+        hash = (config != null ? config.hashCode() : 0);
+        hash = 31 * hash + w;
+        hash = 31 * hash + h;
+        hash = 31 * hash + Arrays.deepHashCode(args);
+        return hash;

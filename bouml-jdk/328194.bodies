@@ -1,0 +1,421 @@
+class JFIFMarkerSegment
+!!!1798018.java!!!	JFIFMarkerSegment()
+        super(JPEG.APP0);
+        majorVersion = 1;
+        minorVersion = 2;
+        resUnits = JPEG.DENSITY_UNIT_ASPECT_RATIO;
+        Xdensity = 1;
+        Ydensity = 1;
+        thumbWidth = 0;
+        thumbHeight = 0;
+!!!1798146.java!!!	JFIFMarkerSegment(inout buffer : JPEGBuffer)
+        super(buffer);
+        buffer.bufPtr += ID_SIZE;  // skip the id, we already checked it
+
+        majorVersion = buffer.buf[buffer.bufPtr++];
+        minorVersion = buffer.buf[buffer.bufPtr++];
+        resUnits = buffer.buf[buffer.bufPtr++];
+        Xdensity = (buffer.buf[buffer.bufPtr++] & 0xff) << 8;
+        Xdensity |= buffer.buf[buffer.bufPtr++] & 0xff;
+        Ydensity = (buffer.buf[buffer.bufPtr++] & 0xff) << 8;
+        Ydensity |= buffer.buf[buffer.bufPtr++] & 0xff;
+        thumbWidth = buffer.buf[buffer.bufPtr++] & 0xff;
+        thumbHeight = buffer.buf[buffer.bufPtr++] & 0xff;
+        buffer.bufAvail -= DATA_SIZE;
+        if (thumbWidth > 0) {
+            thumb = new JFIFThumbRGB(buffer, thumbWidth, thumbHeight);
+        }
+!!!1798274.java!!!	JFIFMarkerSegment(inout node : Node)
+        this();
+        updateFromNativeNode(node, true);
+!!!1798402.java!!!	clone() : Object
+        JFIFMarkerSegment newGuy = (JFIFMarkerSegment) super.clone();
+        if (!extSegments.isEmpty()) { // Clone the list with a deep copy
+            newGuy.extSegments = new ArrayList();
+            for (Iterator iter = extSegments.iterator(); iter.hasNext();) {
+                JFIFExtensionMarkerSegment jfxx =
+                    (JFIFExtensionMarkerSegment) iter.next();
+                newGuy.extSegments.add(jfxx.clone());
+            }
+        }
+        if (iccSegment != null) {
+            newGuy.iccSegment = (ICCMarkerSegment) iccSegment.clone();
+        }
+        return newGuy;
+!!!1798530.java!!!	addJFXX(inout buffer : JPEGBuffer, inout reader : JPEGImageReader) : void
+        extSegments.add(new JFIFExtensionMarkerSegment(buffer, reader));
+!!!1798658.java!!!	addICC(inout buffer : JPEGBuffer) : void
+        if (inICC == false) {
+            if (iccSegment != null) {
+                throw new IIOException
+                    ("> 1 ICC APP2 Marker Segment not supported");
+            }
+            tempICCSegment = new ICCMarkerSegment(buffer);
+            if (inICC == false) { // Just one chunk
+                iccSegment = tempICCSegment;
+                tempICCSegment = null;
+            }
+        } else {
+            if (tempICCSegment.addData(buffer) == true) {
+                iccSegment = tempICCSegment;
+                tempICCSegment = null;
+            }
+        }
+!!!1798786.java!!!	addICC(inout cs : ICC_ColorSpace) : void
+        if (iccSegment != null) {
+            throw new IIOException
+                ("> 1 ICC APP2 Marker Segment not supported");
+        }
+        iccSegment = new ICCMarkerSegment(cs);
+!!!1798914.java!!!	getNativeNode() : IIOMetadataNode
+        IIOMetadataNode node = new IIOMetadataNode("app0JFIF");
+        node.setAttribute("majorVersion", Integer.toString(majorVersion));
+        node.setAttribute("minorVersion", Integer.toString(minorVersion));
+        node.setAttribute("resUnits", Integer.toString(resUnits));
+        node.setAttribute("Xdensity", Integer.toString(Xdensity));
+        node.setAttribute("Ydensity", Integer.toString(Ydensity));
+        node.setAttribute("thumbWidth", Integer.toString(thumbWidth));
+        node.setAttribute("thumbHeight", Integer.toString(thumbHeight));
+        if (!extSegments.isEmpty()) {
+            IIOMetadataNode JFXXnode = new IIOMetadataNode("JFXX");
+            node.appendChild(JFXXnode);
+            for (Iterator iter = extSegments.iterator(); iter.hasNext();) {
+                JFIFExtensionMarkerSegment seg =
+                    (JFIFExtensionMarkerSegment) iter.next();
+                JFXXnode.appendChild(seg.getNativeNode());
+            }
+        }
+        if (iccSegment != null) {
+            node.appendChild(iccSegment.getNativeNode());
+        }
+
+        return node;
+!!!1799042.java!!!	updateFromNativeNode(inout node : Node, inout fromScratch : boolean) : void
+        // none of the attributes are required
+        NamedNodeMap attrs = node.getAttributes();
+        if (attrs.getLength() > 0) {
+            int value = getAttributeValue(node, attrs, "majorVersion",
+                                          0, 255, false);
+            majorVersion = (value != -1) ? value : majorVersion;
+            value = getAttributeValue(node, attrs, "minorVersion",
+                                      0, 255, false);
+            minorVersion = (value != -1) ? value : minorVersion;
+            value = getAttributeValue(node, attrs, "resUnits", 0, 2, false);
+            resUnits = (value != -1) ? value : resUnits;
+            value = getAttributeValue(node, attrs, "Xdensity", 1, 65535, false);
+            Xdensity = (value != -1) ? value : Xdensity;
+            value = getAttributeValue(node, attrs, "Ydensity", 1, 65535, false);
+            Ydensity = (value != -1) ? value : Ydensity;
+            value = getAttributeValue(node, attrs, "thumbWidth", 0, 255, false);
+            thumbWidth = (value != -1) ? value : thumbWidth;
+            value = getAttributeValue(node, attrs, "thumbHeight", 0, 255, false);
+            thumbHeight = (value != -1) ? value : thumbHeight;
+        }
+        if (node.hasChildNodes()) {
+            NodeList children = node.getChildNodes();
+            int count = children.getLength();
+            if (count > 2) {
+                throw new IIOInvalidTreeException
+                    ("app0JFIF node cannot have > 2 children", node);
+            }
+            for (int i = 0; i < count; i++) {
+                Node child = children.item(i);
+                String name = child.getNodeName();
+                if (name.equals("JFXX")) {
+                    if ((!extSegments.isEmpty()) && fromScratch) {
+                        throw new IIOInvalidTreeException
+                            ("app0JFIF node cannot have > 1 JFXX node", node);
+                    }
+                    NodeList exts = child.getChildNodes();
+                    int extCount = exts.getLength();
+                    for (int j = 0; j < extCount; j++) {
+                        Node ext = exts.item(j);
+                        extSegments.add(new JFIFExtensionMarkerSegment(ext));
+                    }
+                }
+                if (name.equals("app2ICC")) {
+                    if ((iccSegment != null) && fromScratch) {
+                        throw new IIOInvalidTreeException
+                            ("> 1 ICC APP2 Marker Segment not supported", node);
+                    }
+                    iccSegment = new ICCMarkerSegment(child);
+                }
+            }
+        }
+!!!1799170.java!!!	getThumbnailWidth(in index : int) : int
+        if (thumb != null) {
+            if (index == 0) {
+                return thumb.getWidth();
+            }
+            index--;
+        }
+        JFIFExtensionMarkerSegment jfxx =
+            (JFIFExtensionMarkerSegment) extSegments.get(index);
+        return jfxx.thumb.getWidth();
+!!!1799298.java!!!	getThumbnailHeight(in index : int) : int
+        if (thumb != null) {
+            if (index == 0) {
+                return thumb.getHeight();
+            }
+            index--;
+        }
+        JFIFExtensionMarkerSegment jfxx =
+            (JFIFExtensionMarkerSegment) extSegments.get(index);
+        return jfxx.thumb.getHeight();
+!!!1799426.java!!!	getThumbnail(inout iis : ImageInputStream, in index : int, inout reader : JPEGImageReader) : BufferedImage
+        reader.thumbnailStarted(index);
+        BufferedImage ret = null;
+        if ((thumb != null) && (index == 0)) {
+                ret = thumb.getThumbnail(iis, reader);
+        } else {
+            if (thumb != null) {
+                index--;
+            }
+            JFIFExtensionMarkerSegment jfxx =
+                (JFIFExtensionMarkerSegment) extSegments.get(index);
+            ret = jfxx.thumb.getThumbnail(iis, reader);
+        }
+        reader.thumbnailComplete();
+        return ret;
+!!!1799554.java!!!	write(inout ios : ImageOutputStream, inout writer : JPEGImageWriter) : void
+        // No thumbnail
+        write(ios, null, writer);
+!!!1799682.java!!!	write(inout ios : ImageOutputStream, inout thumb : BufferedImage, inout writer : JPEGImageWriter) : void
+        int thumbWidth = 0;
+        int thumbHeight = 0;
+        int thumbLength = 0;
+        int [] thumbData = null;
+        if (thumb != null) {
+            // Clip if necessary and get the data in thumbData
+            thumbWidth = thumb.getWidth();
+            thumbHeight = thumb.getHeight();
+            if ((thumbWidth > MAX_THUMB_WIDTH)
+                || (thumbHeight > MAX_THUMB_HEIGHT)) {
+                writer.warningOccurred(JPEGImageWriter.WARNING_THUMB_CLIPPED);
+            }
+            thumbWidth = Math.min(thumbWidth, MAX_THUMB_WIDTH);
+            thumbHeight = Math.min(thumbHeight, MAX_THUMB_HEIGHT);
+            thumbData = thumb.getRaster().getPixels(0, 0,
+                                                    thumbWidth, thumbHeight,
+                                                    (int []) null);
+            thumbLength = thumbData.length;
+        }
+        length = DATA_SIZE + LENGTH_SIZE + thumbLength;
+        writeTag(ios);
+        byte [] id = {0x4A, 0x46, 0x49, 0x46, 0x00};
+        ios.write(id);
+        ios.write(majorVersion);
+        ios.write(minorVersion);
+        ios.write(resUnits);
+        write2bytes(ios, Xdensity);
+        write2bytes(ios, Ydensity);
+        ios.write(thumbWidth);
+        ios.write(thumbHeight);
+        if (thumbData != null) {
+            writer.thumbnailStarted(0);
+            writeThumbnailData(ios, thumbData, writer);
+            writer.thumbnailComplete();
+        }
+!!!1799810.java!!!	writeThumbnailData(inout ios : ImageOutputStream, inout thumbData : int [[]], inout writer : JPEGImageWriter) : void
+        int progInterval = thumbData.length / 20;  // approx. every 5%
+        if (progInterval == 0) {
+            progInterval = 1;
+        }
+        for (int i = 0; i < thumbData.length; i++) {
+            ios.write(thumbData[i]);
+            if ((i > progInterval) && (i % progInterval == 0)) {
+                writer.thumbnailProgress
+                    (((float) i * 100) / ((float) thumbData.length));
+            }
+        }
+!!!1799938.java!!!	writeWithThumbs(inout ios : ImageOutputStream, inout thumbnails : List, inout writer : JPEGImageWriter) : void
+        if (thumbnails != null) {
+            JFIFExtensionMarkerSegment jfxx = null;
+            if (thumbnails.size() == 1) {
+                if (!extSegments.isEmpty()) {
+                    jfxx = (JFIFExtensionMarkerSegment) extSegments.get(0);
+                }
+                writeThumb(ios,
+                           (BufferedImage) thumbnails.get(0),
+                           jfxx,
+                           0,
+                           true,
+                           writer);
+            } else {
+                // All others write as separate JFXX segments
+                write(ios, writer);  // Just the header without any thumbnail
+                for (int i = 0; i < thumbnails.size(); i++) {
+                    jfxx = null;
+                    if (i < extSegments.size()) {
+                        jfxx = (JFIFExtensionMarkerSegment) extSegments.get(i);
+                    }
+                    writeThumb(ios,
+                               (BufferedImage) thumbnails.get(i),
+                               jfxx,
+                               i,
+                               false,
+                               writer);
+                }
+            }
+        } else {  // No thumbnails
+            write(ios, writer);
+        }
+
+!!!1800066.java!!!	writeThumb(inout ios : ImageOutputStream, inout thumb : BufferedImage, inout jfxx : JFIFMarkerSegment::JFIFExtensionMarkerSegment, in index : int, inout onlyOne : boolean, inout writer : JPEGImageWriter) : void
+        ColorModel cm = thumb.getColorModel();
+        ColorSpace cs = cm.getColorSpace();
+
+        if (cm instanceof IndexColorModel) {
+            // We never write a palette image into the header
+            // So if it's the only one, we need to write the header first
+            if (onlyOne) {
+                write(ios, writer);
+            }
+            if ((jfxx == null)
+                || (jfxx.code == THUMB_PALETTE)) {
+                writeJFXXSegment(index, thumb, ios, writer); // default
+            } else {
+                // Expand to RGB
+                BufferedImage thumbRGB =
+                    ((IndexColorModel) cm).convertToIntDiscrete
+                    (thumb.getRaster(), false);
+                jfxx.setThumbnail(thumbRGB);
+                writer.thumbnailStarted(index);
+                jfxx.write(ios, writer);  // Handles clipping if needed
+                writer.thumbnailComplete();
+            }
+        } else if (cs.getType() == ColorSpace.TYPE_RGB) {
+            if (jfxx == null) {
+                if (onlyOne) {
+                    write(ios, thumb, writer); // As part of the header
+                } else {
+                    writeJFXXSegment(index, thumb, ios, writer); // default
+                }
+            } else {
+                // If this is the only one, write the header first
+                if (onlyOne) {
+                    write(ios, writer);
+                }
+                if (jfxx.code == THUMB_PALETTE) {
+                    writeJFXXSegment(index, thumb, ios, writer); // default
+                    writer.warningOccurred
+                        (JPEGImageWriter.WARNING_NO_RGB_THUMB_AS_INDEXED);
+                } else {
+                    jfxx.setThumbnail(thumb);
+                    writer.thumbnailStarted(index);
+                    jfxx.write(ios, writer);  // Handles clipping if needed
+                    writer.thumbnailComplete();
+                }
+            }
+        } else if (cs.getType() == ColorSpace.TYPE_GRAY) {
+            if (jfxx == null) {
+                if (onlyOne) {
+                    BufferedImage thumbRGB = expandGrayThumb(thumb);
+                    write(ios, thumbRGB, writer); // As part of the header
+                } else {
+                    writeJFXXSegment(index, thumb, ios, writer); // default
+                }
+            } else {
+                // If this is the only one, write the header first
+                if (onlyOne) {
+                    write(ios, writer);
+                }
+                if (jfxx.code == THUMB_RGB) {
+                    BufferedImage thumbRGB = expandGrayThumb(thumb);
+                    writeJFXXSegment(index, thumbRGB, ios, writer);
+                } else if (jfxx.code == THUMB_JPEG) {
+                    jfxx.setThumbnail(thumb);
+                    writer.thumbnailStarted(index);
+                    jfxx.write(ios, writer);  // Handles clipping if needed
+                    writer.thumbnailComplete();
+                } else if (jfxx.code == THUMB_PALETTE) {
+                    writeJFXXSegment(index, thumb, ios, writer); // default
+                    writer.warningOccurred
+                        (JPEGImageWriter.WARNING_NO_GRAY_THUMB_AS_INDEXED);
+                }
+            }
+        } else {
+            writer.warningOccurred
+                (JPEGImageWriter.WARNING_ILLEGAL_THUMBNAIL);
+        }
+!!!1800194.java!!!	writeJFXXSegment(in index : int, inout thumbnail : BufferedImage, inout ios : ImageOutputStream, inout writer : JPEGImageWriter) : void
+        JFIFExtensionMarkerSegment jfxx = null;
+        try {
+             jfxx = new JFIFExtensionMarkerSegment(thumbnail);
+        } catch (IllegalThumbException e) {
+            writer.warningOccurred
+                (JPEGImageWriter.WARNING_ILLEGAL_THUMBNAIL);
+            return;
+        }
+        writer.thumbnailStarted(index);
+        jfxx.write(ios, writer);
+        writer.thumbnailComplete();
+!!!1800322.java!!!	expandGrayThumb(inout thumb : BufferedImage) : BufferedImage
+        BufferedImage ret = new BufferedImage(thumb.getWidth(),
+                                              thumb.getHeight(),
+                                              BufferedImage.TYPE_INT_RGB);
+        Graphics g = ret.getGraphics();
+        g.drawImage(thumb, 0, 0, null);
+        return ret;
+!!!1800450.java!!!	writeDefaultJFIF(inout ios : ImageOutputStream, inout thumbnails : List, inout iccProfile : ICC_Profile, inout writer : JPEGImageWriter) : void
+
+        JFIFMarkerSegment jfif = new JFIFMarkerSegment();
+        jfif.writeWithThumbs(ios, thumbnails, writer);
+        if (iccProfile != null) {
+            writeICC(iccProfile, ios);
+        }
+!!!1800578.java!!!	print() : void
+        printTag("JFIF");
+        System.out.print("Version ");
+        System.out.print(majorVersion);
+        System.out.println(".0"
+                           + Integer.toString(minorVersion));
+        System.out.print("Resolution units: ");
+        System.out.println(resUnits);
+        System.out.print("X density: ");
+        System.out.println(Xdensity);
+        System.out.print("Y density: ");
+        System.out.println(Ydensity);
+        System.out.print("Thumbnail Width: ");
+        System.out.println(thumbWidth);
+        System.out.print("Thumbnail Height: ");
+        System.out.println(thumbHeight);
+        if (!extSegments.isEmpty()) {
+            for (Iterator iter = extSegments.iterator(); iter.hasNext();) {
+                JFIFExtensionMarkerSegment extSegment =
+                    (JFIFExtensionMarkerSegment) iter.next();
+                extSegment.print();
+            }
+        }
+        if (iccSegment != null) {
+            iccSegment.print();
+        }
+!!!1808514.java!!!	writeICC(inout profile : ICC_Profile, inout ios : ImageOutputStream) : void
+        int LENGTH_LENGTH = 2;
+        final String ID = "ICC_PROFILE";
+        int ID_LENGTH = ID.length()+1; // spec says it's null-terminated
+        int COUNTS_LENGTH = 2;
+        int MAX_ICC_CHUNK_SIZE =
+            65535 - LENGTH_LENGTH - ID_LENGTH - COUNTS_LENGTH;
+
+        byte [] data = profile.getData();
+        int numChunks = data.length / MAX_ICC_CHUNK_SIZE;
+        if ((data.length % MAX_ICC_CHUNK_SIZE) != 0) {
+            numChunks++;
+        }
+        int chunkNum = 1;
+        int offset = 0;
+        for (int i = 0; i < numChunks; i++) {
+            int dataLength = Math.min(data.length-offset, MAX_ICC_CHUNK_SIZE);
+            int segLength = dataLength+COUNTS_LENGTH+ID_LENGTH+LENGTH_LENGTH;
+            ios.write(0xff);
+            ios.write(JPEG.APP2);
+            MarkerSegment.write2bytes(ios, segLength);
+            byte [] id = ID.getBytes("US-ASCII");
+            ios.write(id);
+            ios.write(0); // Null-terminate the string
+            ios.write(chunkNum++);
+            ios.write(numChunks);
+            ios.write(data, offset, dataLength);
+            offset += dataLength;
+        }

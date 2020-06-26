@@ -1,0 +1,226 @@
+class BaselineGroup
+!!!10526466.java!!!	BaselineGroup(inout resizable : boolean)
+            super(Alignment.LEADING, resizable);
+            prefAscent = prefDescent = -1;
+            calcedBaseline = false;
+!!!10526594.java!!!	BaselineGroup(inout resizable : boolean, inout baselineAnchoredToTop : boolean)
+            this(resizable);
+            this.baselineAnchoredToTop = baselineAnchoredToTop;
+            baselineAnchorSet = true;
+!!!10526722.java!!!	unset() : void
+            super.unset();
+            prefAscent = prefDescent = -1;
+            calcedBaseline = false;
+!!!10526850.java!!!	setValidSize(in axis : int, in origin : int, in size : int) : void
+            checkAxis(axis);
+            if (prefAscent == -1) {
+                super.setValidSize(axis, origin, size);
+            } else {
+                // do baseline layout
+                baselineLayout(origin, size);
+            }
+!!!10526978.java!!!	calculateSize(in axis : int, in type : int) : int
+            checkAxis(axis);
+            if (!calcedBaseline) {
+                calculateBaselineAndResizeBehavior();
+            }
+            if (type == MIN_SIZE) {
+                return calculateMinSize();
+            }
+            if (type == MAX_SIZE) {
+                return calculateMaxSize();
+            }
+            if (allSpringsHaveBaseline) {
+                return prefAscent + prefDescent;
+            }
+            return Math.max(prefAscent + prefDescent,
+                    super.calculateSize(axis, type));
+!!!10527106.java!!!	calculateBaselineAndResizeBehavior() : void
+            // calculate baseline
+            prefAscent = 0;
+            prefDescent = 0;
+            int baselineSpringCount = 0;
+            BaselineResizeBehavior resizeBehavior = null;
+            for (Spring spring : springs) {
+                if (spring.getAlignment() == null ||
+                        spring.getAlignment() == Alignment.BASELINE) {
+                    int baseline = spring.getBaseline();
+                    if (baseline >= 0) {
+                        if (spring.isResizable(VERTICAL)) {
+                            BaselineResizeBehavior brb = spring.
+                                    getBaselineResizeBehavior();
+                            if (resizeBehavior == null) {
+                                resizeBehavior = brb;
+                            } else if (brb != resizeBehavior) {
+                                resizeBehavior = BaselineResizeBehavior.
+                                        CONSTANT_ASCENT;
+                            }
+                        }
+                        prefAscent = Math.max(prefAscent, baseline);
+                        prefDescent = Math.max(prefDescent, spring.
+                                getPreferredSize(VERTICAL) - baseline);
+                        baselineSpringCount++;
+                    }
+                }
+            }
+            if (!baselineAnchorSet) {
+                if (resizeBehavior == BaselineResizeBehavior.CONSTANT_DESCENT){
+                    this.baselineAnchoredToTop = false;
+                } else {
+                    this.baselineAnchoredToTop = true;
+                }
+            }
+            allSpringsHaveBaseline = (baselineSpringCount == springs.size());
+            calcedBaseline = true;
+!!!10527234.java!!!	calculateMaxSize() : int
+            int maxAscent = prefAscent;
+            int maxDescent = prefDescent;
+            int nonBaselineMax = 0;
+            for (Spring spring : springs) {
+                int baseline;
+                int springMax = spring.getMaximumSize(VERTICAL);
+                if ((spring.getAlignment() == null ||
+                        spring.getAlignment() == Alignment.BASELINE) &&
+                        (baseline = spring.getBaseline()) >= 0) {
+                    int springPref = spring.getPreferredSize(VERTICAL);
+                    if (springPref != springMax) {
+                        switch (spring.getBaselineResizeBehavior()) {
+                            case CONSTANT_ASCENT:
+                                if (baselineAnchoredToTop) {
+                                    maxDescent = Math.max(maxDescent,
+                                            springMax - baseline);
+                                }
+                                break;
+                            case CONSTANT_DESCENT:
+                                if (!baselineAnchoredToTop) {
+                                    maxAscent = Math.max(maxAscent,
+                                            springMax - springPref + baseline);
+                                }
+                                break;
+                            default: // CENTER_OFFSET and OTHER, not resizable
+                                break;
+                        }
+                    }
+                } else {
+                    // Not aligned along the baseline, or no baseline.
+                    nonBaselineMax = Math.max(nonBaselineMax, springMax);
+                }
+            }
+            return Math.max(nonBaselineMax, maxAscent + maxDescent);
+!!!10527362.java!!!	calculateMinSize() : int
+            int minAscent = 0;
+            int minDescent = 0;
+            int nonBaselineMin = 0;
+            if (baselineAnchoredToTop) {
+                minAscent = prefAscent;
+            } else {
+                minDescent = prefDescent;
+            }
+            for (Spring spring : springs) {
+                int springMin = spring.getMinimumSize(VERTICAL);
+                int baseline;
+                if ((spring.getAlignment() == null ||
+                        spring.getAlignment() == Alignment.BASELINE) &&
+                        (baseline = spring.getBaseline()) >= 0) {
+                    int springPref = spring.getPreferredSize(VERTICAL);
+                    BaselineResizeBehavior brb = spring.
+                            getBaselineResizeBehavior();
+                    switch (brb) {
+                        case CONSTANT_ASCENT:
+                            if (baselineAnchoredToTop) {
+                                minDescent = Math.max(springMin - baseline,
+                                        minDescent);
+                            } else {
+                                minAscent = Math.max(baseline, minAscent);
+                            }
+                            break;
+                        case CONSTANT_DESCENT:
+                            if (!baselineAnchoredToTop) {
+                                minAscent = Math.max(
+                                        baseline - (springPref - springMin),
+                                        minAscent);
+                            } else {
+                                minDescent = Math.max(springPref - baseline,
+                                        minDescent);
+                            }
+                            break;
+                        default:
+                            // CENTER_OFFSET and OTHER are !resizable, use
+                            // the preferred size.
+                            minAscent = Math.max(baseline, minAscent);
+                            minDescent = Math.max(springPref - baseline,
+                                    minDescent);
+                            break;
+                    }
+                } else {
+                    // Not aligned along the baseline, or no baseline.
+                    nonBaselineMin = Math.max(nonBaselineMin, springMin);
+                }
+            }
+            return Math.max(nonBaselineMin, minAscent + minDescent);
+!!!10527490.java!!!	baselineLayout(in origin : int, in size : int) : void
+            int ascent;
+            int descent;
+            if (baselineAnchoredToTop) {
+                ascent = prefAscent;
+                descent = size - ascent;
+            } else {
+                ascent = size - prefDescent;
+                descent = prefDescent;
+            }
+            for (Spring spring : springs) {
+                Alignment alignment = spring.getAlignment();
+                if (alignment == null || alignment == Alignment.BASELINE) {
+                    int baseline = spring.getBaseline();
+                    if (baseline >= 0) {
+                        int springMax = spring.getMaximumSize(VERTICAL);
+                        int springPref = spring.getPreferredSize(VERTICAL);
+                        int height = springPref;
+                        int y;
+                        switch(spring.getBaselineResizeBehavior()) {
+                            case CONSTANT_ASCENT:
+                                y = origin + ascent - baseline;
+                                height = Math.min(descent, springMax -
+                                        baseline) + baseline;
+                                break;
+                            case CONSTANT_DESCENT:
+                                height = Math.min(ascent, springMax -
+                                        springPref + baseline) +
+                                        (springPref - baseline);
+                                y = origin + ascent +
+                                        (springPref - baseline) - height;
+                                break;
+                            default: // CENTER_OFFSET & OTHER, not resizable
+                                y = origin + ascent - baseline;
+                                break;
+                        }
+                        spring.setSize(VERTICAL, y, height);
+                    } else {
+                        setChildSize(spring, VERTICAL, origin, size);
+                    }
+                } else {
+                    setChildSize(spring, VERTICAL, origin, size);
+                }
+            }
+!!!10527618.java!!!	getBaseline() : int
+            if (springs.size() > 1) {
+                // Force the baseline to be calculated
+                getPreferredSize(VERTICAL);
+                return prefAscent;
+            } else if (springs.size() == 1) {
+                return springs.get(0).getBaseline();
+            }
+            return -1;
+!!!10527746.java!!!	getBaselineResizeBehavior() : BaselineResizeBehavior
+            if (springs.size() == 1) {
+                return springs.get(0).getBaselineResizeBehavior();
+            }
+            if (baselineAnchoredToTop) {
+                return BaselineResizeBehavior.CONSTANT_ASCENT;
+            }
+            return BaselineResizeBehavior.CONSTANT_DESCENT;
+!!!10527874.java!!!	checkAxis(in axis : int) : void
+            if (axis == HORIZONTAL) {
+                throw new IllegalStateException(
+                        "Baseline must be used along vertical axis");
+            }

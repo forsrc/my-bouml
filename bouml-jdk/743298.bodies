@@ -1,0 +1,758 @@
+class DTMDocumentImpl
+!!!5188994.java!!!	DTMDocumentImpl(inout mgr : DTMManager, in documentNumber : int, inout whiteSpaceFilter : DTMWSFilter, inout xstringfactory : XMLStringFactory)
+                initDocument(documentNumber);    // clear nodes and document handle
+                m_xsf = xstringfactory;
+!!!5189122.java!!!	setIncrementalSAXSource(inout source : IncrementalSAXSource) : void
+    m_incrSAXSource=source;
+
+    // Establish SAX-stream link so we can receive the requested data
+    source.setContentHandler(this);
+    source.setLexicalHandler(this);
+
+    // Are the following really needed? IncrementalSAXSource doesn't yet
+    // support them, and they're mostly no-ops here...
+    //source.setErrorHandler(this);
+    //source.setDTDHandler(this);
+    //source.setDeclHandler(this);
+!!!5189250.java!!!	appendNode(in w0 : int, in w1 : int, in w2 : int, in w3 : int) : int
+                // A decent compiler may inline this.
+                int slotnumber = nodes.appendSlot(w0, w1, w2, w3);
+
+                if (DEBUG) System.out.println(slotnumber+": "+w0+" "+w1+" "+w2+" "+w3);
+
+                if (previousSiblingWasParent)
+                        nodes.writeEntry(previousSibling,2,slotnumber);
+
+                previousSiblingWasParent = false;       // Set the default; endElement overrides
+
+                return slotnumber;
+!!!5189506.java!!!	setLocalNameTable(inout poolRef : DTMStringPool) : void
+                m_localNames = poolRef;
+!!!5189634.java!!!	getLocalNameTable() : DTMStringPool
+                 return m_localNames;
+!!!5189762.java!!!	setNsNameTable(inout poolRef : DTMStringPool) : void
+                m_nsNames = poolRef;
+!!!5189890.java!!!	getNsNameTable() : DTMStringPool
+                 return m_nsNames;
+!!!5190018.java!!!	setPrefixNameTable(inout poolRef : DTMStringPool) : void
+                m_prefixNames = poolRef;
+!!!5190146.java!!!	getPrefixNameTable() : DTMStringPool
+                return m_prefixNames;
+!!!5190274.java!!!	setContentBuffer(inout buffer : FastStringBuffer) : void
+                 m_char = buffer;
+!!!5190402.java!!!	getContentBuffer() : FastStringBuffer
+                 return m_char;
+!!!5190530.java!!!	getContentHandler() : ContentHandler
+    if (m_incrSAXSource instanceof IncrementalSAXSource_Filter)
+      return (ContentHandler) m_incrSAXSource;
+    else
+      return this;
+!!!5190658.java!!!	getLexicalHandler() : LexicalHandler
+
+    if (m_incrSAXSource instanceof IncrementalSAXSource_Filter)
+      return (LexicalHandler) m_incrSAXSource;
+    else
+      return this;
+!!!5190786.java!!!	getEntityResolver() : EntityResolver
+
+    return null;
+!!!5190914.java!!!	getDTDHandler() : DTDHandler
+
+    return null;
+!!!5191042.java!!!	getErrorHandler() : ErrorHandler
+
+    return null;
+!!!5191170.java!!!	getDeclHandler() : DeclHandler
+
+    return null;
+!!!5191298.java!!!	needsTwoThreads() : boolean
+    return null!=m_incrSAXSource;
+!!!5191426.java!!!	characters(inout ch : char [[]], in start : int, in length : int) : void
+    // Actually creating the text node is handled by
+    // processAccumulatedText(); here we just accumulate the
+    // characters into the buffer.
+    m_char.append(ch,start,length);
+!!!5191554.java!!!	processAccumulatedText() : void
+    int len=m_char.length();
+    if(len!=m_char_current_start)
+      {
+        // The FastStringBuffer has been previously agreed upon
+        appendTextChild(m_char_current_start,len-m_char_current_start);
+        m_char_current_start=len;
+      }
+!!!5191682.java!!!	endDocument() : void
+    // May need to tell the low-level builder code to pop up a level.
+    // There _should't_ be any significant pending text at this point.
+    appendEndDocument();
+!!!5191810.java!!!	endElement(inout namespaceURI : String, inout localName : String, inout qName : String) : void
+    processAccumulatedText();
+    // No args but we do need to tell the low-level builder code to
+    // pop up a level.
+    appendEndElement();
+!!!5191938.java!!!	endPrefixMapping(inout prefix : String) : void
+    // No-op
+!!!5192066.java!!!	ignorableWhitespace(inout ch : char [[]], in start : int, in length : int) : void
+    // %TBD% I believe ignorable text isn't part of the DTM model...?
+!!!5192194.java!!!	processingInstruction(inout target : String, inout data : String) : void
+    processAccumulatedText();
+    // %TBD% Which pools do target and data go into?
+!!!5192322.java!!!	setDocumentLocator(inout locator : Locator) : void
+    // No-op for DTM
+!!!5192450.java!!!	skippedEntity(inout name : String) : void
+    processAccumulatedText();
+    //%TBD%
+!!!5192578.java!!!	startDocument() : void
+    appendStartDocument();
+!!!5192706.java!!!	startElement(inout namespaceURI : String, inout localName : String, inout qName : String, inout atts : Attributes) : void
+    processAccumulatedText();
+
+    // %TBD% Split prefix off qname
+    String prefix=null;
+    int colon=qName.indexOf(':');
+    if(colon>0)
+      prefix=qName.substring(0,colon);
+
+    // %TBD% Where do we pool expandedName, or is it just the union, or...
+    /**/System.out.println("Prefix="+prefix+" index="+m_prefixNames.stringToIndex(prefix));
+    appendStartElement(m_nsNames.stringToIndex(namespaceURI),
+                     m_localNames.stringToIndex(localName),
+                     m_prefixNames.stringToIndex(prefix)); /////// %TBD%
+
+    // %TBD% I'm assuming that DTM will require resequencing of
+    // NS decls before other attrs, hence two passes are taken.
+    // %TBD% Is there an easier way to test for NSDecl?
+    int nAtts=(atts==null) ? 0 : atts.getLength();
+    // %TBD% Countdown is more efficient if nobody cares about sequence.
+    for(int i=nAtts-1;i>=0;--i)
+      {
+        qName=atts.getQName(i);
+        if(qName.startsWith("xmlns:") || "xmlns".equals(qName))
+          {
+            prefix=null;
+            colon=qName.indexOf(':');
+            if(colon>0)
+              {
+                prefix=qName.substring(0,colon);
+              }
+            else
+              {
+                // %REVEIW% Null or ""?
+                prefix=null; // Default prefix
+              }
+
+
+            appendNSDeclaration(
+                                    m_prefixNames.stringToIndex(prefix),
+                                    m_nsNames.stringToIndex(atts.getValue(i)),
+                                    atts.getType(i).equalsIgnoreCase("ID"));
+          }
+      }
+
+    for(int i=nAtts-1;i>=0;--i)
+      {
+        qName=atts.getQName(i);
+        if(!(qName.startsWith("xmlns:") || "xmlns".equals(qName)))
+          {
+            // %TBD% I hate having to extract the prefix into a new
+            // string when we may never use it. Consider pooling whole
+            // qNames, which are already strings?
+            prefix=null;
+            colon=qName.indexOf(':');
+            if(colon>0)
+              {
+                prefix=qName.substring(0,colon);
+                localName=qName.substring(colon+1);
+              }
+            else
+              {
+                prefix=""; // Default prefix
+                localName=qName;
+              }
+
+
+            m_char.append(atts.getValue(i)); // Single-string value
+            int contentEnd=m_char.length();
+
+            if(!("xmlns".equals(prefix) || "xmlns".equals(qName)))
+              appendAttribute(m_nsNames.stringToIndex(atts.getURI(i)),
+                                  m_localNames.stringToIndex(localName),
+                                  m_prefixNames.stringToIndex(prefix),
+                                  atts.getType(i).equalsIgnoreCase("ID"),
+                                  m_char_current_start, contentEnd-m_char_current_start);
+            m_char_current_start=contentEnd;
+          }
+      }
+!!!5192834.java!!!	startPrefixMapping(inout prefix : String, inout uri : String) : void
+    // No-op in DTM, handled during element/attr processing?
+!!!5192962.java!!!	comment(inout ch : char [[]], in start : int, in length : int) : void
+    processAccumulatedText();
+
+    m_char.append(ch,start,length); // Single-string value
+    appendComment(m_char_current_start,length);
+    m_char_current_start+=length;
+!!!5193090.java!!!	endCDATA() : void
+    // No-op in DTM
+!!!5193218.java!!!	endDTD() : void
+    // No-op in DTM
+!!!5193346.java!!!	endEntity(inout name : String) : void
+    // No-op in DTM
+!!!5193474.java!!!	startCDATA() : void
+    // No-op in DTM
+!!!5193602.java!!!	startDTD(inout name : String, inout publicId : String, inout systemId : String) : void
+    // No-op in DTM
+!!!5193730.java!!!	startEntity(inout name : String) : void
+    // No-op in DTM
+!!!5193858.java!!!	initDocument(in documentNumber : int) : void
+                // save masked DTM document handle
+                m_docHandle = documentNumber<<DOCHANDLE_SHIFT;
+
+                // Initialize the doc -- no parent, no next-sib
+                nodes.writeSlot(0,DOCUMENT_NODE,-1,-1,0);
+                // wait for the first startElement to create the doc root node
+                done = false;
+!!!5193986.java!!!	hasChildNodes(in nodeHandle : int) : boolean
+                return(getFirstChild(nodeHandle) != NULL);
+!!!5194114.java!!!	getFirstChild(in nodeHandle : int) : int
+
+                // ###shs worry about tracing/debug later
+                nodeHandle &= NODEHANDLE_MASK;
+                // Read node into variable
+                nodes.readSlot(nodeHandle, gotslot);
+
+                // type is the last half of first slot
+                short type = (short) (gotslot[0] & 0xFFFF);
+
+                // Check to see if Element or Document node
+                if ((type == ELEMENT_NODE) || (type == DOCUMENT_NODE) ||
+                                (type == ENTITY_REFERENCE_NODE)) {
+
+                        // In case when Document root is given
+                        //      if (nodeHandle == 0) nodeHandle = 1;
+                        // %TBD% Probably was a mistake.
+                        // If someone explicitly asks for first child
+                        // of Document, I would expect them to want
+                        // that and only that.
+
+                        int kid = nodeHandle + 1;
+                        nodes.readSlot(kid, gotslot);
+                        while (ATTRIBUTE_NODE == (gotslot[0] & 0xFFFF)) {
+                                // points to next sibling
+                                kid = gotslot[2];
+                                // Return NULL if node has only attributes
+                                if (kid == NULL) return NULL;
+                                nodes.readSlot(kid, gotslot);
+                        }
+                        // If parent slot matches given parent, return kid
+                        if (gotslot[1] == nodeHandle)
+                        {
+                          int firstChild = kid | m_docHandle;
+
+                          return firstChild;
+                        }
+                }
+                // No child found
+
+                return NULL;
+!!!5194242.java!!!	getLastChild(in nodeHandle : int) : int
+                // ###shs put trace/debug later
+                nodeHandle &= NODEHANDLE_MASK;
+                // do not need to test node type since getFirstChild does that
+                int lastChild = NULL;
+                for (int nextkid = getFirstChild(nodeHandle); nextkid != NULL;
+                                nextkid = getNextSibling(nextkid)) {
+                        lastChild = nextkid;
+                }
+                return lastChild | m_docHandle;
+!!!5194370.java!!!	getAttributeNode(in nodeHandle : int, inout namespaceURI : String, inout name : String) : int
+                int nsIndex = m_nsNames.stringToIndex(namespaceURI),
+                                                                        nameIndex = m_localNames.stringToIndex(name);
+                nodeHandle &= NODEHANDLE_MASK;
+                nodes.readSlot(nodeHandle, gotslot);
+                short type = (short) (gotslot[0] & 0xFFFF);
+                // If nodeHandle points to element next slot would be first attribute
+                if (type == ELEMENT_NODE)
+                        nodeHandle++;
+                // Iterate through Attribute Nodes
+                while (type == ATTRIBUTE_NODE) {
+                        if ((nsIndex == (gotslot[0] << 16)) && (gotslot[3] == nameIndex))
+                                return nodeHandle | m_docHandle;
+                        // Goto next sibling
+                        nodeHandle = gotslot[2];
+                        nodes.readSlot(nodeHandle, gotslot);
+                }
+                return NULL;
+!!!5194498.java!!!	getFirstAttribute(in nodeHandle : int) : int
+                nodeHandle &= NODEHANDLE_MASK;
+
+                // %REVIEW% jjk: Just a quick observation: If you're going to
+                // call readEntry repeatedly on the same node, it may be
+                // more efficiently to do a readSlot to get the data locally,
+                // reducing the addressing and call-and-return overhead.
+
+                // Should we check if handle is element (do we want sanity checks?)
+                if (ELEMENT_NODE != (nodes.readEntry(nodeHandle, 0) & 0xFFFF))
+                        return NULL;
+                // First Attribute (if any) should be at next position in table
+                nodeHandle++;
+                return(ATTRIBUTE_NODE == (nodes.readEntry(nodeHandle, 0) & 0xFFFF)) ?
+                nodeHandle | m_docHandle : NULL;
+!!!5194626.java!!!	getFirstNamespaceNode(in nodeHandle : int, inout inScope : boolean) : int
+
+                return NULL;
+!!!5194754.java!!!	getNextSibling(in nodeHandle : int) : int
+                nodeHandle &= NODEHANDLE_MASK;
+                // Document root has no next sibling
+                if (nodeHandle == 0)
+                        return NULL;
+
+                short type = (short) (nodes.readEntry(nodeHandle, 0) & 0xFFFF);
+                if ((type == ELEMENT_NODE) || (type == ATTRIBUTE_NODE) ||
+                                (type == ENTITY_REFERENCE_NODE)) {
+                        int nextSib = nodes.readEntry(nodeHandle, 2);
+                        if (nextSib == NULL)
+                                return NULL;
+                        if (nextSib != 0)
+                                return (m_docHandle | nextSib);
+                        // ###shs should cycle/wait if nextSib is 0? Working on threading next
+                }
+                // Next Sibling is in the next position if it shares the same parent
+                int thisParent = nodes.readEntry(nodeHandle, 1);
+
+                if (nodes.readEntry(++nodeHandle, 1) == thisParent)
+                        return (m_docHandle | nodeHandle);
+
+                return NULL;
+!!!5194882.java!!!	getPreviousSibling(in nodeHandle : int) : int
+                nodeHandle &= NODEHANDLE_MASK;
+                // Document root has no previous sibling
+                if (nodeHandle == 0)
+                        return NULL;
+
+                int parent = nodes.readEntry(nodeHandle, 1);
+                int kid = NULL;
+                for (int nextkid = getFirstChild(parent); nextkid != nodeHandle;
+                                nextkid = getNextSibling(nextkid)) {
+                        kid = nextkid;
+                }
+                return kid | m_docHandle;
+!!!5195010.java!!!	getNextAttribute(in nodeHandle : int) : int
+                nodeHandle &= NODEHANDLE_MASK;
+                nodes.readSlot(nodeHandle, gotslot);
+
+                //%REVIEW% Why are we using short here? There's no storage
+                //reduction for an automatic variable, especially one used
+                //so briefly, and it typically costs more cycles to process
+                //than an int would.
+                short type = (short) (gotslot[0] & 0xFFFF);
+
+                if (type == ELEMENT_NODE) {
+                        return getFirstAttribute(nodeHandle);
+                } else if (type == ATTRIBUTE_NODE) {
+                        if (gotslot[2] != NULL)
+                                return (m_docHandle | gotslot[2]);
+                }
+                return NULL;
+!!!5195138.java!!!	getNextNamespaceNode(in baseHandle : int, in namespaceHandle : int, inout inScope : boolean) : int
+                // ###shs need to work on namespace
+                return NULL;
+!!!5195266.java!!!	getNextDescendant(in subtreeRootHandle : int, in nodeHandle : int) : int
+                subtreeRootHandle &= NODEHANDLE_MASK;
+                nodeHandle &= NODEHANDLE_MASK;
+                // Document root [Document Node? -- jjk] - no next-sib
+                if (nodeHandle == 0)
+                        return NULL;
+                while (!m_isError) {
+                        // Document done and node out of bounds
+                        if (done && (nodeHandle > nodes.slotsUsed()))
+                                break;
+                        if (nodeHandle > subtreeRootHandle) {
+                                nodes.readSlot(nodeHandle+1, gotslot);
+                                if (gotslot[2] != 0) {
+                                        short type = (short) (gotslot[0] & 0xFFFF);
+                                        if (type == ATTRIBUTE_NODE) {
+                                                nodeHandle +=2;
+                                        } else {
+                                                int nextParentPos = gotslot[1];
+                                                if (nextParentPos >= subtreeRootHandle)
+                                                        return (m_docHandle | (nodeHandle+1));
+                                                else
+                                                        break;
+                                        }
+                                } else if (!done) {
+                                        // Add wait logic here
+                                } else
+                                        break;
+                        } else {
+                                nodeHandle++;
+                        }
+                }
+                // Probably should throw error here like original instead of returning
+                return NULL;
+!!!5195394.java!!!	getNextFollowing(in axisContextHandle : int, in nodeHandle : int) : int
+                //###shs still working on
+                return NULL;
+!!!5195522.java!!!	getNextPreceding(in axisContextHandle : int, in nodeHandle : int) : int
+                // ###shs copied from Xalan 1, what is this suppose to do?
+                nodeHandle &= NODEHANDLE_MASK;
+                while (nodeHandle > 1) {
+                        nodeHandle--;
+                        if (ATTRIBUTE_NODE == (nodes.readEntry(nodeHandle, 0) & 0xFFFF))
+                                continue;
+
+                        // if nodeHandle is _not_ an ancestor of
+                        // axisContextHandle, specialFind will return it.
+                        // If it _is_ an ancestor, specialFind will return -1
+
+                        // %REVIEW% unconditional return defeats the
+                        // purpose of the while loop -- does this
+                        // logic make any sense?
+
+                        return (m_docHandle | nodes.specialFind(axisContextHandle, nodeHandle));
+                }
+                return NULL;
+!!!5195650.java!!!	getParent(in nodeHandle : int) : int
+                // Should check to see within range?
+
+                // Document Root should not have to be handled differently
+                return (m_docHandle | nodes.readEntry(nodeHandle, 1));
+!!!5195778.java!!!	getDocumentRoot() : int
+                return (m_docHandle | m_docElement);
+!!!5195906.java!!!	getDocument() : int
+                return m_docHandle;
+!!!5196034.java!!!	getOwnerDocument(in nodeHandle : int) : int
+                // Assumption that Document Node is always in 0 slot
+                if ((nodeHandle & NODEHANDLE_MASK) == 0)
+                        return NULL;
+                return (nodeHandle & DOCHANDLE_MASK);
+!!!5196162.java!!!	getDocumentRoot(in nodeHandle : int) : int
+                // Assumption that Document Node is always in 0 slot
+                if ((nodeHandle & NODEHANDLE_MASK) == 0)
+                        return NULL;
+                return (nodeHandle & DOCHANDLE_MASK);
+!!!5196290.java!!!	getStringValue(in nodeHandle : int) : XMLString
+        // ###zaj - researching
+        nodes.readSlot(nodeHandle, gotslot);
+        int nodetype=gotslot[0] & 0xFF;
+        String value=null;
+
+        switch (nodetype) {
+        case TEXT_NODE:
+        case COMMENT_NODE:
+        case CDATA_SECTION_NODE:
+                value= m_char.getString(gotslot[2], gotslot[3]);
+                break;
+        case PROCESSING_INSTRUCTION_NODE:
+        case ATTRIBUTE_NODE:
+        case ELEMENT_NODE:
+        case ENTITY_REFERENCE_NODE:
+        default:
+                break;
+        }
+        return m_xsf.newstr( value );
+
+!!!5196418.java!!!	getStringValueChunkCount(in nodeHandle : int) : int
+                //###zaj    return value
+                return 0;
+!!!5196546.java!!!	getStringValueChunk(in nodeHandle : int, in chunkIndex : int, inout startAndLen : int [[]]) : char
+return new char[0];
+!!!5196674.java!!!	getExpandedTypeID(in nodeHandle : int) : int
+           nodes.readSlot(nodeHandle, gotslot);
+           String qName = m_localNames.indexToString(gotslot[3]);
+           // Remove prefix from qName
+           // %TBD% jjk This is assuming the elementName is the qName.
+           int colonpos = qName.indexOf(":");
+           String localName = qName.substring(colonpos+1);
+           // Get NS
+           String namespace = m_nsNames.indexToString(gotslot[0] << 16);
+           // Create expanded name
+           String expandedName = namespace + ":" + localName;
+           int expandedNameID = m_nsNames.stringToIndex(expandedName);
+
+        return expandedNameID;
+!!!5196802.java!!!	getExpandedTypeID(inout namespace : String, inout localName : String, in type : int) : int
+           // Create expanded name
+          // %TBD% jjk Expanded name is bitfield-encoded as
+          // typeID[6]nsuriID[10]localID[16]. Switch to that form, and to
+          // accessing the ns/local via their tables rather than confusing
+          // nsnames and expandednames.
+           String expandedName = namespace + ":" + localName;
+           int expandedNameID = m_nsNames.stringToIndex(expandedName);
+
+           return expandedNameID;
+!!!5196930.java!!!	getLocalNameFromExpandedNameID(in ExpandedNameID : int) : String
+
+           // Get expanded name
+           String expandedName = m_localNames.indexToString(ExpandedNameID);
+           // Remove prefix from expanded name
+           int colonpos = expandedName.indexOf(":");
+           String localName = expandedName.substring(colonpos+1);
+           return localName;
+!!!5197058.java!!!	getNamespaceFromExpandedNameID(in ExpandedNameID : int) : String
+
+           String expandedName = m_localNames.indexToString(ExpandedNameID);
+           // Remove local name from expanded name
+           int colonpos = expandedName.indexOf(":");
+           String nsName = expandedName.substring(0, colonpos);
+
+        return nsName;
+!!!5197186.java!!!	getNodeName(in nodeHandle : int) : String
+                nodes.readSlot(nodeHandle, gotslot);
+                short type = (short) (gotslot[0] & 0xFFFF);
+                String name = fixednames[type];
+                if (null == name) {
+                  int i=gotslot[3];
+                  /**/System.out.println("got i="+i+" "+(i>>16)+"/"+(i&0xffff));
+
+                  name=m_localNames.indexToString(i & 0xFFFF);
+                  String prefix=m_prefixNames.indexToString(i >>16);
+                  if(prefix!=null && prefix.length()>0)
+                    name=prefix+":"+name;
+                }
+                return name;
+!!!5197314.java!!!	getNodeNameX(in nodeHandle : int) : String
+return null;
+!!!5197442.java!!!	getLocalName(in nodeHandle : int) : String
+                nodes.readSlot(nodeHandle, gotslot);
+                short type = (short) (gotslot[0] & 0xFFFF);
+                String name = "";
+                if ((type==ELEMENT_NODE) || (type==ATTRIBUTE_NODE)) {
+                  int i=gotslot[3];
+                  name=m_localNames.indexToString(i & 0xFFFF);
+                  if(name==null) name="";
+                }
+                return name;
+!!!5197570.java!!!	getPrefix(in nodeHandle : int) : String
+                nodes.readSlot(nodeHandle, gotslot);
+                short type = (short) (gotslot[0] & 0xFFFF);
+                String name = "";
+                if((type==ELEMENT_NODE) || (type==ATTRIBUTE_NODE)) {
+                  int i=gotslot[3];
+                  name=m_prefixNames.indexToString(i >>16);
+                  if(name==null) name="";
+                }
+                return name;
+!!!5197698.java!!!	getNamespaceURI(in nodeHandle : int) : String
+return null;
+!!!5197826.java!!!	getNodeValue(in nodeHandle : int) : String
+                nodes.readSlot(nodeHandle, gotslot);
+                int nodetype=gotslot[0] & 0xFF;         // ###zaj use mask to get node type
+                String value=null;
+
+                switch (nodetype) {                     // ###zaj todo - document nodetypes
+                case ATTRIBUTE_NODE:
+                        nodes.readSlot(nodeHandle+1, gotslot);
+                case TEXT_NODE:
+                case COMMENT_NODE:
+                case CDATA_SECTION_NODE:
+                        value=m_char.getString(gotslot[2], gotslot[3]);         //###zaj
+                        break;
+                case PROCESSING_INSTRUCTION_NODE:
+                case ELEMENT_NODE:
+                case ENTITY_REFERENCE_NODE:
+                default:
+                        break;
+                }
+                return value;
+!!!5197954.java!!!	getNodeType(in nodeHandle : int) : short
+                return(short) (nodes.readEntry(nodeHandle, 0) & 0xFFFF);
+!!!5198082.java!!!	getLevel(in nodeHandle : int) : short
+                short count = 0;
+                while (nodeHandle != 0) {
+                        count++;
+                        nodeHandle = nodes.readEntry(nodeHandle, 1);
+                }
+                return count;
+!!!5198210.java!!!	isSupported(inout feature : String, inout version : String) : boolean
+return false;
+!!!5198338.java!!!	getDocumentBaseURI() : String
+
+          return m_documentBaseURI;
+!!!5198466.java!!!	setDocumentBaseURI(inout baseURI : String) : void
+
+          m_documentBaseURI = baseURI;
+!!!5198594.java!!!	getDocumentSystemIdentifier(in nodeHandle : int) : String
+return null;
+!!!5198722.java!!!	getDocumentEncoding(in nodeHandle : int) : String
+return null;
+!!!5198850.java!!!	getDocumentStandalone(in nodeHandle : int) : String
+return null;
+!!!5198978.java!!!	getDocumentVersion(in documentHandle : int) : String
+return null;
+!!!5199106.java!!!	getDocumentAllDeclarationsProcessed() : boolean
+return false;
+!!!5199234.java!!!	getDocumentTypeDeclarationSystemIdentifier() : String
+return null;
+!!!5199362.java!!!	getDocumentTypeDeclarationPublicIdentifier() : String
+return null;
+!!!5199490.java!!!	getElementById(inout elementId : String) : int
+return 0;
+!!!5199618.java!!!	getUnparsedEntityURI(inout name : String) : String
+return null;
+!!!5199746.java!!!	supportsPreStripping() : boolean
+return false;
+!!!5199874.java!!!	isNodeAfter(in nodeHandle1 : int, in nodeHandle2 : int) : boolean
+return false;
+!!!5200002.java!!!	isCharacterElementContentWhitespace(in nodeHandle : int) : boolean
+return false;
+!!!5200130.java!!!	isDocumentAllDeclarationsProcessed(in documentHandle : int) : boolean
+return false;
+!!!5200258.java!!!	isAttributeSpecified(in attributeHandle : int) : boolean
+return false;
+!!!5200642.java!!!	getNode(in nodeHandle : int) : Node
+          return null;
+!!!5200770.java!!!	appendChild(in newChild : int, inout clone : boolean, inout cloneDepth : boolean) : void
+                boolean sameDoc = ((newChild & DOCHANDLE_MASK) == m_docHandle);
+                if (clone || !sameDoc) {
+
+                } else {
+
+                }
+!!!5200898.java!!!	appendTextChild(inout str : String) : void
+                // ###shs Think more about how this differs from createTextNode
+          //%TBD%
+!!!5201026.java!!!	appendTextChild(in m_char_current_start : int, in contentLength : int) : void
+    // create a Text Node
+    // %TBD% may be possible to combine with appendNode()to replace the next chunk of code
+    int w0 = TEXT_NODE;
+    // W1: Parent
+    int w1 = currentParent;
+    // W2: Start position within m_char
+    int w2 = m_char_current_start;
+    // W3: Length of the full string
+    int w3 = contentLength;
+
+    int ourslot = appendNode(w0, w1, w2, w3);
+    previousSibling = ourslot;
+!!!5201154.java!!!	appendComment(in m_char_current_start : int, in contentLength : int) : void
+    // create a Comment Node
+    // %TBD% may be possible to combine with appendNode()to replace the next chunk of code
+    int w0 = COMMENT_NODE;
+    // W1: Parent
+    int w1 = currentParent;
+    // W2: Start position within m_char
+    int w2 = m_char_current_start;
+    // W3: Length of the full string
+    int w3 = contentLength;
+
+    int ourslot = appendNode(w0, w1, w2, w3);
+    previousSibling = ourslot;
+!!!5201282.java!!!	appendStartElement(in namespaceIndex : int, in localNameIndex : int, in prefixIndex : int) : void
+                // do document root node creation here on the first element, create nodes for
+                // this element and its attributes, store the element, namespace, and attritute
+                // name indexes to the nodes array, keep track of the current node and parent
+                // element used
+
+                // W0  High:  Namespace  Low:  Node Type
+                int w0 = (namespaceIndex << 16) | ELEMENT_NODE;
+                // W1: Parent
+                int w1 = currentParent;
+                // W2: Next  (initialized as 0)
+                int w2 = 0;
+                // W3: Tagname high: prefix Low: local name
+                int w3 = localNameIndex | prefixIndex<<16;
+                /**/System.out.println("set w3="+w3+" "+(w3>>16)+"/"+(w3&0xffff));
+
+                //int ourslot = nodes.appendSlot(w0, w1, w2, w3);
+                int ourslot = appendNode(w0, w1, w2, w3);
+                currentParent = ourslot;
+                previousSibling = 0;
+
+                // set the root element pointer when creating the first element node
+                if (m_docElement == NULL)
+                        m_docElement = ourslot;
+!!!5201410.java!!!	appendNSDeclaration(in prefixIndex : int, in namespaceIndex : int, inout isID : boolean) : void
+    // %REVIEW% I'm assigning this node the "namespace for namespaces"
+    // which the DOM defined. It is expected that the Namespace spec will
+    // adopt this as official. It isn't strictly needed since it's implied
+    // by the nodetype, but for now...
+
+    // %REVIEW% Prefix need not be recorded; it's implied too. But
+    // recording it might simplify the design.
+
+    // %TBD% isID is not currently honored.
+
+    final int namespaceForNamespaces=m_nsNames.stringToIndex("http://www.w3.org/2000/xmlns/");
+
+    // W0  High:  Namespace  Low:  Node Type
+    int w0 = NAMESPACE_NODE | (m_nsNames.stringToIndex("http://www.w3.org/2000/xmlns/")<<16);
+
+    // W1:  Parent
+    int w1 = currentParent;
+    // W2:  CURRENTLY UNUSED -- It's next-sib in attrs, but we have no kids.
+    int w2 = 0;
+    // W3:  namespace name
+    int w3 = namespaceIndex;
+    // Add node
+    int ourslot = appendNode(w0, w1, w2, w3);
+    previousSibling = ourslot;  // Should attributes be previous siblings
+    previousSiblingWasParent = false;
+    return ;//(m_docHandle | ourslot);
+!!!5201538.java!!!	appendAttribute(in namespaceIndex : int, in localNameIndex : int, in prefixIndex : int, inout isID : boolean, in m_char_current_start : int, in contentLength : int) : void
+    // %TBD% isID is not currently honored.
+
+    // W0  High:  Namespace  Low:  Node Type
+    int w0 = ATTRIBUTE_NODE | namespaceIndex<<16;
+
+    // W1:  Parent
+    int w1 = currentParent;
+    // W2:  Next (not yet resolved)
+    int w2 = 0;
+    // W3:  Tagname high: prefix Low: local name
+    int w3 = localNameIndex | prefixIndex<<16;
+    /**/System.out.println("set w3="+w3+" "+(w3>>16)+"/"+(w3&0xffff));
+    // Add node
+    int ourslot = appendNode(w0, w1, w2, w3);
+    previousSibling = ourslot;  // Should attributes be previous siblings
+
+    // Attribute's content is currently appended as a Text Node
+
+    // W0: Node Type
+    w0 = TEXT_NODE;
+    // W1: Parent
+    w1 = ourslot;
+    // W2: Start Position within buffer
+    w2 = m_char_current_start;
+    // W3: Length
+    w3 = contentLength;
+    appendNode(w0, w1, w2, w3);
+
+    // Attrs are Parents
+    previousSiblingWasParent = true;
+    return ;//(m_docHandle | ourslot);
+!!!5201666.java!!!	getAxisTraverser(in axis : int) : DTMAxisTraverser
+    return null;
+!!!5201794.java!!!	getAxisIterator(in axis : int) : DTMAxisIterator
+    // %TBD%
+    return null;
+!!!5201922.java!!!	getTypedAxisIterator(in axis : int, in type : int) : DTMAxisIterator
+    // %TBD%
+    return null;
+!!!5202050.java!!!	appendEndElement() : void
+    // pop up the stacks
+
+    if (previousSiblingWasParent)
+      nodes.writeEntry(previousSibling, 2, NULL);
+
+    // Pop parentage
+    previousSibling = currentParent;
+    nodes.readSlot(currentParent, gotslot);
+    currentParent = gotslot[1] & 0xFFFF;
+
+    // The element just being finished will be
+    // the previous sibling for the next operation
+    previousSiblingWasParent = true;
+
+    // Pop a level of namespace table
+    // namespaceTable.removeLastElem();
+!!!5202178.java!!!	appendStartDocument() : void
+
+    // %TBD% reset slot 0 to indicate ChunkedIntArray reuse or wait for
+    //       the next initDocument().
+    m_docElement = NULL;         // reset nodeHandle to the root of the actual dtm doc content
+    initDocument(0);
+!!!5202306.java!!!	appendEndDocument() : void
+    done = true;
+    // %TBD% may need to notice the last slot number and slot count to avoid
+    // residual data from provious use of this DTM
+!!!5202562.java!!!	getSourceLocatorFor(in node : int) : SourceLocator
+    return null;

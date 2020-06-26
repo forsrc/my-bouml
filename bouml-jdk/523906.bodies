@@ -1,0 +1,272 @@
+class SnmpRequestTree
+!!!3164674.java!!!	SnmpRequestTree(inout req : SnmpMibRequest, inout creationflag : boolean, in pdutype : int)
+        this.request = req;
+        this.version  = req.getVersion();
+        this.creationflag = creationflag;
+        this.hashtable = new Hashtable<>();
+        setPduType(pdutype);
+!!!3164802.java!!!	mapSetException(in errorStatus : int, in version : int) : int
+
+        final int errorCode = errorStatus;
+
+        if (version == SnmpDefinitions.snmpVersionOne)
+            return errorCode;
+
+        int mappedErrorCode = errorCode;
+
+        // Now take care of V2 errorCodes that can be stored
+        // in the varbind itself:
+        if (errorCode == SnmpStatusException.noSuchObject)
+            // noSuchObject => notWritable
+            mappedErrorCode = SnmpStatusException.snmpRspNotWritable;
+
+        else if (errorCode == SnmpStatusException.noSuchInstance)
+            // noSuchInstance => notWritable
+            mappedErrorCode = SnmpStatusException.snmpRspNotWritable;
+
+        return mappedErrorCode;
+!!!3164930.java!!!	mapGetException(in errorStatus : int, in version : int) : int
+
+        final int errorCode = errorStatus;
+        if (version == SnmpDefinitions.snmpVersionOne)
+            return errorCode;
+
+        int mappedErrorCode = errorCode;
+
+        // Now take care of V2 errorCodes that can be stored
+        // in the varbind itself:
+        if (errorCode ==
+            SnmpStatusException.noSuchObject)
+            // noSuchObject => noSuchObject
+            mappedErrorCode = errorCode;
+
+        else if (errorCode ==
+                 SnmpStatusException.noSuchInstance)
+            // noSuchInstance => noSuchInstance
+            mappedErrorCode = errorCode;
+
+        // Now we're going to try to transform every other
+        // global code in either noSuchInstance or noSuchObject,
+        // so that the get can return a partial result.
+        //
+        // Only noSuchInstance or noSuchObject can be stored
+        // in the varbind itself.
+        //
+
+        // According to RFC 1905: noAccess is emitted when the
+        // the access is denied because it is not in the MIB view...
+        //
+        else if (errorCode ==
+                 SnmpStatusException.noAccess)
+            // noAccess => noSuchInstance
+            mappedErrorCode = SnmpStatusException.noSuchInstance;
+
+        // According to RFC 1905: (my interpretation because it is not
+        // really clear) The specified variable name exists - but the
+        // variable does not exists and cannot be created under the
+        // present circumstances (probably because the request specifies
+        // another variable/value which is incompatible, or because the
+        // value of some other variable in the MIB prevents the creation)
+        //
+        // Note that this error should never be raised in a GET context
+        // but who knows?
+        //
+        else if (errorCode == SnmpStatusException.snmpRspInconsistentName)
+            // inconsistentName => noSuchInstance
+            mappedErrorCode = SnmpStatusException.noSuchInstance;
+
+        // All the errors comprised between snmpRspWrongType and
+        // snmpRspInconsistentValue concern values: so we're going
+        // to assume the OID was correct, and reply with noSuchInstance.
+        //
+        // Note that this error should never be raised in a GET context
+        // but who knows?
+        //
+        else if ((errorCode >= SnmpStatusException.snmpRspWrongType) &&
+                 (errorCode <= SnmpStatusException.snmpRspInconsistentValue))
+            mappedErrorCode = SnmpStatusException.noSuchInstance;
+
+        // We're going to assume the OID was correct, and reply
+        // with noSuchInstance.
+        //
+        else if (errorCode == SnmpStatusException.readOnly)
+            mappedErrorCode = SnmpStatusException.noSuchInstance;
+
+        // For all other errors but genErr, we're going to reply with
+        // noSuchObject
+        //
+        else if (errorCode != SnmpStatusException.snmpRspAuthorizationError &&
+                 errorCode != SnmpStatusException.snmpRspGenErr)
+            mappedErrorCode = SnmpStatusException.noSuchObject;
+
+        // Only genErr will abort the GET and be returned as global
+        // error.
+        //
+        return mappedErrorCode;
+
+!!!3169922.java!!!	getUserData() : Object
+ return request.getUserData();
+!!!3170050.java!!!	isCreationAllowed() : boolean
+        return creationflag;
+!!!3170178.java!!!	isSetRequest() : boolean
+        return setreqflag;
+!!!3170306.java!!!	getVersion() : int
+        return version;
+!!!3170434.java!!!	getRequestPduVersion() : int
+        return request.getRequestPduVersion();
+!!!3170562.java!!!	getMetaNode(inout handler : SnmpRequestTree::Handler) : SnmpMibNode
+        return handler.meta;
+!!!3170690.java!!!	getOidDepth(inout handler : SnmpRequestTree::Handler) : int
+        return handler.depth;
+!!!3170818.java!!!	getSubRequests(inout handler : SnmpRequestTree::Handler) : Enumeration
+        return new Enum(this,handler);
+!!!3170946.java!!!	getHandlers() : Enumeration
+        return hashtable.elements();
+!!!3171074.java!!!	add(inout meta : SnmpMibNode, in depth : int, inout varbind : SnmpVarBind) : void
+        registerNode(meta,depth,null,varbind,false,null);
+!!!3171202.java!!!	add(inout meta : SnmpMibNode, in depth : int, inout entryoid : SnmpOid, inout varbind : SnmpVarBind, inout isnew : boolean) : void
+        registerNode(meta,depth,entryoid,varbind,isnew,null);
+!!!3171330.java!!!	add(inout meta : SnmpMibNode, in depth : int, inout entryoid : SnmpOid, inout varbind : SnmpVarBind, inout isnew : boolean, inout statusvb : SnmpVarBind) : void
+        registerNode(meta,depth,entryoid,varbind,isnew,statusvb);
+!!!3171458.java!!!	setPduType(in pduType : int) : void
+        type = pduType;
+        setreqflag = ((pduType == SnmpDefinitions.pduWalkRequest) ||
+            (pduType == SnmpDefinitions.pduSetRequestPdu));
+!!!3171586.java!!!	setGetNextFlag() : void
+        getnextflag = true;
+!!!3171714.java!!!	switchCreationFlag(inout flag : boolean) : void
+        creationflag = flag;
+!!!3171842.java!!!	getSubRequest(inout handler : SnmpRequestTree::Handler) : SnmpMibSubRequest
+        if (handler == null) return null;
+        return new SnmpMibSubRequestImpl(request,handler.getSubList(),
+                                      null,false,getnextflag,null);
+!!!3171970.java!!!	getSubRequest(inout handler : SnmpRequestTree::Handler, inout oid : SnmpOid) : SnmpMibSubRequest
+        if (handler == null) return null;
+        final int pos = handler.getEntryPos(oid);
+        if (pos == -1) return null;
+        return new SnmpMibSubRequestImpl(request,
+                                         handler.getEntrySubList(pos),
+                                         handler.getEntryOid(pos),
+                                         handler.isNewEntry(pos),
+                                         getnextflag,
+                                         handler.getRowStatusVarBind(pos));
+!!!3172098.java!!!	getSubRequest(inout handler : SnmpRequestTree::Handler, in entry : int) : SnmpMibSubRequest
+        if (handler == null) return null;
+        return new
+            SnmpMibSubRequestImpl(request,handler.getEntrySubList(entry),
+                                  handler.getEntryOid(entry),
+                                  handler.isNewEntry(entry),getnextflag,
+                                  handler.getRowStatusVarBind(entry));
+!!!3172226.java!!!	put(inout key : Object, inout handler : SnmpRequestTree::Handler) : void
+        if (handler == null) return;
+        if (key == null) return;
+        if (hashtable == null) hashtable = new Hashtable<Object, Handler>();
+        hashtable.put(key,handler);
+!!!3172354.java!!!	get(inout key : Object) : SnmpRequestTree::Handler
+        if (key == null) return null;
+        if (hashtable == null) return null;
+        return hashtable.get(key);
+!!!3172482.java!!!	findOid(inout oids : SnmpOid [[]], in count : int, inout oid : SnmpOid) : int
+        final int size = count;
+        int low= 0;
+        int max= size - 1;
+        int curr= low + (max-low)/2;
+        //System.out.println("Try to retrieve: " + oid.toString());
+        while (low <= max) {
+
+            final SnmpOid pos = oids[curr];
+
+            //System.out.println("Compare with" + pos.toString());
+            // never know ...we might find something ...
+            //
+            final int comp = oid.compareTo(pos);
+            if (comp == 0)
+                return curr;
+
+            if (oid.equals(pos)) {
+                return curr;
+            }
+            if (comp > 0) {
+                low = curr + 1;
+            } else {
+                max = curr - 1;
+            }
+            curr = low + (max-low)/2;
+        }
+        return -1;
+!!!3172610.java!!!	getInsertionPoint(inout oids : SnmpOid [[]], in count : int, inout oid : SnmpOid) : int
+        final SnmpOid[] localoids = oids;
+        final int size = count;
+        int low= 0;
+        int max= size - 1;
+        int curr= low + (max-low)/2;
+
+
+        while (low <= max) {
+
+            final SnmpOid pos = localoids[curr];
+
+            // never know ...we might find something ...
+            //
+            final int comp= oid.compareTo(pos);
+
+            // In the calling method we will have to check for this case...
+            //    if (comp == 0)
+            //       return -1;
+            // Returning curr instead of -1 avoids having to call
+            // findOid() first and getInsertionPoint() afterwards.
+            // We can simply call getInsertionPoint() and then checks whether
+            // there's an OID at the returned position which equals the
+            // given OID.
+            if (comp == 0)
+                return curr;
+
+            if (comp>0) {
+                low= curr +1;
+            } else {
+                max= curr -1;
+            }
+            curr= low + (max-low)/2;
+        }
+        return curr;
+!!!3172738.java!!!	registerNode(inout meta : SnmpMibNode, in depth : int, inout entryoid : SnmpOid, inout varbind : SnmpVarBind, inout isnew : boolean, inout statusvb : SnmpVarBind) : void
+        if (meta == null) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINEST,
+                    SnmpRequestTree.class.getName(),
+                    "registerNode", "meta-node is null!");
+            return;
+        }
+        if (varbind == null) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINEST,
+                    SnmpRequestTree.class.getName(),
+                    "registerNode", "varbind is null!");
+            return ;
+        }
+
+        final Object key = meta;
+
+        // retrieve the handler node associated with the given meta,
+        // if any
+        Handler handler = get(key);
+
+        // If no handler node was found for that meta, create one.
+        if (handler == null) {
+            // if (isDebugOn())
+            //    debug("registerNode", "adding node for " +
+            //          varbind.oid.toString());
+            handler = new Handler(type);
+            handler.meta  = meta;
+            handler.depth = depth;
+            put(key,handler);
+        }
+        // else {
+        //   if (isDebugOn())
+        //      debug("registerNode","found node for " +
+        //            varbind.oid.toString());
+        // }
+
+        // Adds the varbind in the handler node's sublist.
+        if (entryoid == null)
+            handler.addVarbind(varbind);
+        else
+            handler.addVarbind(varbind,entryoid,isnew,statusvb);

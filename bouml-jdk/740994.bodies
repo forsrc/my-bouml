@@ -1,0 +1,123 @@
+class Scanner
+!!!5169666.java!!!	Scanner(inout symbolTable : SymbolTable)
+            // save pool and tokens
+            fSymbolTable = symbolTable;
+
+!!!5169794.java!!!	scanExpr(inout symbolTable : SymbolTable, inout tokens : ElementSchemePointer::Tokens, inout data : String, in currentOffset : int, in endOffset : int) : boolean
+
+            int ch;
+            int nameOffset;
+            String nameHandle = null;
+
+            while (true) {
+                if (currentOffset == endOffset) {
+                    break;
+                }
+
+                ch = data.charAt(currentOffset);
+                byte chartype = (ch >= 0x80) ? CHARTYPE_NONASCII
+                        : fASCIICharMap[ch];
+
+                //
+                // [1]    ElementSchemeData    ::=    (NCName ChildSequence?) | ChildSequence
+                // [2]    ChildSequence    ::=    ('/' [1-9] [0-9]*)+
+                //
+
+                switch (chartype) {
+
+                case CHARTYPE_SLASH:
+                    // if last character is '/', break and report an error
+                    if (++currentOffset == endOffset) {
+                        return false;
+                    }
+
+                    addToken(tokens, Tokens.XPTRTOKEN_ELEM_CHILD);
+                    ch = data.charAt(currentOffset);
+
+                    // ChildSequence    ::=    ('/' [1-9] [0-9]*)+
+                    int child = 0;
+                    while (ch >= '0' && ch <= '9') {
+                        child = (child * 10) + (ch - '0');
+                        if (++currentOffset == endOffset) {
+                            break;
+                        }
+                        ch = data.charAt(currentOffset);
+                    }
+
+                    // An invalid child sequence character
+                    if (child == 0) {
+                        reportError("InvalidChildSequenceCharacter",
+                                new Object[] { new Character((char) ch) });
+                        return false;
+                    }
+
+                    tokens.addToken(child);
+
+                    break;
+
+                case CHARTYPE_DIGIT:
+                case CHARTYPE_LETTER:
+                case CHARTYPE_MINUS:
+                case CHARTYPE_NONASCII:
+                case CHARTYPE_OTHER:
+                case CHARTYPE_PERIOD:
+                case CHARTYPE_UNDERSCORE:
+                    // Scan the ShortHand Pointer NCName
+                    nameOffset = currentOffset;
+                    currentOffset = scanNCName(data, endOffset, currentOffset);
+
+                    if (currentOffset == nameOffset) {
+                        //return false;
+                        reportError("InvalidNCNameInElementSchemeData",
+                                new Object[] { data });
+                        return false;
+                    }
+
+                    if (currentOffset < endOffset) {
+                        ch = data.charAt(currentOffset);
+                    } else {
+                        ch = -1;
+                    }
+
+                    nameHandle = symbolTable.addSymbol(data.substring(
+                            nameOffset, currentOffset));
+                    addToken(tokens, Tokens.XPTRTOKEN_ELEM_NCNAME);
+                    tokens.addToken(nameHandle);
+
+                    break;
+                }
+            }
+            return true;
+!!!5169922.java!!!	scanNCName(inout data : String, in endOffset : int, in currentOffset : int) : int
+            int ch = data.charAt(currentOffset);
+            if (ch >= 0x80) {
+                if (!XMLChar.isNameStart(ch)) {
+                    return currentOffset;
+                }
+            } else {
+                byte chartype = fASCIICharMap[ch];
+                if (chartype != CHARTYPE_LETTER
+                        && chartype != CHARTYPE_UNDERSCORE) {
+                    return currentOffset;
+                }
+            }
+            while (++currentOffset < endOffset) {
+                ch = data.charAt(currentOffset);
+                if (ch >= 0x80) {
+                    if (!XMLChar.isName(ch)) {
+                        break;
+                    }
+                } else {
+                    byte chartype = fASCIICharMap[ch];
+                    if (chartype != CHARTYPE_LETTER
+                            && chartype != CHARTYPE_DIGIT
+                            && chartype != CHARTYPE_PERIOD
+                            && chartype != CHARTYPE_MINUS
+                            && chartype != CHARTYPE_UNDERSCORE) {
+                        break;
+                    }
+                }
+            }
+            return currentOffset;
+!!!5170050.java!!!	addToken(inout tokens : ElementSchemePointer::Tokens, in token : int) : void
+            tokens.addToken(token);

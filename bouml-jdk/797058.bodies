@@ -1,0 +1,225 @@
+class ListingErrorHandler
+!!!5677442.java!!!	ListingErrorHandler(inout pw : PrintWriter)
+        if (null == pw)
+            throw new NullPointerException(XMLMessages.createXMLMessage(XMLErrorResources.ER_ERRORHANDLER_CREATED_WITH_NULL_PRINTWRITER, null));
+            // "ListingErrorHandler created with null PrintWriter!");
+
+        m_pw = pw;
+!!!5677570.java!!!	ListingErrorHandler()
+        m_pw = new PrintWriter(System.err, true);
+!!!5677698.java!!!	warning(inout exception : SAXParseException) : void
+        logExceptionLocation(m_pw, exception);
+        // Note: should we really call .toString() below, since
+        //  sometimes the message is not properly set?
+        m_pw.println("warning: " + exception.getMessage());
+        m_pw.flush();
+
+        if (getThrowOnWarning())
+            throw exception;
+!!!5677826.java!!!	error(inout exception : SAXParseException) : void
+        logExceptionLocation(m_pw, exception);
+        m_pw.println("error: " + exception.getMessage());
+        m_pw.flush();
+
+        if (getThrowOnError())
+            throw exception;
+!!!5677954.java!!!	fatalError(inout exception : SAXParseException) : void
+        logExceptionLocation(m_pw, exception);
+        m_pw.println("fatalError: " + exception.getMessage());
+        m_pw.flush();
+
+        if (getThrowOnFatalError())
+            throw exception;
+!!!5678082.java!!!	warning(inout exception : TransformerException) : void
+        logExceptionLocation(m_pw, exception);
+        m_pw.println("warning: " + exception.getMessage());
+        m_pw.flush();
+
+        if (getThrowOnWarning())
+            throw exception;
+!!!5678210.java!!!	error(inout exception : TransformerException) : void
+        logExceptionLocation(m_pw, exception);
+        m_pw.println("error: " + exception.getMessage());
+        m_pw.flush();
+
+        if (getThrowOnError())
+            throw exception;
+!!!5678338.java!!!	fatalError(inout exception : TransformerException) : void
+        logExceptionLocation(m_pw, exception);
+        m_pw.println("error: " + exception.getMessage());
+        m_pw.flush();
+
+        if (getThrowOnError())
+            throw exception;
+!!!5678466.java!!!	logExceptionLocation(inout pw : PrintWriter, inout exception : Throwable) : void
+        if (null == pw)
+            pw = new PrintWriter(System.err, true);
+
+        SourceLocator locator = null;
+        Throwable cause = exception;
+
+        // Try to find the locator closest to the cause.
+        do
+        {
+            // Find the current locator, if one present
+            if(cause instanceof SAXParseException)
+            {
+                // A SAXSourceLocator is a Xalan helper class
+                //  that implements both a SourceLocator and a SAX Locator
+                //@todo check that the new locator actually has
+                //  as much or more information as the
+                //  current one already does
+                locator = new SAXSourceLocator((SAXParseException)cause);
+            }
+            else if (cause instanceof TransformerException)
+            {
+                SourceLocator causeLocator = ((TransformerException)cause).getLocator();
+                if(null != causeLocator)
+                {
+                    locator = causeLocator;
+                }
+            }
+
+            // Then walk back down the chain of exceptions
+            if(cause instanceof TransformerException)
+                cause = ((TransformerException)cause).getCause();
+            else if(cause instanceof WrappedRuntimeException)
+                cause = ((WrappedRuntimeException)cause).getException();
+            else if(cause instanceof SAXException)
+                cause = ((SAXException)cause).getException();
+            else
+                cause = null;
+        }
+        while(null != cause);
+
+        // Formatting note: mimic javac-like errors:
+        //  path\filename:123: message-here
+        //  systemId:L=1;C=2: message-here
+        if(null != locator)
+        {
+            String id = (locator.getPublicId() != locator.getPublicId())
+                      ? locator.getPublicId()
+                        : (null != locator.getSystemId())
+                          ? locator.getSystemId() : "SystemId-Unknown";
+
+            pw.print(id + ":Line=" + locator.getLineNumber()
+                             + ";Column=" + locator.getColumnNumber()+": ");
+            pw.println("exception:" + exception.getMessage());
+            pw.println("root-cause:"
+                       + ((null != cause) ? cause.getMessage() : "null"));
+            logSourceLine(pw, locator);
+        }
+        else
+        {
+            pw.print("SystemId-Unknown:locator-unavailable: ");
+            pw.println("exception:" + exception.getMessage());
+            pw.println("root-cause:"
+                       + ((null != cause) ? cause.getMessage() : "null"));
+        }
+!!!5678594.java!!!	logSourceLine(inout pw : PrintWriter, inout locator : SourceLocator) : void
+        if (null == locator)
+            return;
+
+        if (null == pw)
+            pw = new PrintWriter(System.err, true);
+
+        String url = locator.getSystemId();
+        // Bail immediately if we get SystemId-Unknown
+        //@todo future improvement: attempt to get resource
+        //  from a publicId if possible
+        if (null == url)
+        {
+            pw.println("line: (No systemId; cannot read file)");
+            pw.println();
+            return;
+        }
+
+        //@todo attempt to get DOM backpointer or other ids
+
+        try
+        {
+            int line = locator.getLineNumber();
+            int column = locator.getColumnNumber();
+            pw.println("line: " + getSourceLine(url, line));
+            StringBuffer buf = new StringBuffer("line: ");
+            for (int i = 1; i < column; i++)
+            {
+                buf.append(' ');
+            }
+            buf.append('^');
+            pw.println(buf.toString());
+        }
+        catch (Exception e)
+        {
+            pw.println("line: logSourceLine unavailable due to: " + e.getMessage());
+            pw.println();
+        }
+!!!5678722.java!!!	getSourceLine(inout sourceUrl : String, in lineNum : int) : String
+        URL url = null;
+        // Get a URL from the sourceUrl
+        try
+        {
+            // Try to get a URL from it as-is
+            url = new URL(sourceUrl);
+        }
+        catch (java.net.MalformedURLException mue)
+        {
+            int indexOfColon = sourceUrl.indexOf(':');
+            int indexOfSlash = sourceUrl.indexOf('/');
+
+            if ((indexOfColon != -1)
+                && (indexOfSlash != -1)
+                && (indexOfColon < indexOfSlash))
+            {
+                // The url is already absolute, but we could not get
+                //  the system to form it, so bail
+                throw mue;
+            }
+            else
+            {
+                // The url is relative, so attempt to get absolute
+                url = new URL(SystemIDResolver.getAbsoluteURI(sourceUrl));
+                // If this fails, allow the exception to propagate
+            }
+        }
+
+        String line = null;
+        InputStream is = null;
+        BufferedReader br = null;
+        try
+        {
+            // Open the URL and read to our specified line
+            URLConnection uc = url.openConnection();
+            is = uc.getInputStream();
+            br = new BufferedReader(new InputStreamReader(is));
+
+            // Not the most efficient way, but it works
+            // (Feel free to patch to seek to the appropriate line)
+            for (int i = 1; i <= lineNum; i++)
+            {
+                line = br.readLine();
+            }
+
+        }
+        // Allow exceptions to propagate from here, but ensure
+        //  streams are closed!
+        finally
+        {
+            br.close();
+            is.close();
+        }
+
+        // Return whatever we found
+        return line;
+!!!5678850.java!!!	setThrowOnWarning(inout b : boolean) : void
+        throwOnWarning = b;
+!!!5678978.java!!!	getThrowOnWarning() : boolean
+        return throwOnWarning;
+!!!5679106.java!!!	setThrowOnError(inout b : boolean) : void
+        throwOnError = b;
+!!!5679234.java!!!	getThrowOnError() : boolean
+        return throwOnError;
+!!!5679362.java!!!	setThrowOnFatalError(inout b : boolean) : void
+        throwOnFatalError = b;
+!!!5679490.java!!!	getThrowOnFatalError() : boolean
+        return throwOnFatalError;

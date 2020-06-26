@@ -1,0 +1,376 @@
+class AttributeTrackingDestination
+!!!11863042.java!!!	AttributeTrackingDestination()
+        characterAttributes = rootCharacterAttributes();
+        parserState.put("chr", characterAttributes);
+        paragraphAttributes = rootParagraphAttributes();
+        parserState.put("pgf", paragraphAttributes);
+        sectionAttributes = rootSectionAttributes();
+        parserState.put("sec", sectionAttributes);
+!!!11863298.java!!!	handleBinaryBlob(inout data : byte [[]]) : void
+        /* This should really be in TextHandlingDestination, but
+         * since *nobody* does anything with binary blobs, this
+         * is more convenient. */
+        warning("Unexpected binary data in RTF file.");
+!!!11863426.java!!!	begingroup() : void
+        AttributeSet characterParent = currentTextAttributes();
+        AttributeSet paragraphParent = currentParagraphAttributes();
+        AttributeSet sectionParent = currentSectionAttributes();
+
+        /* It would probably be more efficient to use the
+         * resolver property of the attributes set for
+         * implementing rtf groups,
+         * but that's needed for styles. */
+
+        /* update the cached attribute dictionaries */
+        characterAttributes = new SimpleAttributeSet();
+        characterAttributes.addAttributes(characterParent);
+        parserState.put("chr", characterAttributes);
+
+        paragraphAttributes = new SimpleAttributeSet();
+        paragraphAttributes.addAttributes(paragraphParent);
+        parserState.put("pgf", paragraphAttributes);
+
+        sectionAttributes = new SimpleAttributeSet();
+        sectionAttributes.addAttributes(sectionParent);
+        parserState.put("sec", sectionAttributes);
+!!!11863554.java!!!	endgroup(inout oldState : Dictionary) : void
+        characterAttributes = (MutableAttributeSet)parserState.get("chr");
+        paragraphAttributes = (MutableAttributeSet)parserState.get("pgf");
+        sectionAttributes   = (MutableAttributeSet)parserState.get("sec");
+!!!11863810.java!!!	handleKeyword(inout keyword : String) : boolean
+        if (keyword.equals("ulnone")) {
+            return handleKeyword("ul", 0);
+        }
+
+        {
+            RTFAttribute attr = straightforwardAttributes.get(keyword);
+            if (attr != null) {
+                boolean ok;
+
+                switch(attr.domain()) {
+                  case RTFAttribute.D_CHARACTER:
+                    ok = attr.set(characterAttributes);
+                    break;
+                  case RTFAttribute.D_PARAGRAPH:
+                    ok = attr.set(paragraphAttributes);
+                    break;
+                  case RTFAttribute.D_SECTION:
+                    ok = attr.set(sectionAttributes);
+                    break;
+                  case RTFAttribute.D_META:
+                    mockery.backing = parserState;
+                    ok = attr.set(mockery);
+                    mockery.backing = null;
+                    break;
+                  case RTFAttribute.D_DOCUMENT:
+                    ok = attr.set(documentAttributes);
+                    break;
+                  default:
+                    /* should never happen */
+                    ok = false;
+                    break;
+                }
+                if (ok)
+                    return true;
+            }
+        }
+
+
+        if (keyword.equals("plain")) {
+            resetCharacterAttributes();
+            return true;
+        }
+
+        if (keyword.equals("pard")) {
+            resetParagraphAttributes();
+            return true;
+        }
+
+        if (keyword.equals("sectd")) {
+            resetSectionAttributes();
+            return true;
+        }
+
+        return false;
+!!!11863938.java!!!	handleKeyword(inout keyword : String, in parameter : int) : boolean
+        boolean booleanParameter = (parameter != 0);
+
+        if (keyword.equals("fc"))
+            keyword = "cf"; /* whatEVER, dude. */
+
+        if (keyword.equals("f")) {
+            parserState.put(keyword, Integer.valueOf(parameter));
+            return true;
+        }
+        if (keyword.equals("cf")) {
+            parserState.put(keyword, Integer.valueOf(parameter));
+            return true;
+        }
+
+        {
+            RTFAttribute attr = straightforwardAttributes.get(keyword);
+            if (attr != null) {
+                boolean ok;
+
+                switch(attr.domain()) {
+                  case RTFAttribute.D_CHARACTER:
+                    ok = attr.set(characterAttributes, parameter);
+                    break;
+                  case RTFAttribute.D_PARAGRAPH:
+                    ok = attr.set(paragraphAttributes, parameter);
+                    break;
+                  case RTFAttribute.D_SECTION:
+                    ok = attr.set(sectionAttributes, parameter);
+                    break;
+                  case RTFAttribute.D_META:
+                    mockery.backing = parserState;
+                    ok = attr.set(mockery, parameter);
+                    mockery.backing = null;
+                    break;
+                  case RTFAttribute.D_DOCUMENT:
+                    ok = attr.set(documentAttributes, parameter);
+                    break;
+                  default:
+                    /* should never happen */
+                    ok = false;
+                    break;
+                }
+                if (ok)
+                    return true;
+            }
+        }
+
+        if (keyword.equals("fs")) {
+            StyleConstants.setFontSize(characterAttributes, (parameter / 2));
+            return true;
+        }
+
+        /* TODO: superscript/subscript */
+
+        if (keyword.equals("sl")) {
+            if (parameter == 1000) {  /* magic value! */
+                characterAttributes.removeAttribute(StyleConstants.LineSpacing);
+            } else {
+                /* TODO: The RTF sl attribute has special meaning if it's
+                   negative. Make sure that SwingText has the same special
+                   meaning, or find a way to imitate that. When SwingText
+                   handles this, also recognize the slmult keyword. */
+                StyleConstants.setLineSpacing(characterAttributes,
+                                              parameter / 20f);
+            }
+            return true;
+        }
+
+        /* TODO: Other kinds of underlining */
+
+        if (keyword.equals("tx") || keyword.equals("tb")) {
+            float tabPosition = parameter / 20f;
+            int tabAlignment, tabLeader;
+            Number item;
+
+            tabAlignment = TabStop.ALIGN_LEFT;
+            item = (Number)(parserState.get("tab_alignment"));
+            if (item != null)
+                tabAlignment = item.intValue();
+            tabLeader = TabStop.LEAD_NONE;
+            item = (Number)(parserState.get("tab_leader"));
+            if (item != null)
+                tabLeader = item.intValue();
+            if (keyword.equals("tb"))
+                tabAlignment = TabStop.ALIGN_BAR;
+
+            parserState.remove("tab_alignment");
+            parserState.remove("tab_leader");
+
+            TabStop newStop = new TabStop(tabPosition, tabAlignment, tabLeader);
+            Dictionary<Object, Object> tabs;
+            Integer stopCount;
+
+            tabs = (Dictionary<Object, Object>)parserState.get("_tabs");
+            if (tabs == null) {
+                tabs = new Hashtable<Object, Object>();
+                parserState.put("_tabs", tabs);
+                stopCount = Integer.valueOf(1);
+            } else {
+                stopCount = (Integer)tabs.get("stop count");
+                stopCount = Integer.valueOf(1 + stopCount.intValue());
+            }
+            tabs.put(stopCount, newStop);
+            tabs.put("stop count", stopCount);
+            parserState.remove("_tabs_immutable");
+
+            return true;
+        }
+
+        if (keyword.equals("s") &&
+            paragraphStyles != null) {
+            parserState.put("paragraphStyle", paragraphStyles[parameter]);
+            return true;
+        }
+
+        if (keyword.equals("cs") &&
+            characterStyles != null) {
+            parserState.put("characterStyle", characterStyles[parameter]);
+            return true;
+        }
+
+        if (keyword.equals("ds") &&
+            sectionStyles != null) {
+            parserState.put("sectionStyle", sectionStyles[parameter]);
+            return true;
+        }
+
+        return false;
+!!!11864066.java!!!	rootCharacterAttributes() : MutableAttributeSet
+        MutableAttributeSet set = new SimpleAttributeSet();
+
+        /* TODO: default font */
+
+        StyleConstants.setItalic(set, false);
+        StyleConstants.setBold(set, false);
+        StyleConstants.setUnderline(set, false);
+        StyleConstants.setForeground(set, defaultColor());
+
+        return set;
+!!!11864194.java!!!	rootParagraphAttributes() : MutableAttributeSet
+        MutableAttributeSet set = new SimpleAttributeSet();
+
+        StyleConstants.setLeftIndent(set, 0f);
+        StyleConstants.setRightIndent(set, 0f);
+        StyleConstants.setFirstLineIndent(set, 0f);
+
+        /* TODO: what should this be, really? */
+        set.setResolveParent(target.getStyle(StyleContext.DEFAULT_STYLE));
+
+        return set;
+!!!11864322.java!!!	rootSectionAttributes() : MutableAttributeSet
+        MutableAttributeSet set = new SimpleAttributeSet();
+
+        return set;
+!!!11864450.java!!!	currentTextAttributes() : MutableAttributeSet
+        MutableAttributeSet attributes =
+            new SimpleAttributeSet(characterAttributes);
+        Integer fontnum;
+        Integer stateItem;
+
+        /* figure out the font name */
+        /* TODO: catch exceptions for undefined attributes,
+           bad font indices, etc.? (as it stands, it is the caller's
+           job to clean up after corrupt RTF) */
+        fontnum = (Integer)parserState.get("f");
+        /* note setFontFamily() can not handle a null font */
+        String fontFamily;
+        if (fontnum != null)
+            fontFamily = fontTable.get(fontnum);
+        else
+            fontFamily = null;
+        if (fontFamily != null)
+            StyleConstants.setFontFamily(attributes, fontFamily);
+        else
+            attributes.removeAttribute(StyleConstants.FontFamily);
+
+        if (colorTable != null) {
+            stateItem = (Integer)parserState.get("cf");
+            if (stateItem != null) {
+                Color fg = colorTable[stateItem.intValue()];
+                StyleConstants.setForeground(attributes, fg);
+            } else {
+                /* AttributeSet dies if you set a value to null */
+                attributes.removeAttribute(StyleConstants.Foreground);
+            }
+        }
+
+        if (colorTable != null) {
+            stateItem = (Integer)parserState.get("cb");
+            if (stateItem != null) {
+                Color bg = colorTable[stateItem.intValue()];
+                attributes.addAttribute(StyleConstants.Background,
+                                        bg);
+            } else {
+                /* AttributeSet dies if you set a value to null */
+                attributes.removeAttribute(StyleConstants.Background);
+            }
+        }
+
+        Style characterStyle = (Style)parserState.get("characterStyle");
+        if (characterStyle != null)
+            attributes.setResolveParent(characterStyle);
+
+        /* Other attributes are maintained directly in "attributes" */
+
+        return attributes;
+!!!11864578.java!!!	currentParagraphAttributes() : MutableAttributeSet
+        /* NB if there were a mutableCopy() method we should use it */
+        MutableAttributeSet bld = new SimpleAttributeSet(paragraphAttributes);
+
+        Integer stateItem;
+
+        /*** Tab stops ***/
+        TabStop tabs[];
+
+        tabs = (TabStop[])parserState.get("_tabs_immutable");
+        if (tabs == null) {
+            Dictionary workingTabs = (Dictionary)parserState.get("_tabs");
+            if (workingTabs != null) {
+                int count = ((Integer)workingTabs.get("stop count")).intValue();
+                tabs = new TabStop[count];
+                for (int ix = 1; ix <= count; ix ++)
+                    tabs[ix-1] = (TabStop)workingTabs.get(Integer.valueOf(ix));
+                parserState.put("_tabs_immutable", tabs);
+            }
+        }
+        if (tabs != null)
+            bld.addAttribute(Constants.Tabs, tabs);
+
+        Style paragraphStyle = (Style)parserState.get("paragraphStyle");
+        if (paragraphStyle != null)
+            bld.setResolveParent(paragraphStyle);
+
+        return bld;
+!!!11864706.java!!!	currentSectionAttributes() : AttributeSet
+        MutableAttributeSet attributes = new SimpleAttributeSet(sectionAttributes);
+
+        Style sectionStyle = (Style)parserState.get("sectionStyle");
+        if (sectionStyle != null)
+            attributes.setResolveParent(sectionStyle);
+
+        return attributes;
+!!!11864834.java!!!	resetCharacterAttributes() : void
+        handleKeyword("f", 0);
+        handleKeyword("cf", 0);
+
+        handleKeyword("fs", 24);  /* 12 pt. */
+
+        Enumeration<RTFAttribute> attributes = straightforwardAttributes.elements();
+        while(attributes.hasMoreElements()) {
+            RTFAttribute attr = attributes.nextElement();
+            if (attr.domain() == RTFAttribute.D_CHARACTER)
+                attr.setDefault(characterAttributes);
+        }
+
+        handleKeyword("sl", 1000);
+
+        parserState.remove("characterStyle");
+!!!11864962.java!!!	resetParagraphAttributes() : void
+        parserState.remove("_tabs");
+        parserState.remove("_tabs_immutable");
+        parserState.remove("paragraphStyle");
+
+        StyleConstants.setAlignment(paragraphAttributes,
+                                    StyleConstants.ALIGN_LEFT);
+
+        Enumeration<RTFAttribute> attributes = straightforwardAttributes.elements();
+        while(attributes.hasMoreElements()) {
+            RTFAttribute attr = attributes.nextElement();
+            if (attr.domain() == RTFAttribute.D_PARAGRAPH)
+                attr.setDefault(characterAttributes);
+        }
+!!!11865090.java!!!	resetSectionAttributes() : void
+        Enumeration<RTFAttribute> attributes = straightforwardAttributes.elements();
+        while(attributes.hasMoreElements()) {
+            RTFAttribute attr = attributes.nextElement();
+            if (attr.domain() == RTFAttribute.D_SECTION)
+                attr.setDefault(characterAttributes);
+        }
+
+        parserState.remove("sectionStyle");

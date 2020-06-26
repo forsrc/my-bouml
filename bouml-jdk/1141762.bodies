@@ -1,0 +1,183 @@
+class XMLFormatter
+!!!9409794.java!!!	a2(inout sb : StringBuilder, in x : int) : void
+        if (x < 10) {
+            sb.append('0');
+        }
+        sb.append(x);
+!!!9409922.java!!!	appendISO8601(inout sb : StringBuilder, in millis : long) : void
+        GregorianCalendar cal = new GregorianCalendar();
+        cal.setTimeInMillis(millis);
+        sb.append(cal.get(Calendar.YEAR));
+        sb.append('-');
+        a2(sb, cal.get(Calendar.MONTH) + 1);
+        sb.append('-');
+        a2(sb, cal.get(Calendar.DAY_OF_MONTH));
+        sb.append('T');
+        a2(sb, cal.get(Calendar.HOUR_OF_DAY));
+        sb.append(':');
+        a2(sb, cal.get(Calendar.MINUTE));
+        sb.append(':');
+        a2(sb, cal.get(Calendar.SECOND));
+!!!9410050.java!!!	escape(inout sb : StringBuilder, inout text : String) : void
+        if (text == null) {
+            text = "<null>";
+        }
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch == '<') {
+                sb.append("&lt;");
+            } else if (ch == '>') {
+                sb.append("&gt;");
+            } else if (ch == '&') {
+                sb.append("&amp;");
+            } else {
+                sb.append(ch);
+            }
+        }
+!!!9410178.java!!!	format(inout record : LogRecord) : String
+        StringBuilder sb = new StringBuilder(500);
+        sb.append("<record>\n");
+
+        sb.append("  <date>");
+        appendISO8601(sb, record.getMillis());
+        sb.append("</date>\n");
+
+        sb.append("  <millis>");
+        sb.append(record.getMillis());
+        sb.append("</millis>\n");
+
+        sb.append("  <sequence>");
+        sb.append(record.getSequenceNumber());
+        sb.append("</sequence>\n");
+
+        String name = record.getLoggerName();
+        if (name != null) {
+            sb.append("  <logger>");
+            escape(sb, name);
+            sb.append("</logger>\n");
+        }
+
+        sb.append("  <level>");
+        escape(sb, record.getLevel().toString());
+        sb.append("</level>\n");
+
+        if (record.getSourceClassName() != null) {
+            sb.append("  <class>");
+            escape(sb, record.getSourceClassName());
+            sb.append("</class>\n");
+        }
+
+        if (record.getSourceMethodName() != null) {
+            sb.append("  <method>");
+            escape(sb, record.getSourceMethodName());
+            sb.append("</method>\n");
+        }
+
+        sb.append("  <thread>");
+        sb.append(record.getThreadID());
+        sb.append("</thread>\n");
+
+        if (record.getMessage() != null) {
+            // Format the message string and its accompanying parameters.
+            String message = formatMessage(record);
+            sb.append("  <message>");
+            escape(sb, message);
+            sb.append("</message>");
+            sb.append("\n");
+        }
+
+        // If the message is being localized, output the key, resource
+        // bundle name, and params.
+        ResourceBundle bundle = record.getResourceBundle();
+        try {
+            if (bundle != null && bundle.getString(record.getMessage()) != null) {
+                sb.append("  <key>");
+                escape(sb, record.getMessage());
+                sb.append("</key>\n");
+                sb.append("  <catalog>");
+                escape(sb, record.getResourceBundleName());
+                sb.append("</catalog>\n");
+            }
+        } catch (Exception ex) {
+            // The message is not in the catalog.  Drop through.
+        }
+
+        Object parameters[] = record.getParameters();
+        //  Check to see if the parameter was not a messagetext format
+        //  or was not null or empty
+        if ( parameters != null && parameters.length != 0
+                && record.getMessage().indexOf("{") == -1 ) {
+            for (int i = 0; i < parameters.length; i++) {
+                sb.append("  <param>");
+                try {
+                    escape(sb, parameters[i].toString());
+                } catch (Exception ex) {
+                    sb.append("???");
+                }
+                sb.append("</param>\n");
+            }
+        }
+
+        if (record.getThrown() != null) {
+            // Report on the state of the throwable.
+            Throwable th = record.getThrown();
+            sb.append("  <exception>\n");
+            sb.append("    <message>");
+            escape(sb, th.toString());
+            sb.append("</message>\n");
+            StackTraceElement trace[] = th.getStackTrace();
+            for (int i = 0; i < trace.length; i++) {
+                StackTraceElement frame = trace[i];
+                sb.append("    <frame>\n");
+                sb.append("      <class>");
+                escape(sb, frame.getClassName());
+                sb.append("</class>\n");
+                sb.append("      <method>");
+                escape(sb, frame.getMethodName());
+                sb.append("</method>\n");
+                // Check for a line number.
+                if (frame.getLineNumber() >= 0) {
+                    sb.append("      <line>");
+                    sb.append(frame.getLineNumber());
+                    sb.append("</line>\n");
+                }
+                sb.append("    </frame>\n");
+            }
+            sb.append("  </exception>\n");
+        }
+
+        sb.append("</record>\n");
+        return sb.toString();
+!!!9410306.java!!!	getHead(inout h : Handler) : String
+        StringBuilder sb = new StringBuilder();
+        String encoding;
+        sb.append("<?xml version=\"1.0\"");
+
+        if (h != null) {
+            encoding = h.getEncoding();
+        } else {
+            encoding = null;
+        }
+
+        if (encoding == null) {
+            // Figure out the default encoding.
+            encoding = java.nio.charset.Charset.defaultCharset().name();
+        }
+        // Try to map the encoding name to a canonical name.
+        try {
+            Charset cs = Charset.forName(encoding);
+            encoding = cs.name();
+        } catch (Exception ex) {
+            // We hit problems finding a canonical name.
+            // Just use the raw encoding name.
+        }
+
+        sb.append(" encoding=\"");
+        sb.append(encoding);
+        sb.append("\"");
+        sb.append(" standalone=\"no\"?>\n");
+        sb.append("<!DOCTYPE log SYSTEM \"logger.dtd\">\n");
+        sb.append("<log>\n");
+        return sb.toString();
+!!!9410434.java!!!	getTail(inout h : Handler) : String
+        return "</log>\n";

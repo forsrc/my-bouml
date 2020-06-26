@@ -1,0 +1,928 @@
+class StyleSheet
+!!!2415106.java!!!	StyleSheet()
+        super();
+        selectorMapping = new SelectorMapping(0);
+        resolvedStyles = new Hashtable<String, ResolvedStyle>();
+        if (css == null) {
+            css = new CSS();
+        }
+!!!2415234.java!!!	getRule(inout t : HTML::Tag, inout e : Element) : Style
+        SearchBuffer sb = SearchBuffer.obtainSearchBuffer();
+
+        try {
+            // Build an array of all the parent elements.
+            Vector<Element> searchContext = sb.getVector();
+
+            for (Element p = e; p != null; p = p.getParentElement()) {
+                searchContext.addElement(p);
+            }
+
+            // Build a fully qualified selector.
+            int              n = searchContext.size();
+            StringBuffer     cacheLookup = sb.getStringBuffer();
+            AttributeSet     attr;
+            String           eName;
+            Object           name;
+
+            // >= 1 as the HTML.Tag for the 0th element is passed in.
+            for (int counter = n - 1; counter >= 1; counter--) {
+                e = searchContext.elementAt(counter);
+                attr = e.getAttributes();
+                name = attr.getAttribute(StyleConstants.NameAttribute);
+                eName = name.toString();
+                cacheLookup.append(eName);
+                if (attr != null) {
+                    if (attr.isDefined(HTML.Attribute.ID)) {
+                        cacheLookup.append('#');
+                        cacheLookup.append(attr.getAttribute
+                                           (HTML.Attribute.ID));
+                    }
+                    else if (attr.isDefined(HTML.Attribute.CLASS)) {
+                        cacheLookup.append('.');
+                        cacheLookup.append(attr.getAttribute
+                                           (HTML.Attribute.CLASS));
+                    }
+                }
+                cacheLookup.append(' ');
+            }
+            cacheLookup.append(t.toString());
+            e = searchContext.elementAt(0);
+            attr = e.getAttributes();
+            if (e.isLeaf()) {
+                // For leafs, we use the second tier attributes.
+                Object testAttr = attr.getAttribute(t);
+                if (testAttr instanceof AttributeSet) {
+                    attr = (AttributeSet)testAttr;
+                }
+                else {
+                    attr = null;
+                }
+            }
+            if (attr != null) {
+                if (attr.isDefined(HTML.Attribute.ID)) {
+                    cacheLookup.append('#');
+                    cacheLookup.append(attr.getAttribute(HTML.Attribute.ID));
+                }
+                else if (attr.isDefined(HTML.Attribute.CLASS)) {
+                    cacheLookup.append('.');
+                    cacheLookup.append(attr.getAttribute
+                                       (HTML.Attribute.CLASS));
+                }
+            }
+
+            Style style = getResolvedStyle(cacheLookup.toString(),
+                                           searchContext, t);
+            return style;
+        }
+        finally {
+            SearchBuffer.releaseSearchBuffer(sb);
+        }
+!!!2415362.java!!!	getRule(inout selector : String) : Style
+        selector = cleanSelectorString(selector);
+        if (selector != null) {
+            Style style = getResolvedStyle(selector);
+            return style;
+        }
+        return null;
+!!!2415490.java!!!	addRule(inout rule : String) : void
+        if (rule != null) {
+            //tweaks to control display properties
+            //see BasicEditorPaneUI
+            final String baseUnitsDisable = "BASE_SIZE_DISABLE";
+            final String baseUnits = "BASE_SIZE ";
+            final String w3cLengthUnitsEnable = "W3C_LENGTH_UNITS_ENABLE";
+            final String w3cLengthUnitsDisable = "W3C_LENGTH_UNITS_DISABLE";
+            if (rule == baseUnitsDisable) {
+                sizeMap = sizeMapDefault;
+            } else if (rule.startsWith(baseUnits)) {
+                rebaseSizeMap(Integer.
+                              parseInt(rule.substring(baseUnits.length())));
+            } else if (rule == w3cLengthUnitsEnable) {
+                w3cLengthUnits = true;
+            } else if (rule == w3cLengthUnitsDisable) {
+                w3cLengthUnits = false;
+            } else {
+                CssParser parser = new CssParser();
+                try {
+                    parser.parse(getBase(), new StringReader(rule), false, false);
+                } catch (IOException ioe) { }
+            }
+        }
+!!!2415618.java!!!	getDeclaration(inout decl : String) : AttributeSet
+        if (decl == null) {
+            return SimpleAttributeSet.EMPTY;
+        }
+        CssParser parser = new CssParser();
+        return parser.parseDeclaration(decl);
+!!!2415746.java!!!	loadRules(inout in : Reader, inout ref : URL) : void
+        CssParser parser = new CssParser();
+        parser.parse(ref, in, false, false);
+!!!2415874.java!!!	getViewAttributes(inout v : View) : AttributeSet
+        return new ViewAttributeSet(v);
+!!!2416002.java!!!	removeStyle(inout nm : String) : void
+        Style       aStyle = getStyle(nm);
+
+        if (aStyle != null) {
+            String selector = cleanSelectorString(nm);
+            String[] selectors = getSimpleSelectors(selector);
+            synchronized(this) {
+                SelectorMapping mapping = getRootSelectorMapping();
+                for (int i = selectors.length - 1; i >= 0; i--) {
+                    mapping = mapping.getChildSelectorMapping(selectors[i],
+                                                              true);
+                }
+                Style rule = mapping.getStyle();
+                if (rule != null) {
+                    mapping.setStyle(null);
+                    if (resolvedStyles.size() > 0) {
+                        Enumeration<ResolvedStyle> values = resolvedStyles.elements();
+                        while (values.hasMoreElements()) {
+                            ResolvedStyle style = values.nextElement();
+                            style.removeStyle(rule);
+                        }
+                    }
+                }
+            }
+        }
+        super.removeStyle(nm);
+!!!2416130.java!!!	addStyleSheet(inout ss : StyleSheet) : void
+        synchronized(this) {
+            if (linkedStyleSheets == null) {
+                linkedStyleSheets = new Vector<StyleSheet>();
+            }
+            if (!linkedStyleSheets.contains(ss)) {
+                int index = 0;
+                if (ss instanceof javax.swing.plaf.UIResource
+                    && linkedStyleSheets.size() > 1) {
+                    index = linkedStyleSheets.size() - 1;
+                }
+                linkedStyleSheets.insertElementAt(ss, index);
+                linkStyleSheetAt(ss, index);
+            }
+        }
+!!!2416258.java!!!	removeStyleSheet(inout ss : StyleSheet) : void
+        synchronized(this) {
+            if (linkedStyleSheets != null) {
+                int index = linkedStyleSheets.indexOf(ss);
+                if (index != -1) {
+                    linkedStyleSheets.removeElementAt(index);
+                    unlinkStyleSheet(ss, index);
+                    if (index == 0 && linkedStyleSheets.size() == 0) {
+                        linkedStyleSheets = null;
+                    }
+                }
+            }
+        }
+!!!2416386.java!!!	getStyleSheets() : StyleSheet
+        StyleSheet[] retValue;
+
+        synchronized(this) {
+            if (linkedStyleSheets != null) {
+                retValue = new StyleSheet[linkedStyleSheets.size()];
+                linkedStyleSheets.copyInto(retValue);
+            }
+            else {
+                retValue = null;
+            }
+        }
+        return retValue;
+!!!2416514.java!!!	importStyleSheet(inout url : URL) : void
+        try {
+            InputStream is;
+
+            is = url.openStream();
+            Reader r = new BufferedReader(new InputStreamReader(is));
+            CssParser parser = new CssParser();
+            parser.parse(url, r, false, true);
+            r.close();
+            is.close();
+        } catch (Throwable e) {
+            // on error we simply have no styles... the html
+            // will look mighty wrong but still function.
+        }
+!!!2416642.java!!!	setBase(inout base : URL) : void
+        this.base = base;
+!!!2416770.java!!!	getBase() : URL
+        return base;
+!!!2416898.java!!!	addCSSAttribute(inout attr : MutableAttributeSet, inout key : CSS::Attribute, inout value : String) : void
+        css.addInternalCSSValue(attr, key, value);
+!!!2417026.java!!!	addCSSAttributeFromHTML(inout attr : MutableAttributeSet, inout key : CSS::Attribute, inout value : String) : boolean
+        Object iValue = css.getCssValue(key, value);
+        if (iValue != null) {
+            attr.addAttribute(key, iValue);
+            return true;
+        }
+        return false;
+!!!2417154.java!!!	translateHTMLToCSS(inout htmlAttrSet : AttributeSet) : AttributeSet
+        AttributeSet cssAttrSet = css.translateHTMLToCSS(htmlAttrSet);
+
+        MutableAttributeSet cssStyleSet = addStyle(null, null);
+        cssStyleSet.addAttributes(cssAttrSet);
+
+        return cssStyleSet;
+!!!2417282.java!!!	addAttribute(inout old : AttributeSet, inout key : Object, inout value : Object) : AttributeSet
+        if (css == null) {
+            // supers constructor will call this before returning,
+            // and we need to make sure CSS is non null.
+            css = new CSS();
+        }
+        if (key instanceof StyleConstants) {
+            HTML.Tag tag = HTML.getTagForStyleConstantsKey(
+                                (StyleConstants)key);
+
+            if (tag != null && old.isDefined(tag)) {
+                old = removeAttribute(old, tag);
+            }
+
+            Object cssValue = css.styleConstantsValueToCSSValue
+                              ((StyleConstants)key, value);
+            if (cssValue != null) {
+                Object cssKey = css.styleConstantsKeyToCSSKey
+                                    ((StyleConstants)key);
+                if (cssKey != null) {
+                    return super.addAttribute(old, cssKey, cssValue);
+                }
+            }
+        }
+        return super.addAttribute(old, key, value);
+!!!2417410.java!!!	addAttributes(inout old : AttributeSet, inout attr : AttributeSet) : AttributeSet
+        if (!(attr instanceof HTMLDocument.TaggedAttributeSet)) {
+            old = removeHTMLTags(old, attr);
+        }
+        return super.addAttributes(old, convertAttributeSet(attr));
+!!!2417538.java!!!	removeAttribute(inout old : AttributeSet, inout key : Object) : AttributeSet
+        if (key instanceof StyleConstants) {
+            HTML.Tag tag = HTML.getTagForStyleConstantsKey(
+                                   (StyleConstants)key);
+            if (tag != null) {
+                old = super.removeAttribute(old, tag);
+            }
+
+            Object cssKey = css.styleConstantsKeyToCSSKey((StyleConstants)key);
+            if (cssKey != null) {
+                return super.removeAttribute(old, cssKey);
+            }
+        }
+        return super.removeAttribute(old, key);
+!!!2417666.java!!!	removeAttributes(inout old : AttributeSet, inout names : Enumeration) : AttributeSet
+        // PENDING: Should really be doing something similar to
+        // removeHTMLTags here, but it is rather expensive to have to
+        // clone names
+        return super.removeAttributes(old, names);
+!!!2417794.java!!!	removeAttributes(inout old : AttributeSet, inout attrs : AttributeSet) : AttributeSet
+        if (old != attrs) {
+            old = removeHTMLTags(old, attrs);
+        }
+        return super.removeAttributes(old, convertAttributeSet(attrs));
+!!!2417922.java!!!	createSmallAttributeSet(inout a : AttributeSet) : StyleContext::SmallAttributeSet
+        return new SmallConversionSet(a);
+!!!2418050.java!!!	createLargeAttributeSet(inout a : AttributeSet) : MutableAttributeSet
+        return new LargeConversionSet(a);
+!!!2418178.java!!!	removeHTMLTags(inout old : AttributeSet, inout attr : AttributeSet) : AttributeSet
+        if (!(attr instanceof LargeConversionSet) &&
+            !(attr instanceof SmallConversionSet)) {
+            Enumeration names = attr.getAttributeNames();
+
+            while (names.hasMoreElements()) {
+                Object key = names.nextElement();
+
+                if (key instanceof StyleConstants) {
+                    HTML.Tag tag = HTML.getTagForStyleConstantsKey(
+                        (StyleConstants)key);
+
+                    if (tag != null && old.isDefined(tag)) {
+                        old = super.removeAttribute(old, tag);
+                    }
+                }
+            }
+        }
+        return old;
+!!!2418306.java!!!	convertAttributeSet(inout a : AttributeSet) : AttributeSet
+        if ((a instanceof LargeConversionSet) ||
+            (a instanceof SmallConversionSet)) {
+            // known to be converted.
+            return a;
+        }
+        // in most cases, there are no StyleConstants attributes
+        // so we iterate the collection of keys to avoid creating
+        // a new set.
+        Enumeration names = a.getAttributeNames();
+        while (names.hasMoreElements()) {
+            Object name = names.nextElement();
+            if (name instanceof StyleConstants) {
+                // we really need to do a conversion, iterate again
+                // building a new set.
+                MutableAttributeSet converted = new LargeConversionSet();
+                Enumeration keys = a.getAttributeNames();
+                while (keys.hasMoreElements()) {
+                    Object key = keys.nextElement();
+                    Object cssValue = null;
+                    if (key instanceof StyleConstants) {
+                        // convert the StyleConstants attribute if possible
+                        Object cssKey = css.styleConstantsKeyToCSSKey
+                                            ((StyleConstants)key);
+                        if (cssKey != null) {
+                            Object value = a.getAttribute(key);
+                            cssValue = css.styleConstantsValueToCSSValue
+                                           ((StyleConstants)key, value);
+                            if (cssValue != null) {
+                                converted.addAttribute(cssKey, cssValue);
+                            }
+                        }
+                    }
+                    if (cssValue == null) {
+                        converted.addAttribute(key, a.getAttribute(key));
+                    }
+                }
+                return converted;
+            }
+        }
+        return a;
+!!!2423810.java!!!	getFont(inout a : AttributeSet) : Font
+        return css.getFont(this, a, 12, this);
+!!!2423938.java!!!	getForeground(inout a : AttributeSet) : Color
+        Color c = css.getColor(a, CSS.Attribute.COLOR);
+        if (c == null) {
+            return Color.black;
+        }
+        return c;
+!!!2424066.java!!!	getBackground(inout a : AttributeSet) : Color
+        return css.getColor(a, CSS.Attribute.BACKGROUND_COLOR);
+!!!2424194.java!!!	getBoxPainter(inout a : AttributeSet) : StyleSheet::BoxPainter
+        return new BoxPainter(a, css, this);
+!!!2424322.java!!!	getListPainter(inout a : AttributeSet) : StyleSheet::ListPainter
+        return new ListPainter(a, this);
+!!!2424450.java!!!	setBaseFontSize(in sz : int) : void
+        css.setBaseFontSize(sz);
+!!!2424578.java!!!	setBaseFontSize(inout size : String) : void
+        css.setBaseFontSize(size);
+!!!2424706.java!!!	getIndexOfSize(in pt : float) : int
+        return CSS.getIndexOfSize(pt, sizeMapDefault);
+!!!2424834.java!!!	getPointSize(in index : int) : float
+        return css.getPointSize(index, this);
+!!!2424962.java!!!	getPointSize(inout size : String) : float
+        return css.getPointSize(size, this);
+!!!2425090.java!!!	stringToColor(inout string : String) : Color
+        return CSS.stringToColor(string);
+!!!2425218.java!!!	getBackgroundImage(inout attr : AttributeSet) : ImageIcon
+        Object value = attr.getAttribute(CSS.Attribute.BACKGROUND_IMAGE);
+
+        if (value != null) {
+            return ((CSS.BackgroundImage)value).getImage(getBase());
+        }
+        return null;
+!!!2425346.java!!!	addRule(inout selector : String [[]], inout declaration : AttributeSet, inout isLinked : boolean) : void
+        int n = selector.length;
+        StringBuilder sb = new StringBuilder();
+        sb.append(selector[0]);
+        for (int counter = 1; counter < n; counter++) {
+            sb.append(' ');
+            sb.append(selector[counter]);
+        }
+        String selectorName = sb.toString();
+        Style rule = getStyle(selectorName);
+        if (rule == null) {
+            // Notice how the rule is first created, and it not part of
+            // the synchronized block. It is done like this as creating
+            // a new rule will fire a ChangeEvent. We do not want to be
+            // holding the lock when calling to other objects, it can
+            // result in deadlock.
+            Style altRule = addStyle(selectorName, null);
+            synchronized(this) {
+                SelectorMapping mapping = getRootSelectorMapping();
+                for (int i = n - 1; i >= 0; i--) {
+                    mapping = mapping.getChildSelectorMapping
+                                      (selector[i], true);
+                }
+                rule = mapping.getStyle();
+                if (rule == null) {
+                    rule = altRule;
+                    mapping.setStyle(rule);
+                    refreshResolvedRules(selectorName, selector, rule,
+                                         mapping.getSpecificity());
+                }
+            }
+        }
+        if (isLinked) {
+            rule = getLinkedStyle(rule);
+        }
+        rule.addAttributes(declaration);
+!!!2425474.java!!!	linkStyleSheetAt(inout ss : StyleSheet, in index : int) : void
+        if (resolvedStyles.size() > 0) {
+            Enumeration<ResolvedStyle> values = resolvedStyles.elements();
+            while (values.hasMoreElements()) {
+                ResolvedStyle rule = values.nextElement();
+                rule.insertExtendedStyleAt(ss.getRule(rule.getName()),
+                                           index);
+            }
+        }
+!!!2425602.java!!!	unlinkStyleSheet(inout ss : StyleSheet, in index : int) : void
+        if (resolvedStyles.size() > 0) {
+            Enumeration<ResolvedStyle> values = resolvedStyles.elements();
+            while (values.hasMoreElements()) {
+                ResolvedStyle rule = values.nextElement();
+                rule.removeExtendedStyleAt(index);
+            }
+        }
+!!!2425730.java!!!	getSimpleSelectors(inout selector : String) : String
+        selector = cleanSelectorString(selector);
+        SearchBuffer sb = SearchBuffer.obtainSearchBuffer();
+        Vector<String> selectors = sb.getVector();
+        int lastIndex = 0;
+        int length = selector.length();
+        while (lastIndex != -1) {
+            int newIndex = selector.indexOf(' ', lastIndex);
+            if (newIndex != -1) {
+                selectors.addElement(selector.substring(lastIndex, newIndex));
+                if (++newIndex == length) {
+                    lastIndex = -1;
+                }
+                else {
+                    lastIndex = newIndex;
+                }
+            }
+            else {
+                selectors.addElement(selector.substring(lastIndex));
+                lastIndex = -1;
+            }
+        }
+        String[] retValue = new String[selectors.size()];
+        selectors.copyInto(retValue);
+        SearchBuffer.releaseSearchBuffer(sb);
+        return retValue;
+!!!2425858.java!!!	cleanSelectorString(inout selector : String) : String
+        boolean lastWasSpace = true;
+        for (int counter = 0, maxCounter = selector.length();
+             counter < maxCounter; counter++) {
+            switch(selector.charAt(counter)) {
+            case ' ':
+                if (lastWasSpace) {
+                    return _cleanSelectorString(selector);
+                }
+                lastWasSpace = true;
+                break;
+            case '\n':
+            case '\r':
+            case '\t':
+                return _cleanSelectorString(selector);
+            default:
+                lastWasSpace = false;
+            }
+        }
+        if (lastWasSpace) {
+            return _cleanSelectorString(selector);
+        }
+        // It was fine.
+        return selector;
+!!!2425986.java!!!	_cleanSelectorString(inout selector : String) : String
+        SearchBuffer sb = SearchBuffer.obtainSearchBuffer();
+        StringBuffer buff = sb.getStringBuffer();
+        boolean lastWasSpace = true;
+        int lastIndex = 0;
+        char[] chars = selector.toCharArray();
+        int numChars = chars.length;
+        String retValue = null;
+        try {
+            for (int counter = 0; counter < numChars; counter++) {
+                switch(chars[counter]) {
+                case ' ':
+                    if (!lastWasSpace) {
+                        lastWasSpace = true;
+                        if (lastIndex < counter) {
+                            buff.append(chars, lastIndex,
+                                        1 + counter - lastIndex);
+                        }
+                    }
+                    lastIndex = counter + 1;
+                    break;
+                case '\n':
+                case '\r':
+                case '\t':
+                    if (!lastWasSpace) {
+                        lastWasSpace = true;
+                        if (lastIndex < counter) {
+                            buff.append(chars, lastIndex,
+                                        counter - lastIndex);
+                            buff.append(' ');
+                        }
+                    }
+                    lastIndex = counter + 1;
+                    break;
+                default:
+                    lastWasSpace = false;
+                    break;
+                }
+            }
+            if (lastWasSpace && buff.length() > 0) {
+                // Remove last space.
+                buff.setLength(buff.length() - 1);
+            }
+            else if (lastIndex < numChars) {
+                buff.append(chars, lastIndex, numChars - lastIndex);
+            }
+            retValue = buff.toString();
+        }
+        finally {
+            SearchBuffer.releaseSearchBuffer(sb);
+        }
+        return retValue;
+!!!2426114.java!!!	getRootSelectorMapping() : StyleSheet::SelectorMapping
+        return selectorMapping;
+!!!2426242.java!!!	getSpecificity(inout selector : String) : int
+        int specificity = 0;
+        boolean lastWasSpace = true;
+
+        for (int counter = 0, maxCounter = selector.length();
+             counter < maxCounter; counter++) {
+            switch(selector.charAt(counter)) {
+            case '.':
+                specificity += 100;
+                break;
+            case '#':
+                specificity += 10000;
+                break;
+            case ' ':
+                lastWasSpace = true;
+                break;
+            default:
+                if (lastWasSpace) {
+                    lastWasSpace = false;
+                    specificity += 1;
+                }
+            }
+        }
+        return specificity;
+!!!2426370.java!!!	getLinkedStyle(inout localStyle : Style) : Style
+        // NOTE: This is not synchronized, and the caller of this does
+        // not synchronize. There is the chance for one of the callers to
+        // overwrite the existing resolved parent, but it is quite rare.
+        // The reason this is left like this is because setResolveParent
+        // will fire a ChangeEvent. It is really, REALLY bad for us to
+        // hold a lock when calling outside of us, it may cause a deadlock.
+        Style retStyle = (Style)localStyle.getResolveParent();
+        if (retStyle == null) {
+            retStyle = addStyle(null, null);
+            localStyle.setResolveParent(retStyle);
+        }
+        return retStyle;
+!!!2426498.java!!!	getResolvedStyle(inout selector : String, inout elements : Vector, inout t : HTML::Tag) : Style
+        Style retStyle = resolvedStyles.get(selector);
+        if (retStyle == null) {
+            retStyle = createResolvedStyle(selector, elements, t);
+        }
+        return retStyle;
+!!!2426626.java!!!	getResolvedStyle(inout selector : String) : Style
+        Style retStyle = resolvedStyles.get(selector);
+        if (retStyle == null) {
+            retStyle = createResolvedStyle(selector);
+        }
+        return retStyle;
+!!!2426754.java!!!	addSortedStyle(inout mapping : StyleSheet::SelectorMapping, inout elements : Vector) : void
+        int       size = elements.size();
+
+        if (size > 0) {
+            int     specificity = mapping.getSpecificity();
+
+            for (int counter = 0; counter < size; counter++) {
+                if (specificity >= elements.elementAt(counter).getSpecificity()) {
+                    elements.insertElementAt(mapping, counter);
+                    return;
+                }
+            }
+        }
+        elements.addElement(mapping);
+!!!2426882.java!!!	getStyles(inout parentMapping : StyleSheet::SelectorMapping, inout styles : Vector, inout tags : String [[]], inout ids : String [[]], inout classes : String [[]], in index : int, in numElements : int, inout alreadyChecked : Hashtable) : void
+        // Avoid desending the same mapping twice.
+        if (alreadyChecked.contains(parentMapping)) {
+            return;
+        }
+        alreadyChecked.put(parentMapping, parentMapping);
+        Style style = parentMapping.getStyle();
+        if (style != null) {
+            addSortedStyle(parentMapping, styles);
+        }
+        for (int counter = index; counter < numElements; counter++) {
+            String tagString = tags[counter];
+            if (tagString != null) {
+                SelectorMapping childMapping = parentMapping.
+                                getChildSelectorMapping(tagString, false);
+                if (childMapping != null) {
+                    getStyles(childMapping, styles, tags, ids, classes,
+                              counter + 1, numElements, alreadyChecked);
+                }
+                if (classes[counter] != null) {
+                    String className = classes[counter];
+                    childMapping = parentMapping.getChildSelectorMapping(
+                                         tagString + "." + className, false);
+                    if (childMapping != null) {
+                        getStyles(childMapping, styles, tags, ids, classes,
+                                  counter + 1, numElements, alreadyChecked);
+                    }
+                    childMapping = parentMapping.getChildSelectorMapping(
+                                         "." + className, false);
+                    if (childMapping != null) {
+                        getStyles(childMapping, styles, tags, ids, classes,
+                                  counter + 1, numElements, alreadyChecked);
+                    }
+                }
+                if (ids[counter] != null) {
+                    String idName = ids[counter];
+                    childMapping = parentMapping.getChildSelectorMapping(
+                                         tagString + "#" + idName, false);
+                    if (childMapping != null) {
+                        getStyles(childMapping, styles, tags, ids, classes,
+                                  counter + 1, numElements, alreadyChecked);
+                    }
+                    childMapping = parentMapping.getChildSelectorMapping(
+                                   "#" + idName, false);
+                    if (childMapping != null) {
+                        getStyles(childMapping, styles, tags, ids, classes,
+                                  counter + 1, numElements, alreadyChecked);
+                    }
+                }
+            }
+        }
+!!!2427010.java!!!	createResolvedStyle(inout selector : String, inout tags : String [[]], inout ids : String [[]], inout classes : String [[]]) : Style
+        SearchBuffer sb = SearchBuffer.obtainSearchBuffer();
+        Vector<SelectorMapping> tempVector = sb.getVector();
+        Hashtable<SelectorMapping, SelectorMapping> tempHashtable = sb.getHashtable();
+        // Determine all the Styles that are appropriate, placing them
+        // in tempVector
+        try {
+            SelectorMapping mapping = getRootSelectorMapping();
+            int numElements = tags.length;
+            String tagString = tags[0];
+            SelectorMapping childMapping = mapping.getChildSelectorMapping(
+                                                   tagString, false);
+            if (childMapping != null) {
+                getStyles(childMapping, tempVector, tags, ids, classes, 1,
+                          numElements, tempHashtable);
+            }
+            if (classes[0] != null) {
+                String className = classes[0];
+                childMapping = mapping.getChildSelectorMapping(
+                                       tagString + "." + className, false);
+                if (childMapping != null) {
+                    getStyles(childMapping, tempVector, tags, ids, classes, 1,
+                              numElements, tempHashtable);
+                }
+                childMapping = mapping.getChildSelectorMapping(
+                                       "." + className, false);
+                if (childMapping != null) {
+                    getStyles(childMapping, tempVector, tags, ids, classes,
+                              1, numElements, tempHashtable);
+                }
+            }
+            if (ids[0] != null) {
+                String idName = ids[0];
+                childMapping = mapping.getChildSelectorMapping(
+                                       tagString + "#" + idName, false);
+                if (childMapping != null) {
+                    getStyles(childMapping, tempVector, tags, ids, classes,
+                              1, numElements, tempHashtable);
+                }
+                childMapping = mapping.getChildSelectorMapping(
+                                       "#" + idName, false);
+                if (childMapping != null) {
+                    getStyles(childMapping, tempVector, tags, ids, classes,
+                              1, numElements, tempHashtable);
+                }
+            }
+            // Create a new Style that will delegate to all the matching
+            // Styles.
+            int numLinkedSS = (linkedStyleSheets != null) ?
+                              linkedStyleSheets.size() : 0;
+            int numStyles = tempVector.size();
+            AttributeSet[] attrs = new AttributeSet[numStyles + numLinkedSS];
+            for (int counter = 0; counter < numStyles; counter++) {
+                attrs[counter] = tempVector.elementAt(counter).getStyle();
+            }
+            // Get the AttributeSet from linked style sheets.
+            for (int counter = 0; counter < numLinkedSS; counter++) {
+                AttributeSet attr = linkedStyleSheets.elementAt(counter).getRule(selector);
+                if (attr == null) {
+                    attrs[counter + numStyles] = SimpleAttributeSet.EMPTY;
+                }
+                else {
+                    attrs[counter + numStyles] = attr;
+                }
+            }
+            ResolvedStyle retStyle = new ResolvedStyle(selector, attrs,
+                                                       numStyles);
+            resolvedStyles.put(selector, retStyle);
+            return retStyle;
+        }
+        finally {
+            SearchBuffer.releaseSearchBuffer(sb);
+        }
+!!!2427138.java!!!	createResolvedStyle(inout selector : String, inout elements : Vector, inout t : HTML::Tag) : Style
+        int numElements = elements.size();
+        // Build three arrays, one for tags, one for class's, and one for
+        // id's
+        String tags[] = new String[numElements];
+        String ids[] = new String[numElements];
+        String classes[] = new String[numElements];
+        for (int counter = 0; counter < numElements; counter++) {
+            Element e = (Element)elements.elementAt(counter);
+            AttributeSet attr = e.getAttributes();
+            if (counter == 0 && e.isLeaf()) {
+                // For leafs, we use the second tier attributes.
+                Object testAttr = attr.getAttribute(t);
+                if (testAttr instanceof AttributeSet) {
+                    attr = (AttributeSet)testAttr;
+                }
+                else {
+                    attr = null;
+                }
+            }
+            if (attr != null) {
+                HTML.Tag tag = (HTML.Tag)attr.getAttribute(StyleConstants.
+                                                           NameAttribute);
+                if (tag != null) {
+                    tags[counter] = tag.toString();
+                }
+                else {
+                    tags[counter] = null;
+                }
+                if (attr.isDefined(HTML.Attribute.CLASS)) {
+                    classes[counter] = attr.getAttribute
+                                      (HTML.Attribute.CLASS).toString();
+                }
+                else {
+                    classes[counter] = null;
+                }
+                if (attr.isDefined(HTML.Attribute.ID)) {
+                    ids[counter] = attr.getAttribute(HTML.Attribute.ID).
+                                        toString();
+                }
+                else {
+                    ids[counter] = null;
+                }
+            }
+            else {
+                tags[counter] = ids[counter] = classes[counter] = null;
+            }
+        }
+        tags[0] = t.toString();
+        return createResolvedStyle(selector, tags, ids, classes);
+!!!2427266.java!!!	createResolvedStyle(inout selector : String) : Style
+        SearchBuffer sb = SearchBuffer.obtainSearchBuffer();
+        // Will contain the tags, ids, and classes, in that order.
+        Vector<String> elements = sb.getVector();
+        try {
+            boolean done;
+            int dotIndex = 0;
+            int spaceIndex;
+            int poundIndex = 0;
+            int lastIndex = 0;
+            int length = selector.length();
+            while (lastIndex < length) {
+                if (dotIndex == lastIndex) {
+                    dotIndex = selector.indexOf('.', lastIndex);
+                }
+                if (poundIndex == lastIndex) {
+                    poundIndex = selector.indexOf('#', lastIndex);
+                }
+                spaceIndex = selector.indexOf(' ', lastIndex);
+                if (spaceIndex == -1) {
+                    spaceIndex = length;
+                }
+                if (dotIndex != -1 && poundIndex != -1 &&
+                    dotIndex < spaceIndex && poundIndex < spaceIndex) {
+                    if (poundIndex < dotIndex) {
+                        // #.
+                        if (lastIndex == poundIndex) {
+                            elements.addElement("");
+                        }
+                        else {
+                            elements.addElement(selector.substring(lastIndex,
+                                                                  poundIndex));
+                        }
+                        if ((dotIndex + 1) < spaceIndex) {
+                            elements.addElement(selector.substring
+                                                (dotIndex + 1, spaceIndex));
+                        }
+                        else {
+                            elements.addElement(null);
+                        }
+                        if ((poundIndex + 1) == dotIndex) {
+                            elements.addElement(null);
+                        }
+                        else {
+                            elements.addElement(selector.substring
+                                                (poundIndex + 1, dotIndex));
+                        }
+                    }
+                    else if(poundIndex < spaceIndex) {
+                        // .#
+                        if (lastIndex == dotIndex) {
+                            elements.addElement("");
+                        }
+                        else {
+                            elements.addElement(selector.substring(lastIndex,
+                                                                  dotIndex));
+                        }
+                        if ((dotIndex + 1) < poundIndex) {
+                            elements.addElement(selector.substring
+                                                (dotIndex + 1, poundIndex));
+                        }
+                        else {
+                            elements.addElement(null);
+                        }
+                        if ((poundIndex + 1) == spaceIndex) {
+                            elements.addElement(null);
+                        }
+                        else {
+                            elements.addElement(selector.substring
+                                                (poundIndex + 1, spaceIndex));
+                        }
+                    }
+                    dotIndex = poundIndex = spaceIndex + 1;
+                }
+                else if (dotIndex != -1 && dotIndex < spaceIndex) {
+                    // .
+                    if (dotIndex == lastIndex) {
+                        elements.addElement("");
+                    }
+                    else {
+                        elements.addElement(selector.substring(lastIndex,
+                                                               dotIndex));
+                    }
+                    if ((dotIndex + 1) == spaceIndex) {
+                        elements.addElement(null);
+                    }
+                    else {
+                        elements.addElement(selector.substring(dotIndex + 1,
+                                                               spaceIndex));
+                    }
+                    elements.addElement(null);
+                    dotIndex = spaceIndex + 1;
+                }
+                else if (poundIndex != -1 && poundIndex < spaceIndex) {
+                    // #
+                    if (poundIndex == lastIndex) {
+                        elements.addElement("");
+                    }
+                    else {
+                        elements.addElement(selector.substring(lastIndex,
+                                                               poundIndex));
+                    }
+                    elements.addElement(null);
+                    if ((poundIndex + 1) == spaceIndex) {
+                        elements.addElement(null);
+                    }
+                    else {
+                        elements.addElement(selector.substring(poundIndex + 1,
+                                                               spaceIndex));
+                    }
+                    poundIndex = spaceIndex + 1;
+                }
+                else {
+                    // id
+                    elements.addElement(selector.substring(lastIndex,
+                                                           spaceIndex));
+                    elements.addElement(null);
+                    elements.addElement(null);
+                }
+                lastIndex = spaceIndex + 1;
+            }
+            // Create the tag, id, and class arrays.
+            int total = elements.size();
+            int numTags = total / 3;
+            String[] tags = new String[numTags];
+            String[] ids = new String[numTags];
+            String[] classes = new String[numTags];
+            for (int index = 0, eIndex = total - 3; index < numTags;
+                 index++, eIndex -= 3) {
+                tags[index] = elements.elementAt(eIndex);
+                classes[index] = elements.elementAt(eIndex + 1);
+                ids[index] = elements.elementAt(eIndex + 2);
+            }
+            return createResolvedStyle(selector, tags, ids, classes);
+        }
+        finally {
+            SearchBuffer.releaseSearchBuffer(sb);
+        }
+!!!2427394.java!!!	refreshResolvedRules(inout selectorName : String, inout selector : String [[]], inout newStyle : Style, in specificity : int) : void
+        if (resolvedStyles.size() > 0) {
+            Enumeration<ResolvedStyle> values = resolvedStyles.elements();
+            while (values.hasMoreElements()) {
+                ResolvedStyle style = values.nextElement();
+                if (style.matches(selectorName)) {
+                    style.insertStyle(newStyle, specificity);
+                }
+            }
+        }
+!!!2442626.java!!!	rebaseSizeMap(in base : int) : void
+        final int minimalFontSize = 4;
+        sizeMap = new int[sizeMapDefault.length];
+        for (int i = 0; i < sizeMapDefault.length; i++) {
+            sizeMap[i] = Math.max(base * sizeMapDefault[i] /
+                                  sizeMapDefault[CSS.baseFontSizeIndex],
+                                  minimalFontSize);
+        }
+
+!!!2442754.java!!!	getSizeMap() : int
+        return sizeMap;
+!!!2442882.java!!!	isW3CLengthUnits() : boolean
+        return w3cLengthUnits;

@@ -1,0 +1,356 @@
+class CatalogManager
+!!!5259522.java!!!	CatalogManager()
+    init();
+!!!5259650.java!!!	CatalogManager(inout propertyFile : String)
+    this.propertyFile = propertyFile;
+    init();
+!!!5259778.java!!!	init() : void
+    debug = new Debug();
+    // Note that we don't setDebug() here; we do that lazily. Either the
+    // user will set it explicitly, or we'll do it automagically if they
+    // read from the propertyFile for some other reason. That way, there's
+    // no attempt to read from the file before the caller has had a chance
+    // to avoid it.
+    if (System.getSecurityManager() == null) {
+        useServicesMechanism = true;
+    }
+!!!5259906.java!!!	setBootstrapResolver(inout resolver : BootstrapResolver) : void
+    bResolver = resolver;
+!!!5260034.java!!!	getBootstrapResolver() : BootstrapResolver
+    return bResolver;
+!!!5260162.java!!!	readProperties() : void
+    try {
+      propertyFileURI = CatalogManager.class.getResource("/"+propertyFile);
+      InputStream in =
+        CatalogManager.class.getResourceAsStream("/"+propertyFile);
+      if (in==null) {
+        if (!ignoreMissingProperties) {
+          System.err.println("Cannot find "+propertyFile);
+          // there's no reason to give this warning more than once
+          ignoreMissingProperties = true;
+        }
+        return;
+      }
+      resources = new PropertyResourceBundle(in);
+    } catch (MissingResourceException mre) {
+      if (!ignoreMissingProperties) {
+        System.err.println("Cannot read "+propertyFile);
+      }
+    } catch (java.io.IOException e) {
+      if (!ignoreMissingProperties) {
+        System.err.println("Failure trying to read "+propertyFile);
+      }
+    }
+
+    // This is a bit of a hack. After we've successfully read the properties,
+    // use them to set the default debug level, if the user hasn't already set
+    // the default debug level.
+    if (verbosity == null) {
+      try {
+        String verbStr = resources.getString("verbosity");
+        int verb = Integer.parseInt(verbStr.trim());
+        debug.setDebug(verb);
+        verbosity = new Integer(verb);
+      } catch (Exception e) {
+        // nop
+      }
+    }
+!!!5260290.java!!!	getStaticManager() : CatalogManager
+    return staticManager;
+!!!5260418.java!!!	getIgnoreMissingProperties() : boolean
+    return ignoreMissingProperties;
+!!!5260546.java!!!	setIgnoreMissingProperties(inout ignore : boolean) : void
+    ignoreMissingProperties = ignore;
+!!!5260674.java!!!	ignoreMissingProperties(inout ignore : boolean) : void
+    setIgnoreMissingProperties(ignore);
+!!!5260802.java!!!	queryVerbosity() : int
+    String defaultVerbStr = Integer.toString(defaultVerbosity);
+
+    String verbStr = SecuritySupport.getSystemProperty(pVerbosity);
+
+    if (verbStr == null) {
+      if (resources==null) readProperties();
+      if (resources != null) {
+        try {
+          verbStr = resources.getString("verbosity");
+        } catch (MissingResourceException e) {
+          verbStr = defaultVerbStr;
+        }
+      } else {
+        verbStr = defaultVerbStr;
+      }
+    }
+
+    int verb = defaultVerbosity;
+
+    try {
+      verb = Integer.parseInt(verbStr.trim());
+    } catch (Exception e) {
+      System.err.println("Cannot parse verbosity: \"" + verbStr + "\"");
+    }
+
+    // This is a bit of a hack. After we've successfully got the verbosity,
+    // we have to use it to set the default debug level,
+    // if the user hasn't already set the default debug level.
+    if (verbosity == null) {
+      debug.setDebug(verb);
+      verbosity = new Integer(verb);
+    }
+
+    return verb;
+!!!5260930.java!!!	getVerbosity() : int
+    if (verbosity == null) {
+      verbosity = new Integer(queryVerbosity());
+    }
+
+    return verbosity.intValue();
+!!!5261058.java!!!	setVerbosity(in verbosity : int) : void
+    this.verbosity = new Integer(verbosity);
+    debug.setDebug(verbosity);
+!!!5261186.java!!!	verbosity() : int
+    return getVerbosity();
+!!!5261314.java!!!	queryRelativeCatalogs() : boolean
+    if (resources==null) readProperties();
+
+    if (resources==null) return defaultRelativeCatalogs;
+
+    try {
+      String allow = resources.getString("relative-catalogs");
+      return (allow.equalsIgnoreCase("true")
+              || allow.equalsIgnoreCase("yes")
+              || allow.equalsIgnoreCase("1"));
+    } catch (MissingResourceException e) {
+      return defaultRelativeCatalogs;
+    }
+!!!5261442.java!!!	getRelativeCatalogs() : boolean
+    if (relativeCatalogs == null) {
+      relativeCatalogs = new Boolean(queryRelativeCatalogs());
+    }
+
+    return relativeCatalogs.booleanValue();
+!!!5261570.java!!!	setRelativeCatalogs(inout relative : boolean) : void
+    relativeCatalogs = new Boolean(relative);
+!!!5261698.java!!!	relativeCatalogs() : boolean
+    return getRelativeCatalogs();
+!!!5261826.java!!!	queryCatalogFiles() : String
+    String catalogList = SecuritySupport.getSystemProperty(pFiles);
+    fromPropertiesFile = false;
+
+    if (catalogList == null) {
+      if (resources == null) readProperties();
+      if (resources != null) {
+        try {
+          catalogList = resources.getString("catalogs");
+          fromPropertiesFile = true;
+        } catch (MissingResourceException e) {
+          System.err.println(propertyFile + ": catalogs not found.");
+          catalogList = null;
+        }
+      }
+    }
+
+    if (catalogList == null) {
+      catalogList = defaultCatalogFiles;
+    }
+
+    return catalogList;
+!!!5261954.java!!!	getCatalogFiles() : Vector
+    if (catalogFiles == null) {
+      catalogFiles = queryCatalogFiles();
+    }
+
+    StringTokenizer files = new StringTokenizer(catalogFiles, ";");
+    Vector catalogs = new Vector();
+    while (files.hasMoreTokens()) {
+      String catalogFile = files.nextToken();
+      URL absURI = null;
+
+      if (fromPropertiesFile && !relativeCatalogs()) {
+        try {
+          absURI = new URL(propertyFileURI, catalogFile);
+          catalogFile = absURI.toString();
+        } catch (MalformedURLException mue) {
+          absURI = null;
+        }
+      }
+
+      catalogs.add(catalogFile);
+    }
+
+    return catalogs;
+!!!5262082.java!!!	setCatalogFiles(inout fileList : String) : void
+    catalogFiles = fileList;
+    fromPropertiesFile = false;
+!!!5262210.java!!!	catalogFiles() : Vector
+    return getCatalogFiles();
+!!!5262338.java!!!	queryPreferPublic() : boolean
+    String prefer = SecuritySupport.getSystemProperty(pPrefer);
+
+    if (prefer == null) {
+      if (resources==null) readProperties();
+      if (resources==null) return defaultPreferPublic;
+      try {
+        prefer = resources.getString("prefer");
+      } catch (MissingResourceException e) {
+        return defaultPreferPublic;
+      }
+    }
+
+    if (prefer == null) {
+      return defaultPreferPublic;
+    }
+
+    return (prefer.equalsIgnoreCase("public"));
+!!!5262466.java!!!	getPreferPublic() : boolean
+    if (preferPublic == null) {
+      preferPublic = new Boolean(queryPreferPublic());
+    }
+    return preferPublic.booleanValue();
+!!!5262594.java!!!	setPreferPublic(inout preferPublic : boolean) : void
+    this.preferPublic = new Boolean(preferPublic);
+!!!5262722.java!!!	preferPublic() : boolean
+    return getPreferPublic();
+!!!5262850.java!!!	queryUseStaticCatalog() : boolean
+    String staticCatalog = SecuritySupport.getSystemProperty(pStatic);
+
+    if (staticCatalog == null) {
+      if (resources==null) readProperties();
+      if (resources==null) return defaultUseStaticCatalog;
+      try {
+        staticCatalog = resources.getString("static-catalog");
+      } catch (MissingResourceException e) {
+        return defaultUseStaticCatalog;
+      }
+    }
+
+    if (staticCatalog == null) {
+      return defaultUseStaticCatalog;
+    }
+
+    return (staticCatalog.equalsIgnoreCase("true")
+            || staticCatalog.equalsIgnoreCase("yes")
+            || staticCatalog.equalsIgnoreCase("1"));
+!!!5262978.java!!!	getUseStaticCatalog() : boolean
+    if (useStaticCatalog == null) {
+      useStaticCatalog = new Boolean(queryUseStaticCatalog());
+    }
+
+    return useStaticCatalog.booleanValue();
+!!!5263106.java!!!	setUseStaticCatalog(inout useStatic : boolean) : void
+    useStaticCatalog = new Boolean(useStatic);
+!!!5263234.java!!!	staticCatalog() : boolean
+    return getUseStaticCatalog();
+!!!5263362.java!!!	getPrivateCatalog() : Catalog
+    Catalog catalog = staticCatalog;
+
+    if (useStaticCatalog == null) {
+      useStaticCatalog = new Boolean(getUseStaticCatalog());
+    }
+
+    if (catalog == null || !useStaticCatalog.booleanValue()) {
+
+      try {
+        String catalogClassName = getCatalogClassName();
+
+        if (catalogClassName == null) {
+          catalog = new Catalog();
+        } else {
+          try {
+            catalog = (Catalog) ReflectUtil.forName(catalogClassName).newInstance();
+          } catch (ClassNotFoundException cnfe) {
+            debug.message(1,"Catalog class named '"
+                          + catalogClassName
+                          + "' could not be found. Using default.");
+            catalog = new Catalog();
+          } catch (ClassCastException cnfe) {
+            debug.message(1,"Class named '"
+                          + catalogClassName
+                          + "' is not a Catalog. Using default.");
+            catalog = new Catalog();
+          }
+        }
+
+        catalog.setCatalogManager(this);
+        catalog.setupReaders();
+        catalog.loadSystemCatalogs();
+      } catch (Exception ex) {
+        ex.printStackTrace();
+      }
+
+      if (useStaticCatalog.booleanValue()) {
+        staticCatalog = catalog;
+      }
+    }
+
+    return catalog;
+!!!5263490.java!!!	getCatalog() : Catalog
+    Catalog catalog = staticCatalog;
+
+    if (useStaticCatalog == null) {
+      useStaticCatalog = new Boolean(getUseStaticCatalog());
+    }
+
+    if (catalog == null || !useStaticCatalog.booleanValue()) {
+      catalog = getPrivateCatalog();
+      if (useStaticCatalog.booleanValue()) {
+        staticCatalog = catalog;
+      }
+    }
+
+    return catalog;
+!!!5263618.java!!!	queryAllowOasisXMLCatalogPI() : boolean
+    String allow = SecuritySupport.getSystemProperty(pAllowPI);
+
+    if (allow == null) {
+      if (resources==null) readProperties();
+      if (resources==null) return defaultOasisXMLCatalogPI;
+      try {
+        allow = resources.getString("allow-oasis-xml-catalog-pi");
+      } catch (MissingResourceException e) {
+        return defaultOasisXMLCatalogPI;
+      }
+    }
+
+    if (allow == null) {
+      return defaultOasisXMLCatalogPI;
+    }
+
+    return (allow.equalsIgnoreCase("true")
+            || allow.equalsIgnoreCase("yes")
+            || allow.equalsIgnoreCase("1"));
+!!!5263746.java!!!	getAllowOasisXMLCatalogPI() : boolean
+    if (oasisXMLCatalogPI == null) {
+      oasisXMLCatalogPI = new Boolean(queryAllowOasisXMLCatalogPI());
+    }
+
+    return oasisXMLCatalogPI.booleanValue();
+!!!5263874.java!!!	useServicesMechanism() : boolean
+      return useServicesMechanism;
+!!!5264002.java!!!	setAllowOasisXMLCatalogPI(inout allowPI : boolean) : void
+    oasisXMLCatalogPI = new Boolean(allowPI);
+!!!5264130.java!!!	allowOasisXMLCatalogPI() : boolean
+    return getAllowOasisXMLCatalogPI();
+!!!5264258.java!!!	queryCatalogClassName() : String
+    String className = SecuritySupport.getSystemProperty(pClassname);
+
+    if (className == null) {
+      if (resources==null) readProperties();
+      if (resources==null) return null;
+      try {
+        return resources.getString("catalog-class-name");
+      } catch (MissingResourceException e) {
+        return null;
+      }
+    }
+
+    return className;
+!!!5264386.java!!!	getCatalogClassName() : String
+    if (catalogClassName == null) {
+      catalogClassName = queryCatalogClassName();
+    }
+
+    return catalogClassName;
+!!!5264514.java!!!	setCatalogClassName(inout className : String) : void
+    catalogClassName = className;
+!!!5264642.java!!!	catalogClassName() : String
+    return getCatalogClassName();

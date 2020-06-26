@@ -1,0 +1,209 @@
+class ZoneOffset
+!!!8439682.java!!!	of(inout offsetId : String) : ZoneOffset
+        Objects.requireNonNull(offsetId, "offsetId");
+        // "Z" is always in the cache
+        ZoneOffset offset = ID_CACHE.get(offsetId);
+        if (offset != null) {
+            return offset;
+        }
+
+        // parse - +h, +hh, +hhmm, +hh:mm, +hhmmss, +hh:mm:ss
+        final int hours, minutes, seconds;
+        switch (offsetId.length()) {
+            case 2:
+                offsetId = offsetId.charAt(0) + "0" + offsetId.charAt(1);  // fallthru
+            case 3:
+                hours = parseNumber(offsetId, 1, false);
+                minutes = 0;
+                seconds = 0;
+                break;
+            case 5:
+                hours = parseNumber(offsetId, 1, false);
+                minutes = parseNumber(offsetId, 3, false);
+                seconds = 0;
+                break;
+            case 6:
+                hours = parseNumber(offsetId, 1, false);
+                minutes = parseNumber(offsetId, 4, true);
+                seconds = 0;
+                break;
+            case 7:
+                hours = parseNumber(offsetId, 1, false);
+                minutes = parseNumber(offsetId, 3, false);
+                seconds = parseNumber(offsetId, 5, false);
+                break;
+            case 9:
+                hours = parseNumber(offsetId, 1, false);
+                minutes = parseNumber(offsetId, 4, true);
+                seconds = parseNumber(offsetId, 7, true);
+                break;
+            default:
+                throw new DateTimeException("Invalid ID for ZoneOffset, invalid format: " + offsetId);
+        }
+        char first = offsetId.charAt(0);
+        if (first != '+' && first != '-') {
+            throw new DateTimeException("Invalid ID for ZoneOffset, plus/minus not found when expected: " + offsetId);
+        }
+        if (first == '-') {
+            return ofHoursMinutesSeconds(-hours, -minutes, -seconds);
+        } else {
+            return ofHoursMinutesSeconds(hours, minutes, seconds);
+        }
+!!!8439810.java!!!	parseNumber(inout offsetId : CharSequence, in pos : int, inout precededByColon : boolean) : int
+        if (precededByColon && offsetId.charAt(pos - 1) != ':') {
+            throw new DateTimeException("Invalid ID for ZoneOffset, colon not found when expected: " + offsetId);
+        }
+        char ch1 = offsetId.charAt(pos);
+        char ch2 = offsetId.charAt(pos + 1);
+        if (ch1 < '0' || ch1 > '9' || ch2 < '0' || ch2 > '9') {
+            throw new DateTimeException("Invalid ID for ZoneOffset, non numeric characters found: " + offsetId);
+        }
+        return (ch1 - 48) * 10 + (ch2 - 48);
+!!!8439938.java!!!	ofHours(in hours : int) : ZoneOffset
+        return ofHoursMinutesSeconds(hours, 0, 0);
+!!!8440066.java!!!	ofHoursMinutes(in hours : int, in minutes : int) : ZoneOffset
+        return ofHoursMinutesSeconds(hours, minutes, 0);
+!!!8440194.java!!!	ofHoursMinutesSeconds(in hours : int, in minutes : int, in seconds : int) : ZoneOffset
+        validate(hours, minutes, seconds);
+        int totalSeconds = totalSeconds(hours, minutes, seconds);
+        return ofTotalSeconds(totalSeconds);
+!!!8440322.java!!!	from(inout temporal : TemporalAccessor) : ZoneOffset
+        Objects.requireNonNull(temporal, "temporal");
+        ZoneOffset offset = temporal.query(TemporalQueries.offset());
+        if (offset == null) {
+            throw new DateTimeException("Unable to obtain ZoneOffset from TemporalAccessor: " +
+                    temporal + " of type " + temporal.getClass().getName());
+        }
+        return offset;
+!!!8440450.java!!!	validate(in hours : int, in minutes : int, in seconds : int) : void
+        if (hours < -18 || hours > 18) {
+            throw new DateTimeException("Zone offset hours not in valid range: value " + hours +
+                    " is not in the range -18 to 18");
+        }
+        if (hours > 0) {
+            if (minutes < 0 || seconds < 0) {
+                throw new DateTimeException("Zone offset minutes and seconds must be positive because hours is positive");
+            }
+        } else if (hours < 0) {
+            if (minutes > 0 || seconds > 0) {
+                throw new DateTimeException("Zone offset minutes and seconds must be negative because hours is negative");
+            }
+        } else if ((minutes > 0 && seconds < 0) || (minutes < 0 && seconds > 0)) {
+            throw new DateTimeException("Zone offset minutes and seconds must have the same sign");
+        }
+        if (Math.abs(minutes) > 59) {
+            throw new DateTimeException("Zone offset minutes not in valid range: abs(value) " +
+                    Math.abs(minutes) + " is not in the range 0 to 59");
+        }
+        if (Math.abs(seconds) > 59) {
+            throw new DateTimeException("Zone offset seconds not in valid range: abs(value) " +
+                    Math.abs(seconds) + " is not in the range 0 to 59");
+        }
+        if (Math.abs(hours) == 18 && (Math.abs(minutes) > 0 || Math.abs(seconds) > 0)) {
+            throw new DateTimeException("Zone offset not in valid range: -18:00 to +18:00");
+        }
+!!!8440578.java!!!	totalSeconds(in hours : int, in minutes : int, in seconds : int) : int
+        return hours * SECONDS_PER_HOUR + minutes * SECONDS_PER_MINUTE + seconds;
+!!!8440706.java!!!	ofTotalSeconds(in totalSeconds : int) : ZoneOffset
+        if (Math.abs(totalSeconds) > MAX_SECONDS) {
+            throw new DateTimeException("Zone offset not in valid range: -18:00 to +18:00");
+        }
+        if (totalSeconds % (15 * SECONDS_PER_MINUTE) == 0) {
+            Integer totalSecs = totalSeconds;
+            ZoneOffset result = SECONDS_CACHE.get(totalSecs);
+            if (result == null) {
+                result = new ZoneOffset(totalSeconds);
+                SECONDS_CACHE.putIfAbsent(totalSecs, result);
+                result = SECONDS_CACHE.get(totalSecs);
+                ID_CACHE.putIfAbsent(result.getId(), result);
+            }
+            return result;
+        } else {
+            return new ZoneOffset(totalSeconds);
+        }
+!!!8440834.java!!!	ZoneOffset(in totalSeconds : int)
+        super();
+        this.totalSeconds = totalSeconds;
+        id = buildId(totalSeconds);
+!!!8440962.java!!!	buildId(in totalSeconds : int) : String
+        if (totalSeconds == 0) {
+            return "Z";
+        } else {
+            int absTotalSeconds = Math.abs(totalSeconds);
+            StringBuilder buf = new StringBuilder();
+            int absHours = absTotalSeconds / SECONDS_PER_HOUR;
+            int absMinutes = (absTotalSeconds / SECONDS_PER_MINUTE) % MINUTES_PER_HOUR;
+            buf.append(totalSeconds < 0 ? "-" : "+")
+                .append(absHours < 10 ? "0" : "").append(absHours)
+                .append(absMinutes < 10 ? ":0" : ":").append(absMinutes);
+            int absSeconds = absTotalSeconds % SECONDS_PER_MINUTE;
+            if (absSeconds != 0) {
+                buf.append(absSeconds < 10 ? ":0" : ":").append(absSeconds);
+            }
+            return buf.toString();
+        }
+!!!8441090.java!!!	getTotalSeconds() : int
+        return totalSeconds;
+!!!8441218.java!!!	getId() : String
+        return id;
+!!!8441346.java!!!	getRules() : ZoneRules
+        return ZoneRules.of(this);
+!!!8441474.java!!!	isSupported(inout field : TemporalField) : boolean
+        if (field instanceof ChronoField) {
+            return field == OFFSET_SECONDS;
+        }
+        return field != null && field.isSupportedBy(this);
+!!!8441602.java!!!	range(inout field : TemporalField) : ValueRange
+        return TemporalAccessor.super.range(field);
+!!!8441730.java!!!	get(inout field : TemporalField) : int
+        if (field == OFFSET_SECONDS) {
+            return totalSeconds;
+        } else if (field instanceof ChronoField) {
+            throw new UnsupportedTemporalTypeException("Unsupported field: " + field);
+        }
+        return range(field).checkValidIntValue(getLong(field), field);
+!!!8441858.java!!!	getLong(inout field : TemporalField) : long
+        if (field == OFFSET_SECONDS) {
+            return totalSeconds;
+        } else if (field instanceof ChronoField) {
+            throw new UnsupportedTemporalTypeException("Unsupported field: " + field);
+        }
+        return field.getFrom(this);
+!!!8441986.java!!!	query(inout query : TemporalQuery) : R
+        if (query == TemporalQueries.offset() || query == TemporalQueries.zone()) {
+            return (R) this;
+        }
+        return TemporalAccessor.super.query(query);
+!!!8442114.java!!!	adjustInto(inout temporal : Temporal) : Temporal
+        return temporal.with(OFFSET_SECONDS, totalSeconds);
+!!!8442242.java!!!	compareTo(inout other : ZoneOffset) : int
+        return other.totalSeconds - totalSeconds;
+!!!8442370.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+           return true;
+        }
+        if (obj instanceof ZoneOffset) {
+            return totalSeconds == ((ZoneOffset) obj).totalSeconds;
+        }
+        return false;
+!!!8442498.java!!!	hashCode() : int
+        return totalSeconds;
+!!!8442626.java!!!	toString() : String
+        return id;
+!!!8442754.java!!!	writeReplace() : Object
+        return new Ser(Ser.ZONE_OFFSET_TYPE, this);
+!!!8442882.java!!!	readObject(inout s : ObjectInputStream) : void
+        throw new InvalidObjectException("Deserialization via serialization delegate");
+!!!8443010.java!!!	write(inout out : DataOutput) : void
+        out.writeByte(Ser.ZONE_OFFSET_TYPE);
+        writeExternal(out);
+!!!8443138.java!!!	writeExternal(inout out : DataOutput) : void
+        final int offsetSecs = totalSeconds;
+        int offsetByte = offsetSecs % 900 == 0 ? offsetSecs / 900 : 127;  // compress to -72 to +72
+        out.writeByte(offsetByte);
+        if (offsetByte == 127) {
+            out.writeInt(offsetSecs);
+        }
+!!!8443266.java!!!	readExternal(inout in : DataInput) : ZoneOffset
+        int offsetByte = in.readByte();
+        return (offsetByte == 127 ? ZoneOffset.ofTotalSeconds(in.readInt()) : ZoneOffset.ofTotalSeconds(offsetByte * 900));

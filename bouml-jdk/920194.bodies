@@ -1,0 +1,614 @@
+class BeanContextSupport
+!!!6824066.java!!!	BeanContextSupport(inout peer : BeanContext, inout lcle : Locale, inout dTime : boolean, inout visible : boolean)
+        super(peer);
+
+        locale          = lcle != null ? lcle : Locale.getDefault();
+        designTime      = dTime;
+        okToUseGui      = visible;
+
+        initialize();
+!!!6824194.java!!!	BeanContextSupport(inout peer : BeanContext, inout lcle : Locale, inout dtime : boolean)
+        this (peer, lcle, dtime, true);
+!!!6824322.java!!!	BeanContextSupport(inout peer : BeanContext, inout lcle : Locale)
+        this (peer, lcle, false, true);
+!!!6824450.java!!!	BeanContextSupport(inout peer : BeanContext)
+        this (peer, null, false, true);
+!!!6824578.java!!!	BeanContextSupport()
+        this (null, null, false, true);
+!!!6824706.java!!!	getBeanContextPeer() : BeanContext
+ return (BeanContext)getBeanContextChildPeer();
+!!!6824834.java!!!	instantiateChild(inout beanName : String) : Object
+        BeanContext bc = getBeanContextPeer();
+
+        return Beans.instantiate(bc.getClass().getClassLoader(), beanName, bc);
+!!!6824962.java!!!	size() : int
+        synchronized(children) {
+            return children.size();
+        }
+!!!6825090.java!!!	isEmpty() : boolean
+        synchronized(children) {
+            return children.isEmpty();
+        }
+!!!6825218.java!!!	contains(inout o : Object) : boolean
+        synchronized(children) {
+            return children.containsKey(o);
+        }
+!!!6825346.java!!!	containsKey(inout o : Object) : boolean
+        synchronized(children) {
+            return children.containsKey(o);
+        }
+!!!6825474.java!!!	iterator() : Iterator
+        synchronized(children) {
+            return new BCSIterator(children.keySet().iterator());
+        }
+!!!6825602.java!!!	toArray() : Object
+        synchronized(children) {
+            return children.keySet().toArray();
+        }
+!!!6825730.java!!!	toArray(inout arry : Object [[]]) : Object
+        synchronized(children) {
+            return children.keySet().toArray(arry);
+        }
+!!!6827138.java!!!	createBCSChild(inout targetChild : Object, inout peer : Object) : BeanContextSupport::BCSChild
+        return new BCSChild(targetChild, peer);
+!!!6827266.java!!!	add(inout targetChild : Object) : boolean
+
+        if (targetChild == null) throw new IllegalArgumentException();
+
+        // The specification requires that we do nothing if the child
+        // is already nested herein.
+
+        if (children.containsKey(targetChild)) return false; // test before locking
+
+        synchronized(BeanContext.globalHierarchyLock) {
+            if (children.containsKey(targetChild)) return false; // check again
+
+            if (!validatePendingAdd(targetChild)) {
+                throw new IllegalStateException();
+            }
+
+
+            // The specification requires that we invoke setBeanContext() on the
+            // newly added child if it implements the java.beans.beancontext.BeanContextChild interface
+
+            BeanContextChild cbcc  = getChildBeanContextChild(targetChild);
+            BeanContextChild  bccp = null;
+
+            synchronized(targetChild) {
+
+                if (targetChild instanceof BeanContextProxy) {
+                    bccp = ((BeanContextProxy)targetChild).getBeanContextProxy();
+
+                    if (bccp == null) throw new NullPointerException("BeanContextPeer.getBeanContextProxy()");
+                }
+
+                BCSChild bcsc  = createBCSChild(targetChild, bccp);
+                BCSChild pbcsc = null;
+
+                synchronized (children) {
+                    children.put(targetChild, bcsc);
+
+                    if (bccp != null) children.put(bccp, pbcsc = createBCSChild(bccp, targetChild));
+                }
+
+                if (cbcc != null) synchronized(cbcc) {
+                    try {
+                        cbcc.setBeanContext(getBeanContextPeer());
+                    } catch (PropertyVetoException pve) {
+
+                        synchronized (children) {
+                            children.remove(targetChild);
+
+                            if (bccp != null) children.remove(bccp);
+                        }
+
+                        throw new IllegalStateException();
+                    }
+
+                    cbcc.addPropertyChangeListener("beanContext", childPCL);
+                    cbcc.addVetoableChangeListener("beanContext", childVCL);
+                }
+
+                Visibility v = getChildVisibility(targetChild);
+
+                if (v != null) {
+                    if (okToUseGui)
+                        v.okToUseGui();
+                    else
+                        v.dontUseGui();
+                }
+
+                if (getChildSerializable(targetChild) != null) serializable++;
+
+                childJustAddedHook(targetChild, bcsc);
+
+                if (bccp != null) {
+                    v = getChildVisibility(bccp);
+
+                    if (v != null) {
+                        if (okToUseGui)
+                            v.okToUseGui();
+                        else
+                            v.dontUseGui();
+                    }
+
+                    if (getChildSerializable(bccp) != null) serializable++;
+
+                    childJustAddedHook(bccp, pbcsc);
+                }
+
+
+            }
+
+            // The specification requires that we fire a notification of the change
+
+            fireChildrenAdded(new BeanContextMembershipEvent(getBeanContextPeer(), bccp == null ? new Object[] { targetChild } : new Object[] { targetChild, bccp } ));
+
+        }
+
+        return true;
+!!!6827394.java!!!	remove(inout targetChild : Object) : boolean
+        return remove(targetChild, true);
+!!!6827522.java!!!	remove(inout targetChild : Object, inout callChildSetBC : boolean) : boolean
+
+        if (targetChild == null) throw new IllegalArgumentException();
+
+        synchronized(BeanContext.globalHierarchyLock) {
+            if (!containsKey(targetChild)) return false;
+
+            if (!validatePendingRemove(targetChild)) {
+                throw new IllegalStateException();
+            }
+
+            BCSChild bcsc  = (BCSChild)children.get(targetChild);
+            BCSChild pbcsc = null;
+            Object   peer  = null;
+
+            // we are required to notify the child that it is no longer nested here if
+            // it implements java.beans.beancontext.BeanContextChild
+
+            synchronized(targetChild) {
+                if (callChildSetBC) {
+                    BeanContextChild cbcc = getChildBeanContextChild(targetChild);
+                    if (cbcc != null) synchronized(cbcc) {
+                        cbcc.removePropertyChangeListener("beanContext", childPCL);
+                        cbcc.removeVetoableChangeListener("beanContext", childVCL);
+
+                        try {
+                            cbcc.setBeanContext(null);
+                        } catch (PropertyVetoException pve1) {
+                            cbcc.addPropertyChangeListener("beanContext", childPCL);
+                            cbcc.addVetoableChangeListener("beanContext", childVCL);
+                            throw new IllegalStateException();
+                        }
+
+                    }
+                }
+
+                synchronized (children) {
+                    children.remove(targetChild);
+
+                    if (bcsc.isProxyPeer()) {
+                        pbcsc = (BCSChild)children.get(peer = bcsc.getProxyPeer());
+                        children.remove(peer);
+                    }
+                }
+
+                if (getChildSerializable(targetChild) != null) serializable--;
+
+                childJustRemovedHook(targetChild, bcsc);
+
+                if (peer != null) {
+                    if (getChildSerializable(peer) != null) serializable--;
+
+                    childJustRemovedHook(peer, pbcsc);
+                }
+            }
+
+            fireChildrenRemoved(new BeanContextMembershipEvent(getBeanContextPeer(), peer == null ? new Object[] { targetChild } : new Object[] { targetChild, peer } ));
+
+        }
+
+        return true;
+!!!6827650.java!!!	containsAll(inout c : Collection) : boolean
+        synchronized(children) {
+            Iterator i = c.iterator();
+            while (i.hasNext())
+                if(!contains(i.next()))
+                    return false;
+
+            return true;
+        }
+!!!6827778.java!!!	addAll(inout c : Collection) : boolean
+        throw new UnsupportedOperationException();
+!!!6827906.java!!!	removeAll(inout c : Collection) : boolean
+        throw new UnsupportedOperationException();
+!!!6828034.java!!!	retainAll(inout c : Collection) : boolean
+        throw new UnsupportedOperationException();
+!!!6828162.java!!!	clear() : void
+        throw new UnsupportedOperationException();
+!!!6828290.java!!!	addBeanContextMembershipListener(inout bcml : BeanContextMembershipListener) : void
+        if (bcml == null) throw new NullPointerException("listener");
+
+        synchronized(bcmListeners) {
+            if (bcmListeners.contains(bcml))
+                return;
+            else
+                bcmListeners.add(bcml);
+        }
+!!!6828418.java!!!	removeBeanContextMembershipListener(inout bcml : BeanContextMembershipListener) : void
+        if (bcml == null) throw new NullPointerException("listener");
+
+        synchronized(bcmListeners) {
+            if (!bcmListeners.contains(bcml))
+                return;
+            else
+                bcmListeners.remove(bcml);
+        }
+!!!6828546.java!!!	getResourceAsStream(inout name : String, inout bcc : BeanContextChild) : InputStream
+        if (name == null) throw new NullPointerException("name");
+        if (bcc  == null) throw new NullPointerException("bcc");
+
+        if (containsKey(bcc)) {
+            ClassLoader cl = bcc.getClass().getClassLoader();
+
+            return cl != null ? cl.getResourceAsStream(name)
+                              : ClassLoader.getSystemResourceAsStream(name);
+        } else throw new IllegalArgumentException("Not a valid child");
+!!!6828674.java!!!	getResource(inout name : String, inout bcc : BeanContextChild) : URL
+        if (name == null) throw new NullPointerException("name");
+        if (bcc  == null) throw new NullPointerException("bcc");
+
+        if (containsKey(bcc)) {
+            ClassLoader cl = bcc.getClass().getClassLoader();
+
+            return cl != null ? cl.getResource(name)
+                              : ClassLoader.getSystemResource(name);
+        } else throw new IllegalArgumentException("Not a valid child");
+!!!6828802.java!!!	setDesignTime(inout dTime : boolean) : void
+        if (designTime != dTime) {
+            designTime = dTime;
+
+            firePropertyChange("designMode", Boolean.valueOf(!dTime), Boolean.valueOf(dTime));
+        }
+!!!6828930.java!!!	isDesignTime() : boolean
+ return designTime;
+!!!6829058.java!!!	setLocale(inout newLocale : Locale) : void
+
+        if ((locale != null && !locale.equals(newLocale)) && newLocale != null) {
+            Locale old = locale;
+
+            fireVetoableChange("locale", old, newLocale); // throws
+
+            locale = newLocale;
+
+            firePropertyChange("locale", old, newLocale);
+        }
+!!!6829186.java!!!	getLocale() : Locale
+ return locale;
+!!!6829314.java!!!	needsGui() : boolean
+        BeanContext bc = getBeanContextPeer();
+
+        if (bc != this) {
+            if (bc instanceof Visibility) return ((Visibility)bc).needsGui();
+
+            if (bc instanceof Container || bc instanceof Component)
+                return true;
+        }
+
+        synchronized(children) {
+            for (Iterator i = children.keySet().iterator(); i.hasNext();) {
+                Object c = i.next();
+
+                try {
+                        return ((Visibility)c).needsGui();
+                    } catch (ClassCastException cce) {
+                        // do nothing ...
+                    }
+
+                    if (c instanceof Container || c instanceof Component)
+                        return true;
+            }
+        }
+
+        return false;
+!!!6829442.java!!!	dontUseGui() : void
+        if (okToUseGui) {
+            okToUseGui = false;
+
+            // lets also tell the Children that can that they may not use their GUI's
+            synchronized(children) {
+                for (Iterator i = children.keySet().iterator(); i.hasNext();) {
+                    Visibility v = getChildVisibility(i.next());
+
+                    if (v != null) v.dontUseGui();
+               }
+            }
+        }
+!!!6829570.java!!!	okToUseGui() : void
+        if (!okToUseGui) {
+            okToUseGui = true;
+
+            // lets also tell the Children that can that they may use their GUI's
+            synchronized(children) {
+                for (Iterator i = children.keySet().iterator(); i.hasNext();) {
+                    Visibility v = getChildVisibility(i.next());
+
+                    if (v != null) v.okToUseGui();
+                }
+            }
+        }
+!!!6829698.java!!!	avoidingGui() : boolean
+        return !okToUseGui && needsGui();
+!!!6829826.java!!!	isSerializing() : boolean
+ return serializing;
+!!!6829954.java!!!	bcsChildren() : Iterator
+ synchronized(children) { return children.values().iterator();  }
+!!!6830338.java!!!	childDeserializedHook(inout child : Object, inout bcsc : BeanContextSupport::BCSChild) : void
+        synchronized(children) {
+            children.put(child, bcsc);
+        }
+!!!6830466.java!!!	serialize(inout oos : ObjectOutputStream, inout coll : Collection) : void
+        int      count   = 0;
+        Object[] objects = coll.toArray();
+
+        for (int i = 0; i < objects.length; i++) {
+            if (objects[i] instanceof Serializable)
+                count++;
+            else
+                objects[i] = null;
+        }
+
+        oos.writeInt(count); // number of subsequent objects
+
+        for (int i = 0; count > 0; i++) {
+            Object o = objects[i];
+
+            if (o != null) {
+                oos.writeObject(o);
+                count--;
+            }
+        }
+!!!6830594.java!!!	deserialize(inout ois : ObjectInputStream, inout coll : Collection) : void
+        int count = 0;
+
+        count = ois.readInt();
+
+        while (count-- > 0) {
+            coll.add(ois.readObject());
+        }
+!!!6830722.java!!!	writeChildren(inout oos : ObjectOutputStream) : void
+        if (serializable <= 0) return;
+
+        boolean prev = serializing;
+
+        serializing = true;
+
+        int count = 0;
+
+        synchronized(children) {
+            Iterator i = children.entrySet().iterator();
+
+            while (i.hasNext() && count < serializable) {
+                Map.Entry entry = (Map.Entry)i.next();
+
+                if (entry.getKey() instanceof Serializable) {
+                    try {
+                        oos.writeObject(entry.getKey());   // child
+                        oos.writeObject(entry.getValue()); // BCSChild
+                    } catch (IOException ioe) {
+                        serializing = prev;
+                        throw ioe;
+                    }
+                    count++;
+                }
+            }
+        }
+
+        serializing = prev;
+
+        if (count != serializable) {
+            throw new IOException("wrote different number of children than expected");
+        }
+
+!!!6830850.java!!!	writeObject(inout oos : ObjectOutputStream) : void
+        serializing = true;
+
+        synchronized (BeanContext.globalHierarchyLock) {
+            try {
+                oos.defaultWriteObject(); // serialize the BeanContextSupport object
+
+                bcsPreSerializationHook(oos);
+
+                if (serializable > 0 && this.equals(getBeanContextPeer()))
+                    writeChildren(oos);
+
+                serialize(oos, (Collection)bcmListeners);
+            } finally {
+                serializing = false;
+            }
+        }
+!!!6830978.java!!!	readChildren(inout ois : ObjectInputStream) : void
+        int count = serializable;
+
+        while (count-- > 0) {
+            Object                      child = null;
+            BeanContextSupport.BCSChild bscc  = null;
+
+            try {
+                child = ois.readObject();
+                bscc  = (BeanContextSupport.BCSChild)ois.readObject();
+            } catch (IOException ioe) {
+                continue;
+            } catch (ClassNotFoundException cnfe) {
+                continue;
+            }
+
+
+            synchronized(child) {
+                BeanContextChild bcc = null;
+
+                try {
+                    bcc = (BeanContextChild)child;
+                } catch (ClassCastException cce) {
+                    // do nothing;
+                }
+
+                if (bcc != null) {
+                    try {
+                        bcc.setBeanContext(getBeanContextPeer());
+
+                       bcc.addPropertyChangeListener("beanContext", childPCL);
+                       bcc.addVetoableChangeListener("beanContext", childVCL);
+
+                    } catch (PropertyVetoException pve) {
+                        continue;
+                    }
+                }
+
+                childDeserializedHook(child, bscc);
+            }
+        }
+!!!6831106.java!!!	readObject(inout ois : ObjectInputStream) : void
+
+        synchronized(BeanContext.globalHierarchyLock) {
+            ois.defaultReadObject();
+
+            initialize();
+
+            bcsPreDeserializationHook(ois);
+
+            if (serializable > 0 && this.equals(getBeanContextPeer()))
+                readChildren(ois);
+
+            deserialize(ois, bcmListeners = new ArrayList(1));
+        }
+!!!6831234.java!!!	vetoableChange(inout pce : PropertyChangeEvent) : void
+        String propertyName = pce.getPropertyName();
+        Object source       = pce.getSource();
+
+        synchronized(children) {
+            if ("beanContext".equals(propertyName) &&
+                containsKey(source)                    &&
+                !getBeanContextPeer().equals(pce.getNewValue())
+            ) {
+                if (!validatePendingRemove(source)) {
+                    throw new PropertyVetoException("current BeanContext vetoes setBeanContext()", pce);
+                } else ((BCSChild)children.get(source)).setRemovePending(true);
+            }
+        }
+!!!6831362.java!!!	propertyChange(inout pce : PropertyChangeEvent) : void
+        String propertyName = pce.getPropertyName();
+        Object source       = pce.getSource();
+
+        synchronized(children) {
+            if ("beanContext".equals(propertyName) &&
+                containsKey(source)                    &&
+                ((BCSChild)children.get(source)).isRemovePending()) {
+                BeanContext bc = getBeanContextPeer();
+
+                if (bc.equals(pce.getOldValue()) && !bc.equals(pce.getNewValue())) {
+                    remove(source, false);
+                } else {
+                    ((BCSChild)children.get(source)).setRemovePending(false);
+                }
+            }
+        }
+!!!6831490.java!!!	validatePendingAdd(inout targetChild : Object) : boolean
+        return true;
+!!!6831618.java!!!	validatePendingRemove(inout targetChild : Object) : boolean
+        return true;
+!!!6832002.java!!!	getChildVisibility(inout child : Object) : Visibility
+        try {
+            return (Visibility)child;
+        } catch (ClassCastException cce) {
+            return null;
+        }
+!!!6832130.java!!!	getChildSerializable(inout child : Object) : Serializable
+        try {
+            return (Serializable)child;
+        } catch (ClassCastException cce) {
+            return null;
+        }
+!!!6832258.java!!!	getChildPropertyChangeListener(inout child : Object) : PropertyChangeListener
+        try {
+            return (PropertyChangeListener)child;
+        } catch (ClassCastException cce) {
+            return null;
+        }
+!!!6832386.java!!!	getChildVetoableChangeListener(inout child : Object) : VetoableChangeListener
+        try {
+            return (VetoableChangeListener)child;
+        } catch (ClassCastException cce) {
+            return null;
+        }
+!!!6832514.java!!!	getChildBeanContextMembershipListener(inout child : Object) : BeanContextMembershipListener
+        try {
+            return (BeanContextMembershipListener)child;
+        } catch (ClassCastException cce) {
+            return null;
+        }
+!!!6832642.java!!!	getChildBeanContextChild(inout child : Object) : BeanContextChild
+        try {
+            BeanContextChild bcc = (BeanContextChild)child;
+
+            if (child instanceof BeanContextChild && child instanceof BeanContextProxy)
+                throw new IllegalArgumentException("child cannot implement both BeanContextChild and BeanContextProxy");
+            else
+                return bcc;
+        } catch (ClassCastException cce) {
+            try {
+                return ((BeanContextProxy)child).getBeanContextProxy();
+            } catch (ClassCastException cce1) {
+                return null;
+            }
+        }
+!!!6832770.java!!!	fireChildrenAdded(inout bcme : BeanContextMembershipEvent) : void
+        Object[] copy;
+
+        synchronized(bcmListeners) { copy = bcmListeners.toArray(); }
+
+        for (int i = 0; i < copy.length; i++)
+            ((BeanContextMembershipListener)copy[i]).childrenAdded(bcme);
+!!!6832898.java!!!	fireChildrenRemoved(inout bcme : BeanContextMembershipEvent) : void
+        Object[] copy;
+
+        synchronized(bcmListeners) { copy = bcmListeners.toArray(); }
+
+        for (int i = 0; i < copy.length; i++)
+            ((BeanContextMembershipListener)copy[i]).childrenRemoved(bcme);
+!!!6833026.java!!!	initialize() : void
+        children     = new HashMap(serializable + 1);
+        bcmListeners = new ArrayList(1);
+
+        childPCL = new PropertyChangeListener() {
+
+            /*
+             * this adaptor is used by the BeanContextSupport class to forward
+             * property changes from a child to the BeanContext, avoiding
+             * accidential serialization of the BeanContext by a badly
+             * behaved Serializable child.
+             */
+
+            public void propertyChange(PropertyChangeEvent pce) {
+                BeanContextSupport.this.propertyChange(pce);
+            }
+        };
+
+        childVCL = new VetoableChangeListener() {
+
+            /*
+             * this adaptor is used by the BeanContextSupport class to forward
+             * vetoable changes from a child to the BeanContext, avoiding
+             * accidential serialization of the BeanContext by a badly
+             * behaved Serializable child.
+             */
+
+            public void vetoableChange(PropertyChangeEvent pce) throws PropertyVetoException {
+                BeanContextSupport.this.vetoableChange(pce);
+             }
+        };
+!!!6833154.java!!!	copyChildren() : Object
+        synchronized(children) { return children.keySet().toArray(); }
+!!!6833282.java!!!	classEquals(inout first : Class, inout second : Class) : boolean
+        return first.equals(second) || first.getName().equals(second.getName());

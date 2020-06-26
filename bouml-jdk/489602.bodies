@@ -1,0 +1,166 @@
+class ClassLoaderRepositorySupport
+!!!2938626.java!!!	add(inout name : ObjectName, inout cl : ClassLoader) : boolean
+        List<LoaderEntry> l =
+            new ArrayList<LoaderEntry>(Arrays.asList(loaders));
+        l.add(new LoaderEntry(name, cl));
+        loaders = l.toArray(EMPTY_LOADER_ARRAY);
+        return true;
+!!!2938754.java!!!	remove(inout name : ObjectName, inout cl : ClassLoader) : boolean
+        final int size = loaders.length;
+        for (int i = 0; i < size; i++) {
+            LoaderEntry entry = loaders[i];
+            boolean match =
+                (name == null) ?
+                cl == entry.loader :
+                name.equals(entry.name);
+            if (match) {
+                LoaderEntry[] newloaders = new LoaderEntry[size - 1];
+                System.arraycopy(loaders, 0, newloaders, 0, i);
+                System.arraycopy(loaders, i + 1, newloaders, i,
+                                 size - 1 - i);
+                loaders = newloaders;
+                return true;
+            }
+        }
+        return false;
+!!!2938882.java!!!	loadClass(inout className : String) : Class
+        return  loadClass(loaders, className, null, null);
+!!!2939010.java!!!	loadClassWithout(inout without : ClassLoader, inout className : String) : Class
+        if (MBEANSERVER_LOGGER.isLoggable(Level.FINER)) {
+            MBEANSERVER_LOGGER.logp(Level.FINER,
+                    ClassLoaderRepositorySupport.class.getName(),
+                    "loadClassWithout", className + " without " + without);
+        }
+
+        // without is null => just behave as loadClass
+        //
+        if (without == null)
+            return loadClass(loaders, className, null, null);
+
+        // We must try to load the class without the given loader.
+        //
+        startValidSearch(without, className);
+        try {
+            return loadClass(loaders, className, without, null);
+        } finally {
+            stopValidSearch(without, className);
+        }
+!!!2939138.java!!!	loadClassBefore(inout stop : ClassLoader, inout className : String) : Class
+        if (MBEANSERVER_LOGGER.isLoggable(Level.FINER)) {
+            MBEANSERVER_LOGGER.logp(Level.FINER,
+                    ClassLoaderRepositorySupport.class.getName(),
+                    "loadClassBefore", className + " before " + stop);
+        }
+
+        if (stop == null)
+            return loadClass(loaders, className, null, null);
+
+        startValidSearch(stop, className);
+        try {
+            return loadClass(loaders, className, null, stop);
+        } finally {
+            stopValidSearch(stop, className);
+        }
+!!!2939266.java!!!	loadClass(in list : ClassLoaderRepositorySupport::LoaderEntry [[]], in className : String, in without : ClassLoader, in stop : ClassLoader) : Class
+        ReflectUtil.checkPackageAccess(className);
+        final int size = list.length;
+        for(int i=0; i<size; i++) {
+            try {
+                final ClassLoader cl = list[i].loader;
+                if (cl == null) // bootstrap class loader
+                    return Class.forName(className, false, null);
+                if (cl == without)
+                    continue;
+                if (cl == stop)
+                    break;
+                if (MBEANSERVER_LOGGER.isLoggable(Level.FINER)) {
+                    MBEANSERVER_LOGGER.logp(Level.FINER,
+                            ClassLoaderRepositorySupport.class.getName(),
+                            "loadClass", "Trying loader = " + cl);
+                }
+                /* We used to have a special case for "instanceof
+                   MLet" here, where we invoked the method
+                   loadClass(className, null) to prevent infinite
+                   recursion.  But the rule whereby the MLet only
+                   consults loaders that precede it in the CLR (via
+                   loadClassBefore) means that the recursion can't
+                   happen, and the test here caused some legitimate
+                   classloading to fail.  For example, if you have
+                   dependencies C->D->E with loaders {E D C} in the
+                   CLR in that order, you would expect to be able to
+                   load C.  The problem is that while resolving D, CLR
+                   delegation is disabled, so it can't find E.  */
+                return Class.forName(className, false, cl);
+            } catch (ClassNotFoundException e) {
+                // OK: continue with next class
+            }
+        }
+
+        throw new ClassNotFoundException(className);
+!!!2939394.java!!!	startValidSearch(inout aloader : ClassLoader, inout className : String) : void
+        // Check if we have such a current search
+        //
+        List<ClassLoader> excluded = search.get(className);
+        if ((excluded!= null) && (excluded.contains(aloader))) {
+            if (MBEANSERVER_LOGGER.isLoggable(Level.FINER)) {
+                MBEANSERVER_LOGGER.logp(Level.FINER,
+                        ClassLoaderRepositorySupport.class.getName(),
+                        "startValidSearch", "Already requested loader = " +
+                        aloader + " class = " + className);
+            }
+            throw new ClassNotFoundException(className);
+        }
+
+        // Add an entry
+        //
+        if (excluded == null) {
+            excluded = new ArrayList<ClassLoader>(1);
+            search.put(className, excluded);
+        }
+        excluded.add(aloader);
+        if (MBEANSERVER_LOGGER.isLoggable(Level.FINER)) {
+            MBEANSERVER_LOGGER.logp(Level.FINER,
+                    ClassLoaderRepositorySupport.class.getName(),
+                    "startValidSearch",
+                    "loader = " + aloader + " class = " + className);
+        }
+!!!2939522.java!!!	stopValidSearch(inout aloader : ClassLoader, inout className : String) : void
+
+        // Retrieve the search.
+        //
+        List<ClassLoader> excluded = search.get(className);
+        if (excluded != null) {
+            excluded.remove(aloader);
+            if (MBEANSERVER_LOGGER.isLoggable(Level.FINER)) {
+                MBEANSERVER_LOGGER.logp(Level.FINER,
+                        ClassLoaderRepositorySupport.class.getName(),
+                        "stopValidSearch",
+                        "loader = " + aloader + " class = " + className);
+            }
+        }
+!!!2939650.java!!!	addClassLoader(inout loader : ClassLoader) : void
+        add(null, loader);
+!!!2939778.java!!!	removeClassLoader(inout loader : ClassLoader) : void
+        remove(null, loader);
+!!!2939906.java!!!	addClassLoader(inout name : ObjectName, inout loader : ClassLoader) : void
+        loadersWithNames.put(name, loader);
+        if (!(loader instanceof PrivateClassLoader))
+            add(name, loader);
+!!!2940034.java!!!	removeClassLoader(inout name : ObjectName) : void
+        ClassLoader loader = loadersWithNames.remove(name);
+        if (!(loader instanceof PrivateClassLoader))
+            remove(name, loader);
+!!!2940162.java!!!	getClassLoader(inout name : ObjectName) : ClassLoader
+        ClassLoader instance = loadersWithNames.get(name);
+        if (instance != null) {
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                Permission perm =
+                        new MBeanPermission(instance.getClass().getName(),
+                        null,
+                        name,
+                        "getClassLoader");
+                sm.checkPermission(perm);
+            }
+        }
+        return instance;

@@ -1,0 +1,293 @@
+class XPrecisionDecimal
+!!!4527618.java!!!	XPrecisionDecimal(inout content : String)
+            if(content.equals("NaN")) {
+                ivalue = content;
+                sign = 0;
+            }
+            if(content.equals("+INF") || content.equals("INF") || content.equals("-INF")) {
+                ivalue = content.charAt(0) == '+' ? content.substring(1) : content;
+                return;
+            }
+            initD(content);
+!!!4527746.java!!!	initD(inout content : String) : void
+            int len = content.length();
+            if (len == 0)
+                throw new NumberFormatException();
+
+            // these 4 variables are used to indicate where the integre/fraction
+            // parts start/end.
+            int intStart = 0, intEnd = 0, fracStart = 0, fracEnd = 0;
+
+            // Deal with leading sign symbol if present
+            if (content.charAt(0) == '+') {
+                // skip '+', so intStart should be 1
+                intStart = 1;
+            }
+            else if (content.charAt(0) == '-') {
+                intStart = 1;
+                sign = -1;
+            }
+
+            // skip leading zeroes in integer part
+            int actualIntStart = intStart;
+            while (actualIntStart < len && content.charAt(actualIntStart) == '0') {
+                actualIntStart++;
+            }
+
+            // Find the ending position of the integer part
+            for (intEnd = actualIntStart; intEnd < len && TypeValidator.isDigit(content.charAt(intEnd)); intEnd++);
+
+            // Not reached the end yet
+            if (intEnd < len) {
+                // the remaining part is not ".DDD" or "EDDD" or "eDDD", error
+                if (content.charAt(intEnd) != '.' && content.charAt(intEnd) != 'E' && content.charAt(intEnd) != 'e')
+                    throw new NumberFormatException();
+
+                if(content.charAt(intEnd) == '.') {
+                    // fraction part starts after '.', and ends at the end of the input
+                    fracStart = intEnd + 1;
+
+                    // find location of E or e (if present)
+                    // Find the ending position of the fracion part
+                    for (fracEnd = fracStart;
+                    fracEnd < len && TypeValidator.isDigit(content.charAt(fracEnd));
+                    fracEnd++);
+                }
+                else {
+                    pvalue = Integer.parseInt(content.substring(intEnd + 1, len));
+                }
+            }
+
+            // no integer part, no fraction part, error.
+            if (intStart == intEnd && fracStart == fracEnd)
+                throw new NumberFormatException();
+
+            // ignore trailing zeroes in fraction part
+            /*while (fracEnd > fracStart && content.charAt(fracEnd-1) == '0') {
+             fracEnd--;
+             }*/
+
+            // check whether there is non-digit characters in the fraction part
+            for (int fracPos = fracStart; fracPos < fracEnd; fracPos++) {
+                if (!TypeValidator.isDigit(content.charAt(fracPos)))
+                    throw new NumberFormatException();
+            }
+
+            intDigits = intEnd - actualIntStart;
+            fracDigits = fracEnd - fracStart;
+
+            if (intDigits > 0) {
+                ivalue = content.substring(actualIntStart, intEnd);
+            }
+
+            if (fracDigits > 0) {
+                fvalue = content.substring(fracStart, fracEnd);
+                if(fracEnd < len) {
+                    pvalue = Integer.parseInt(content.substring(fracEnd + 1, len));
+                }
+            }
+            totalDigits = intDigits + fracDigits;
+!!!4527874.java!!!	canonicalToStringForHashCode(inout ivalue : String, inout fvalue : String, in sign : int, in pvalue : int) : String
+            if ("NaN".equals(ivalue)) {
+                return "NaN";
+            }
+            if ("INF".equals(ivalue)) {
+                return sign < 0 ? "-INF" : "INF";
+            }
+            final StringBuilder builder = new StringBuilder();
+            final int ilen = ivalue.length();
+            final int flen0 = fvalue.length();
+            int lastNonZero;
+            for (lastNonZero = flen0; lastNonZero > 0 ; lastNonZero--) {
+                if (fvalue.charAt(lastNonZero -1 ) != '0') break;
+            }
+            final int flen = lastNonZero;
+            int iStart;
+            int exponent = pvalue;
+            for (iStart = 0; iStart < ilen; iStart++) {
+                if (ivalue.charAt(iStart) != '0') break;
+            }
+            int fStart = 0;
+            if (iStart < ivalue.length()) {
+                builder.append(sign == -1 ? "-" : "");
+                builder.append(ivalue.charAt(iStart));
+                iStart++;
+            } else {
+                if (flen > 0) {
+                    for (fStart = 0; fStart < flen; fStart++) {
+                        if (fvalue.charAt(fStart) != '0') break;
+                    }
+                    if (fStart < flen) {
+                        builder.append(sign == -1 ? "-" : "");
+                        builder.append(fvalue.charAt(fStart));
+                        exponent -= ++fStart;
+                    } else {
+                        return "0";
+                    }
+                } else {
+                    return "0";
+                }
+            }
+
+            if (iStart < ilen || fStart < flen) {
+                builder.append('.');
+            }
+            while (iStart < ilen) {
+                builder.append(ivalue.charAt(iStart++));
+                exponent++;
+            }
+            while (fStart < flen) {
+                builder.append(fvalue.charAt(fStart++));
+            }
+            if (exponent != 0) {
+                builder.append("E").append(exponent);
+            }
+            return builder.toString();
+!!!4528002.java!!!	equals(inout val : Object) : boolean
+            if (val == this)
+                return true;
+
+            if (!(val instanceof XPrecisionDecimal))
+                return false;
+            XPrecisionDecimal oval = (XPrecisionDecimal)val;
+
+            return this.compareTo(oval) == EQUAL;
+!!!4528130.java!!!	hashCode() : int
+            // There's nothing else we can use easily, because equals could
+            // return true for widely different representation of the
+            // same number - and we don't have any canonical representation.
+            // The problem here is that we must ensure that if two numbers
+            // are equals then their hash code must also be equals.
+            // hashCode for 1.01E1 should be the same as hashCode for 0.101E2
+            // So we call cannonicalToStringForHashCode - which implements an
+            // algorithm that invents a normalized string representation
+            // for this number, and we return a hash for that.
+            return canonicalToStringForHashCode(ivalue, fvalue, sign, pvalue).hashCode();
+!!!4528258.java!!!	compareFractionalPart(inout oval : PrecisionDecimalDV::XPrecisionDecimal) : int
+            if(fvalue.equals(oval.fvalue))
+                return EQUAL;
+
+            StringBuffer temp1 = new StringBuffer(fvalue);
+            StringBuffer temp2 = new StringBuffer(oval.fvalue);
+
+            truncateTrailingZeros(temp1, temp2);
+            return temp1.toString().compareTo(temp2.toString());
+!!!4528386.java!!!	truncateTrailingZeros(inout fValue : StringBuffer, inout otherFValue : StringBuffer) : void
+            for(int i = fValue.length() - 1;i >= 0; i--)
+                if(fValue.charAt(i) == '0')
+                    fValue.deleteCharAt(i);
+                else
+                    break;
+
+            for(int i = otherFValue.length() - 1;i >= 0; i--)
+                if(otherFValue.charAt(i) == '0')
+                    otherFValue.deleteCharAt(i);
+                else
+                    break;
+!!!4528514.java!!!	compareTo(inout val : PrecisionDecimalDV::XPrecisionDecimal) : int
+
+            // seen NaN
+            if(sign == 0)
+                return INDETERMINATE;
+
+            //INF is greater than everything and equal to itself
+            if(ivalue.equals("INF") || val.ivalue.equals("INF")) {
+                if(ivalue.equals(val.ivalue))
+                    return EQUAL;
+                else if(ivalue.equals("INF"))
+                    return GREATER_THAN;
+                return LESS_THAN;
+            }
+
+            //-INF is smaller than everything and equal itself
+            if(ivalue.equals("-INF") || val.ivalue.equals("-INF")) {
+                if(ivalue.equals(val.ivalue))
+                    return EQUAL;
+                else if(ivalue.equals("-INF"))
+                    return LESS_THAN;
+                return GREATER_THAN;
+            }
+
+            if (sign != val.sign)
+                return sign > val.sign ? GREATER_THAN : LESS_THAN;
+
+            return sign * compare(val);
+!!!4528642.java!!!	compare(inout val : PrecisionDecimalDV::XPrecisionDecimal) : int
+
+            if(pvalue != 0 || val.pvalue != 0) {
+                if(pvalue == val.pvalue)
+                    return intComp(val);
+                else {
+
+                    if(intDigits + pvalue != val.intDigits + val.pvalue)
+                        return intDigits + pvalue > val.intDigits + val.pvalue ? GREATER_THAN : LESS_THAN;
+
+                    //otherwise the 2 combined values are the same
+                    if(pvalue > val.pvalue) {
+                        int expDiff = pvalue - val.pvalue;
+                        StringBuffer buffer = new StringBuffer(ivalue);
+                        StringBuffer fbuffer = new StringBuffer(fvalue);
+                        for(int i = 0;i < expDiff; i++) {
+                            if(i < fracDigits) {
+                                buffer.append(fvalue.charAt(i));
+                                fbuffer.deleteCharAt(i);
+                            }
+                            else
+                                buffer.append('0');
+                        }
+                        return compareDecimal(buffer.toString(), val.ivalue, fbuffer.toString(), val.fvalue);
+                    }
+                    else {
+                        int expDiff = val.pvalue - pvalue;
+                        StringBuffer buffer = new StringBuffer(val.ivalue);
+                        StringBuffer fbuffer = new StringBuffer(val.fvalue);
+                        for(int i = 0;i < expDiff; i++) {
+                            if(i < val.fracDigits) {
+                                buffer.append(val.fvalue.charAt(i));
+                                fbuffer.deleteCharAt(i);
+                            }
+                            else
+                                buffer.append('0');
+                        }
+                        return compareDecimal(ivalue, buffer.toString(), fvalue, fbuffer.toString());
+                    }
+                }
+            }
+            else {
+                return intComp(val);
+            }
+!!!4528770.java!!!	intComp(inout val : PrecisionDecimalDV::XPrecisionDecimal) : int
+            if (intDigits != val.intDigits)
+                return intDigits > val.intDigits ? GREATER_THAN : LESS_THAN;
+
+            return compareDecimal(ivalue, val.ivalue, fvalue, val.fvalue);
+!!!4528898.java!!!	compareDecimal(inout iValue : String, inout fValue : String, inout otherIValue : String, inout otherFValue : String) : int
+            int ret = iValue.compareTo(otherIValue);
+            if (ret != 0)
+                return ret > 0 ? GREATER_THAN : LESS_THAN;
+
+            if(fValue.equals(otherFValue))
+                return EQUAL;
+
+            StringBuffer temp1=new StringBuffer(fValue);
+            StringBuffer temp2=new StringBuffer(otherFValue);
+
+            truncateTrailingZeros(temp1, temp2);
+            ret = temp1.toString().compareTo(temp2.toString());
+            return ret == 0 ? EQUAL : (ret > 0 ? GREATER_THAN : LESS_THAN);
+!!!4529026.java!!!	toString() : String
+            if (canonical == null) {
+                makeCanonical();
+            }
+            return canonical;
+!!!4529154.java!!!	makeCanonical() : void
+            // REVISIT: to be determined by working group
+            canonical = "TBD by Working Group";
+!!!4529282.java!!!	isIdentical(inout decimal : PrecisionDecimalDV::XPrecisionDecimal) : boolean
+            if(ivalue.equals(decimal.ivalue) && (ivalue.equals("INF") || ivalue.equals("-INF") || ivalue.equals("NaN")))
+                return true;
+
+            if(sign == decimal.sign && intDigits == decimal.intDigits && fracDigits == decimal.fracDigits && pvalue == decimal.pvalue
+                    && ivalue.equals(decimal.ivalue) && fvalue.equals(decimal.fvalue))
+                return true;
+            return false;

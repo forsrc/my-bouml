@@ -1,0 +1,341 @@
+class AsyncBoxView
+!!!11628034.java!!!	AsyncBoxView(inout elem : Element, in axis : int)
+        super(elem);
+        stats = new ArrayList<ChildState>();
+        this.axis = axis;
+        locator = new ChildLocator();
+        flushTask = new FlushTask();
+        minorSpan = Short.MAX_VALUE;
+        estimatedMajorSpan = false;
+!!!11628162.java!!!	getMajorAxis() : int
+        return axis;
+!!!11628290.java!!!	getMinorAxis() : int
+        return (axis == X_AXIS) ? Y_AXIS : X_AXIS;
+!!!11628418.java!!!	getTopInset() : float
+        return topInset;
+!!!11628546.java!!!	setTopInset(in i : float) : void
+        topInset = i;
+!!!11628674.java!!!	getBottomInset() : float
+        return bottomInset;
+!!!11628802.java!!!	setBottomInset(in i : float) : void
+        bottomInset = i;
+!!!11628930.java!!!	getLeftInset() : float
+        return leftInset;
+!!!11629058.java!!!	setLeftInset(in i : float) : void
+        leftInset = i;
+!!!11629186.java!!!	getRightInset() : float
+        return rightInset;
+!!!11629314.java!!!	setRightInset(in i : float) : void
+        rightInset = i;
+!!!11629442.java!!!	getInsetSpan(in axis : int) : float
+        float margin = (axis == X_AXIS) ?
+            getLeftInset() + getRightInset() : getTopInset() + getBottomInset();
+        return margin;
+!!!11629570.java!!!	setEstimatedMajorSpan(inout isEstimated : boolean) : void
+        estimatedMajorSpan = isEstimated;
+!!!11629698.java!!!	getEstimatedMajorSpan() : boolean
+        return estimatedMajorSpan;
+!!!11629826.java!!!	getChildState(in index : int) : AsyncBoxView::ChildState
+        synchronized(stats) {
+            if ((index >= 0) && (index < stats.size())) {
+                return stats.get(index);
+            }
+            return null;
+        }
+!!!11629954.java!!!	getLayoutQueue() : LayoutQueue
+        return LayoutQueue.getDefaultQueue();
+!!!11630082.java!!!	createChildState(inout v : View) : AsyncBoxView::ChildState
+        return new ChildState(v);
+!!!11630210.java!!!	majorRequirementChange(inout cs : AsyncBoxView::ChildState, in delta : float) : void
+        if (estimatedMajorSpan == false) {
+            majorSpan += delta;
+        }
+        majorChanged = true;
+!!!11630338.java!!!	minorRequirementChange(inout cs : AsyncBoxView::ChildState) : void
+        minorChanged = true;
+!!!11630466.java!!!	flushRequirementChanges() : void
+        AbstractDocument doc = (AbstractDocument) getDocument();
+        try {
+            doc.readLock();
+
+            View parent = null;
+            boolean horizontal = false;
+            boolean vertical = false;
+
+            synchronized(this) {
+                // perform tasks that iterate over the children while
+                // preventing the collection from changing.
+                synchronized(stats) {
+                    int n = getViewCount();
+                    if ((n > 0) && (minorChanged || estimatedMajorSpan)) {
+                        LayoutQueue q = getLayoutQueue();
+                        ChildState min = getChildState(0);
+                        ChildState pref = getChildState(0);
+                        float span = 0f;
+                        for (int i = 1; i < n; i++) {
+                            ChildState cs = getChildState(i);
+                            if (minorChanged) {
+                                if (cs.min > min.min) {
+                                    min = cs;
+                                }
+                                if (cs.pref > pref.pref) {
+                                    pref = cs;
+                                }
+                            }
+                            if (estimatedMajorSpan) {
+                                span += cs.getMajorSpan();
+                            }
+                        }
+
+                        if (minorChanged) {
+                            minRequest = min;
+                            prefRequest = pref;
+                        }
+                        if (estimatedMajorSpan) {
+                            majorSpan = span;
+                            estimatedMajorSpan = false;
+                            majorChanged = true;
+                        }
+                    }
+                }
+
+                // message preferenceChanged
+                if (majorChanged || minorChanged) {
+                    parent = getParent();
+                    if (parent != null) {
+                        if (axis == X_AXIS) {
+                            horizontal = majorChanged;
+                            vertical = minorChanged;
+                        } else {
+                            vertical = majorChanged;
+                            horizontal = minorChanged;
+                        }
+                    }
+                    majorChanged = false;
+                    minorChanged = false;
+                }
+            }
+
+            // propagate a preferenceChanged, using the
+            // layout thread.
+            if (parent != null) {
+                parent.preferenceChanged(this, horizontal, vertical);
+
+                // probably want to change this to be more exact.
+                Component c = getContainer();
+                if (c != null) {
+                    c.repaint();
+                }
+            }
+        } finally {
+            doc.readUnlock();
+        }
+!!!11630594.java!!!	replace(in offset : int, in length : int, inout views : View [[]]) : void
+        synchronized(stats) {
+            // remove the replaced state records
+            for (int i = 0; i < length; i++) {
+                ChildState cs = stats.remove(offset);
+                float csSpan = cs.getMajorSpan();
+
+                cs.getChildView().setParent(null);
+                if (csSpan != 0) {
+                    majorRequirementChange(cs, -csSpan);
+                }
+            }
+
+            // insert the state records for the new children
+            LayoutQueue q = getLayoutQueue();
+            if (views != null) {
+                for (int i = 0; i < views.length; i++) {
+                    ChildState s = createChildState(views[i]);
+                    stats.add(offset + i, s);
+                    q.addTask(s);
+                }
+            }
+
+            // notify that the size changed
+            q.addTask(flushTask);
+        }
+!!!11630722.java!!!	loadChildren(inout f : ViewFactory) : void
+        Element e = getElement();
+        int n = e.getElementCount();
+        if (n > 0) {
+            View[] added = new View[n];
+            for (int i = 0; i < n; i++) {
+                added[i] = f.create(e.getElement(i));
+            }
+            replace(0, 0, added);
+        }
+!!!11630850.java!!!	getViewIndexAtPosition(in pos : int, inout b : Position::Bias) : int
+        boolean isBackward = (b == Position.Bias.Backward);
+        pos = (isBackward) ? Math.max(0, pos - 1) : pos;
+        Element elem = getElement();
+        return elem.getElementIndex(pos);
+!!!11630978.java!!!	updateLayout(inout ec : DocumentEvent::ElementChange, inout e : DocumentEvent, inout a : Shape) : void
+        if (ec != null) {
+            // the newly inserted children don't have a valid
+            // offset so the child locator needs to be messaged
+            // that the child prior to the new children has
+            // changed size.
+            int index = Math.max(ec.getIndex() - 1, 0);
+            ChildState cs = getChildState(index);
+            locator.childChanged(cs);
+        }
+!!!11631106.java!!!	setParent(inout parent : View) : void
+        super.setParent(parent);
+        if ((parent != null) && (getViewCount() == 0)) {
+            ViewFactory f = getViewFactory();
+            loadChildren(f);
+        }
+!!!11631234.java!!!	preferenceChanged(inout child : View, inout width : boolean, inout height : boolean) : void
+        if (child == null) {
+            getParent().preferenceChanged(this, width, height);
+        } else {
+            if (changing != null) {
+                View cv = changing.getChildView();
+                if (cv == child) {
+                    // size was being changed on the child, no need to
+                    // queue work for it.
+                    changing.preferenceChanged(width, height);
+                    return;
+                }
+            }
+            int index = getViewIndex(child.getStartOffset(),
+                                     Position.Bias.Forward);
+            ChildState cs = getChildState(index);
+            cs.preferenceChanged(width, height);
+            LayoutQueue q = getLayoutQueue();
+            q.addTask(cs);
+            q.addTask(flushTask);
+        }
+!!!11631362.java!!!	setSize(in width : float, in height : float) : void
+        setSpanOnAxis(X_AXIS, width);
+        setSpanOnAxis(Y_AXIS, height);
+!!!11631490.java!!!	getSpanOnAxis(in axis : int) : float
+        if (axis == getMajorAxis()) {
+            return majorSpan;
+        }
+        return minorSpan;
+!!!11631618.java!!!	setSpanOnAxis(in axis : int, in span : float) : void
+        float margin = getInsetSpan(axis);
+        if (axis == getMinorAxis()) {
+            float targetSpan = span - margin;
+            if (targetSpan != minorSpan) {
+                minorSpan = targetSpan;
+
+                // mark all of the ChildState instances as needing to
+                // resize the child, and queue up work to fix them.
+                int n = getViewCount();
+                if (n != 0) {
+                    LayoutQueue q = getLayoutQueue();
+                    for (int i = 0; i < n; i++) {
+                        ChildState cs = getChildState(i);
+                        cs.childSizeValid = false;
+                        q.addTask(cs);
+                    }
+                    q.addTask(flushTask);
+                }
+            }
+        } else {
+            // along the major axis the value is ignored
+            // unless the estimatedMajorSpan property is
+            // true.
+            if (estimatedMajorSpan) {
+                majorSpan = span - margin;
+            }
+        }
+!!!11631746.java!!!	paint(inout g : Graphics, inout alloc : Shape) : void
+        synchronized (locator) {
+            locator.setAllocation(alloc);
+            locator.paintChildren(g);
+        }
+!!!11631874.java!!!	getPreferredSpan(in axis : int) : float
+        float margin = getInsetSpan(axis);
+        if (axis == this.axis) {
+            return majorSpan + margin;
+        }
+        if (prefRequest != null) {
+            View child = prefRequest.getChildView();
+            return child.getPreferredSpan(axis) + margin;
+        }
+
+        // nothing is known about the children yet
+        return margin + 30;
+!!!11632002.java!!!	getMinimumSpan(in axis : int) : float
+        if (axis == this.axis) {
+            return getPreferredSpan(axis);
+        }
+        if (minRequest != null) {
+            View child = minRequest.getChildView();
+            return child.getMinimumSpan(axis);
+        }
+
+        // nothing is known about the children yet
+        if (axis == X_AXIS) {
+            return getLeftInset() + getRightInset() + 5;
+        } else {
+            return getTopInset() + getBottomInset() + 5;
+        }
+!!!11632130.java!!!	getMaximumSpan(in axis : int) : float
+        if (axis == this.axis) {
+            return getPreferredSpan(axis);
+        }
+        return Integer.MAX_VALUE;
+!!!11632258.java!!!	getViewCount() : int
+        synchronized(stats) {
+            return stats.size();
+        }
+!!!11632386.java!!!	getView(in n : int) : View
+        ChildState cs = getChildState(n);
+        if (cs != null) {
+            return cs.getChildView();
+        }
+        return null;
+!!!11632514.java!!!	getChildAllocation(in index : int, inout a : Shape) : Shape
+        Shape ca = locator.getChildAllocation(index, a);
+        return ca;
+!!!11632642.java!!!	getViewIndex(in pos : int, inout b : Position::Bias) : int
+        return getViewIndexAtPosition(pos, b);
+!!!11632770.java!!!	modelToView(in pos : int, inout a : Shape, inout b : Position::Bias) : Shape
+        int index = getViewIndex(pos, b);
+        Shape ca = locator.getChildAllocation(index, a);
+
+        // forward to the child view, and make sure we don't
+        // interact with the layout thread by synchronizing
+        // on the child state.
+        ChildState cs = getChildState(index);
+        synchronized (cs) {
+            View cv = cs.getChildView();
+            Shape v = cv.modelToView(pos, ca, b);
+            return v;
+        }
+!!!11632898.java!!!	viewToModel(in x : float, in y : float, inout a : Shape, inout biasReturn : Position::Bias [[]]) : int
+        int pos;    // return position
+        int index;  // child index to forward to
+        Shape ca;   // child allocation
+
+        // locate the child view and it's allocation so that
+        // we can forward to it.  Make sure the layout thread
+        // doesn't change anything by trying to flush changes
+        // to the parent while the GUI thread is trying to
+        // find the child and it's allocation.
+        synchronized (locator) {
+            index = locator.getViewIndexAtPoint(x, y, a);
+            ca = locator.getChildAllocation(index, a);
+        }
+
+        // forward to the child view, and make sure we don't
+        // interact with the layout thread by synchronizing
+        // on the child state.
+        ChildState cs = getChildState(index);
+        synchronized (cs) {
+            View v = cs.getChildView();
+            pos = v.viewToModel(x, y, ca, biasReturn);
+        }
+        return pos;
+!!!11633026.java!!!	getNextVisualPositionFrom(in pos : int, inout b : Position::Bias, inout a : Shape, in direction : int, inout biasRet : Position::Bias [[]]) : int
+        if (pos < -1) {
+            throw new BadLocationException("invalid position", pos);
+        }
+        return Utilities.getNextVisualPositionFrom(
+                            this, pos, b, a, direction, biasRet);

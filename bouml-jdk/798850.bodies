@@ -1,0 +1,146 @@
+class StringComparable
+!!!5698818.java!!!	StringComparable(in text : String, in locale : Locale, in collator : Collator, in caseOrder : String)
+         m_text =  text;
+         m_locale = locale;
+         m_collator = (RuleBasedCollator)collator;
+         m_caseOrder = caseOrder;
+         m_mask = getMask(m_collator.getStrength());
+!!!5698946.java!!!	getComparator(in text : String, in locale : Locale, in collator : Collator, in caseOrder : String) : Comparable
+       if((caseOrder == null) ||(caseOrder.length() == 0)){// no case-order specified
+            return  ((RuleBasedCollator)collator).getCollationKey(text);
+       }else{
+            return new StringComparable(text, locale, collator, caseOrder);
+       }
+!!!5699074.java!!!	toString() : String
+return m_text;
+!!!5699202.java!!!	compareTo(inout o : Object) : int
+   final String pattern = ((StringComparable)o).toString();
+   if(m_text.equals(pattern)){//Code-point equals
+      return 0;
+   }
+   final int savedStrength = m_collator.getStrength();
+   int comp = 0;
+      // Is there difference more significant than case-order?
+     if(((savedStrength == Collator.PRIMARY) || (savedStrength == Collator.SECONDARY))){
+         comp = m_collator.compare(m_text, pattern );
+     }else{// more than SECONDARY
+         m_collator.setStrength(Collator.SECONDARY);
+         comp = m_collator.compare(m_text, pattern );
+         m_collator.setStrength(savedStrength);
+     }
+     if(comp != 0){//Difference more significant than case-order
+        return comp ;
+     }
+
+      // No difference more significant than case-order.
+      // Find case difference
+       comp = getCaseDiff(m_text, pattern);
+       if(comp != 0){
+           return comp;
+       }else{// No case differences. Less significant difference could exist
+            return m_collator.compare(m_text, pattern );
+       }
+!!!5699330.java!!!	getCaseDiff(in text : String, in pattern : String) : int
+     final int savedStrength = m_collator.getStrength();
+     final int savedDecomposition = m_collator.getDecomposition();
+     m_collator.setStrength(Collator.TERTIARY);// not to ignore case
+     m_collator.setDecomposition(Collator.CANONICAL_DECOMPOSITION );// corresponds NDF
+
+    final int diff[] =getFirstCaseDiff (text, pattern, m_locale);
+    m_collator.setStrength(savedStrength);// restore
+    m_collator.setDecomposition(savedDecomposition); //restore
+    if(diff != null){
+       if((m_caseOrder).equals("upper-first")){
+            if(diff[0] == UPPER_CASE){
+                return -1;
+            }else{
+                return 1;
+            }
+       }else{// lower-first
+            if(diff[0] == LOWER_CASE){
+                return -1;
+            }else{
+                return 1;
+            }
+       }
+   }else{// No case differences
+        return 0;
+   }
+
+!!!5699458.java!!!	getFirstCaseDiff(in text : String, in pattern : String, in locale : Locale) : int
+
+        final CollationElementIterator targIter = m_collator.getCollationElementIterator(text);
+        final CollationElementIterator patIter = m_collator.getCollationElementIterator(pattern);
+        int startTarg = -1;
+        int endTarg = -1;
+        int startPatt = -1;
+        int endPatt = -1;
+        final int done = getElement(CollationElementIterator.NULLORDER);
+        int patternElement = 0, targetElement = 0;
+        boolean getPattern = true, getTarget = true;
+
+        while (true) {
+            if (getPattern){
+                 startPatt = patIter.getOffset();
+                 patternElement = getElement(patIter.next());
+                 endPatt = patIter.getOffset();
+            }
+            if ((getTarget)){
+                 startTarg  = targIter.getOffset();
+                 targetElement   = getElement(targIter.next());
+                 endTarg  = targIter.getOffset();
+            }
+            getTarget = getPattern = true;
+            if ((patternElement == done) ||( targetElement == done)) {
+                return null;
+            } else if (targetElement == 0) {
+              getPattern = false;
+            } else if (patternElement == 0) {
+              getTarget = false;
+            } else if (targetElement != patternElement) {// mismatch
+                if((startPatt < endPatt) && (startTarg < endTarg)){
+                    final String  subText = text.substring(startTarg, endTarg);
+                    final String  subPatt = pattern.substring(startPatt, endPatt);
+                    final String  subTextUp = subText.toUpperCase(locale);
+                    final String  subPattUp = subPatt.toUpperCase(locale);
+                    if(m_collator.compare(subTextUp, subPattUp) != 0){ // not case diffference
+                        continue;
+                    }
+
+                    int diff[] = {UNKNOWN_CASE, UNKNOWN_CASE};
+                    if(m_collator.compare(subText, subTextUp) == 0){
+                        diff[0] = UPPER_CASE;
+                    }else if(m_collator.compare(subText, subText.toLowerCase(locale)) == 0){
+                       diff[0] = LOWER_CASE;
+                    }
+                    if(m_collator.compare(subPatt, subPattUp) == 0){
+                        diff[1] = UPPER_CASE;
+                    }else if(m_collator.compare(subPatt, subPatt.toLowerCase(locale)) == 0){
+                       diff[1] = LOWER_CASE;
+                    }
+
+                    if(((diff[0] == UPPER_CASE) && ( diff[1] == LOWER_CASE)) ||
+                       ((diff[0] == LOWER_CASE) && ( diff[1] == UPPER_CASE))){
+                        return diff;
+                    }else{// not case diff
+                      continue;
+                    }
+                }else{
+                    continue;
+                }
+
+           }
+        }
+
+!!!5699586.java!!!	getMask(in strength : int) : int
+        switch (strength) {
+            case Collator.PRIMARY:
+                return 0xFFFF0000;
+            case Collator.SECONDARY:
+                return 0xFFFFFF00;
+            default:
+                return 0xFFFFFFFF;
+        }
+!!!5699714.java!!!	getElement(in maxStrengthElement : int) : int
+
+    return (maxStrengthElement & m_mask);

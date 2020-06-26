@@ -1,0 +1,625 @@
+class GTKStyle
+!!!2118786.java!!!	GTKStyle(inout userFont : Font, inout widgetType : GTKEngine::WidgetType)
+        this.widgetType = widgetType.ordinal();
+
+        String pangoFontName;
+        synchronized (sun.awt.UNIXToolkit.GTK_LOCK) {
+            xThickness = nativeGetXThickness(this.widgetType);
+            yThickness = nativeGetYThickness(this.widgetType);
+            pangoFontName = nativeGetPangoFontName(this.widgetType);
+        }
+
+        Font pangoFont = null;
+        if (pangoFontName != null) {
+            pangoFont = PangoFonts.lookupFont(pangoFontName);
+        }
+        if (pangoFont != null) {
+            this.font = pangoFont;
+        } else if (userFont != null) {
+            this.font = userFont;
+        } else {
+            this.font = DEFAULT_FONT;
+        }
+!!!2118914.java!!!	installDefaults(inout context : SynthContext) : void
+        super.installDefaults(context);
+        if (!context.getRegion().isSubregion()) {
+            context.getComponent().putClientProperty(
+                SwingUtilities2.AA_TEXT_PROPERTY_KEY,
+                GTKLookAndFeel.aaTextInfo);
+        }
+!!!2119042.java!!!	getGraphicsUtils(inout context : SynthContext) : SynthGraphicsUtils
+        return GTK_GRAPHICS;
+!!!2119170.java!!!	getPainter(inout state : SynthContext) : SynthPainter
+        return GTKPainter.INSTANCE;
+!!!2119298.java!!!	getColorForState(inout context : SynthContext, inout type : ColorType) : Color
+        if (type == ColorType.FOCUS || type == GTKColorType.BLACK) {
+            return BLACK_COLOR;
+        }
+        else if (type == GTKColorType.WHITE) {
+            return WHITE_COLOR;
+        }
+
+        Region id = context.getRegion();
+        int state = context.getComponentState();
+        state = GTKLookAndFeel.synthStateToGTKState(id, state);
+
+        if (type == ColorType.TEXT_FOREGROUND &&
+               (id == Region.BUTTON ||
+                id == Region.CHECK_BOX ||
+                id == Region.CHECK_BOX_MENU_ITEM ||
+                id == Region.MENU ||
+                id == Region.MENU_ITEM ||
+                id == Region.RADIO_BUTTON ||
+                id == Region.RADIO_BUTTON_MENU_ITEM ||
+                id == Region.TABBED_PANE_TAB ||
+                id == Region.TOGGLE_BUTTON ||
+                id == Region.TOOL_TIP ||
+                id == Region.MENU_ITEM_ACCELERATOR ||
+                id == Region.TABBED_PANE_TAB)) {
+            type = ColorType.FOREGROUND;
+        } else if (id == Region.TABLE ||
+                   id == Region.LIST ||
+                   id == Region.TREE ||
+                   id == Region.TREE_CELL) {
+            if (type == ColorType.FOREGROUND) {
+                type = ColorType.TEXT_FOREGROUND;
+                if (state == SynthConstants.PRESSED) {
+                    state = SynthConstants.SELECTED;
+                }
+            } else if (type == ColorType.BACKGROUND) {
+                type = ColorType.TEXT_BACKGROUND;
+            }
+        }
+
+        return getStyleSpecificColor(context, state, type);
+!!!2119426.java!!!	getStyleSpecificColor(inout context : SynthContext, in state : int, inout type : ColorType) : Color
+        state = GTKLookAndFeel.synthStateToGTKStateType(state).ordinal();
+        synchronized (sun.awt.UNIXToolkit.GTK_LOCK) {
+            int rgb = nativeGetColorForState(widgetType, state,
+                                             type.getID());
+            return new ColorUIResource(rgb);
+        }
+!!!2119554.java!!!	getGTKColor(in state : int, inout type : ColorType) : Color
+        return getGTKColor(null, state, type);
+!!!2119682.java!!!	getGTKColor(inout context : SynthContext, in state : int, inout type : ColorType) : Color
+        if (context != null) {
+            JComponent c = context.getComponent();
+            Region id = context.getRegion();
+
+            state = GTKLookAndFeel.synthStateToGTKState(id, state);
+            if (!id.isSubregion() &&
+                (state & SynthConstants.ENABLED) != 0) {
+                if (type == ColorType.BACKGROUND ||
+                    type == ColorType.TEXT_BACKGROUND) {
+                    Color bg = c.getBackground();
+                    if (!(bg instanceof UIResource)) {
+                        return bg;
+                    }
+                }
+                else if (type == ColorType.FOREGROUND ||
+                         type == ColorType.TEXT_FOREGROUND) {
+                    Color fg = c.getForeground();
+                    if (!(fg instanceof UIResource)) {
+                        return fg;
+                    }
+                }
+            }
+        }
+
+        return getStyleSpecificColor(context, state, type);
+!!!2119810.java!!!	getColor(inout context : SynthContext, inout type : ColorType) : Color
+        JComponent c = context.getComponent();
+        Region id = context.getRegion();
+        int state = context.getComponentState();
+
+        if (c.getName() == "Table.cellRenderer") {
+             if (type == ColorType.BACKGROUND) {
+                 return c.getBackground();
+             }
+             if (type == ColorType.FOREGROUND) {
+                 return c.getForeground();
+             }
+        }
+
+        if (id == Region.LABEL && type == ColorType.TEXT_FOREGROUND) {
+            type = ColorType.FOREGROUND;
+        }
+
+        // For the enabled state, prefer the widget's colors
+        if (!id.isSubregion() && (state & SynthConstants.ENABLED) != 0) {
+            if (type == ColorType.BACKGROUND) {
+                return c.getBackground();
+            }
+            else if (type == ColorType.FOREGROUND) {
+                return c.getForeground();
+            }
+            else if (type == ColorType.TEXT_FOREGROUND) {
+                // If getForeground returns a non-UIResource it means the
+                // developer has explicitly set the foreground, use it over
+                // that of TEXT_FOREGROUND as that is typically the expected
+                // behavior.
+                Color color = c.getForeground();
+                if (color != null && !(color instanceof UIResource)) {
+                    return color;
+                }
+            }
+        }
+        return getColorForState(context, type);
+!!!2119938.java!!!	getFontForState(inout context : SynthContext) : Font
+        return font;
+!!!2120066.java!!!	getXThickness() : int
+        return xThickness;
+!!!2120194.java!!!	getYThickness() : int
+        return yThickness;
+!!!2120322.java!!!	getInsets(inout state : SynthContext, inout insets : Insets) : Insets
+        Region id = state.getRegion();
+        JComponent component = state.getComponent();
+        String name = (id.isSubregion()) ? null : component.getName();
+
+        if (insets == null) {
+            insets = new Insets(0, 0, 0, 0);
+        } else {
+            insets.top = insets.bottom = insets.left = insets.right = 0;
+        }
+
+        if (id == Region.ARROW_BUTTON || id == Region.BUTTON ||
+                id == Region.TOGGLE_BUTTON) {
+            if ("Spinner.previousButton" == name ||
+                    "Spinner.nextButton" == name) {
+                return getSimpleInsets(state, insets, 1);
+            } else {
+                return getButtonInsets(state, insets);
+            }
+        }
+        else if (id == Region.CHECK_BOX || id == Region.RADIO_BUTTON) {
+            return getRadioInsets(state, insets);
+        }
+        else if (id == Region.MENU_BAR) {
+            return getMenuBarInsets(state, insets);
+        }
+        else if (id == Region.MENU ||
+                 id == Region.MENU_ITEM ||
+                 id == Region.CHECK_BOX_MENU_ITEM ||
+                 id == Region.RADIO_BUTTON_MENU_ITEM) {
+            return getMenuItemInsets(state, insets);
+        }
+        else if (id == Region.FORMATTED_TEXT_FIELD) {
+            return getTextFieldInsets(state, insets);
+        }
+        else if (id == Region.INTERNAL_FRAME) {
+            insets = Metacity.INSTANCE.getBorderInsets(state, insets);
+        }
+        else if (id == Region.LABEL) {
+            if ("TableHeader.renderer" == name) {
+                return getButtonInsets(state, insets);
+            }
+            else if (component instanceof ListCellRenderer) {
+                return getTextFieldInsets(state, insets);
+            }
+            else if ("Tree.cellRenderer" == name) {
+                return getSimpleInsets(state, insets, 1);
+            }
+        }
+        else if (id == Region.OPTION_PANE) {
+            return getSimpleInsets(state, insets, 6);
+        }
+        else if (id == Region.POPUP_MENU) {
+            return getSimpleInsets(state, insets, 2);
+        }
+        else if (id == Region.PROGRESS_BAR || id == Region.SLIDER ||
+                 id == Region.TABBED_PANE  || id == Region.TABBED_PANE_CONTENT ||
+                 id == Region.TOOL_BAR     ||
+                 id == Region.TOOL_BAR_DRAG_WINDOW ||
+                 id == Region.TOOL_TIP) {
+            return getThicknessInsets(state, insets);
+        }
+        else if (id == Region.SCROLL_BAR) {
+            return getScrollBarInsets(state, insets);
+        }
+        else if (id == Region.SLIDER_TRACK) {
+            return getSliderTrackInsets(state, insets);
+        }
+        else if (id == Region.TABBED_PANE_TAB) {
+            return getTabbedPaneTabInsets(state, insets);
+        }
+        else if (id == Region.TEXT_FIELD || id == Region.PASSWORD_FIELD) {
+            if (name == "Tree.cellEditor") {
+                return getSimpleInsets(state, insets, 1);
+            }
+            return getTextFieldInsets(state, insets);
+        } else if (id == Region.SEPARATOR ||
+                   id == Region.POPUP_MENU_SEPARATOR ||
+                   id == Region.TOOL_BAR_SEPARATOR) {
+            return getSeparatorInsets(state, insets);
+        } else if (id == GTKEngine.CustomRegion.TITLED_BORDER) {
+            return getThicknessInsets(state, insets);
+        }
+        return insets;
+!!!2120450.java!!!	getButtonInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        // The following calculations are derived from gtkbutton.c
+        // (GTK+ version 2.8.20), gtk_button_size_allocate() method.
+        int CHILD_SPACING = 1;
+        int focusSize = getClassSpecificIntValue(context, "focus-line-width",1);
+        int focusPad = getClassSpecificIntValue(context, "focus-padding", 1);
+        int xThickness = getXThickness();
+        int yThickness = getYThickness();
+        int w = focusSize + focusPad + xThickness + CHILD_SPACING;
+        int h = focusSize + focusPad + yThickness + CHILD_SPACING;
+        insets.left = insets.right = w;
+        insets.top = insets.bottom = h;
+
+        Component component = context.getComponent();
+        if ((component instanceof JButton) &&
+            !(component.getParent() instanceof JToolBar) &&
+            ((JButton)component).isDefaultCapable())
+        {
+            // Include the default border insets, but only for JButtons
+            // that are default capable.  Note that
+            // JButton.getDefaultCapable() returns true by default, but
+            // GtkToolButtons are never default capable, so we skip this
+            // step if the button is contained in a toolbar.
+            Insets defaultInsets = getClassSpecificInsetsValue(context,
+                          "default-border", BUTTON_DEFAULT_BORDER_INSETS);
+            insets.left += defaultInsets.left;
+            insets.right += defaultInsets.right;
+            insets.top += defaultInsets.top;
+            insets.bottom += defaultInsets.bottom;
+        }
+
+        return insets;
+!!!2120578.java!!!	getRadioInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        // The following calculations are derived from gtkcheckbutton.c
+        // (GTK+ version 2.8.20), gtk_check_button_size_allocate() method.
+        int focusSize =
+            getClassSpecificIntValue(context, "focus-line-width", 1);
+        int focusPad =
+            getClassSpecificIntValue(context, "focus-padding", 1);
+        int totalFocus = focusSize + focusPad;
+
+        // Note: GTKIconFactory.DelegateIcon will have already included the
+        // "indicator-spacing" value in the size of the indicator icon,
+        // which explains why we use zero as the left inset (or right inset
+        // in the RTL case); see 6489585 for more details.
+        insets.top    = totalFocus;
+        insets.bottom = totalFocus;
+        if (context.getComponent().getComponentOrientation().isLeftToRight()) {
+            insets.left  = 0;
+            insets.right = totalFocus;
+        } else {
+            insets.left  = totalFocus;
+            insets.right = 0;
+        }
+
+        return insets;
+!!!2120706.java!!!	getMenuBarInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        // The following calculations are derived from gtkmenubar.c
+        // (GTK+ version 2.8.20), gtk_menu_bar_size_allocate() method.
+        int internalPadding = getClassSpecificIntValue(context,
+                                                       "internal-padding", 1);
+        int xThickness = getXThickness();
+        int yThickness = getYThickness();
+        insets.left = insets.right = xThickness + internalPadding;
+        insets.top = insets.bottom = yThickness + internalPadding;
+        return insets;
+!!!2120834.java!!!	getMenuItemInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        // The following calculations are derived from gtkmenuitem.c
+        // (GTK+ version 2.8.20), gtk_menu_item_size_allocate() method.
+        int horizPadding = getClassSpecificIntValue(context,
+                                                    "horizontal-padding", 3);
+        int xThickness = getXThickness();
+        int yThickness = getYThickness();
+        insets.left = insets.right = xThickness + horizPadding;
+        insets.top = insets.bottom = yThickness;
+        return insets;
+!!!2120962.java!!!	getThicknessInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        insets.left = insets.right = getXThickness();
+        insets.top = insets.bottom = getYThickness();
+        return insets;
+!!!2121090.java!!!	getSeparatorInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        int horizPadding = 0;
+        if (context.getRegion() == Region.POPUP_MENU_SEPARATOR) {
+            horizPadding =
+                getClassSpecificIntValue(context, "horizontal-padding", 3);
+        }
+        insets.right = insets.left = getXThickness() + horizPadding;
+        insets.top = insets.bottom = getYThickness();
+        return insets;
+!!!2121218.java!!!	getSliderTrackInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        int focusSize = getClassSpecificIntValue(context, "focus-line-width", 1);
+        int focusPad = getClassSpecificIntValue(context, "focus-padding", 1);
+        insets.top = insets.bottom =
+                insets.left = insets.right = focusSize + focusPad;
+        return insets;
+!!!2121346.java!!!	getSimpleInsets(inout context : SynthContext, inout insets : Insets, in n : int) : Insets
+        insets.top = insets.bottom = insets.right = insets.left = n;
+        return insets;
+!!!2121474.java!!!	getTabbedPaneTabInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        int xThickness = getXThickness();
+        int yThickness = getYThickness();
+        int focusSize = getClassSpecificIntValue(context, "focus-line-width",1);
+        int pad = 2;
+
+        insets.left = insets.right = focusSize + pad + xThickness;
+        insets.top = insets.bottom = focusSize + pad + yThickness;
+        return insets;
+!!!2121602.java!!!	getTextFieldInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        insets = getClassSpecificInsetsValue(context, "inner-border",
+                                    getSimpleInsets(context, insets, 2));
+
+        int xThickness = getXThickness();
+        int yThickness = getYThickness();
+        boolean interiorFocus =
+                getClassSpecificBoolValue(context, "interior-focus", true);
+        int focusSize = 0;
+
+        if (!interiorFocus) {
+            focusSize = getClassSpecificIntValue(context, "focus-line-width",1);
+        }
+
+        insets.left   += focusSize + xThickness;
+        insets.right  += focusSize + xThickness;
+        insets.top    += focusSize + yThickness;
+        insets.bottom += focusSize + yThickness;
+        return insets;
+!!!2121730.java!!!	getScrollBarInsets(inout context : SynthContext, inout insets : Insets) : Insets
+        int troughBorder =
+            getClassSpecificIntValue(context, "trough-border", 1);
+        insets.left = insets.right = insets.top = insets.bottom = troughBorder;
+
+        JComponent c = context.getComponent();
+        if (c.getParent() instanceof JScrollPane) {
+            // This scrollbar is part of a scrollpane; use only the
+            // "scrollbar-spacing" style property to determine the padding
+            // between the scrollbar and its parent scrollpane.
+            int spacing =
+                getClassSpecificIntValue(WidgetType.SCROLL_PANE,
+                                         "scrollbar-spacing", 3);
+            if (((JScrollBar)c).getOrientation() == JScrollBar.HORIZONTAL) {
+                insets.top += spacing;
+            } else {
+                if (c.getComponentOrientation().isLeftToRight()) {
+                    insets.left += spacing;
+                } else {
+                    insets.right += spacing;
+                }
+            }
+        } else {
+            // This is a standalone scrollbar; leave enough room for the
+            // focus line in addition to the trough border.
+            if (c.isFocusable()) {
+                int focusSize =
+                    getClassSpecificIntValue(context, "focus-line-width", 1);
+                int focusPad =
+                    getClassSpecificIntValue(context, "focus-padding", 1);
+                int totalFocus = focusSize + focusPad;
+                insets.left   += totalFocus;
+                insets.right  += totalFocus;
+                insets.top    += totalFocus;
+                insets.bottom += totalFocus;
+            }
+        }
+        return insets;
+!!!2121858.java!!!	getClassSpecificValue(inout wt : GTKEngine::WidgetType, inout key : String) : Object
+        synchronized (UNIXToolkit.GTK_LOCK) {
+            return nativeGetClassValue(wt.ordinal(), key);
+        }
+!!!2121986.java!!!	getClassSpecificIntValue(inout wt : GTKEngine::WidgetType, inout key : String, in defaultValue : int) : int
+        Object value = getClassSpecificValue(wt, key);
+        if (value instanceof Number) {
+            return ((Number)value).intValue();
+        }
+        return defaultValue;
+!!!2122114.java!!!	getClassSpecificValue(inout key : String) : Object
+        synchronized (sun.awt.UNIXToolkit.GTK_LOCK) {
+            return nativeGetClassValue(widgetType, key);
+        }
+!!!2122242.java!!!	getClassSpecificIntValue(inout context : SynthContext, inout key : String, in defaultValue : int) : int
+        Object value = getClassSpecificValue(key);
+
+        if (value instanceof Number) {
+            return ((Number)value).intValue();
+        }
+        return defaultValue;
+!!!2122370.java!!!	getClassSpecificInsetsValue(inout context : SynthContext, inout key : String, inout defaultValue : Insets) : Insets
+        Object value = getClassSpecificValue(key);
+
+        if (value instanceof Insets) {
+            return (Insets)value;
+        }
+        return defaultValue;
+!!!2122498.java!!!	getClassSpecificBoolValue(inout context : SynthContext, inout key : String, inout defaultValue : boolean) : boolean
+        Object value = getClassSpecificValue(key);
+
+        if (value instanceof Boolean) {
+            return ((Boolean)value).booleanValue();
+        }
+        return defaultValue;
+!!!2122626.java!!!	isOpaque(inout context : SynthContext) : boolean
+        Region region = context.getRegion();
+        if (region == Region.COMBO_BOX ||
+              region == Region.DESKTOP_PANE ||
+              region == Region.DESKTOP_ICON ||
+              region == Region.EDITOR_PANE ||
+              region == Region.FORMATTED_TEXT_FIELD ||
+              region == Region.INTERNAL_FRAME ||
+              region == Region.LIST ||
+              region == Region.MENU_BAR ||
+              region == Region.PANEL ||
+              region == Region.PASSWORD_FIELD ||
+              region == Region.POPUP_MENU ||
+              region == Region.PROGRESS_BAR ||
+              region == Region.ROOT_PANE ||
+              region == Region.SCROLL_PANE ||
+              region == Region.SPINNER ||
+              region == Region.SPLIT_PANE_DIVIDER ||
+              region == Region.TABLE ||
+              region == Region.TEXT_AREA ||
+              region == Region.TEXT_FIELD ||
+              region == Region.TEXT_PANE ||
+              region == Region.TOOL_BAR_DRAG_WINDOW ||
+              region == Region.TOOL_TIP ||
+              region == Region.TREE ||
+              region == Region.VIEWPORT) {
+            return true;
+        }
+        Component c = context.getComponent();
+        String name = c.getName();
+        if (name == "ComboBox.renderer" || name == "ComboBox.listRenderer") {
+            return true;
+        }
+        return false;
+!!!2122754.java!!!	get(inout context : SynthContext, inout key : Object) : Object
+        // See if this is a class specific value.
+        String classKey = CLASS_SPECIFIC_MAP.get(key);
+        if (classKey != null) {
+            Object value = getClassSpecificValue(classKey);
+            if (value != null) {
+                return value;
+            }
+        }
+
+        // Is it a specific value ?
+        if (key == "ScrollPane.viewportBorderInsets") {
+            return getThicknessInsets(context, new Insets(0, 0, 0, 0));
+        }
+        else if (key == "Slider.tickColor") {
+            return getColorForState(context, ColorType.FOREGROUND);
+        }
+        else if (key == "ScrollBar.minimumThumbSize") {
+            int len =
+                getClassSpecificIntValue(context, "min-slider-length", 21);
+            JScrollBar sb = (JScrollBar)context.getComponent();
+            if (sb.getOrientation() == JScrollBar.HORIZONTAL) {
+                return new DimensionUIResource(len, 0);
+            } else {
+                return new DimensionUIResource(0, len);
+            }
+        }
+        else if (key == "Separator.thickness") {
+            JSeparator sep = (JSeparator)context.getComponent();
+            if (sep.getOrientation() == JSeparator.HORIZONTAL) {
+                return getYThickness();
+            } else {
+                return getXThickness();
+            }
+        }
+        else if (key == "ToolBar.separatorSize") {
+            int size = getClassSpecificIntValue(WidgetType.TOOL_BAR,
+                                                "space-size", 12);
+            return new DimensionUIResource(size, size);
+        }
+        else if (key == "ScrollBar.buttonSize") {
+            JScrollBar sb = (JScrollBar)context.getComponent().getParent();
+            boolean horiz = (sb.getOrientation() == JScrollBar.HORIZONTAL);
+            WidgetType wt = horiz ?
+                WidgetType.HSCROLL_BAR : WidgetType.VSCROLL_BAR;
+            int sliderWidth = getClassSpecificIntValue(wt, "slider-width", 14);
+            int stepperSize = getClassSpecificIntValue(wt, "stepper-size", 14);
+            return horiz ?
+                new DimensionUIResource(stepperSize, sliderWidth) :
+                new DimensionUIResource(sliderWidth, stepperSize);
+        }
+        else if (key == "ArrowButton.size") {
+            String name = context.getComponent().getName();
+            if (name != null && name.startsWith("Spinner")) {
+                // Believe it or not, the size of a spinner arrow button is
+                // dependent upon the size of the spinner's font.  These
+                // calculations come from gtkspinbutton.c (version 2.8.20),
+                // spin_button_get_arrow_size() method.
+                String pangoFontName;
+                synchronized (sun.awt.UNIXToolkit.GTK_LOCK) {
+                    pangoFontName =
+                        nativeGetPangoFontName(WidgetType.SPINNER.ordinal());
+                }
+                int arrowSize = (pangoFontName != null) ?
+                    PangoFonts.getFontSize(pangoFontName) : 10;
+                return (arrowSize + (getXThickness() * 2));
+            }
+            // For all other kinds of arrow buttons (e.g. combobox arrow
+            // buttons), we will simply fall back on the value of
+            // ArrowButton.size as defined in the UIDefaults for
+            // GTKLookAndFeel when we call UIManager.get() below...
+        }
+        else if ("CheckBox.iconTextGap".equals(key) ||
+                 "RadioButton.iconTextGap".equals(key))
+        {
+            // The iconTextGap value needs to include "indicator-spacing"
+            // and it also needs to leave enough space for the focus line,
+            // which falls between the indicator icon and the text.
+            // See getRadioInsets() and 6489585 for more details.
+            int indicatorSpacing =
+                getClassSpecificIntValue(context, "indicator-spacing", 2);
+            int focusSize =
+                getClassSpecificIntValue(context, "focus-line-width", 1);
+            int focusPad =
+                getClassSpecificIntValue(context, "focus-padding", 1);
+            return indicatorSpacing + focusSize + focusPad;
+        }
+
+        // Is it a stock icon ?
+        GTKStockIcon stockIcon = null;
+        synchronized (ICONS_MAP) {
+            stockIcon = ICONS_MAP.get(key);
+        }
+
+        if (stockIcon != null) {
+            return stockIcon;
+        }
+
+        // Is it another kind of value ?
+        if (key != "engine") {
+            // For backward compatibility we'll fallback to the UIManager.
+            // We don't go to the UIManager for engine as the engine is GTK
+            // specific.
+            Object value = UIManager.get(key);
+            if (key == "Table.rowHeight") {
+                int focusLineWidth = getClassSpecificIntValue(context,
+                        "focus-line-width", 0);
+                if (value == null && focusLineWidth > 0) {
+                    value = Integer.valueOf(16 + 2 * focusLineWidth);
+                }
+            }
+            return value;
+        }
+
+        // Don't call super, we don't want to pick up defaults from
+        // SynthStyle.
+        return null;
+!!!2122882.java!!!	getStockIcon(inout context : SynthContext, inout key : String, in type : int) : Icon
+        TextDirection direction = TextDirection.LTR;
+
+        if (context != null) {
+            ComponentOrientation co = context.getComponent().
+                                              getComponentOrientation();
+
+            if (co != null && !co.isLeftToRight()) {
+                direction = TextDirection.RTL;
+            }
+        }
+
+        // First try loading a theme-specific icon using the native
+        // GTK libraries (native GTK handles the resizing for us).
+        Icon icon = getStyleSpecificIcon(key, direction, type);
+        if (icon != null) {
+            return icon;
+        }
+
+        // In a failure case where native GTK (unexpectedly) returns a
+        // null icon, we can try loading a default icon as a fallback.
+        String propName = ICON_PROPERTY_PREFIX + key + '.' + type + '.' +
+                          (direction == TextDirection.RTL ? "rtl" : "ltr");
+        Image img = (Image)
+            Toolkit.getDefaultToolkit().getDesktopProperty(propName);
+        if (img != null) {
+            return new ImageIcon(img);
+        }
+
+        // In an extreme failure situation, just return null (callers are
+        // already prepared to handle a null icon, so the worst that can
+        // happen is that an icon won't be included in the button/dialog).
+        return null;
+!!!2123010.java!!!	getStyleSpecificIcon(inout key : String, inout direction : GTKConstants::TextDirection, in type : int) : Icon
+        UNIXToolkit tk = (UNIXToolkit)Toolkit.getDefaultToolkit();
+        Image img =
+            tk.getStockIcon(widgetType, key, type, direction.ordinal(), null);
+        return (img != null) ? new ImageIcon(img) : null;

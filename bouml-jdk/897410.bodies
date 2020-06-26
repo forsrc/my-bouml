@@ -1,0 +1,246 @@
+class BufferedImageFilter
+!!!6627842.java!!!	BufferedImageFilter(inout op : BufferedImageOp)
+        super();
+        if (op == null) {
+            throw new NullPointerException("Operation cannot be null");
+        }
+        bufferedImageOp = op;
+!!!6627970.java!!!	getBufferedImageOp() : BufferedImageOp
+        return bufferedImageOp;
+!!!6628098.java!!!	setDimensions(in width : int, in height : int) : void
+        if (width <= 0 || height <= 0) {
+            imageComplete(STATICIMAGEDONE);
+            return;
+        }
+        this.width  = width;
+        this.height = height;
+!!!6628226.java!!!	setColorModel(inout model : ColorModel) : void
+        this.model = model;
+!!!6628354.java!!!	convertToRGB() : void
+        int size = width * height;
+        int newpixels[] = new int[size];
+        if (bytePixels != null) {
+            for (int i = 0; i < size; i++) {
+                newpixels[i] = this.model.getRGB(bytePixels[i] & 0xff);
+            }
+        } else if (intPixels != null) {
+            for (int i = 0; i < size; i++) {
+                newpixels[i] = this.model.getRGB(intPixels[i]);
+            }
+        }
+        bytePixels = null;
+        intPixels = newpixels;
+        this.model = ColorModel.getRGBdefault();
+!!!6628482.java!!!	setPixels(in x : int, in y : int, in w : int, in h : int, inout model : ColorModel, inout pixels : byte [[]], in off : int, in scansize : int) : void
+        // Fix 4184230
+        if (w < 0 || h < 0) {
+            throw new IllegalArgumentException("Width ("+w+
+                                                ") and height ("+h+
+                                                ") must be > 0");
+        }
+        // Nothing to do
+        if (w == 0 || h == 0) {
+            return;
+        }
+        if (y < 0) {
+            int diff = -y;
+            if (diff >= h) {
+                return;
+            }
+            off += scansize * diff;
+            y += diff;
+            h -= diff;
+        }
+        if (y + h > height) {
+            h = height - y;
+            if (h <= 0) {
+                return;
+            }
+        }
+        if (x < 0) {
+            int diff = -x;
+            if (diff >= w) {
+                return;
+            }
+            off += diff;
+            x += diff;
+            w -= diff;
+        }
+        if (x + w > width) {
+            w = width - x;
+            if (w <= 0) {
+                return;
+            }
+        }
+        int dstPtr = y*width + x;
+        if (intPixels == null) {
+            if (bytePixels == null) {
+                bytePixels = new byte[width*height];
+                this.model = model;
+            } else if (this.model != model) {
+                convertToRGB();
+            }
+            if (bytePixels != null) {
+                for (int sh = h; sh > 0; sh--) {
+                    System.arraycopy(pixels, off, bytePixels, dstPtr, w);
+                    off += scansize;
+                    dstPtr += width;
+                }
+            }
+        }
+        if (intPixels != null) {
+            int dstRem = width - w;
+            int srcRem = scansize - w;
+            for (int sh = h; sh > 0; sh--) {
+                for (int sw = w; sw > 0; sw--) {
+                    intPixels[dstPtr++] = model.getRGB(pixels[off++]&0xff);
+                }
+                off    += srcRem;
+                dstPtr += dstRem;
+            }
+        }
+!!!6628610.java!!!	setPixels(in x : int, in y : int, in w : int, in h : int, inout model : ColorModel, inout pixels : int [[]], in off : int, in scansize : int) : void
+        // Fix 4184230
+        if (w < 0 || h < 0) {
+            throw new IllegalArgumentException("Width ("+w+
+                                                ") and height ("+h+
+                                                ") must be > 0");
+        }
+        // Nothing to do
+        if (w == 0 || h == 0) {
+            return;
+        }
+        if (y < 0) {
+            int diff = -y;
+            if (diff >= h) {
+                return;
+            }
+            off += scansize * diff;
+            y += diff;
+            h -= diff;
+        }
+        if (y + h > height) {
+            h = height - y;
+            if (h <= 0) {
+                return;
+            }
+        }
+        if (x < 0) {
+            int diff = -x;
+            if (diff >= w) {
+                return;
+            }
+            off += diff;
+            x += diff;
+            w -= diff;
+        }
+        if (x + w > width) {
+            w = width - x;
+            if (w <= 0) {
+                return;
+            }
+        }
+
+        if (intPixels == null) {
+            if (bytePixels == null) {
+                intPixels = new int[width * height];
+                this.model = model;
+            } else {
+                convertToRGB();
+            }
+        }
+        int dstPtr = y*width + x;
+        if (this.model == model) {
+            for (int sh = h; sh > 0; sh--) {
+                System.arraycopy(pixels, off, intPixels, dstPtr, w);
+                off += scansize;
+                dstPtr += width;
+            }
+        } else {
+            if (this.model != ColorModel.getRGBdefault()) {
+                convertToRGB();
+            }
+            int dstRem = width - w;
+            int srcRem = scansize - w;
+            for (int sh = h; sh > 0; sh--) {
+                for (int sw = w; sw > 0; sw--) {
+                    intPixels[dstPtr++] = model.getRGB(pixels[off++]);
+                }
+                off += srcRem;
+                dstPtr += dstRem;
+            }
+        }
+!!!6628738.java!!!	imageComplete(in status : int) : void
+        WritableRaster wr;
+        switch(status) {
+        case IMAGEERROR:
+        case IMAGEABORTED:
+            // reinitialize the params
+            model  = null;
+            width  = -1;
+            height = -1;
+            intPixels  = null;
+            bytePixels = null;
+            break;
+
+        case SINGLEFRAMEDONE:
+        case STATICIMAGEDONE:
+            if (width <= 0 || height <= 0) break;
+            if (model instanceof DirectColorModel) {
+                if (intPixels == null) break;
+                wr = createDCMraster();
+            }
+            else if (model instanceof IndexColorModel) {
+                int[] bandOffsets = {0};
+                if (bytePixels == null) break;
+                DataBufferByte db = new DataBufferByte(bytePixels,
+                                                       width*height);
+                wr = Raster.createInterleavedRaster(db, width, height, width,
+                                                    1, bandOffsets, null);
+            }
+            else {
+                convertToRGB();
+                if (intPixels == null) break;
+                wr = createDCMraster();
+            }
+            BufferedImage bi = new BufferedImage(model, wr,
+                                                 model.isAlphaPremultiplied(),
+                                                 null);
+            bi = bufferedImageOp.filter(bi, null);
+            WritableRaster r = bi.getRaster();
+            ColorModel cm = bi.getColorModel();
+            int w = r.getWidth();
+            int h = r.getHeight();
+            consumer.setDimensions(w, h);
+            consumer.setColorModel(cm);
+            if (cm instanceof DirectColorModel) {
+                DataBufferInt db = (DataBufferInt) r.getDataBuffer();
+                consumer.setPixels(0, 0, w, h,
+                                   cm, db.getData(), 0, w);
+            }
+            else if (cm instanceof IndexColorModel) {
+                DataBufferByte db = (DataBufferByte) r.getDataBuffer();
+                consumer.setPixels(0, 0, w, h,
+                                   cm, db.getData(), 0, w);
+            }
+            else {
+                throw new InternalError("Unknown color model "+cm);
+            }
+            break;
+        }
+        consumer.imageComplete(status);
+!!!6628866.java!!!	createDCMraster() : WritableRaster
+        WritableRaster wr;
+        DirectColorModel dcm = (DirectColorModel) model;
+        boolean hasAlpha = model.hasAlpha();
+        int[] bandMasks = new int[3+(hasAlpha ? 1 : 0)];
+        bandMasks[0] = dcm.getRedMask();
+        bandMasks[1] = dcm.getGreenMask();
+        bandMasks[2] = dcm.getBlueMask();
+        if (hasAlpha) {
+            bandMasks[3] = dcm.getAlphaMask();
+        }
+        DataBufferInt db = new DataBufferInt(intPixels, width*height);
+        wr = Raster.createPackedRaster(db, width, height, width,
+                                       bandMasks, null);
+        return wr;

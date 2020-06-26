@@ -1,0 +1,571 @@
+class Raster
+!!!6686594.java!!!	createInterleavedRaster(in dataType : int, in w : int, in h : int, in bands : int, inout location : Point) : WritableRaster
+        int[] bandOffsets = new int[bands];
+        for (int i = 0; i < bands; i++) {
+            bandOffsets[i] = i;
+        }
+        return createInterleavedRaster(dataType, w, h, w*bands, bands,
+                                       bandOffsets, location);
+!!!6686722.java!!!	createInterleavedRaster(in dataType : int, in w : int, in h : int, in scanlineStride : int, in pixelStride : int, inout bandOffsets : int [[]], inout location : Point) : WritableRaster
+        DataBuffer d;
+
+        int size = scanlineStride * (h - 1) + // fisrt (h - 1) scans
+            pixelStride * w; // last scan
+
+        switch(dataType) {
+        case DataBuffer.TYPE_BYTE:
+            d = new DataBufferByte(size);
+            break;
+
+        case DataBuffer.TYPE_USHORT:
+            d = new DataBufferUShort(size);
+            break;
+
+        default:
+            throw new IllegalArgumentException("Unsupported data type " +
+                                                dataType);
+        }
+
+        return createInterleavedRaster(d, w, h, scanlineStride,
+                                       pixelStride, bandOffsets, location);
+!!!6686850.java!!!	createBandedRaster(in dataType : int, in w : int, in h : int, in bands : int, inout location : Point) : WritableRaster
+        if (bands < 1) {
+            throw new ArrayIndexOutOfBoundsException("Number of bands ("+
+                                                     bands+") must"+
+                                                     " be greater than 0");
+        }
+        int[] bankIndices = new int[bands];
+        int[] bandOffsets = new int[bands];
+        for (int i = 0; i < bands; i++) {
+            bankIndices[i] = i;
+            bandOffsets[i] = 0;
+        }
+
+        return createBandedRaster(dataType, w, h, w,
+                                  bankIndices, bandOffsets,
+                                  location);
+!!!6686978.java!!!	createBandedRaster(in dataType : int, in w : int, in h : int, in scanlineStride : int, inout bankIndices : int [[]], inout bandOffsets : int [[]], inout location : Point) : WritableRaster
+        DataBuffer d;
+        int bands = bandOffsets.length;
+
+        if (bankIndices == null) {
+            throw new
+                ArrayIndexOutOfBoundsException("Bank indices array is null");
+        }
+        if (bandOffsets == null) {
+            throw new
+                ArrayIndexOutOfBoundsException("Band offsets array is null");
+        }
+
+        // Figure out the #banks and the largest band offset
+        int maxBank = bankIndices[0];
+        int maxBandOff = bandOffsets[0];
+        for (int i = 1; i < bands; i++) {
+            if (bankIndices[i] > maxBank) {
+                maxBank = bankIndices[i];
+            }
+            if (bandOffsets[i] > maxBandOff) {
+                maxBandOff = bandOffsets[i];
+            }
+        }
+        int banks = maxBank + 1;
+        int size = maxBandOff +
+            scanlineStride * (h - 1) + // fisrt (h - 1) scans
+            w; // last scan
+
+        switch(dataType) {
+        case DataBuffer.TYPE_BYTE:
+            d = new DataBufferByte(size, banks);
+            break;
+
+        case DataBuffer.TYPE_USHORT:
+            d = new DataBufferUShort(size, banks);
+            break;
+
+        case DataBuffer.TYPE_INT:
+            d = new DataBufferInt(size, banks);
+            break;
+
+        default:
+            throw new IllegalArgumentException("Unsupported data type " +
+                                                dataType);
+        }
+
+        return createBandedRaster(d, w, h, scanlineStride,
+                                  bankIndices, bandOffsets, location);
+!!!6687106.java!!!	createPackedRaster(in dataType : int, in w : int, in h : int, inout bandMasks : int [[]], inout location : Point) : WritableRaster
+        DataBuffer d;
+
+        switch(dataType) {
+        case DataBuffer.TYPE_BYTE:
+            d = new DataBufferByte(w*h);
+            break;
+
+        case DataBuffer.TYPE_USHORT:
+            d = new DataBufferUShort(w*h);
+            break;
+
+        case DataBuffer.TYPE_INT:
+            d = new DataBufferInt(w*h);
+            break;
+
+        default:
+            throw new IllegalArgumentException("Unsupported data type " +
+                                                dataType);
+        }
+
+        return createPackedRaster(d, w, h, w, bandMasks, location);
+!!!6687234.java!!!	createPackedRaster(in dataType : int, in w : int, in h : int, in bands : int, in bitsPerBand : int, inout location : Point) : WritableRaster
+        DataBuffer d;
+
+        if (bands <= 0) {
+            throw new IllegalArgumentException("Number of bands ("+bands+
+                                               ") must be greater than 0");
+        }
+
+        if (bitsPerBand <= 0) {
+            throw new IllegalArgumentException("Bits per band ("+bitsPerBand+
+                                               ") must be greater than 0");
+        }
+
+        if (bands != 1) {
+            int[] masks = new int[bands];
+            int mask = (1 << bitsPerBand) - 1;
+            int shift = (bands-1)*bitsPerBand;
+
+            /* Make sure the total mask size will fit in the data type */
+            if (shift+bitsPerBand > DataBuffer.getDataTypeSize(dataType)) {
+                throw new IllegalArgumentException("bitsPerBand("+
+                                                   bitsPerBand+") * bands is "+
+                                                   " greater than data type "+
+                                                   "size.");
+            }
+            switch(dataType) {
+            case DataBuffer.TYPE_BYTE:
+            case DataBuffer.TYPE_USHORT:
+            case DataBuffer.TYPE_INT:
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported data type " +
+                                                    dataType);
+            }
+
+            for (int i = 0; i < bands; i++) {
+                masks[i] = mask << shift;
+                shift = shift - bitsPerBand;
+            }
+
+            return createPackedRaster(dataType, w, h, masks, location);
+        }
+        else {
+            double fw = w;
+            switch(dataType) {
+            case DataBuffer.TYPE_BYTE:
+                d = new DataBufferByte((int)(Math.ceil(fw/(8/bitsPerBand)))*h);
+                break;
+
+            case DataBuffer.TYPE_USHORT:
+                d = new DataBufferUShort((int)(Math.ceil(fw/(16/bitsPerBand)))*h);
+                break;
+
+            case DataBuffer.TYPE_INT:
+                d = new DataBufferInt((int)(Math.ceil(fw/(32/bitsPerBand)))*h);
+                break;
+
+            default:
+                throw new IllegalArgumentException("Unsupported data type " +
+                                                   dataType);
+            }
+
+            return createPackedRaster(d, w, h, bitsPerBand, location);
+        }
+!!!6687362.java!!!	createInterleavedRaster(inout dataBuffer : DataBuffer, in w : int, in h : int, in scanlineStride : int, in pixelStride : int, inout bandOffsets : int [[]], inout location : Point) : WritableRaster
+        if (dataBuffer == null) {
+            throw new NullPointerException("DataBuffer cannot be null");
+        }
+        if (location == null) {
+            location = new Point(0, 0);
+        }
+        int dataType = dataBuffer.getDataType();
+
+        PixelInterleavedSampleModel csm =
+            new PixelInterleavedSampleModel(dataType, w, h,
+                                            pixelStride,
+                                            scanlineStride,
+                                            bandOffsets);
+        switch(dataType) {
+        case DataBuffer.TYPE_BYTE:
+            return new ByteInterleavedRaster(csm, dataBuffer, location);
+
+        case DataBuffer.TYPE_USHORT:
+            return new ShortInterleavedRaster(csm, dataBuffer, location);
+
+        default:
+            throw new IllegalArgumentException("Unsupported data type " +
+                                                dataType);
+        }
+!!!6687490.java!!!	createBandedRaster(inout dataBuffer : DataBuffer, in w : int, in h : int, in scanlineStride : int, inout bankIndices : int [[]], inout bandOffsets : int [[]], inout location : Point) : WritableRaster
+        if (dataBuffer == null) {
+            throw new NullPointerException("DataBuffer cannot be null");
+        }
+        if (location == null) {
+           location = new Point(0,0);
+        }
+        int dataType = dataBuffer.getDataType();
+
+        int bands = bankIndices.length;
+        if (bandOffsets.length != bands) {
+            throw new IllegalArgumentException(
+                                   "bankIndices.length != bandOffsets.length");
+        }
+
+        BandedSampleModel bsm =
+            new BandedSampleModel(dataType, w, h,
+                                  scanlineStride,
+                                  bankIndices, bandOffsets);
+
+        switch(dataType) {
+        case DataBuffer.TYPE_BYTE:
+            return new ByteBandedRaster(bsm, dataBuffer, location);
+
+        case DataBuffer.TYPE_USHORT:
+            return new ShortBandedRaster(bsm, dataBuffer, location);
+
+        case DataBuffer.TYPE_INT:
+            return new SunWritableRaster(bsm, dataBuffer, location);
+
+        default:
+            throw new IllegalArgumentException("Unsupported data type " +
+                                                dataType);
+        }
+!!!6687618.java!!!	createPackedRaster(inout dataBuffer : DataBuffer, in w : int, in h : int, in scanlineStride : int, inout bandMasks : int [[]], inout location : Point) : WritableRaster
+        if (dataBuffer == null) {
+            throw new NullPointerException("DataBuffer cannot be null");
+        }
+        if (location == null) {
+           location = new Point(0,0);
+        }
+        int dataType = dataBuffer.getDataType();
+
+        SinglePixelPackedSampleModel sppsm =
+            new SinglePixelPackedSampleModel(dataType, w, h, scanlineStride,
+                                             bandMasks);
+
+        switch(dataType) {
+        case DataBuffer.TYPE_BYTE:
+            return new ByteInterleavedRaster(sppsm, dataBuffer, location);
+
+        case DataBuffer.TYPE_USHORT:
+            return new ShortInterleavedRaster(sppsm, dataBuffer, location);
+
+        case DataBuffer.TYPE_INT:
+            return new IntegerInterleavedRaster(sppsm, dataBuffer, location);
+
+        default:
+            throw new IllegalArgumentException("Unsupported data type " +
+                                                dataType);
+        }
+!!!6687746.java!!!	createPackedRaster(inout dataBuffer : DataBuffer, in w : int, in h : int, in bitsPerPixel : int, inout location : Point) : WritableRaster
+        if (dataBuffer == null) {
+            throw new NullPointerException("DataBuffer cannot be null");
+        }
+        if (location == null) {
+           location = new Point(0,0);
+        }
+        int dataType = dataBuffer.getDataType();
+
+        if (dataType != DataBuffer.TYPE_BYTE &&
+            dataType != DataBuffer.TYPE_USHORT &&
+            dataType != DataBuffer.TYPE_INT) {
+            throw new IllegalArgumentException("Unsupported data type " +
+                                               dataType);
+        }
+
+        if (dataBuffer.getNumBanks() != 1) {
+            throw new
+                RasterFormatException("DataBuffer for packed Rasters"+
+                                      " must only have 1 bank.");
+        }
+
+        MultiPixelPackedSampleModel mppsm =
+                new MultiPixelPackedSampleModel(dataType, w, h, bitsPerPixel);
+
+        if (dataType == DataBuffer.TYPE_BYTE &&
+            (bitsPerPixel == 1 || bitsPerPixel == 2 || bitsPerPixel == 4)) {
+            return new BytePackedRaster(mppsm, dataBuffer, location);
+        } else {
+            return new SunWritableRaster(mppsm, dataBuffer, location);
+        }
+!!!6687874.java!!!	createRaster(inout sm : SampleModel, inout db : DataBuffer, inout location : Point) : Raster
+        if ((sm == null) || (db == null)) {
+            throw new NullPointerException("SampleModel and DataBuffer cannot be null");
+        }
+
+        if (location == null) {
+           location = new Point(0,0);
+        }
+        int dataType = sm.getDataType();
+
+        if (sm instanceof PixelInterleavedSampleModel) {
+            switch(dataType) {
+                case DataBuffer.TYPE_BYTE:
+                    return new ByteInterleavedRaster(sm, db, location);
+
+                case DataBuffer.TYPE_USHORT:
+                    return new ShortInterleavedRaster(sm, db, location);
+            }
+        } else if (sm instanceof SinglePixelPackedSampleModel) {
+            switch(dataType) {
+                case DataBuffer.TYPE_BYTE:
+                    return new ByteInterleavedRaster(sm, db, location);
+
+                case DataBuffer.TYPE_USHORT:
+                    return new ShortInterleavedRaster(sm, db, location);
+
+                case DataBuffer.TYPE_INT:
+                    return new IntegerInterleavedRaster(sm, db, location);
+            }
+        } else if (sm instanceof MultiPixelPackedSampleModel &&
+                   dataType == DataBuffer.TYPE_BYTE &&
+                   sm.getSampleSize(0) < 8) {
+            return new BytePackedRaster(sm, db, location);
+        }
+
+        // we couldn't do anything special - do the generic thing
+
+        return new Raster(sm,db,location);
+!!!6688002.java!!!	createWritableRaster(inout sm : SampleModel, inout location : Point) : WritableRaster
+        if (location == null) {
+           location = new Point(0,0);
+        }
+
+        return createWritableRaster(sm, sm.createDataBuffer(), location);
+!!!6688130.java!!!	createWritableRaster(inout sm : SampleModel, inout db : DataBuffer, inout location : Point) : WritableRaster
+        if ((sm == null) || (db == null)) {
+            throw new NullPointerException("SampleModel and DataBuffer cannot be null");
+        }
+        if (location == null) {
+           location = new Point(0,0);
+        }
+
+        int dataType = sm.getDataType();
+
+        if (sm instanceof PixelInterleavedSampleModel) {
+            switch(dataType) {
+                case DataBuffer.TYPE_BYTE:
+                    return new ByteInterleavedRaster(sm, db, location);
+
+                case DataBuffer.TYPE_USHORT:
+                    return new ShortInterleavedRaster(sm, db, location);
+            }
+        } else if (sm instanceof SinglePixelPackedSampleModel) {
+            switch(dataType) {
+                case DataBuffer.TYPE_BYTE:
+                    return new ByteInterleavedRaster(sm, db, location);
+
+                case DataBuffer.TYPE_USHORT:
+                    return new ShortInterleavedRaster(sm, db, location);
+
+                case DataBuffer.TYPE_INT:
+                    return new IntegerInterleavedRaster(sm, db, location);
+            }
+        } else if (sm instanceof MultiPixelPackedSampleModel &&
+                   dataType == DataBuffer.TYPE_BYTE &&
+                   sm.getSampleSize(0) < 8) {
+            return new BytePackedRaster(sm, db, location);
+        }
+
+        // we couldn't do anything special - do the generic thing
+
+        return new SunWritableRaster(sm,db,location);
+!!!6688258.java!!!	Raster(inout sampleModel : SampleModel, inout origin : Point)
+        this(sampleModel,
+             sampleModel.createDataBuffer(),
+             new Rectangle(origin.x,
+                           origin.y,
+                           sampleModel.getWidth(),
+                           sampleModel.getHeight()),
+             origin,
+             null);
+!!!6688386.java!!!	Raster(inout sampleModel : SampleModel, inout dataBuffer : DataBuffer, inout origin : Point)
+        this(sampleModel,
+             dataBuffer,
+             new Rectangle(origin.x,
+                           origin.y,
+                           sampleModel.getWidth(),
+                           sampleModel.getHeight()),
+             origin,
+             null);
+!!!6688514.java!!!	Raster(inout sampleModel : SampleModel, inout dataBuffer : DataBuffer, inout aRegion : Rectangle, inout sampleModelTranslate : Point, inout parent : Raster)
+
+        if ((sampleModel == null) || (dataBuffer == null) ||
+            (aRegion == null) || (sampleModelTranslate == null)) {
+            throw new NullPointerException("SampleModel, dataBuffer, aRegion and " +
+                                           "sampleModelTranslate cannot be null");
+        }
+       this.sampleModel = sampleModel;
+       this.dataBuffer = dataBuffer;
+       minX = aRegion.x;
+       minY = aRegion.y;
+       width = aRegion.width;
+       height = aRegion.height;
+       if (width <= 0 || height <= 0) {
+           throw new RasterFormatException("negative or zero " +
+               ((width <= 0) ? "width" : "height"));
+       }
+       if ((minX + width) < minX) {
+           throw new RasterFormatException(
+               "overflow condition for X coordinates of Raster");
+       }
+       if ((minY + height) < minY) {
+           throw new RasterFormatException(
+               "overflow condition for Y coordinates of Raster");
+       }
+
+       sampleModelTranslateX = sampleModelTranslate.x;
+       sampleModelTranslateY = sampleModelTranslate.y;
+
+       numBands = sampleModel.getNumBands();
+       numDataElements = sampleModel.getNumDataElements();
+       this.parent = parent;
+!!!6688642.java!!!	getParent() : Raster
+        return parent;
+!!!6688770.java!!!	getSampleModelTranslateX() : int
+        return sampleModelTranslateX;
+!!!6688898.java!!!	getSampleModelTranslateY() : int
+        return sampleModelTranslateY;
+!!!6689026.java!!!	createCompatibleWritableRaster() : WritableRaster
+        return new SunWritableRaster(sampleModel, new Point(0,0));
+!!!6689154.java!!!	createCompatibleWritableRaster(in w : int, in h : int) : WritableRaster
+        if (w <= 0 || h <=0) {
+            throw new RasterFormatException("negative " +
+                                          ((w <= 0) ? "width" : "height"));
+        }
+
+        SampleModel sm = sampleModel.createCompatibleSampleModel(w,h);
+
+        return new SunWritableRaster(sm, new Point(0,0));
+!!!6689282.java!!!	createCompatibleWritableRaster(inout rect : Rectangle) : WritableRaster
+        if (rect == null) {
+            throw new NullPointerException("Rect cannot be null");
+        }
+        return createCompatibleWritableRaster(rect.x, rect.y,
+                                              rect.width, rect.height);
+!!!6689410.java!!!	createCompatibleWritableRaster(in x : int, in y : int, in w : int, in h : int) : WritableRaster
+        WritableRaster ret = createCompatibleWritableRaster(w, h);
+        return ret.createWritableChild(0,0,w,h,x,y,null);
+!!!6689538.java!!!	createTranslatedChild(in childMinX : int, in childMinY : int) : Raster
+        return createChild(minX,minY,width,height,
+                           childMinX,childMinY,null);
+!!!6689666.java!!!	createChild(in parentX : int, in parentY : int, in width : int, in height : int, in childMinX : int, in childMinY : int, inout bandList : int [[]]) : Raster
+        if (parentX < this.minX) {
+            throw new RasterFormatException("parentX lies outside raster");
+        }
+        if (parentY < this.minY) {
+            throw new RasterFormatException("parentY lies outside raster");
+        }
+        if ((parentX + width < parentX) ||
+            (parentX + width > this.width + this.minX)) {
+            throw new RasterFormatException("(parentX + width) is outside raster");
+        }
+        if ((parentY + height < parentY) ||
+            (parentY + height > this.height + this.minY)) {
+            throw new RasterFormatException("(parentY + height) is outside raster");
+        }
+
+        SampleModel subSampleModel;
+        // Note: the SampleModel for the child Raster should have the same
+        // width and height as that for the parent, since it represents
+        // the physical layout of the pixel data.  The child Raster's width
+        // and height represent a "virtual" view of the pixel data, so
+        // they may be different than those of the SampleModel.
+        if (bandList == null) {
+            subSampleModel = sampleModel;
+        } else {
+            subSampleModel = sampleModel.createSubsetSampleModel(bandList);
+        }
+
+        int deltaX = childMinX - parentX;
+        int deltaY = childMinY - parentY;
+
+        return new Raster(subSampleModel, getDataBuffer(),
+                          new Rectangle(childMinX, childMinY, width, height),
+                          new Point(sampleModelTranslateX + deltaX,
+                                    sampleModelTranslateY + deltaY), this);
+!!!6689794.java!!!	getBounds() : Rectangle
+        return new Rectangle(minX, minY, width, height);
+!!!6689922.java!!!	getMinX() : int
+        return minX;
+!!!6690050.java!!!	getMinY() : int
+        return minY;
+!!!6690178.java!!!	getWidth() : int
+        return width;
+!!!6690306.java!!!	getHeight() : int
+        return height;
+!!!6690434.java!!!	getNumBands() : int
+        return numBands;
+!!!6690562.java!!!	getNumDataElements() : int
+        return sampleModel.getNumDataElements();
+!!!6690690.java!!!	getTransferType() : int
+        return sampleModel.getTransferType();
+!!!6690818.java!!!	getDataBuffer() : DataBuffer
+        return dataBuffer;
+!!!6690946.java!!!	getSampleModel() : SampleModel
+        return sampleModel;
+!!!6691074.java!!!	getDataElements(in x : int, in y : int, inout outData : Object) : Object
+        return sampleModel.getDataElements(x - sampleModelTranslateX,
+                                           y - sampleModelTranslateY,
+                                           outData, dataBuffer);
+!!!6691202.java!!!	getDataElements(in x : int, in y : int, in w : int, in h : int, inout outData : Object) : Object
+        return sampleModel.getDataElements(x - sampleModelTranslateX,
+                                           y - sampleModelTranslateY,
+                                           w, h, outData, dataBuffer);
+!!!6691330.java!!!	getPixel(in x : int, in y : int, inout iArray : int [[]]) : int
+        return sampleModel.getPixel(x - sampleModelTranslateX,
+                                    y - sampleModelTranslateY,
+                                    iArray, dataBuffer);
+!!!6691458.java!!!	getPixel(in x : int, in y : int, inout fArray : float [[]]) : float
+        return sampleModel.getPixel(x - sampleModelTranslateX,
+                                    y - sampleModelTranslateY,
+                                    fArray, dataBuffer);
+!!!6691586.java!!!	getPixel(in x : int, in y : int, inout dArray : double [[]]) : double
+        return sampleModel.getPixel(x - sampleModelTranslateX,
+                                    y - sampleModelTranslateY,
+                                    dArray, dataBuffer);
+!!!6691714.java!!!	getPixels(in x : int, in y : int, in w : int, in h : int, inout iArray : int [[]]) : int
+        return sampleModel.getPixels(x - sampleModelTranslateX,
+                                     y - sampleModelTranslateY, w, h,
+                                     iArray, dataBuffer);
+!!!6691842.java!!!	getPixels(in x : int, in y : int, in w : int, in h : int, inout fArray : float [[]]) : float
+        return sampleModel.getPixels(x - sampleModelTranslateX,
+                                     y - sampleModelTranslateY, w, h,
+                                     fArray, dataBuffer);
+!!!6691970.java!!!	getPixels(in x : int, in y : int, in w : int, in h : int, inout dArray : double [[]]) : double
+        return sampleModel.getPixels(x - sampleModelTranslateX,
+                                     y - sampleModelTranslateY,
+                                     w, h, dArray, dataBuffer);
+!!!6692098.java!!!	getSample(in x : int, in y : int, in b : int) : int
+        return sampleModel.getSample(x - sampleModelTranslateX,
+                                     y - sampleModelTranslateY, b,
+                                     dataBuffer);
+!!!6692226.java!!!	getSampleFloat(in x : int, in y : int, in b : int) : float
+        return sampleModel.getSampleFloat(x - sampleModelTranslateX,
+                                          y - sampleModelTranslateY, b,
+                                          dataBuffer);
+!!!6692354.java!!!	getSampleDouble(in x : int, in y : int, in b : int) : double
+        return sampleModel.getSampleDouble(x - sampleModelTranslateX,
+                                           y - sampleModelTranslateY,
+                                           b, dataBuffer);
+!!!6692482.java!!!	getSamples(in x : int, in y : int, in w : int, in h : int, in b : int, inout iArray : int [[]]) : int
+        return sampleModel.getSamples(x - sampleModelTranslateX,
+                                      y - sampleModelTranslateY,
+                                      w, h, b, iArray,
+                                      dataBuffer);
+!!!6692610.java!!!	getSamples(in x : int, in y : int, in w : int, in h : int, in b : int, inout fArray : float [[]]) : float
+        return sampleModel.getSamples(x - sampleModelTranslateX,
+                                      y - sampleModelTranslateY,
+                                      w, h, b, fArray, dataBuffer);
+!!!6692738.java!!!	getSamples(in x : int, in y : int, in w : int, in h : int, in b : int, inout dArray : double [[]]) : double
+         return sampleModel.getSamples(x - sampleModelTranslateX,
+                                       y - sampleModelTranslateY,
+                                       w, h, b, dArray, dataBuffer);

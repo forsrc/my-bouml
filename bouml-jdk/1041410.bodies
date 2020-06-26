@@ -1,0 +1,282 @@
+class DriverManager
+!!!8169090.java!!!	getLogWriter() : PrintWriter
+            return logWriter;
+!!!8169218.java!!!	setLogWriter(inout out : PrintWriter) : void
+
+        SecurityManager sec = System.getSecurityManager();
+        if (sec != null) {
+            sec.checkPermission(SET_LOG_PERMISSION);
+        }
+            logStream = null;
+            logWriter = out;
+!!!8169346.java!!!	getConnection(inout url : String, inout info : Properties) : Connection
+
+        return (getConnection(url, info, Reflection.getCallerClass()));
+!!!8169474.java!!!	getConnection(inout url : String, inout user : String, inout password : String) : Connection
+        java.util.Properties info = new java.util.Properties();
+
+        if (user != null) {
+            info.put("user", user);
+        }
+        if (password != null) {
+            info.put("password", password);
+        }
+
+        return (getConnection(url, info, Reflection.getCallerClass()));
+!!!8169602.java!!!	getConnection(inout url : String) : Connection
+
+        java.util.Properties info = new java.util.Properties();
+        return (getConnection(url, info, Reflection.getCallerClass()));
+!!!8169730.java!!!	getDriver(inout url : String) : Driver
+
+        println("DriverManager.getDriver(\"" + url + "\")");
+
+        Class<?> callerClass = Reflection.getCallerClass();
+
+        // Walk through the loaded registeredDrivers attempting to locate someone
+        // who understands the given URL.
+        for (DriverInfo aDriver : registeredDrivers) {
+            // If the caller does not have permission to load the driver then
+            // skip it.
+            if(isDriverAllowed(aDriver.driver, callerClass)) {
+                try {
+                    if(aDriver.driver.acceptsURL(url)) {
+                        // Success!
+                        println("getDriver returning " + aDriver.driver.getClass().getName());
+                    return (aDriver.driver);
+                    }
+
+                } catch(SQLException sqe) {
+                    // Drop through and try the next driver.
+                }
+            } else {
+                println("    skipping: " + aDriver.driver.getClass().getName());
+            }
+
+        }
+
+        println("getDriver: no suitable driver");
+        throw new SQLException("No suitable driver", "08001");
+!!!8169858.java!!!	registerDriver(inout driver : Driver) : void
+
+        registerDriver(driver, null);
+!!!8169986.java!!!	registerDriver(inout driver : Driver, inout da : DriverAction) : void
+
+        /* Register the driver if it has not already been added to our list */
+        if(driver != null) {
+            registeredDrivers.addIfAbsent(new DriverInfo(driver, da));
+        } else {
+            // This is for compatibility with the original DriverManager
+            throw new NullPointerException();
+        }
+
+        println("registerDriver: " + driver);
+
+!!!8170114.java!!!	deregisterDriver(inout driver : Driver) : void
+        if (driver == null) {
+            return;
+        }
+
+        SecurityManager sec = System.getSecurityManager();
+        if (sec != null) {
+            sec.checkPermission(DEREGISTER_DRIVER_PERMISSION);
+        }
+
+        println("DriverManager.deregisterDriver: " + driver);
+
+        DriverInfo aDriver = new DriverInfo(driver, null);
+        if(registeredDrivers.contains(aDriver)) {
+            if (isDriverAllowed(driver, Reflection.getCallerClass())) {
+                DriverInfo di = registeredDrivers.get(registeredDrivers.indexOf(aDriver));
+                 // If a DriverAction was specified, Call it to notify the
+                 // driver that it has been deregistered
+                 if(di.action() != null) {
+                     di.action().deregister();
+                 }
+                 registeredDrivers.remove(aDriver);
+            } else {
+                // If the caller does not have permission to load the driver then
+                // throw a SecurityException.
+                throw new SecurityException();
+            }
+        } else {
+            println("    couldn't find driver to unload");
+        }
+!!!8170242.java!!!	getDrivers() : Enumeration
+        java.util.Vector<Driver> result = new java.util.Vector<>();
+
+        Class<?> callerClass = Reflection.getCallerClass();
+
+        // Walk through the loaded registeredDrivers.
+        for(DriverInfo aDriver : registeredDrivers) {
+            // If the caller does not have permission to load the driver then
+            // skip it.
+            if(isDriverAllowed(aDriver.driver, callerClass)) {
+                result.addElement(aDriver.driver);
+            } else {
+                println("    skipping: " + aDriver.getClass().getName());
+            }
+        }
+        return (result.elements());
+!!!8170370.java!!!	setLoginTimeout(in seconds : int) : void
+        loginTimeout = seconds;
+!!!8170498.java!!!	getLoginTimeout() : int
+        return (loginTimeout);
+!!!8170626.java!!!	setLogStream(inout out : PrintStream) : void
+
+        SecurityManager sec = System.getSecurityManager();
+        if (sec != null) {
+            sec.checkPermission(SET_LOG_PERMISSION);
+        }
+
+        logStream = out;
+        if ( out != null )
+            logWriter = new java.io.PrintWriter(out);
+        else
+            logWriter = null;
+!!!8170754.java!!!	getLogStream() : PrintStream
+        return logStream;
+!!!8170882.java!!!	println(inout message : String) : void
+        synchronized (logSync) {
+            if (logWriter != null) {
+                logWriter.println(message);
+
+                // automatic flushing is never enabled, so we must do it ourselves
+                logWriter.flush();
+            }
+        }
+!!!8171010.java!!!	isDriverAllowed(inout driver : Driver, inout caller : Class) : boolean
+        ClassLoader callerCL = caller != null ? caller.getClassLoader() : null;
+        return isDriverAllowed(driver, callerCL);
+!!!8171138.java!!!	isDriverAllowed(inout driver : Driver, inout classLoader : ClassLoader) : boolean
+        boolean result = false;
+        if(driver != null) {
+            Class<?> aClass = null;
+            try {
+                aClass =  Class.forName(driver.getClass().getName(), true, classLoader);
+            } catch (Exception ex) {
+                result = false;
+            }
+
+             result = ( aClass == driver.getClass() ) ? true : false;
+        }
+
+        return result;
+!!!8171266.java!!!	loadInitialDrivers() : void
+        String drivers;
+        try {
+            drivers = AccessController.doPrivileged(new PrivilegedAction<String>() {
+                public String run() {
+                    return System.getProperty("jdbc.drivers");
+                }
+            });
+        } catch (Exception ex) {
+            drivers = null;
+        }
+        // If the driver is packaged as a Service Provider, load it.
+        // Get all the drivers through the classloader
+        // exposed as a java.sql.Driver.class service.
+        // ServiceLoader.load() replaces the sun.misc.Providers()
+
+        AccessController.doPrivileged(new PrivilegedAction<Void>() {
+            public Void run() {
+
+                ServiceLoader<Driver> loadedDrivers = ServiceLoader.load(Driver.class);
+                Iterator<Driver> driversIterator = loadedDrivers.iterator();
+
+                /* Load these drivers, so that they can be instantiated.
+                 * It may be the case that the driver class may not be there
+                 * i.e. there may be a packaged driver with the service class
+                 * as implementation of java.sql.Driver but the actual class
+                 * may be missing. In that case a java.util.ServiceConfigurationError
+                 * will be thrown at runtime by the VM trying to locate
+                 * and load the service.
+                 *
+                 * Adding a try catch block to catch those runtime errors
+                 * if driver not available in classpath but it's
+                 * packaged as service and that service is there in classpath.
+                 */
+                try{
+                    while(driversIterator.hasNext()) {
+                        driversIterator.next();
+                    }
+                } catch(Throwable t) {
+                // Do nothing
+                }
+                return null;
+            }
+        });
+
+        println("DriverManager.initialize: jdbc.drivers = " + drivers);
+
+        if (drivers == null || drivers.equals("")) {
+            return;
+        }
+        String[] driversList = drivers.split(":");
+        println("number of Drivers:" + driversList.length);
+        for (String aDriver : driversList) {
+            try {
+                println("DriverManager.Initialize: loading " + aDriver);
+                Class.forName(aDriver, true,
+                        ClassLoader.getSystemClassLoader());
+            } catch (Exception ex) {
+                println("DriverManager.Initialize: load failed: " + ex);
+            }
+        }
+!!!8171394.java!!!	getConnection(inout url : String, inout info : Properties, inout caller : Class) : Connection
+        /*
+         * When callerCl is null, we should check the application's
+         * (which is invoking this class indirectly)
+         * classloader, so that the JDBC driver class outside rt.jar
+         * can be loaded from here.
+         */
+        ClassLoader callerCL = caller != null ? caller.getClassLoader() : null;
+        synchronized(DriverManager.class) {
+            // synchronize loading of the correct classloader.
+            if (callerCL == null) {
+                callerCL = Thread.currentThread().getContextClassLoader();
+            }
+        }
+
+        if(url == null) {
+            throw new SQLException("The url cannot be null", "08001");
+        }
+
+        println("DriverManager.getConnection(\"" + url + "\")");
+
+        // Walk through the loaded registeredDrivers attempting to make a connection.
+        // Remember the first exception that gets raised so we can reraise it.
+        SQLException reason = null;
+
+        for(DriverInfo aDriver : registeredDrivers) {
+            // If the caller does not have permission to load the driver then
+            // skip it.
+            if(isDriverAllowed(aDriver.driver, callerCL)) {
+                try {
+                    println("    trying " + aDriver.driver.getClass().getName());
+                    Connection con = aDriver.driver.connect(url, info);
+                    if (con != null) {
+                        // Success!
+                        println("getConnection returning " + aDriver.driver.getClass().getName());
+                        return (con);
+                    }
+                } catch (SQLException ex) {
+                    if (reason == null) {
+                        reason = ex;
+                    }
+                }
+
+            } else {
+                println("    skipping: " + aDriver.getClass().getName());
+            }
+
+        }
+
+        // if we got here nobody could connect.
+        if (reason != null)    {
+            println("getConnection failed: " + reason);
+            throw reason;
+        }
+
+        println("getConnection: no suitable driver found for "+ url);
+        throw new SQLException("No suitable driver found for "+ url, "08001");

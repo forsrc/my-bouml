@@ -1,0 +1,101 @@
+class HttpConnectSocketImpl
+!!!7458946.java!!!	HttpConnectSocketImpl(inout server : String, in port : int)
+        this.server = server;
+        this.port = port;
+!!!7459074.java!!!	HttpConnectSocketImpl(inout proxy : Proxy)
+        SocketAddress a = proxy.address();
+        if ( !(a instanceof InetSocketAddress) )
+            throw new IllegalArgumentException("Unsupported address type");
+
+        InetSocketAddress ad = (InetSocketAddress) a;
+        server = ad.getHostString();
+        port = ad.getPort();
+!!!7459202.java!!!	connect(inout endpoint : SocketAddress, in timeout : int) : void
+        if (endpoint == null || !(endpoint instanceof InetSocketAddress))
+            throw new IllegalArgumentException("Unsupported address type");
+        final InetSocketAddress epoint = (InetSocketAddress)endpoint;
+        final String destHost = epoint.isUnresolved() ? epoint.getHostName()
+                                                      : epoint.getAddress().getHostAddress();
+        final int destPort = epoint.getPort();
+
+        SecurityManager security = System.getSecurityManager();
+        if (security != null)
+            security.checkConnect(destHost, destPort);
+
+        // Connect to the HTTP proxy server
+        String urlString = "http://" + destHost + ":" + destPort;
+        Socket httpSocket = privilegedDoTunnel(urlString, timeout);
+
+        // Success!
+        external_address = epoint;
+
+        // close the original socket impl and release its descriptor
+        close();
+
+        // update the Sockets impl to the impl from the http Socket
+        AbstractPlainSocketImpl psi = (AbstractPlainSocketImpl) httpSocket.impl;
+        this.getSocket().impl = psi;
+
+        // best effort is made to try and reset options previously set
+        Set<Map.Entry<Integer,Object>> options = optionsMap.entrySet();
+        try {
+            for(Map.Entry<Integer,Object> entry : options) {
+                psi.setOption(entry.getKey(), entry.getValue());
+            }
+        } catch (IOException x) {  /* gulp! */  }
+!!!7459330.java!!!	setOption(in opt : int, inout val : Object) : void
+        super.setOption(opt, val);
+
+        if (external_address != null)
+            return;  // we're connected, just return
+
+        // store options so that they can be re-applied to the impl after connect
+        optionsMap.put(opt, val);
+!!!7459458.java!!!	privilegedDoTunnel(in urlString : String, in timeout : int) : Socket
+        try {
+            return java.security.AccessController.doPrivileged(
+                new java.security.PrivilegedExceptionAction<Socket>() {
+                    public Socket run() throws IOException {
+                        return doTunnel(urlString, timeout);
+                }
+            });
+        } catch (java.security.PrivilegedActionException pae) {
+            throw (IOException) pae.getException();
+        }
+!!!7459586.java!!!	doTunnel(inout urlString : String, in connectTimeout : int) : Socket
+        Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(server, port));
+        URL destURL = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) destURL.openConnection(proxy);
+        conn.setConnectTimeout(connectTimeout);
+        conn.setReadTimeout(this.timeout);
+        conn.connect();
+        doTunneling(conn);
+        try {
+            Object httpClient = httpField.get(conn);
+            return (Socket) serverSocketField.get(httpClient);
+        } catch (IllegalAccessException x) {
+            throw new InternalError("Should not reach here", x);
+        }
+!!!7459714.java!!!	doTunneling(inout conn : HttpURLConnection) : void
+        try {
+            doTunneling.invoke(conn);
+        } catch (ReflectiveOperationException x) {
+            throw new InternalError("Should not reach here", x);
+        }
+!!!7459842.java!!!	getInetAddress() : InetAddress
+        if (external_address != null)
+            return external_address.getAddress();
+        else
+            return super.getInetAddress();
+!!!7459970.java!!!	getPort() : int
+        if (external_address != null)
+            return external_address.getPort();
+        else
+            return super.getPort();
+!!!7460098.java!!!	getLocalPort() : int
+        if (socket != null)
+            return super.getLocalPort();
+        if (external_address != null)
+            return external_address.getPort();
+        else
+            return super.getLocalPort();

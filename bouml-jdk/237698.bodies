@@ -1,0 +1,224 @@
+class POAPolicyMediatorImpl_R_USM
+!!!1143426.java!!!	POAPolicyMediatorImpl_R_USM(inout policies : Policies, inout poa : POAImpl)
+        // assert policies.retainServants()
+        super( policies, poa ) ;
+        activator = null ;
+
+        if (!policies.useServantManager())
+            throw poa.invocationWrapper().policyMediatorBadPolicyInFactory() ;
+!!!1143554.java!!!	enterEntry(inout key : ActiveObjectMap::Key) : AOMEntry
+        AOMEntry result = null ;
+        boolean failed ;
+        do {
+            failed = false ;
+            result = activeObjectMap.get(key) ;
+
+            try {
+                result.enter() ;
+            } catch (Exception exc) {
+                failed = true ;
+            }
+        } while (failed) ;
+
+        return result ;
+!!!1143682.java!!!	internalGetServant(inout id : byte [[]], inout operation : String) : Object
+        if (poa.getDebug()) {
+            ORBUtility.dprint( this,
+                "Calling POAPolicyMediatorImpl_R_USM.internalGetServant " +
+                "for poa " + poa + " operation=" + operation ) ;
+        }
+
+        try {
+            ActiveObjectMap.Key key = new ActiveObjectMap.Key( id ) ;
+            AOMEntry entry = enterEntry(key) ;
+            java.lang.Object servant = activeObjectMap.getServant( entry ) ;
+            if (servant != null) {
+                if (poa.getDebug()) {
+                    ORBUtility.dprint( this,
+                        "internalGetServant: servant already activated" ) ;
+                }
+
+                return servant ;
+            }
+
+            if (activator == null) {
+                if (poa.getDebug()) {
+                    ORBUtility.dprint( this,
+                        "internalGetServant: no servant activator in POA" ) ;
+                }
+
+                entry.incarnateFailure() ;
+                throw poa.invocationWrapper().poaNoServantManager() ;
+            }
+
+            // Drop the POA lock during the incarnate call and
+            // re-acquire it afterwards.  The entry state machine
+            // prevents more than one thread from executing the
+            // incarnate method at a time within the same POA.
+            try {
+                if (poa.getDebug()) {
+                    ORBUtility.dprint( this,
+                        "internalGetServant: upcall to incarnate" ) ;
+                }
+
+                poa.unlock() ;
+
+                servant = activator.incarnate(id, poa);
+
+                if (servant == null)
+                    servant = new NullServantImpl(
+                        poa.omgInvocationWrapper().nullServantReturned() ) ;
+            } catch (ForwardRequest freq) {
+                if (poa.getDebug()) {
+                    ORBUtility.dprint( this,
+                        "internalGetServant: incarnate threw ForwardRequest" ) ;
+                }
+
+                throw freq ;
+            } catch (SystemException exc) {
+                if (poa.getDebug()) {
+                    ORBUtility.dprint( this,
+                        "internalGetServant: incarnate threw SystemException " + exc ) ;
+                }
+
+                throw exc ;
+            } catch (Throwable exc) {
+                if (poa.getDebug()) {
+                    ORBUtility.dprint( this,
+                        "internalGetServant: incarnate threw Throwable " + exc ) ;
+                }
+
+                throw poa.invocationWrapper().poaServantActivatorLookupFailed(
+                    exc ) ;
+            } finally {
+                poa.lock() ;
+
+                // servant == null means incarnate threw an exception,
+                // while servant instanceof NullServant means incarnate returned a
+                // null servant.  Either case is an incarnate failure to the
+                // entry state machine.
+                if ((servant == null) || (servant instanceof NullServant)) {
+                    if (poa.getDebug()) {
+                        ORBUtility.dprint( this,
+                            "internalGetServant: incarnate failed" ) ;
+                    }
+
+                    // XXX Does the AOM leak in this case? Yes,
+                    // but the problem is hard to fix.  There may be
+                    // a number of threads waiting for the state to change
+                    // from INCARN to something else, which is VALID or
+                    // INVALID, depending on the incarnate result.
+                    // The activeObjectMap.get() call above creates an
+                    // ActiveObjectMap.Entry if one does not already exist,
+                    // and stores it in the keyToEntry map in the AOM.
+                    entry.incarnateFailure() ;
+                } else {
+                    // here check for unique_id policy, and if the servant
+                    // is already registered for a different ID, then throw
+                    // OBJ_ADAPTER exception, else activate it. Section 11.3.5.1
+                    // 99-10-07.pdf
+                    if (isUnique) {
+                        // check if the servant already is associated with some id
+                        if (activeObjectMap.contains((Servant)servant)) {
+                            if (poa.getDebug()) {
+                                ORBUtility.dprint( this,
+                                    "internalGetServant: servant already assigned to ID" ) ;
+                            }
+
+                            entry.incarnateFailure() ;
+                            throw poa.invocationWrapper().poaServantNotUnique() ;
+                        }
+                    }
+
+                    if (poa.getDebug()) {
+                        ORBUtility.dprint( this,
+                            "internalGetServant: incarnate complete" ) ;
+                    }
+
+                    entry.incarnateComplete() ;
+                    activateServant(key, entry, (Servant)servant);
+                }
+            }
+
+            return servant ;
+        } finally {
+            if (poa.getDebug()) {
+                ORBUtility.dprint( this,
+                    "Exiting POAPolicyMediatorImpl_R_USM.internalGetServant " +
+                    "for poa " + poa ) ;
+            }
+        }
+!!!1143810.java!!!	returnServant() : void
+        OAInvocationInfo info = orb.peekInvocationInfo();
+        byte[] id = info.id() ;
+        ActiveObjectMap.Key key = new ActiveObjectMap.Key( id ) ;
+        AOMEntry entry = activeObjectMap.get( key ) ;
+        entry.exit() ;
+!!!1143938.java!!!	etherealizeAll() : void
+        if (activator != null)  {
+            Set keySet = activeObjectMap.keySet() ;
+
+            // Copy the elements in the set to an array to avoid
+            // changes in the set due to concurrent modification
+            ActiveObjectMap.Key[] keys =
+                (ActiveObjectMap.Key[])keySet.toArray(
+                    new ActiveObjectMap.Key[ keySet.size() ] ) ;
+
+            for (int ctr=0; ctr<keySet.size(); ctr++) {
+                ActiveObjectMap.Key key = keys[ctr] ;
+                AOMEntry entry = activeObjectMap.get( key ) ;
+                Servant servant = activeObjectMap.getServant( entry ) ;
+                if (servant != null) {
+                    boolean remainingActivations =
+                        activeObjectMap.hasMultipleIDs(entry) ;
+
+                    // Here we etherealize in the thread that called this
+                    // method, rather than etherealizing in a new thread
+                    // as in the deactivate case.  We still inform the
+                    // entry state machine so that only one thread at a
+                    // time can call the etherealize method.
+                    entry.startEtherealize( null ) ;
+                    try {
+                        poa.unlock() ;
+                        try {
+                            activator.etherealize(key.id, poa, servant, true,
+                                remainingActivations);
+                        } catch (Exception exc) {
+                            // ignore all exceptions
+                        }
+                    } finally {
+                        poa.lock() ;
+                        entry.etherealizeComplete() ;
+                    }
+                }
+            }
+        }
+!!!1144066.java!!!	getServantManager() : ServantManager
+        return activator;
+!!!1144194.java!!!	setServantManager(inout servantManager : ServantManager) : void
+        if (activator != null)
+            throw poa.invocationWrapper().servantManagerAlreadySet() ;
+
+        if (servantManager instanceof ServantActivator)
+            activator = (ServantActivator)servantManager;
+        else
+            throw poa.invocationWrapper().servantManagerBadType() ;
+!!!1144322.java!!!	getDefaultServant() : Servant
+        throw new WrongPolicy();
+!!!1144450.java!!!	setDefaultServant(inout servant : Servant) : void
+        throw new WrongPolicy();
+!!!1144834.java!!!	deactivateHelper(inout key : ActiveObjectMap::Key, inout entry : AOMEntry, inout servant : Servant) : void
+        if (activator == null)
+            throw poa.invocationWrapper().poaNoServantManager() ;
+
+        Etherealizer eth = new Etherealizer( this, key, entry, servant, poa.getDebug() ) ;
+        entry.startEtherealize( eth ) ;
+!!!1144962.java!!!	idToServant(inout id : byte [[]]) : Servant
+        ActiveObjectMap.Key key = new ActiveObjectMap.Key( id ) ;
+        AOMEntry entry = activeObjectMap.get(key);
+
+        Servant servant = activeObjectMap.getServant( entry ) ;
+        if (servant != null)
+            return servant ;
+        else
+            throw new ObjectNotActive() ;

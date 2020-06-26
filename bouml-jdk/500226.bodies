@@ -1,0 +1,372 @@
+class IdentityHashMap
+!!!8813186.java!!!	maskNull(inout key : Object) : Object
+        return (key == null ? NULL_KEY : key);
+!!!8813314.java!!!	unmaskNull(inout key : Object) : Object
+        return (key == NULL_KEY ? null : key);
+!!!8813442.java!!!	IdentityHashMap()
+        init(DEFAULT_CAPACITY);
+!!!8813570.java!!!	IdentityHashMap(in expectedMaxSize : int)
+        if (expectedMaxSize < 0)
+            throw new IllegalArgumentException("expectedMaxSize is negative: "
+                                               + expectedMaxSize);
+        init(capacity(expectedMaxSize));
+!!!8813698.java!!!	capacity(in expectedMaxSize : int) : int
+        // assert expectedMaxSize >= 0;
+        return
+            (expectedMaxSize > MAXIMUM_CAPACITY / 3) ? MAXIMUM_CAPACITY :
+            (expectedMaxSize <= 2 * MINIMUM_CAPACITY / 3) ? MINIMUM_CAPACITY :
+            Integer.highestOneBit(expectedMaxSize + (expectedMaxSize << 1));
+!!!8813826.java!!!	init(in initCapacity : int) : void
+        // assert (initCapacity & -initCapacity) == initCapacity; // power of 2
+        // assert initCapacity >= MINIMUM_CAPACITY;
+        // assert initCapacity <= MAXIMUM_CAPACITY;
+
+        table = new Object[2 * initCapacity];
+!!!8813954.java!!!	IdentityHashMap(inout m : Map)
+        // Allow for a bit of growth
+        this((int) ((1 + m.size()) * 1.1));
+        putAll(m);
+!!!8814082.java!!!	size() : int
+        return size;
+!!!8814210.java!!!	isEmpty() : boolean
+        return size == 0;
+!!!8814338.java!!!	hash(inout x : Object, in length : int) : int
+        int h = System.identityHashCode(x);
+        // Multiply by -127, and left-shift to use least bit as part of hash
+        return ((h << 1) - (h << 8)) & (length - 1);
+!!!8814466.java!!!	nextKeyIndex(in i : int, in len : int) : int
+        return (i + 2 < len ? i + 2 : 0);
+!!!8814594.java!!!	get(inout key : Object) : V
+        Object k = maskNull(key);
+        Object[] tab = table;
+        int len = tab.length;
+        int i = hash(k, len);
+        while (true) {
+            Object item = tab[i];
+            if (item == k)
+                return (V) tab[i + 1];
+            if (item == null)
+                return null;
+            i = nextKeyIndex(i, len);
+        }
+!!!8814722.java!!!	containsKey(inout key : Object) : boolean
+        Object k = maskNull(key);
+        Object[] tab = table;
+        int len = tab.length;
+        int i = hash(k, len);
+        while (true) {
+            Object item = tab[i];
+            if (item == k)
+                return true;
+            if (item == null)
+                return false;
+            i = nextKeyIndex(i, len);
+        }
+!!!8814850.java!!!	containsValue(inout value : Object) : boolean
+        Object[] tab = table;
+        for (int i = 1; i < tab.length; i += 2)
+            if (tab[i] == value && tab[i - 1] != null)
+                return true;
+
+        return false;
+!!!8814978.java!!!	containsMapping(inout key : Object, inout value : Object) : boolean
+        Object k = maskNull(key);
+        Object[] tab = table;
+        int len = tab.length;
+        int i = hash(k, len);
+        while (true) {
+            Object item = tab[i];
+            if (item == k)
+                return tab[i + 1] == value;
+            if (item == null)
+                return false;
+            i = nextKeyIndex(i, len);
+        }
+!!!8815106.java!!!	put(inout key : K, inout value : V) : V
+        final Object k = maskNull(key);
+
+        retryAfterResize: for (;;) {
+            final Object[] tab = table;
+            final int len = tab.length;
+            int i = hash(k, len);
+
+            for (Object item; (item = tab[i]) != null;
+                 i = nextKeyIndex(i, len)) {
+                if (item == k) {
+                    @SuppressWarnings("unchecked")
+                        V oldValue = (V) tab[i + 1];
+                    tab[i + 1] = value;
+                    return oldValue;
+                }
+            }
+
+            final int s = size + 1;
+            // Use optimized form of 3 * s.
+            // Next capacity is len, 2 * current capacity.
+            if (s + (s << 1) > len && resize(len))
+                continue retryAfterResize;
+
+            modCount++;
+            tab[i] = k;
+            tab[i + 1] = value;
+            size = s;
+            return null;
+        }
+!!!8815234.java!!!	resize(in newCapacity : int) : boolean
+        // assert (newCapacity & -newCapacity) == newCapacity; // power of 2
+        int newLength = newCapacity * 2;
+
+        Object[] oldTable = table;
+        int oldLength = oldTable.length;
+        if (oldLength == 2 * MAXIMUM_CAPACITY) { // can't expand any further
+            if (size == MAXIMUM_CAPACITY - 1)
+                throw new IllegalStateException("Capacity exhausted.");
+            return false;
+        }
+        if (oldLength >= newLength)
+            return false;
+
+        Object[] newTable = new Object[newLength];
+
+        for (int j = 0; j < oldLength; j += 2) {
+            Object key = oldTable[j];
+            if (key != null) {
+                Object value = oldTable[j+1];
+                oldTable[j] = null;
+                oldTable[j+1] = null;
+                int i = hash(key, newLength);
+                while (newTable[i] != null)
+                    i = nextKeyIndex(i, newLength);
+                newTable[i] = key;
+                newTable[i + 1] = value;
+            }
+        }
+        table = newTable;
+        return true;
+!!!8815362.java!!!	putAll(inout m : Map) : void
+        int n = m.size();
+        if (n == 0)
+            return;
+        if (n > size)
+            resize(capacity(n)); // conservatively pre-expand
+
+        for (Entry<? extends K, ? extends V> e : m.entrySet())
+            put(e.getKey(), e.getValue());
+!!!8815490.java!!!	remove(inout key : Object) : V
+        Object k = maskNull(key);
+        Object[] tab = table;
+        int len = tab.length;
+        int i = hash(k, len);
+
+        while (true) {
+            Object item = tab[i];
+            if (item == k) {
+                modCount++;
+                size--;
+                @SuppressWarnings("unchecked")
+                    V oldValue = (V) tab[i + 1];
+                tab[i + 1] = null;
+                tab[i] = null;
+                closeDeletion(i);
+                return oldValue;
+            }
+            if (item == null)
+                return null;
+            i = nextKeyIndex(i, len);
+        }
+!!!8815618.java!!!	removeMapping(inout key : Object, inout value : Object) : boolean
+        Object k = maskNull(key);
+        Object[] tab = table;
+        int len = tab.length;
+        int i = hash(k, len);
+
+        while (true) {
+            Object item = tab[i];
+            if (item == k) {
+                if (tab[i + 1] != value)
+                    return false;
+                modCount++;
+                size--;
+                tab[i] = null;
+                tab[i + 1] = null;
+                closeDeletion(i);
+                return true;
+            }
+            if (item == null)
+                return false;
+            i = nextKeyIndex(i, len);
+        }
+!!!8815746.java!!!	closeDeletion(in d : int) : void
+        // Adapted from Knuth Section 6.4 Algorithm R
+        Object[] tab = table;
+        int len = tab.length;
+
+        // Look for items to swap into newly vacated slot
+        // starting at index immediately following deletion,
+        // and continuing until a null slot is seen, indicating
+        // the end of a run of possibly-colliding keys.
+        Object item;
+        for (int i = nextKeyIndex(d, len); (item = tab[i]) != null;
+             i = nextKeyIndex(i, len) ) {
+            // The following test triggers if the item at slot i (which
+            // hashes to be at slot r) should take the spot vacated by d.
+            // If so, we swap it in, and then continue with d now at the
+            // newly vacated i.  This process will terminate when we hit
+            // the null slot at the end of this run.
+            // The test is messy because we are using a circular table.
+            int r = hash(item, len);
+            if ((i < r && (r <= d || d <= i)) || (r <= d && d <= i)) {
+                tab[d] = item;
+                tab[d + 1] = tab[i + 1];
+                tab[i] = null;
+                tab[i + 1] = null;
+                d = i;
+            }
+        }
+!!!8815874.java!!!	clear() : void
+        modCount++;
+        Object[] tab = table;
+        for (int i = 0; i < tab.length; i++)
+            tab[i] = null;
+        size = 0;
+!!!8816002.java!!!	equals(inout o : Object) : boolean
+        if (o == this) {
+            return true;
+        } else if (o instanceof IdentityHashMap) {
+            IdentityHashMap<?,?> m = (IdentityHashMap<?,?>) o;
+            if (m.size() != size)
+                return false;
+
+            Object[] tab = m.table;
+            for (int i = 0; i < tab.length; i+=2) {
+                Object k = tab[i];
+                if (k != null && !containsMapping(k, tab[i + 1]))
+                    return false;
+            }
+            return true;
+        } else if (o instanceof Map) {
+            Map<?,?> m = (Map<?,?>)o;
+            return entrySet().equals(m.entrySet());
+        } else {
+            return false;  // o is not a Map
+        }
+!!!8816130.java!!!	hashCode() : int
+        int result = 0;
+        Object[] tab = table;
+        for (int i = 0; i < tab.length; i +=2) {
+            Object key = tab[i];
+            if (key != null) {
+                Object k = unmaskNull(key);
+                result += System.identityHashCode(k) ^
+                          System.identityHashCode(tab[i + 1]);
+            }
+        }
+        return result;
+!!!8816258.java!!!	clone() : Object
+        try {
+            IdentityHashMap<?,?> m = (IdentityHashMap<?,?>) super.clone();
+            m.entrySet = null;
+            m.table = table.clone();
+            return m;
+        } catch (CloneNotSupportedException e) {
+            throw new InternalError(e);
+        }
+!!!8818306.java!!!	keySet() : Set
+        Set<K> ks = keySet;
+        if (ks == null) {
+            ks = new KeySet();
+            keySet = ks;
+        }
+        return ks;
+!!!8819714.java!!!	values() : Collection
+        Collection<V> vs = values;
+        if (vs == null) {
+            vs = new Values();
+            values = vs;
+        }
+        return vs;
+!!!8820866.java!!!	entrySet() : Set
+        Set<Map.Entry<K,V>> es = entrySet;
+        if (es != null)
+            return es;
+        else
+            return entrySet = new EntrySet();
+!!!8822146.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        // Write out and any hidden stuff
+        s.defaultWriteObject();
+
+        // Write out size (number of Mappings)
+        s.writeInt(size);
+
+        // Write out keys and values (alternating)
+        Object[] tab = table;
+        for (int i = 0; i < tab.length; i += 2) {
+            Object key = tab[i];
+            if (key != null) {
+                s.writeObject(unmaskNull(key));
+                s.writeObject(tab[i + 1]);
+            }
+        }
+!!!8822274.java!!!	readObject(inout s : ObjectInputStream) : void
+        // Read in any hidden stuff
+        s.defaultReadObject();
+
+        // Read in size (number of Mappings)
+        int size = s.readInt();
+        if (size < 0)
+            throw new java.io.StreamCorruptedException
+                ("Illegal mappings count: " + size);
+        init(capacity(size));
+
+        // Read the keys and values, and put the mappings in the table
+        for (int i=0; i<size; i++) {
+            @SuppressWarnings("unchecked")
+                K key = (K) s.readObject();
+            @SuppressWarnings("unchecked")
+                V value = (V) s.readObject();
+            putForCreate(key, value);
+        }
+!!!8822402.java!!!	putForCreate(inout key : K, inout value : V) : void
+        Object k = maskNull(key);
+        Object[] tab = table;
+        int len = tab.length;
+        int i = hash(k, len);
+
+        Object item;
+        while ( (item = tab[i]) != null) {
+            if (item == k)
+                throw new java.io.StreamCorruptedException();
+            i = nextKeyIndex(i, len);
+        }
+        tab[i] = k;
+        tab[i + 1] = value;
+!!!8822530.java!!!	forEach(inout action : BiConsumer) : void
+        Objects.requireNonNull(action);
+        int expectedModCount = modCount;
+
+        Object[] t = table;
+        for (int index = 0; index < t.length; index += 2) {
+            Object k = t[index];
+            if (k != null) {
+                action.accept((K) unmaskNull(k), (V) t[index + 1]);
+            }
+
+            if (modCount != expectedModCount) {
+                throw new ConcurrentModificationException();
+            }
+        }
+!!!8822658.java!!!	replaceAll(inout function : BiFunction) : void
+        Objects.requireNonNull(function);
+        int expectedModCount = modCount;
+
+        Object[] t = table;
+        for (int index = 0; index < t.length; index += 2) {
+            Object k = t[index];
+            if (k != null) {
+                t[index + 1] = function.apply((K) unmaskNull(k), (V) t[index + 1]);
+            }
+
+            if (modCount != expectedModCount) {
+                throw new ConcurrentModificationException();
+            }
+        }

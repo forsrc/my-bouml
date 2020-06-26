@@ -1,0 +1,1402 @@
+class CoreDocumentImpl
+!!!4205698.java!!!	CoreDocumentImpl()
+        this(false);
+!!!4205826.java!!!	CoreDocumentImpl(inout grammarAccess : boolean)
+        super(null);
+        ownerDocument = this;
+        allowGrammarAccess = grammarAccess;
+        String systemProp = SecuritySupport.getSystemProperty(Constants.SUN_DOM_PROPERTY_PREFIX+Constants.SUN_DOM_ANCESTOR_CHECCK);
+        if (systemProp != null) {
+            if (systemProp.equalsIgnoreCase("false")) {
+                ancestorChecking = false;
+            }
+        }
+!!!4205954.java!!!	CoreDocumentImpl(inout doctype : DocumentType)
+        this(doctype, false);
+!!!4206082.java!!!	CoreDocumentImpl(inout doctype : DocumentType, inout grammarAccess : boolean)
+        this(grammarAccess);
+        if (doctype != null) {
+            DocumentTypeImpl doctypeImpl;
+            try {
+                doctypeImpl = (DocumentTypeImpl) doctype;
+            } catch (ClassCastException e) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "WRONG_DOCUMENT_ERR", null);
+                throw new DOMException(DOMException.WRONG_DOCUMENT_ERR, msg);
+            }
+            doctypeImpl.ownerDocument = this;
+            appendChild(doctype);
+        }
+!!!4206210.java!!!	getOwnerDocument() : Document
+        return null;
+!!!4206338.java!!!	getNodeType() : short
+        return Node.DOCUMENT_NODE;
+!!!4206466.java!!!	getNodeName() : String
+        return "#document";
+!!!4206594.java!!!	cloneNode(inout deep : boolean) : Node
+
+        CoreDocumentImpl newdoc = new CoreDocumentImpl();
+        callUserDataHandlers(this, newdoc, UserDataHandler.NODE_CLONED);
+        cloneNode(newdoc, deep);
+
+        return newdoc;
+
+!!!4206722.java!!!	cloneNode(inout newdoc : CoreDocumentImpl, inout deep : boolean) : void
+
+        // clone the children by importing them
+        if (needsSyncChildren()) {
+            synchronizeChildren();
+        }
+
+        if (deep) {
+            Map<Node, String> reversedIdentifiers = null;
+
+            if (identifiers != null) {
+                // Build a reverse mapping from element to identifier.
+                reversedIdentifiers = new HashMap<>(identifiers.size());
+                for (String elementId : identifiers.keySet()) {
+                    reversedIdentifiers.put(identifiers.get(elementId), elementId);
+                }
+            }
+
+            // Copy children into new document.
+            for (ChildNode kid = firstChild; kid != null;
+                    kid = kid.nextSibling) {
+                newdoc.appendChild(newdoc.importNode(kid, true, true,
+                        reversedIdentifiers));
+            }
+        }
+
+        // experimental
+        newdoc.allowGrammarAccess = allowGrammarAccess;
+        newdoc.errorChecking = errorChecking;
+
+!!!4206850.java!!!	insertBefore(inout newChild : Node, inout refChild : Node) : Node
+
+        // Only one such child permitted
+        int type = newChild.getNodeType();
+        if (errorChecking) {
+            if((type == Node.ELEMENT_NODE && docElement != null) ||
+            (type == Node.DOCUMENT_TYPE_NODE && docType != null)) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "HIERARCHY_REQUEST_ERR", null);
+                throw new DOMException(DOMException.HIERARCHY_REQUEST_ERR, msg);
+            }
+        }
+        // Adopt orphan doctypes
+        if (newChild.getOwnerDocument() == null &&
+        newChild instanceof DocumentTypeImpl) {
+            ((DocumentTypeImpl) newChild).ownerDocument = this;
+        }
+        super.insertBefore(newChild,refChild);
+
+        // If insert succeeded, cache the kid appropriately
+        if (type == Node.ELEMENT_NODE) {
+            docElement = (ElementImpl)newChild;
+        }
+        else if (type == Node.DOCUMENT_TYPE_NODE) {
+            docType = (DocumentTypeImpl)newChild;
+        }
+
+        return newChild;
+
+!!!4206978.java!!!	removeChild(inout oldChild : Node) : Node
+
+        super.removeChild(oldChild);
+
+        // If remove succeeded, un-cache the kid appropriately
+        int type = oldChild.getNodeType();
+        if(type == Node.ELEMENT_NODE) {
+            docElement = null;
+        }
+        else if (type == Node.DOCUMENT_TYPE_NODE) {
+            docType = null;
+        }
+
+        return oldChild;
+
+!!!4207106.java!!!	replaceChild(inout newChild : Node, inout oldChild : Node) : Node
+
+        // Adopt orphan doctypes
+        if (newChild.getOwnerDocument() == null &&
+        newChild instanceof DocumentTypeImpl) {
+            ((DocumentTypeImpl) newChild).ownerDocument = this;
+        }
+
+        if (errorChecking &&((docType != null &&
+            oldChild.getNodeType() != Node.DOCUMENT_TYPE_NODE &&
+            newChild.getNodeType() == Node.DOCUMENT_TYPE_NODE)
+            || (docElement != null &&
+            oldChild.getNodeType() != Node.ELEMENT_NODE &&
+            newChild.getNodeType() == Node.ELEMENT_NODE))) {
+
+            throw new DOMException(
+                    DOMException.HIERARCHY_REQUEST_ERR,
+                    DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "HIERARCHY_REQUEST_ERR", null));
+        }
+        super.replaceChild(newChild, oldChild);
+
+        int type = oldChild.getNodeType();
+        if(type == Node.ELEMENT_NODE) {
+            docElement = (ElementImpl)newChild;
+        }
+        else if (type == Node.DOCUMENT_TYPE_NODE) {
+            docType = (DocumentTypeImpl)newChild;
+        }
+        return oldChild;
+!!!4207234.java!!!	getTextContent() : String
+        return null;
+!!!4207362.java!!!	setTextContent(inout textContent : String) : void
+        // no-op
+!!!4207490.java!!!	getFeature(inout feature : String, inout version : String) : Object
+
+        boolean anyVersion = version == null || version.length() == 0;
+
+        // if a plus sign "+" is prepended to any feature name, implementations
+        // are considered in which the specified feature may not be directly
+        // castable DOMImplementation.getFeature(feature, version). Without a
+        // plus, only features whose interfaces are directly castable are
+        // considered.
+        if ((feature.equalsIgnoreCase("+XPath"))
+                && (anyVersion || version.equals("3.0"))) {
+
+            // If an XPathEvaluator was created previously
+            // return it otherwise create a new one.
+            if (fXPathEvaluator != null) {
+                return fXPathEvaluator;
+            }
+
+            try {
+                Class xpathClass = ObjectFactory.findProviderClass (
+                        "com.sun.org.apache.xpath.internal.domapi.XPathEvaluatorImpl", true);
+                Constructor xpathClassConstr =
+                    xpathClass.getConstructor(new Class[] { Document.class });
+
+                // Check if the DOM XPath implementation implements
+                // the interface org.w3c.dom.XPathEvaluator
+                Class interfaces[] = xpathClass.getInterfaces();
+                for (int i = 0; i < interfaces.length; i++) {
+                    if (interfaces[i].getName().equals(
+                            "org.w3c.dom.xpath.XPathEvaluator")) {
+                        fXPathEvaluator = xpathClassConstr.newInstance(new Object[] { this });
+                        return fXPathEvaluator;
+                    }
+                }
+                return null;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        return super.getFeature(feature, version);
+!!!4207618.java!!!	createAttribute(inout name : String) : Attr
+
+        if (errorChecking && !isXMLName(name,xml11Version)) {
+            String msg =
+                DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "INVALID_CHARACTER_ERR",
+                            null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new AttrImpl(this, name);
+
+!!!4207746.java!!!	createCDATASection(inout data : String) : CDATASection
+        return new CDATASectionImpl(this, data);
+!!!4207874.java!!!	createComment(inout data : String) : Comment
+        return new CommentImpl(this, data);
+!!!4208002.java!!!	createDocumentFragment() : DocumentFragment
+        return new DocumentFragmentImpl(this);
+!!!4208130.java!!!	createElement(inout tagName : String) : Element
+
+        if (errorChecking && !isXMLName(tagName,xml11Version)) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "INVALID_CHARACTER_ERR", null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new ElementImpl(this, tagName);
+
+!!!4208258.java!!!	createEntityReference(inout name : String) : EntityReference
+
+        if (errorChecking && !isXMLName(name,xml11Version)) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "INVALID_CHARACTER_ERR", null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new EntityReferenceImpl(this, name);
+
+!!!4208386.java!!!	createProcessingInstruction(inout target : String, inout data : String) : ProcessingInstruction
+
+        if (errorChecking && !isXMLName(target,xml11Version)) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "INVALID_CHARACTER_ERR", null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new ProcessingInstructionImpl(this, target, data);
+
+!!!4208514.java!!!	createTextNode(inout data : String) : Text
+        return new TextImpl(this, data);
+!!!4208642.java!!!	getDoctype() : DocumentType
+        if (needsSyncChildren()) {
+            synchronizeChildren();
+        }
+        return docType;
+!!!4208770.java!!!	getDocumentElement() : Element
+        if (needsSyncChildren()) {
+            synchronizeChildren();
+        }
+        return docElement;
+!!!4208898.java!!!	getElementsByTagName(inout tagname : String) : NodeList
+        return new DeepNodeListImpl(this,tagname);
+!!!4209026.java!!!	getImplementation() : DOMImplementation
+        // Currently implemented as a singleton, since it's hardcoded
+        // information anyway.
+        return CoreDOMImplementationImpl.getDOMImplementation();
+!!!4209154.java!!!	setErrorChecking(inout check : boolean) : void
+        errorChecking = check;
+!!!4209282.java!!!	setStrictErrorChecking(inout check : boolean) : void
+        errorChecking = check;
+!!!4209410.java!!!	getErrorChecking() : boolean
+        return errorChecking;
+!!!4209538.java!!!	getStrictErrorChecking() : boolean
+        return errorChecking;
+!!!4209666.java!!!	getInputEncoding() : String
+        return actualEncoding;
+!!!4209794.java!!!	setInputEncoding(inout value : String) : void
+        actualEncoding = value;
+!!!4209922.java!!!	setXmlEncoding(inout value : String) : void
+        encoding = value;
+!!!4210050.java!!!	setEncoding(inout value : String) : void
+        setXmlEncoding(value);
+!!!4210178.java!!!	getXmlEncoding() : String
+        return encoding;
+!!!4210306.java!!!	getEncoding() : String
+        return getXmlEncoding();
+!!!4210434.java!!!	setXmlVersion(inout value : String) : void
+        if(value.equals("1.0") || value.equals("1.1")){
+            //we need to change the flag value only --
+            // when the version set is different than already set.
+            if(!getXmlVersion().equals(value)){
+                xmlVersionChanged = true ;
+                //change the normalization value back to false
+                isNormalized(false);
+                version = value;
+            }
+        }
+        else{
+            //NOT_SUPPORTED_ERR: Raised if the vesion is set to a value that is not supported by
+            //this document
+            //we dont support any other XML version
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+            throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+
+        }
+        if((getXmlVersion()).equals("1.1")){
+            xml11Version = true;
+        }
+        else{
+            xml11Version = false;
+        }
+!!!4210562.java!!!	setVersion(inout value : String) : void
+        setXmlVersion(value);
+!!!4210690.java!!!	getXmlVersion() : String
+        return (version == null)?"1.0":version;
+!!!4210818.java!!!	getVersion() : String
+        return getXmlVersion();
+!!!4210946.java!!!	setXmlStandalone(inout value : boolean) : void
+        standalone = value;
+!!!4211074.java!!!	setStandalone(inout value : boolean) : void
+        setXmlStandalone(value);
+!!!4211202.java!!!	getXmlStandalone() : boolean
+        return standalone;
+!!!4211330.java!!!	getStandalone() : boolean
+        return getXmlStandalone();
+!!!4211458.java!!!	getDocumentURI() : String
+        return fDocumentURI;
+!!!4211586.java!!!	renameNode(inout n : Node, inout namespaceURI : String, inout name : String) : Node
+
+        if (errorChecking && n.getOwnerDocument() != this && n != this) {
+            String msg = DOMMessageFormatter.formatMessage(
+                    DOMMessageFormatter.DOM_DOMAIN, "WRONG_DOCUMENT_ERR", null);
+            throw new DOMException(DOMException.WRONG_DOCUMENT_ERR, msg);
+        }
+        switch (n.getNodeType()) {
+            case ELEMENT_NODE: {
+                ElementImpl el = (ElementImpl) n;
+                if (el instanceof ElementNSImpl) {
+                    ((ElementNSImpl) el).rename(namespaceURI, name);
+
+                    // fire user data NODE_RENAMED event
+                    callUserDataHandlers(el, null, UserDataHandler.NODE_RENAMED);
+                }
+                else {
+                    if (namespaceURI == null) {
+                        if (errorChecking) {
+                            int colon1 = name.indexOf(':');
+                            if(colon1 != -1){
+                                String msg =
+                                    DOMMessageFormatter.formatMessage(
+                                                DOMMessageFormatter.DOM_DOMAIN,
+                                                "NAMESPACE_ERR",
+                                                null);
+                                throw new DOMException(DOMException.NAMESPACE_ERR, msg);
+                            }
+                            if (!isXMLName(name,xml11Version)) {
+                                String msg = DOMMessageFormatter.formatMessage(
+                                        DOMMessageFormatter.DOM_DOMAIN,
+                                        "INVALID_CHARACTER_ERR", null);
+                                throw new DOMException(DOMException.INVALID_CHARACTER_ERR,
+                                        msg);
+                            }
+                        }
+                        el.rename(name);
+
+                        // fire user data NODE_RENAMED event
+                        callUserDataHandlers(el, null,
+                                UserDataHandler.NODE_RENAMED);
+                    }
+                    else {
+                        // we need to create a new object
+                        ElementNSImpl nel =
+                            new ElementNSImpl(this, namespaceURI, name);
+
+                        // register event listeners on new node
+                        copyEventListeners(el, nel);
+
+                        // remove user data from old node
+                        Map<String, UserDataRecord> data = removeUserDataTable(el);
+
+                        // remove old node from parent if any
+                        Node parent = el.getParentNode();
+                        Node nextSib = el.getNextSibling();
+                        if (parent != null) {
+                            parent.removeChild(el);
+                        }
+                        // move children to new node
+                        Node child = el.getFirstChild();
+                        while (child != null) {
+                            el.removeChild(child);
+                            nel.appendChild(child);
+                            child = el.getFirstChild();
+                        }
+                        // move specified attributes to new node
+                        nel.moveSpecifiedAttributes(el);
+
+                        // attach user data to new node
+                        setUserDataTable(nel, data);
+
+                        // and fire user data NODE_RENAMED event
+                        callUserDataHandlers(el, nel,
+                                UserDataHandler.NODE_RENAMED);
+
+                        // insert new node where old one was
+                        if (parent != null) {
+                            parent.insertBefore(nel, nextSib);
+                        }
+                        el = nel;
+                    }
+                }
+                // fire ElementNameChanged event
+                renamedElement((Element) n, el);
+                return el;
+            }
+            case ATTRIBUTE_NODE: {
+                AttrImpl at = (AttrImpl) n;
+
+                // dettach attr from element
+                Element el = at.getOwnerElement();
+                if (el != null) {
+                    el.removeAttributeNode(at);
+                }
+                if (n instanceof AttrNSImpl) {
+                    ((AttrNSImpl) at).rename(namespaceURI, name);
+                    // reattach attr to element
+                    if (el != null) {
+                        el.setAttributeNodeNS(at);
+                    }
+
+                    // fire user data NODE_RENAMED event
+                    callUserDataHandlers(at, null, UserDataHandler.NODE_RENAMED);
+                }
+                else {
+                    if (namespaceURI == null) {
+                        at.rename(name);
+                        // reattach attr to element
+                        if (el != null) {
+                            el.setAttributeNode(at);
+                        }
+
+                        // fire user data NODE_RENAMED event
+                        callUserDataHandlers(at, null, UserDataHandler.NODE_RENAMED);
+                    }
+                    else {
+                        // we need to create a new object
+                        AttrNSImpl nat = new AttrNSImpl(this, namespaceURI, name);
+
+                        // register event listeners on new node
+                        copyEventListeners(at, nat);
+
+                        // remove user data from old node
+                        Map<String, UserDataRecord> data = removeUserDataTable(at);
+
+                        // move children to new node
+                        Node child = at.getFirstChild();
+                        while (child != null) {
+                            at.removeChild(child);
+                            nat.appendChild(child);
+                            child = at.getFirstChild();
+                        }
+
+                        // attach user data to new node
+                        setUserDataTable(nat, data);
+
+                        // and fire user data NODE_RENAMED event
+                        callUserDataHandlers(at, nat, UserDataHandler.NODE_RENAMED);
+
+                        // reattach attr to element
+                        if (el != null) {
+                            el.setAttributeNode(nat);
+                        }
+                        at = nat;
+                    }
+                }
+                // fire AttributeNameChanged event
+                renamedAttrNode((Attr) n, at);
+
+                return at;
+            }
+            default: {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+        }
+
+!!!4211714.java!!!	normalizeDocument() : void
+        // No need to normalize if already normalized.
+        if (isNormalized() && !isNormalizeDocRequired()) {
+            return;
+        }
+        if (needsSyncChildren()) {
+            synchronizeChildren();
+        }
+
+        if (domNormalizer == null) {
+            domNormalizer = new DOMNormalizer();
+        }
+
+        if (fConfiguration == null) {
+            fConfiguration =  new DOMConfigurationImpl();
+        }
+        else {
+            fConfiguration.reset();
+        }
+
+        domNormalizer.normalizeDocument(this, fConfiguration);
+        isNormalized(true);
+        //set the XMLversion changed value to false -- once we have finished
+        //doing normalization
+        xmlVersionChanged = false ;
+!!!4211842.java!!!	getDomConfig() : DOMConfiguration
+        if (fConfiguration == null) {
+            fConfiguration = new DOMConfigurationImpl();
+        }
+        return fConfiguration;
+!!!4211970.java!!!	getBaseURI() : String
+        if (fDocumentURI != null && fDocumentURI.length() != 0 ) {// attribute value is always empty string
+            try {
+                return new URI(fDocumentURI).toString();
+            }
+            catch (com.sun.org.apache.xerces.internal.util.URI.MalformedURIException e){
+                // REVISIT: what should happen in this case?
+                return null;
+            }
+        }
+        return fDocumentURI;
+!!!4212098.java!!!	setDocumentURI(inout documentURI : String) : void
+        fDocumentURI = documentURI;
+!!!4212226.java!!!	getAsync() : boolean
+        return false;
+!!!4212354.java!!!	setAsync(inout async : boolean) : void
+        if (async) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+            throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+        }
+!!!4212610.java!!!	load(inout uri : String) : boolean
+        return false;
+!!!4212738.java!!!	loadXML(inout source : String) : boolean
+        return false;
+!!!4212866.java!!!	saveXML(inout node : Node) : String
+        if (errorChecking && node != null
+                && this != node.getOwnerDocument()) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "WRONG_DOCUMENT_ERR", null);
+            throw new DOMException(DOMException.WRONG_DOCUMENT_ERR, msg);
+        }
+        DOMImplementationLS domImplLS = (DOMImplementationLS) DOMImplementationImpl.getDOMImplementation();
+        LSSerializer xmlWriter = domImplLS.createLSSerializer();
+        if (node == null) {
+            node = this;
+        }
+        return xmlWriter.writeToString(node);
+!!!4212994.java!!!	setMutationEvents(inout set : boolean) : void
+        // does nothing by default - overidden in subclass
+!!!4213122.java!!!	getMutationEvents() : boolean
+        // does nothing by default - overriden in subclass
+        return false;
+!!!4213250.java!!!	createDocumentType(inout qualifiedName : String, inout publicID : String, inout systemID : String) : DocumentType
+
+        return new DocumentTypeImpl(this, qualifiedName, publicID, systemID);
+
+!!!4213378.java!!!	createEntity(inout name : String) : Entity
+
+        if (errorChecking && !isXMLName(name, xml11Version)) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "INVALID_CHARACTER_ERR", null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new EntityImpl(this, name);
+
+!!!4213506.java!!!	createNotation(inout name : String) : Notation
+
+        if (errorChecking && !isXMLName(name, xml11Version)) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "INVALID_CHARACTER_ERR", null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new NotationImpl(this, name);
+
+!!!4213634.java!!!	createElementDefinition(inout name : String) : ElementDefinitionImpl
+
+        if (errorChecking && !isXMLName(name, xml11Version)) {
+            String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "INVALID_CHARACTER_ERR", null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+        return new ElementDefinitionImpl(this, name);
+
+!!!4213762.java!!!	getNodeNumber() : int
+        if (documentNumber == 0) {
+
+            CoreDOMImplementationImpl cd = (CoreDOMImplementationImpl) CoreDOMImplementationImpl.getDOMImplementation();
+            documentNumber = cd.assignDocumentNumber();
+        }
+        return documentNumber;
+!!!4213890.java!!!	getNodeNumber(inout node : Node) : int
+
+        // Check if the node is already in the hash
+        // If so, retrieve the node number
+        // If not, assign a number to the node
+        // Node numbers are negative, from -1 to -n
+        int num;
+        if (nodeTable == null) {
+            nodeTable = new HashMap<>();
+            num = --nodeCounter;
+            nodeTable.put(node, new Integer(num));
+        } else {
+            Integer n = nodeTable.get(node);
+            if (n == null) {
+                num = --nodeCounter;
+                nodeTable.put(node, num);
+            } else {
+                num = n.intValue();
+            }
+        }
+        return num;
+!!!4214018.java!!!	importNode(inout source : Node, inout deep : boolean) : Node
+        return importNode(source, deep, false, null);
+!!!4214146.java!!!	importNode(inout source : Node, inout deep : boolean, inout cloningDoc : boolean, inout reversedIdentifiers : Map) : Node
+        Node newnode = null;
+        Map<String, UserDataRecord> userData = null;
+
+        // Sigh. This doesn't work; too many nodes have private data that
+        // would have to be manually tweaked. May be able to add local
+        // shortcuts to each nodetype. Consider ?????
+        // if(source instanceof NodeImpl &&
+        //  !(source instanceof DocumentImpl))
+        // {
+        //  // Can't clone DocumentImpl since it invokes us...
+        //  newnode=(NodeImpl)source.cloneNode(false);
+        //  newnode.ownerDocument=this;
+        // }
+        // else
+        if (source instanceof NodeImpl) {
+            userData = ((NodeImpl) source).getUserDataRecord();
+        }
+        int type = source.getNodeType();
+        switch (type) {
+            case ELEMENT_NODE: {
+                Element newElement;
+                boolean domLevel20 = source.getOwnerDocument().getImplementation().hasFeature("XML", "2.0");
+                // Create element according to namespace support/qualification.
+                if(domLevel20 == false || source.getLocalName() == null)
+                    newElement = createElement(source.getNodeName());
+                else
+                    newElement = createElementNS(source.getNamespaceURI(),
+                            source.getNodeName());
+
+                // Copy element's attributes, if any.
+                NamedNodeMap sourceAttrs = source.getAttributes();
+                if (sourceAttrs != null) {
+                    int length = sourceAttrs.getLength();
+                    for (int index = 0; index < length; index++) {
+                        Attr attr = (Attr)sourceAttrs.item(index);
+
+                        // NOTE: this methods is used for both importingNode
+                        // and cloning the document node. In case of the
+                        // clonning default attributes should be copied.
+                        // But for importNode defaults should be ignored.
+                        if (attr.getSpecified() || cloningDoc) {
+                            Attr newAttr = (Attr)importNode(attr, true, cloningDoc,
+                                    reversedIdentifiers);
+
+                            // Attach attribute according to namespace
+                            // support/qualification.
+                            if (domLevel20 == false ||
+                            attr.getLocalName() == null)
+                                newElement.setAttributeNode(newAttr);
+                            else
+                                newElement.setAttributeNodeNS(newAttr);
+                            }
+                        }
+                    }
+
+                // Register element identifier.
+                if (reversedIdentifiers != null) {
+                    // Does element have an associated identifier?
+                    String elementId = reversedIdentifiers.get(source);
+                    if (elementId != null) {
+                        if (identifiers == null) {
+                            identifiers = new HashMap<>();
+                        }
+
+                        identifiers.put(elementId, newElement);
+                    }
+                }
+
+                newnode = newElement;
+                break;
+            }
+
+            case ATTRIBUTE_NODE: {
+
+                if( source.getOwnerDocument().getImplementation().hasFeature("XML", "2.0") ){
+                    if (source.getLocalName() == null) {
+                        newnode = createAttribute(source.getNodeName());
+                    } else {
+                        newnode = createAttributeNS(source.getNamespaceURI(),
+                                source.getNodeName());
+                    }
+                }
+                else {
+                    newnode = createAttribute(source.getNodeName());
+                }
+                // if source is an AttrImpl from this very same implementation
+                // avoid creating the child nodes if possible
+                if (source instanceof AttrImpl) {
+                    AttrImpl attr = (AttrImpl) source;
+                    if (attr.hasStringValue()) {
+                        AttrImpl newattr = (AttrImpl) newnode;
+                        newattr.setValue(attr.getValue());
+                        deep = false;
+                    }
+                    else {
+                        deep = true;
+                    }
+                }
+                else {
+                    // According to the DOM spec the kids carry the value.
+                    // However, there are non compliant implementations out
+                    // there that fail to do so. To avoid ending up with no
+                    // value at all, in this case we simply copy the text value
+                    // directly.
+                    if (source.getFirstChild() == null) {
+                        newnode.setNodeValue(source.getNodeValue());
+                        deep = false;
+                    } else {
+                        deep = true;
+                    }
+                }
+                break;
+            }
+
+            case TEXT_NODE: {
+                newnode = createTextNode(source.getNodeValue());
+                break;
+            }
+
+            case CDATA_SECTION_NODE: {
+                newnode = createCDATASection(source.getNodeValue());
+                break;
+            }
+
+            case ENTITY_REFERENCE_NODE: {
+                newnode = createEntityReference(source.getNodeName());
+                // the subtree is created according to this doc by the method
+                // above, so avoid carrying over original subtree
+                deep = false;
+                break;
+            }
+
+            case ENTITY_NODE: {
+                Entity srcentity = (Entity)source;
+                EntityImpl newentity =
+                (EntityImpl)createEntity(source.getNodeName());
+                newentity.setPublicId(srcentity.getPublicId());
+                newentity.setSystemId(srcentity.getSystemId());
+                newentity.setNotationName(srcentity.getNotationName());
+                // Kids carry additional value,
+                // allow deep import temporarily
+                newentity.isReadOnly(false);
+                newnode = newentity;
+                break;
+            }
+
+            case PROCESSING_INSTRUCTION_NODE: {
+                newnode = createProcessingInstruction(source.getNodeName(),
+                        source.getNodeValue());
+                break;
+            }
+
+            case COMMENT_NODE: {
+                newnode = createComment(source.getNodeValue());
+                break;
+            }
+
+            case DOCUMENT_TYPE_NODE: {
+                // unless this is used as part of cloning a Document
+                // forbid it for the sake of being compliant to the DOM spec
+                if (!cloningDoc) {
+                    String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+                    throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+                }
+                DocumentType srcdoctype = (DocumentType)source;
+                DocumentTypeImpl newdoctype = (DocumentTypeImpl)
+                createDocumentType(srcdoctype.getNodeName(),
+                        srcdoctype.getPublicId(),
+                        srcdoctype.getSystemId());
+                // Values are on NamedNodeMaps
+                NamedNodeMap smap = srcdoctype.getEntities();
+                NamedNodeMap tmap = newdoctype.getEntities();
+                if(smap != null) {
+                    for(int i = 0; i < smap.getLength(); i++) {
+                        tmap.setNamedItem(importNode(smap.item(i), true, true,
+                                reversedIdentifiers));
+                    }
+                }
+                smap = srcdoctype.getNotations();
+                tmap = newdoctype.getNotations();
+                if (smap != null) {
+                    for(int i = 0; i < smap.getLength(); i++) {
+                        tmap.setNamedItem(importNode(smap.item(i), true, true,
+                                reversedIdentifiers));
+                    }
+                }
+
+                // NOTE: At this time, the DOM definition of DocumentType
+                // doesn't cover Elements and their Attributes. domimpl's
+                // extentions in that area will not be preserved, even if
+                // copying from domimpl to domimpl. We could special-case
+                // that here. Arguably we should. Consider. ?????
+                newnode = newdoctype;
+                break;
+            }
+
+            case DOCUMENT_FRAGMENT_NODE: {
+                newnode = createDocumentFragment();
+                // No name, kids carry value
+                break;
+            }
+
+            case NOTATION_NODE: {
+                Notation srcnotation = (Notation)source;
+                NotationImpl newnotation =
+                (NotationImpl)createNotation(source.getNodeName());
+                newnotation.setPublicId(srcnotation.getPublicId());
+                newnotation.setSystemId(srcnotation.getSystemId());
+                // Kids carry additional value
+                newnode = newnotation;
+                // No name, no value
+                break;
+            }
+            case DOCUMENT_NODE : // Can't import document nodes
+            default: {           // Unknown node type
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+        }
+
+                if(userData != null)
+                        callUserDataHandlers(source, newnode, UserDataHandler.NODE_IMPORTED,userData);
+
+        // If deep, replicate and attach the kids.
+        if (deep) {
+            for (Node srckid = source.getFirstChild();
+                    srckid != null;
+                    srckid = srckid.getNextSibling()) {
+                newnode.appendChild(importNode(srckid, true, cloningDoc,
+                        reversedIdentifiers));
+            }
+        }
+        if (newnode.getNodeType() == Node.ENTITY_NODE) {
+            ((NodeImpl)newnode).setReadOnly(true, true);
+        }
+        return newnode;
+
+!!!4214274.java!!!	adoptNode(inout source : Node) : Node
+        NodeImpl node;
+        Map<String, UserDataRecord> userData;
+        try {
+            node = (NodeImpl) source;
+        } catch (ClassCastException e) {
+            // source node comes from a different DOMImplementation
+            return null;
+        }
+
+        // Return null if the source is null
+
+        if (source == null ) {
+            return null;
+        } else if (source.getOwnerDocument() != null) {
+
+            DOMImplementation thisImpl = this.getImplementation();
+            DOMImplementation otherImpl = source.getOwnerDocument().getImplementation();
+
+            // when the source node comes from a different implementation.
+            if (thisImpl != otherImpl) {
+
+                // Adopting from a DefferedDOM to DOM
+                if (thisImpl instanceof com.sun.org.apache.xerces.internal.dom.DOMImplementationImpl &&
+                        otherImpl instanceof com.sun.org.apache.xerces.internal.dom.DeferredDOMImplementationImpl) {
+                    // traverse the DOM and expand deffered nodes and then allow adoption
+                    undeferChildren (node);
+                } else if ( thisImpl instanceof com.sun.org.apache.xerces.internal.dom.DeferredDOMImplementationImpl
+                        && otherImpl instanceof com.sun.org.apache.xerces.internal.dom.DOMImplementationImpl) {
+                    // Adopting from a DOM into a DefferedDOM, this should be okay
+                } else {
+                    // Adopting between two dissimilar DOM's is not allowed
+                    return null;
+                }
+            }
+        }
+
+        switch (node.getNodeType()) {
+            case ATTRIBUTE_NODE: {
+                AttrImpl attr = (AttrImpl) node;
+                // remove node from wherever it is
+                if( attr.getOwnerElement() != null){
+                    //1. owner element attribute is set to null
+                    attr.getOwnerElement().removeAttributeNode(attr);
+                }
+                //2. specified flag is set to true
+                attr.isSpecified(true);
+                userData = node.getUserDataRecord();
+
+                //3. change ownership
+                attr.setOwnerDocument(this);
+                if (userData != null) {
+                    setUserDataTable(node, userData);
+                }
+                break;
+            }
+            //entity, notation nodes are read only nodes.. so they can't be adopted.
+            //runtime will fall through to NOTATION_NODE
+            case ENTITY_NODE:
+            case NOTATION_NODE:{
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NO_MODIFICATION_ALLOWED_ERR", null);
+                throw new DOMException(DOMException.NO_MODIFICATION_ALLOWED_ERR, msg);
+
+            }
+            //document, documentype nodes can't be adopted.
+            //runtime will fall through to DocumentTypeNode
+            case DOCUMENT_NODE:
+            case DOCUMENT_TYPE_NODE: {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.DOM_DOMAIN, "NOT_SUPPORTED_ERR", null);
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+            case ENTITY_REFERENCE_NODE: {
+                userData = node.getUserDataRecord();
+                // remove node from wherever it is
+                Node parent = node.getParentNode();
+                if (parent != null) {
+                    parent.removeChild(source);
+                }
+                // discard its replacement value
+                Node child;
+                while ((child = node.getFirstChild()) != null) {
+                    node.removeChild(child);
+                }
+                // change ownership
+                node.setOwnerDocument(this);
+                if (userData != null) {
+                    setUserDataTable(node, userData);
+                }
+                // set its new replacement value if any
+                if (docType == null) {
+                    break;
+                }
+                NamedNodeMap entities = docType.getEntities();
+                Node entityNode = entities.getNamedItem(node.getNodeName());
+                if (entityNode == null) {
+                    break;
+                }
+                for (child = entityNode.getFirstChild();
+                        child != null; child = child.getNextSibling()) {
+                    Node childClone = child.cloneNode(true);
+                    node.appendChild(childClone);
+                }
+                break;
+            }
+            case ELEMENT_NODE: {
+                userData = node.getUserDataRecord();
+                // remove node from wherever it is
+                Node parent = node.getParentNode();
+                if (parent != null) {
+                    parent.removeChild(source);
+                }
+                // change ownership
+                node.setOwnerDocument(this);
+                if (userData != null) {
+                    setUserDataTable(node, userData);
+                }
+                // reconcile default attributes
+                ((ElementImpl)node).reconcileDefaultAttributes();
+                break;
+            }
+            default: {
+                userData = node.getUserDataRecord();
+                // remove node from wherever it is
+                Node parent = node.getParentNode();
+                if (parent != null) {
+                    parent.removeChild(source);
+                }
+                // change ownership
+                node.setOwnerDocument(this);
+                if (userData != null) {
+                    setUserDataTable(node, userData);
+                }
+            }
+        }
+
+                //DOM L3 Core CR
+        //http://www.w3.org/TR/2003/CR-DOM-Level-3-Core-20031107/core.html#UserDataHandler-ADOPTED
+        if (userData != null) {
+            callUserDataHandlers(source, null, UserDataHandler.NODE_ADOPTED, userData);
+        }
+
+        return node;
+!!!4214402.java!!!	undeferChildren(inout node : Node) : void
+
+        Node top = node;
+
+        while (null != node) {
+
+            if (((NodeImpl)node).needsSyncData()) {
+                ((NodeImpl)node).synchronizeData();
+            }
+
+            NamedNodeMap attributes = node.getAttributes();
+            if (attributes != null) {
+                int length = attributes.getLength();
+                for (int i = 0; i < length; ++i) {
+                    undeferChildren(attributes.item(i));
+                }
+            }
+
+            Node nextNode = null;
+            nextNode = node.getFirstChild();
+
+            while (null == nextNode) {
+
+                if (top.equals(node))
+                    break;
+
+                nextNode = node.getNextSibling();
+
+                if (null == nextNode) {
+                    node = node.getParentNode();
+
+                    if ((null == node) || (top.equals(node))) {
+                        nextNode = null;
+                        break;
+                    }
+                }
+            }
+
+            node = nextNode;
+        }
+!!!4214530.java!!!	getElementById(inout elementId : String) : Element
+        return getIdentifier(elementId);
+!!!4214658.java!!!	clearIdentifiers() : void
+        if (identifiers != null){
+            identifiers.clear();
+        }
+!!!4214786.java!!!	putIdentifier(inout idName : String, inout element : Element) : void
+
+        if (element == null) {
+            removeIdentifier(idName);
+            return;
+        }
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (identifiers == null) {
+            identifiers = new HashMap<>();
+        }
+
+        identifiers.put(idName, element);
+
+!!!4214914.java!!!	getIdentifier(inout idName : String) : Element
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (identifiers == null) {
+            return null;
+        }
+        Element elem = (Element) identifiers.get(idName);
+        if (elem != null) {
+            // check that the element is in the tree
+            Node parent = elem.getParentNode();
+            while (parent != null) {
+                if (parent == this) {
+                    return elem;
+                }
+                parent = parent.getParentNode();
+            }
+        }
+        return null;
+!!!4215042.java!!!	removeIdentifier(inout idName : String) : void
+
+        if (needsSyncData()) {
+            synchronizeData();
+        }
+
+        if (identifiers == null) {
+            return;
+        }
+
+        identifiers.remove(idName);
+
+!!!4215170.java!!!	createElementNS(inout namespaceURI : String, inout qualifiedName : String) : Element
+        return new ElementNSImpl(this, namespaceURI, qualifiedName);
+!!!4215298.java!!!	createElementNS(inout namespaceURI : String, inout qualifiedName : String, inout localpart : String) : Element
+        return new ElementNSImpl(this, namespaceURI, qualifiedName, localpart);
+!!!4215426.java!!!	createAttributeNS(inout namespaceURI : String, inout qualifiedName : String) : Attr
+        return new AttrNSImpl(this, namespaceURI, qualifiedName);
+!!!4215554.java!!!	createAttributeNS(inout namespaceURI : String, inout qualifiedName : String, inout localpart : String) : Attr
+        return new AttrNSImpl(this, namespaceURI, qualifiedName, localpart);
+!!!4215682.java!!!	getElementsByTagNameNS(inout namespaceURI : String, inout localName : String) : NodeList
+        return new DeepNodeListImpl(this, namespaceURI, localName);
+!!!4215810.java!!!	clone() : Object
+        CoreDocumentImpl newdoc = (CoreDocumentImpl) super.clone();
+        newdoc.docType = null;
+        newdoc.docElement = null;
+        return newdoc;
+!!!4215938.java!!!	isXMLName(inout s : String, inout xml11Version : boolean) : boolean
+
+        if (s == null) {
+            return false;
+        }
+        if(!xml11Version)
+            return XMLChar.isValidName(s);
+        else
+            return XML11Char.isXML11ValidName(s);
+
+!!!4216066.java!!!	isValidQName(inout prefix : String, inout local : String, inout xml11Version : boolean) : boolean
+
+        // check that both prefix and local part match NCName
+        if (local == null) return false;
+        boolean validNCName = false;
+
+        if (!xml11Version) {
+            validNCName = (prefix == null || XMLChar.isValidNCName(prefix))
+                    && XMLChar.isValidNCName(local);
+        }
+        else {
+            validNCName = (prefix == null || XML11Char.isXML11ValidNCName(prefix))
+                    && XML11Char.isXML11ValidNCName(local);
+        }
+
+        return validNCName;
+!!!4216194.java!!!	isKidOK(inout parent : Node, inout child : Node) : boolean
+        if (allowGrammarAccess &&
+        parent.getNodeType() == Node.DOCUMENT_TYPE_NODE) {
+            return child.getNodeType() == Node.ELEMENT_NODE;
+        }
+        return 0 != (kidOK[parent.getNodeType()] & 1 << child.getNodeType());
+!!!4216322.java!!!	changed() : void
+        changes++;
+!!!4216450.java!!!	changes() : int
+        return changes;
+!!!4216578.java!!!	getNodeListCache(inout owner : ParentNode) : NodeListCache
+        if (fFreeNLCache == null) {
+            return new NodeListCache(owner);
+        }
+        NodeListCache c = fFreeNLCache;
+        fFreeNLCache = fFreeNLCache.next;
+        c.fChild = null;
+        c.fChildIndex = -1;
+        c.fLength = -1;
+        // revoke previous ownership
+        if (c.fOwner != null) {
+            c.fOwner.fNodeListCache = null;
+        }
+        c.fOwner = owner;
+        // c.next = null; not necessary, except for confused people...
+        return c;
+!!!4216706.java!!!	freeNodeListCache(inout c : NodeListCache) : void
+        c.next = fFreeNLCache;
+        fFreeNLCache = c;
+!!!4216834.java!!!	setUserData(inout n : Node, inout key : String, inout data : Object, inout handler : UserDataHandler) : Object
+        if (data == null) {
+            if (nodeUserData != null) {
+                Map<String, UserDataRecord> t = nodeUserData.get(n);
+                if (t != null) {
+                    UserDataRecord r = t.remove(key);
+                    if (r != null) {
+                        return r.fData;
+                    }
+                }
+            }
+            return null;
+        } else {
+            Map<String, UserDataRecord> t;
+            if (nodeUserData == null) {
+                nodeUserData = new HashMap<>();
+                t = new HashMap<>();
+                nodeUserData.put(n, t);
+            } else {
+                t = nodeUserData.get(n);
+                if (t == null) {
+                    t = new HashMap<>();
+                    nodeUserData.put(n, t);
+                }
+            }
+            UserDataRecord r = t.put(key, new UserDataRecord(data, handler));
+            if (r != null) {
+                return r.fData;
+            }
+            return null;
+        }
+!!!4216962.java!!!	getUserData(inout n : Node, inout key : String) : Object
+        if (nodeUserData == null) {
+            return null;
+        }
+        Map<String, UserDataRecord> t = nodeUserData.get(n);
+        if (t == null) {
+            return null;
+        }
+        UserDataRecord r = t.get(key);
+        if (r != null) {
+            return r.fData;
+        }
+        return null;
+!!!4217090.java!!!	getUserDataRecord(inout n : Node) : Map
+        if (nodeUserData == null) {
+            return null;
+        }
+        Map<String, UserDataRecord> t = nodeUserData.get(n);
+        if (t == null) {
+            return null;
+        }
+        return t;
+!!!4217218.java!!!	removeUserDataTable(inout n : Node) : Map
+        if (nodeUserData == null) {
+            return null;
+        }
+        return nodeUserData.get(n);
+!!!4217346.java!!!	setUserDataTable(inout n : Node, inout data : Map) : void
+        if (nodeUserData == null) {
+            nodeUserData = new HashMap<>();
+        }
+
+        if (data != null) {
+            nodeUserData.put(n, data);
+        }
+!!!4217474.java!!!	callUserDataHandlers(inout n : Node, inout c : Node, in operation : short) : void
+        if (nodeUserData == null) {
+            return;
+        }
+
+        if (n instanceof NodeImpl) {
+            Map<String, UserDataRecord> t = ((NodeImpl) n).getUserDataRecord();
+            if (t == null || t.isEmpty()) {
+                return;
+            }
+            callUserDataHandlers(n, c, operation, t);
+        }
+!!!4217602.java!!!	callUserDataHandlers(inout n : Node, inout c : Node, in operation : short, inout userData : Map) : void
+        if (userData == null || userData.isEmpty()) {
+            return;
+        }
+        for (String key : userData.keySet()) {
+            UserDataRecord r = userData.get(key);
+            if (r.fHandler != null) {
+                r.fHandler.handle(operation, key, r.fData, n, c);
+            }
+        }
+!!!4217730.java!!!	checkNamespaceWF(inout qname : String, in colon1 : int, in colon2 : int) : void
+
+        if (!errorChecking) {
+            return;
+        }
+        // it is an error for NCName to have more than one ':'
+        // check if it is valid QName [Namespace in XML production 6]
+        // :camera , nikon:camera:minolta, camera:
+        if (colon1 == 0 || colon1 == qname.length() - 1 || colon2 != colon1) {
+            String msg =
+            DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "NAMESPACE_ERR",
+                            null);
+            throw new DOMException(DOMException.NAMESPACE_ERR, msg);
+        }
+!!!4217858.java!!!	checkDOMNSErr(inout prefix : String, inout namespace : String) : void
+        if (errorChecking) {
+            if (namespace == null) {
+                String msg =
+                DOMMessageFormatter.formatMessage(
+                                DOMMessageFormatter.DOM_DOMAIN,
+                                "NAMESPACE_ERR",
+                                null);
+                throw new DOMException(DOMException.NAMESPACE_ERR, msg);
+            }
+            else if (prefix.equals("xml")
+                    && !namespace.equals(NamespaceContext.XML_URI)) {
+                String msg =
+                DOMMessageFormatter.formatMessage(
+                                DOMMessageFormatter.DOM_DOMAIN,
+                                "NAMESPACE_ERR",
+                                null);
+                throw new DOMException(DOMException.NAMESPACE_ERR, msg);
+            }
+            else if (
+            prefix.equals("xmlns")
+                    && !namespace.equals(NamespaceContext.XMLNS_URI)
+                    || (!prefix.equals("xmlns")
+                    && namespace.equals(NamespaceContext.XMLNS_URI))) {
+                String msg =
+                DOMMessageFormatter.formatMessage(
+                                DOMMessageFormatter.DOM_DOMAIN,
+                                "NAMESPACE_ERR",
+                                null);
+                throw new DOMException(DOMException.NAMESPACE_ERR, msg);
+            }
+        }
+!!!4217986.java!!!	checkQName(inout prefix : String, inout local : String) : void
+        if (!errorChecking) {
+            return;
+        }
+
+        // check that both prefix and local part match NCName
+        boolean validNCName = false;
+        if (!xml11Version) {
+            validNCName = (prefix == null || XMLChar.isValidNCName(prefix))
+                    && XMLChar.isValidNCName(local);
+        }
+        else {
+            validNCName = (prefix == null || XML11Char.isXML11ValidNCName(prefix))
+                    && XML11Char.isXML11ValidNCName(local);
+        }
+
+        if (!validNCName) {
+            // REVISIT: add qname parameter to the message
+            String msg =
+            DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "INVALID_CHARACTER_ERR",
+                            null);
+            throw new DOMException(DOMException.INVALID_CHARACTER_ERR, msg);
+        }
+!!!4218114.java!!!	isXML11Version() : boolean
+        return xml11Version;
+!!!4218242.java!!!	isNormalizeDocRequired() : boolean
+        // REVISIT: Implement to optimize when normalization
+        // is required
+        return true;
+!!!4218370.java!!!	isXMLVersionChanged() : boolean
+        return xmlVersionChanged ;
+!!!4218498.java!!!	setUserData(inout n : NodeImpl, inout data : Object) : void
+        setUserData(n, "XERCES1DOMUSERDATA", data, null);
+!!!4218626.java!!!	getUserData(inout n : NodeImpl) : Object
+        return getUserData(n, "XERCES1DOMUSERDATA");
+!!!4218754.java!!!	addEventListener(inout node : NodeImpl, inout type : String, inout listener : EventListener, inout useCapture : boolean) : void
+        // does nothing by default - overidden in subclass
+!!!4218882.java!!!	removeEventListener(inout node : NodeImpl, inout type : String, inout listener : EventListener, inout useCapture : boolean) : void
+        // does nothing by default - overidden in subclass
+!!!4219010.java!!!	copyEventListeners(inout src : NodeImpl, inout tgt : NodeImpl) : void
+        // does nothing by default - overidden in subclass
+!!!4219138.java!!!	dispatchEvent(inout node : NodeImpl, inout event : Event) : boolean
+        // does nothing by default - overidden in subclass
+        return false;
+!!!4221570.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        // Convert Maps to Hashtables
+        Hashtable<Node, Hashtable<String, UserDataRecord>> nud = null;
+        if (nodeUserData != null) {
+            nud = new Hashtable<>();
+            for (Map.Entry<Node, Map<String, UserDataRecord>> e : nodeUserData.entrySet()) {
+                //e.getValue() will not be null since an entry is always put with a non-null value
+                nud.put(e.getKey(), new Hashtable<>(e.getValue()));
+            }
+        }
+
+        Hashtable<String, Node> ids = (identifiers == null)? null : new Hashtable<>(identifiers);
+        Hashtable<Node, Integer> nt = (nodeTable == null)? null : new Hashtable<>(nodeTable);
+
+        // Write serialized fields
+        ObjectOutputStream.PutField pf = out.putFields();
+        pf.put("docType", docType);
+        pf.put("docElement", docElement);
+        pf.put("fFreeNLCache", fFreeNLCache);
+        pf.put("encoding", encoding);
+        pf.put("actualEncoding", actualEncoding);
+        pf.put("version", version);
+        pf.put("standalone", standalone);
+        pf.put("fDocumentURI", fDocumentURI);
+
+        //userData is the original name. It has been changed to nodeUserData, refer to the corrsponding @serialField
+        pf.put("userData", nud);
+        pf.put("identifiers", ids);
+        pf.put("changes", changes);
+        pf.put("allowGrammarAccess", allowGrammarAccess);
+        pf.put("errorChecking", errorChecking);
+        pf.put("ancestorChecking", ancestorChecking);
+        pf.put("xmlVersionChanged", xmlVersionChanged);
+        pf.put("documentNumber", documentNumber);
+        pf.put("nodeCounter", nodeCounter);
+        pf.put("nodeTable", nt);
+        pf.put("xml11Version", xml11Version);
+        out.writeFields();
+!!!4221698.java!!!	readObject(inout in : ObjectInputStream) : void
+        // We have to read serialized fields first.
+        ObjectInputStream.GetField gf = in.readFields();
+        docType = (DocumentTypeImpl)gf.get("docType", null);
+        docElement = (ElementImpl)gf.get("docElement", null);
+        fFreeNLCache = (NodeListCache)gf.get("fFreeNLCache", null);
+        encoding = (String)gf.get("encoding", null);
+        actualEncoding = (String)gf.get("actualEncoding", null);
+        version = (String)gf.get("version", null);
+        standalone = gf.get("standalone", false);
+        fDocumentURI = (String)gf.get("fDocumentURI", null);
+
+        //userData is the original name. It has been changed to nodeUserData, refer to the corrsponding @serialField
+        Hashtable<Node, Hashtable<String, UserDataRecord>> nud =
+                (Hashtable<Node, Hashtable<String, UserDataRecord>>)gf.get("userData", null);
+
+        Hashtable<String, Node> ids = (Hashtable<String, Node>)gf.get("identifiers", null);
+
+        changes = gf.get("changes", 0);
+        allowGrammarAccess = gf.get("allowGrammarAccess", false);
+        errorChecking = gf.get("errorChecking", true);
+        ancestorChecking = gf.get("ancestorChecking", true);
+        xmlVersionChanged = gf.get("xmlVersionChanged", false);
+        documentNumber = gf.get("documentNumber", 0);
+        nodeCounter = gf.get("nodeCounter", 0);
+
+        Hashtable<Node, Integer> nt = (Hashtable<Node, Integer>)gf.get("nodeTable", null);
+
+        xml11Version = gf.get("xml11Version", false);
+
+        //convert Hashtables back to HashMaps
+        if (nud != null) {
+            nodeUserData = new HashMap<>();
+            for (Map.Entry<Node, Hashtable<String, UserDataRecord>> e : nud.entrySet()) {
+                nodeUserData.put(e.getKey(), new HashMap<>(e.getValue()));
+            }
+        }
+
+        if (ids != null) identifiers = new HashMap<>(ids);
+        if (nt != null) nodeTable = new HashMap<>(nt);

@@ -1,0 +1,331 @@
+class MessageFormat
+!!!8293378.java!!!	MessageFormat(inout pattern : String)
+        this.locale = Locale.getDefault(Locale.Category.FORMAT);
+        applyPattern(pattern);
+!!!8293506.java!!!	MessageFormat(inout pattern : String, inout locale : Locale)
+        this.locale = locale;
+        applyPattern(pattern);
+!!!8293634.java!!!	setLocale(inout locale : Locale) : void
+        this.locale = locale;
+!!!8293762.java!!!	getLocale() : Locale
+        return locale;
+!!!8293890.java!!!	applyPattern(inout pattern : String) : void
+            StringBuilder[] segments = new StringBuilder[4];
+            // Allocate only segments[SEG_RAW] here. The rest are
+            // allocated on demand.
+            segments[SEG_RAW] = new StringBuilder();
+
+            int part = SEG_RAW;
+            int formatNumber = 0;
+            boolean inQuote = false;
+            int braceStack = 0;
+            maxOffset = -1;
+            for (int i = 0; i < pattern.length(); ++i) {
+                char ch = pattern.charAt(i);
+                if (part == SEG_RAW) {
+                    if (ch == '\'') {
+                        if (i + 1 < pattern.length()
+                            && pattern.charAt(i+1) == '\'') {
+                            segments[part].append(ch);  // handle doubles
+                            ++i;
+                        } else {
+                            inQuote = !inQuote;
+                        }
+                    } else if (ch == '{' && !inQuote) {
+                        part = SEG_INDEX;
+                        if (segments[SEG_INDEX] == null) {
+                            segments[SEG_INDEX] = new StringBuilder();
+                        }
+                    } else {
+                        segments[part].append(ch);
+                    }
+                } else  {
+                    if (inQuote) {              // just copy quotes in parts
+                        segments[part].append(ch);
+                        if (ch == '\'') {
+                            inQuote = false;
+                        }
+                    } else {
+                        switch (ch) {
+                        case ',':
+                            if (part < SEG_MODIFIER) {
+                                if (segments[++part] == null) {
+                                    segments[part] = new StringBuilder();
+                                }
+                            } else {
+                                segments[part].append(ch);
+                            }
+                            break;
+                        case '{':
+                            ++braceStack;
+                            segments[part].append(ch);
+                            break;
+                        case '}':
+                            if (braceStack == 0) {
+                                part = SEG_RAW;
+                                makeFormat(i, formatNumber, segments);
+                                formatNumber++;
+                                // throw away other segments
+                                segments[SEG_INDEX] = null;
+                                segments[SEG_TYPE] = null;
+                                segments[SEG_MODIFIER] = null;
+                            } else {
+                                --braceStack;
+                                segments[part].append(ch);
+                            }
+                            break;
+                        case ' ':
+                            // Skip any leading space chars for SEG_TYPE.
+                            if (part != SEG_TYPE || segments[SEG_TYPE].length() > 0) {
+                                segments[part].append(ch);
+                            }
+                            break;
+                        case '\'':
+                            inQuote = true;
+                            // fall through, so we keep quotes in other parts
+                        default:
+                            segments[part].append(ch);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (braceStack == 0 && part != 0) {
+                maxOffset = -1;
+                throw new IllegalArgumentException("Unmatched braces in the pattern.");
+            }
+            this.pattern = segments[0].toString();
+!!!8294018.java!!!	toPattern() : String
+        // later, make this more extensible
+        int lastOffset = 0;
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i <= maxOffset; ++i) {
+            copyAndFixQuotes(pattern, lastOffset, offsets[i], result);
+            lastOffset = offsets[i];
+            result.append('{').append(argumentNumbers[i]);
+            Format fmt = formats[i];
+            if (fmt == null) {
+                // do nothing, string format
+            } else if (fmt instanceof NumberFormat) {
+                if (fmt.equals(NumberFormat.getInstance(locale))) {
+                    result.append(",number");
+                } else if (fmt.equals(NumberFormat.getCurrencyInstance(locale))) {
+                    result.append(",number,currency");
+                } else if (fmt.equals(NumberFormat.getPercentInstance(locale))) {
+                    result.append(",number,percent");
+                } else if (fmt.equals(NumberFormat.getIntegerInstance(locale))) {
+                    result.append(",number,integer");
+                } else {
+                    if (fmt instanceof DecimalFormat) {
+                        result.append(",number,").append(((DecimalFormat)fmt).toPattern());
+                    } else if (fmt instanceof ChoiceFormat) {
+                        result.append(",choice,").append(((ChoiceFormat)fmt).toPattern());
+                    } else {
+                        // UNKNOWN
+                    }
+                }
+            } else if (fmt instanceof DateFormat) {
+                int index;
+                for (index = MODIFIER_DEFAULT; index < DATE_TIME_MODIFIERS.length; index++) {
+                    DateFormat df = DateFormat.getDateInstance(DATE_TIME_MODIFIERS[index],
+                                                               locale);
+                    if (fmt.equals(df)) {
+                        result.append(",date");
+                        break;
+                    }
+                    df = DateFormat.getTimeInstance(DATE_TIME_MODIFIERS[index],
+                                                    locale);
+                    if (fmt.equals(df)) {
+                        result.append(",time");
+                        break;
+                    }
+                }
+                if (index >= DATE_TIME_MODIFIERS.length) {
+                    if (fmt instanceof SimpleDateFormat) {
+                        result.append(",date,").append(((SimpleDateFormat)fmt).toPattern());
+                    } else {
+                        // UNKNOWN
+                    }
+                } else if (index != MODIFIER_DEFAULT) {
+                    result.append(',').append(DATE_TIME_MODIFIER_KEYWORDS[index]);
+                }
+            } else {
+                //result.append(", unknown");
+            }
+            result.append('}');
+        }
+        copyAndFixQuotes(pattern, lastOffset, pattern.length(), result);
+        return result.toString();
+!!!8294146.java!!!	setFormatsByArgumentIndex(inout newFormats : Format [[]]) : void
+        for (int i = 0; i <= maxOffset; i++) {
+            int j = argumentNumbers[i];
+            if (j < newFormats.length) {
+                formats[i] = newFormats[j];
+            }
+        }
+!!!8294274.java!!!	setFormats(inout newFormats : Format [[]]) : void
+        int runsToCopy = newFormats.length;
+        if (runsToCopy > maxOffset + 1) {
+            runsToCopy = maxOffset + 1;
+        }
+        for (int i = 0; i < runsToCopy; i++) {
+            formats[i] = newFormats[i];
+        }
+!!!8294402.java!!!	setFormatByArgumentIndex(in argumentIndex : int, inout newFormat : Format) : void
+        for (int j = 0; j <= maxOffset; j++) {
+            if (argumentNumbers[j] == argumentIndex) {
+                formats[j] = newFormat;
+            }
+        }
+!!!8294530.java!!!	setFormat(in formatElementIndex : int, inout newFormat : Format) : void
+        formats[formatElementIndex] = newFormat;
+!!!8294658.java!!!	getFormatsByArgumentIndex() : Format
+        int maximumArgumentNumber = -1;
+        for (int i = 0; i <= maxOffset; i++) {
+            if (argumentNumbers[i] > maximumArgumentNumber) {
+                maximumArgumentNumber = argumentNumbers[i];
+            }
+        }
+        Format[] resultArray = new Format[maximumArgumentNumber + 1];
+        for (int i = 0; i <= maxOffset; i++) {
+            resultArray[argumentNumbers[i]] = formats[i];
+        }
+        return resultArray;
+!!!8294786.java!!!	getFormats() : Format
+        Format[] resultArray = new Format[maxOffset + 1];
+        System.arraycopy(formats, 0, resultArray, 0, maxOffset + 1);
+        return resultArray;
+!!!8294914.java!!!	format(inout arguments : Object [[]], inout result : StringBuffer, inout pos : FieldPosition) : StringBuffer
+        return subformat(arguments, result, pos, null);
+!!!8295042.java!!!	format(inout pattern : String, inout arguments : Object) : String
+        MessageFormat temp = new MessageFormat(pattern);
+        return temp.format(arguments);
+!!!8295170.java!!!	format(inout arguments : Object, inout result : StringBuffer, inout pos : FieldPosition) : StringBuffer
+        return subformat((Object[]) arguments, result, pos, null);
+!!!8295298.java!!!	formatToCharacterIterator(inout arguments : Object) : AttributedCharacterIterator
+        StringBuffer result = new StringBuffer();
+        ArrayList<AttributedCharacterIterator> iterators = new ArrayList<>();
+
+        if (arguments == null) {
+            throw new NullPointerException(
+                   "formatToCharacterIterator must be passed non-null object");
+        }
+        subformat((Object[]) arguments, result, null, iterators);
+        if (iterators.size() == 0) {
+            return createAttributedCharacterIterator("");
+        }
+        return createAttributedCharacterIterator(
+                     iterators.toArray(
+                     new AttributedCharacterIterator[iterators.size()]));
+!!!8295426.java!!!	parse(inout source : String, inout pos : ParsePosition) : Object
+        if (source == null) {
+            Object[] empty = {};
+            return empty;
+        }
+
+        int maximumArgumentNumber = -1;
+        for (int i = 0; i <= maxOffset; i++) {
+            if (argumentNumbers[i] > maximumArgumentNumber) {
+                maximumArgumentNumber = argumentNumbers[i];
+            }
+        }
+        Object[] resultArray = new Object[maximumArgumentNumber + 1];
+
+        int patternOffset = 0;
+        int sourceOffset = pos.index;
+        ParsePosition tempStatus = new ParsePosition(0);
+        for (int i = 0; i <= maxOffset; ++i) {
+            // match up to format
+            int len = offsets[i] - patternOffset;
+            if (len == 0 || pattern.regionMatches(patternOffset,
+                                                  source, sourceOffset, len)) {
+                sourceOffset += len;
+                patternOffset += len;
+            } else {
+                pos.errorIndex = sourceOffset;
+                return null; // leave index as is to signal error
+            }
+
+            // now use format
+            if (formats[i] == null) {   // string format
+                // if at end, use longest possible match
+                // otherwise uses first match to intervening string
+                // does NOT recursively try all possibilities
+                int tempLength = (i != maxOffset) ? offsets[i+1] : pattern.length();
+
+                int next;
+                if (patternOffset >= tempLength) {
+                    next = source.length();
+                }else{
+                    next = source.indexOf(pattern.substring(patternOffset, tempLength),
+                                          sourceOffset);
+                }
+
+                if (next < 0) {
+                    pos.errorIndex = sourceOffset;
+                    return null; // leave index as is to signal error
+                } else {
+                    String strValue= source.substring(sourceOffset,next);
+                    if (!strValue.equals("{"+argumentNumbers[i]+"}"))
+                        resultArray[argumentNumbers[i]]
+                            = source.substring(sourceOffset,next);
+                    sourceOffset = next;
+                }
+            } else {
+                tempStatus.index = sourceOffset;
+                resultArray[argumentNumbers[i]]
+                    = formats[i].parseObject(source,tempStatus);
+                if (tempStatus.index == sourceOffset) {
+                    pos.errorIndex = sourceOffset;
+                    return null; // leave index as is to signal error
+                }
+                sourceOffset = tempStatus.index; // update
+            }
+        }
+        int len = pattern.length() - patternOffset;
+        if (len == 0 || pattern.regionMatches(patternOffset,
+                                              source, sourceOffset, len)) {
+            pos.index = sourceOffset + len;
+        } else {
+            pos.errorIndex = sourceOffset;
+            return null; // leave index as is to signal error
+        }
+        return resultArray;
+!!!8295554.java!!!	parse(inout source : String) : Object
+        ParsePosition pos  = new ParsePosition(0);
+        Object[] result = parse(source, pos);
+        if (pos.index == 0)  // unchanged, returned object is null
+            throw new ParseException("MessageFormat parse error!", pos.errorIndex);
+
+        return result;
+!!!8295682.java!!!	parseObject(inout source : String, inout pos : ParsePosition) : Object
+        return parse(source, pos);
+!!!8295810.java!!!	clone() : Object
+        MessageFormat other = (MessageFormat) super.clone();
+
+        // clone arrays. Can't do with utility because of bug in Cloneable
+        other.formats = formats.clone(); // shallow clone
+        for (int i = 0; i < formats.length; ++i) {
+            if (formats[i] != null)
+                other.formats[i] = (Format)formats[i].clone();
+        }
+        // for primitives or immutables, shallow clone is enough
+        other.offsets = offsets.clone();
+        other.argumentNumbers = argumentNumbers.clone();
+
+        return other;
+!!!8295938.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj)                      // quick check
+            return true;
+        if (obj == null || getClass() != obj.getClass())
+            return false;
+        MessageFormat other = (MessageFormat) obj;
+        return (maxOffset == other.maxOffset
+                && pattern.equals(other.pattern)
+                && ((locale != null && locale.equals(other.locale))
+                 || (locale == null && other.locale == null))
+                && Arrays.equals(offsets,other.offsets)
+                && Arrays.equals(argumentNumbers,other.argumentNumbers)
+                && Arrays.equals(formats,other.formats));
+!!!8296066.java!!!	hashCode() : int
+        return pattern.hashCode(); // enough for reasonable distribution

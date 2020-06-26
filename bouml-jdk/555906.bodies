@@ -1,0 +1,646 @@
+class MethodGen
+!!!3574146.java!!!	MethodGen(in access_flags : int, inout return_type : Type, inout arg_types : Type [[]], inout arg_names : String [[]], inout method_name : String, inout class_name : String, inout il : InstructionList, inout cp : ConstantPoolGen)
+    setAccessFlags(access_flags);
+    setType(return_type);
+    setArgumentTypes(arg_types);
+    setArgumentNames(arg_names);
+    setName(method_name);
+    setClassName(class_name);
+    setInstructionList(il);
+    setConstantPool(cp);
+
+    boolean abstract_ = isAbstract() || isNative();
+    InstructionHandle start = null;
+    InstructionHandle end   = null;
+
+    if(!abstract_) {
+      start = il.getStart();
+      end   = il.getEnd();
+
+      /* Add local variables, namely the implicit `this' and the arguments
+       */
+      if(!isStatic() && (class_name != null)) { // Instance method -> `this' is local var 0
+        addLocalVariable("this", new ObjectType(class_name), start, end);
+      }
+    }
+
+    if(arg_types != null) {
+      int size = arg_types.length;
+
+      for(int i=0; i < size; i++) {
+        if(Type.VOID == arg_types[i]) {
+          throw new ClassGenException("'void' is an illegal argument type for a method");
+        }
+      }
+
+      if(arg_names != null) { // Names for variables provided?
+        if(size != arg_names.length)
+          throw new ClassGenException("Mismatch in argument array lengths: " +
+                                      size + " vs. " + arg_names.length);
+      } else { // Give them dummy names
+        arg_names = new String[size];
+
+        for(int i=0; i < size; i++)
+          arg_names[i] = "arg" + i;
+
+        setArgumentNames(arg_names);
+      }
+
+      if(!abstract_) {
+        for(int i=0; i < size; i++) {
+          addLocalVariable(arg_names[i], arg_types[i], start, end);
+        }
+      }
+    }
+!!!3574274.java!!!	MethodGen(inout m : Method, inout class_name : String, inout cp : ConstantPoolGen)
+    this(m.getAccessFlags(), Type.getReturnType(m.getSignature()),
+         Type.getArgumentTypes(m.getSignature()), null /* may be overridden anyway */,
+         m.getName(), class_name,
+         ((m.getAccessFlags() & (Constants.ACC_ABSTRACT | Constants.ACC_NATIVE)) == 0)?
+         new InstructionList(m.getCode().getCode()) : null,
+         cp);
+
+    Attribute[] attributes = m.getAttributes();
+    for(int i=0; i < attributes.length; i++) {
+      Attribute a = attributes[i];
+
+      if(a instanceof Code) {
+        Code c = (Code)a;
+        setMaxStack(c.getMaxStack());
+        setMaxLocals(c.getMaxLocals());
+
+        CodeException[] ces = c.getExceptionTable();
+
+        if(ces != null) {
+          for(int j=0; j < ces.length; j++) {
+            CodeException ce     = ces[j];
+            int           type   = ce.getCatchType();
+            ObjectType    c_type = null;
+
+            if(type > 0) {
+              String cen = m.getConstantPool().getConstantString(type, Constants.CONSTANT_Class);
+              c_type = new ObjectType(cen);
+            }
+
+            int end_pc = ce.getEndPC();
+            int length = m.getCode().getCode().length;
+
+            InstructionHandle end;
+
+            if(length == end_pc) { // May happen, because end_pc is exclusive
+              end = il.getEnd();
+            } else {
+              end = il.findHandle(end_pc);
+              end = end.getPrev(); // Make it inclusive
+            }
+
+            addExceptionHandler(il.findHandle(ce.getStartPC()), end,
+                                il.findHandle(ce.getHandlerPC()), c_type);
+          }
+        }
+
+        Attribute[] c_attributes = c.getAttributes();
+        for(int j=0; j < c_attributes.length; j++) {
+          a = c_attributes[j];
+
+          if(a instanceof LineNumberTable) {
+            LineNumber[] ln = ((LineNumberTable)a).getLineNumberTable();
+
+            for(int k=0; k < ln.length; k++) {
+              LineNumber l = ln[k];
+              addLineNumber(il.findHandle(l.getStartPC()), l.getLineNumber());
+            }
+          } else if(a instanceof LocalVariableTable) {
+            LocalVariable[] lv = ((LocalVariableTable)a).getLocalVariableTable();
+
+            removeLocalVariables();
+
+            for(int k=0; k < lv.length; k++) {
+              LocalVariable     l     = lv[k];
+              InstructionHandle start = il.findHandle(l.getStartPC());
+              InstructionHandle end   = il.findHandle(l.getStartPC() + l.getLength());
+
+              // Repair malformed handles
+              if(null == start) {
+                start = il.getStart();
+              }
+
+              if(null == end) {
+                end = il.getEnd();
+              }
+
+              addLocalVariable(l.getName(), Type.getType(l.getSignature()),
+                               l.getIndex(), start, end);
+            }
+          } else if (a instanceof LocalVariableTypeTable) {
+             LocalVariable[] lv = ((LocalVariableTypeTable) a).getLocalVariableTypeTable();
+             removeLocalVariableTypes();
+             for (int k = 0; k < lv.length; k++) {
+                 LocalVariable l = lv[k];
+                 InstructionHandle start = il.findHandle(l.getStartPC());
+                 InstructionHandle end = il.findHandle(l.getStartPC() + l.getLength());
+                 // Repair malformed handles
+                 if (null == start) {
+                     start = il.getStart();
+                 }
+                 if (null == end) {
+                     end = il.getEnd();
+                 }
+                 addLocalVariableType(l.getName(), Type.getType(l.getSignature()), l
+                         .getIndex(), start, end);
+              }
+          } else
+            addCodeAttribute(a);
+        }
+      } else if(a instanceof ExceptionTable) {
+        String[] names = ((ExceptionTable)a).getExceptionNames();
+        for(int j=0; j < names.length; j++)
+          addException(names[j]);
+      } else
+        addAttribute(a);
+    }
+!!!3574402.java!!!	addLocalVariable(inout name : String, inout type : Type, in slot : int, inout start : InstructionHandle, inout end : InstructionHandle) : LocalVariableGen
+    byte t = type.getType();
+
+    if(t != Constants.T_ADDRESS) {
+      int  add = type.getSize();
+
+      if(slot + add > max_locals)
+        max_locals = slot + add;
+
+      LocalVariableGen l = new LocalVariableGen(slot, name, type, start, end);
+      int i;
+
+      if((i = variable_vec.indexOf(l)) >= 0) // Overwrite if necessary
+        variable_vec.set(i, l);
+      else
+        variable_vec.add(l);
+
+      return l;
+    } else {
+      throw new IllegalArgumentException("Can not use " + type +
+                                         " as type for local variable");
+
+    }
+!!!3574530.java!!!	addLocalVariable(inout name : String, inout type : Type, inout start : InstructionHandle, inout end : InstructionHandle) : LocalVariableGen
+    return addLocalVariable(name, type, max_locals, start, end);
+!!!3574658.java!!!	removeLocalVariable(inout l : LocalVariableGen) : void
+    variable_vec.remove(l);
+!!!3574786.java!!!	removeLocalVariables() : void
+    variable_vec.clear();
+!!!3574914.java!!!	sort(inout vars : LocalVariableGen [[]], in l : int, in r : int) : void
+    int i = l, j = r;
+    int m = vars[(l + r) / 2].getIndex();
+    LocalVariableGen h;
+
+    do {
+      while(vars[i].getIndex() < m) i++;
+      while(m < vars[j].getIndex()) j--;
+
+      if(i <= j) {
+        h=vars[i]; vars[i]=vars[j]; vars[j]=h; // Swap elements
+        i++; j--;
+      }
+    } while(i <= j);
+
+    if(l < j) sort(vars, l, j);
+    if(i < r) sort(vars, i, r);
+!!!3575042.java!!!	getLocalVariables() : LocalVariableGen
+    int                size = variable_vec.size();
+    LocalVariableGen[] lg   = new LocalVariableGen[size];
+    variable_vec.toArray(lg);
+
+    for(int i=0; i < size; i++) {
+      if(lg[i].getStart() == null)
+        lg[i].setStart(il.getStart());
+
+      if(lg[i].getEnd() == null)
+        lg[i].setEnd(il.getEnd());
+    }
+
+    if(size > 1)
+      sort(lg, 0, size - 1);
+
+    return lg;
+!!!3575170.java!!!	getLocalVariableTypes() : LocalVariableGen
+    int                size = type_vec.size();
+    LocalVariableGen[] lg   = new LocalVariableGen[size];
+    type_vec.toArray(lg);
+
+    for(int i=0; i < size; i++) {
+      if(lg[i].getStart() == null)
+        lg[i].setStart(il.getStart());
+
+      if(lg[i].getEnd() == null)
+        lg[i].setEnd(il.getEnd());
+    }
+
+    if(size > 1)
+      sort(lg, 0, size - 1);
+
+    return lg;
+!!!3575298.java!!!	getLocalVariableTable(inout cp : ConstantPoolGen) : LocalVariableTable
+    LocalVariableGen[] lg   = getLocalVariables();
+    int                size = lg.length;
+    LocalVariable[]    lv   = new LocalVariable[size];
+
+    for(int i=0; i < size; i++)
+      lv[i] = lg[i].getLocalVariable(cp);
+
+    return new LocalVariableTable(cp.addUtf8("LocalVariableTable"),
+                                  2 + lv.length * 10, lv, cp.getConstantPool());
+!!!3575426.java!!!	getLocalVariableTypeTable(inout cp : ConstantPoolGen) : LocalVariableTypeTable
+    LocalVariableGen[] lg   = getLocalVariableTypes();
+    int                size = lg.length;
+    LocalVariable[]    lv   = new LocalVariable[size];
+
+    for(int i=0; i < size; i++)
+      lv[i] = lg[i].getLocalVariable(cp);
+
+    return new LocalVariableTypeTable(cp.addUtf8("LocalVariableTypeTable"),
+                                  2 + lv.length * 10, lv, cp.getConstantPool());
+!!!3575554.java!!!	addLocalVariableType(inout name : String, inout type : Type, in slot : int, inout start : InstructionHandle, inout end : InstructionHandle) : LocalVariableGen
+    byte t = type.getType();
+
+    if(t != Constants.T_ADDRESS) {
+      int  add = type.getSize();
+
+      if(slot + add > max_locals)
+        max_locals = slot + add;
+
+      LocalVariableGen l = new LocalVariableGen(slot, name, type, start, end);
+      int i;
+
+      if((i = type_vec.indexOf(l)) >= 0) // Overwrite if necessary
+        type_vec.set(i, l);
+      else
+        type_vec.add(l);
+
+      return l;
+    } else {
+      throw new IllegalArgumentException("Can not use " + type +
+                                         " as type for local variable");
+
+    }
+!!!3575682.java!!!	removeLocalVariableTypes() : void
+    type_vec.clear();
+!!!3575810.java!!!	addLineNumber(inout ih : InstructionHandle, in src_line : int) : LineNumberGen
+    LineNumberGen l = new LineNumberGen(ih, src_line);
+    line_number_vec.add(l);
+    return l;
+!!!3575938.java!!!	removeLineNumber(inout l : LineNumberGen) : void
+    line_number_vec.remove(l);
+!!!3576066.java!!!	removeLineNumbers() : void
+    line_number_vec.clear();
+!!!3576194.java!!!	getLineNumbers() : LineNumberGen
+    LineNumberGen[] lg = new LineNumberGen[line_number_vec.size()];
+    line_number_vec.toArray(lg);
+    return lg;
+!!!3576322.java!!!	getLineNumberTable(inout cp : ConstantPoolGen) : LineNumberTable
+    int          size = line_number_vec.size();
+    LineNumber[] ln   = new LineNumber[size];
+
+    try {
+      for(int i=0; i < size; i++)
+        ln[i] = ((LineNumberGen)line_number_vec.get(i)).getLineNumber();
+    } catch(ArrayIndexOutOfBoundsException e) {} // Never occurs
+
+    return new LineNumberTable(cp.addUtf8("LineNumberTable"),
+                               2 + ln.length * 4, ln, cp.getConstantPool());
+!!!3576450.java!!!	addExceptionHandler(inout start_pc : InstructionHandle, inout end_pc : InstructionHandle, inout handler_pc : InstructionHandle, inout catch_type : ObjectType) : CodeExceptionGen
+    if((start_pc == null) || (end_pc == null) || (handler_pc == null))
+      throw new ClassGenException("Exception handler target is null instruction");
+
+    CodeExceptionGen c = new CodeExceptionGen(start_pc, end_pc,
+                                              handler_pc, catch_type);
+    exception_vec.add(c);
+    return c;
+!!!3576578.java!!!	removeExceptionHandler(inout c : CodeExceptionGen) : void
+    exception_vec.remove(c);
+!!!3576706.java!!!	removeExceptionHandlers() : void
+    exception_vec.clear();
+!!!3576834.java!!!	getExceptionHandlers() : CodeExceptionGen
+    CodeExceptionGen[] cg   = new CodeExceptionGen[exception_vec.size()];
+    exception_vec.toArray(cg);
+    return cg;
+!!!3576962.java!!!	getCodeExceptions() : CodeException
+    int             size  = exception_vec.size();
+    CodeException[] c_exc = new CodeException[size];
+
+    try {
+      for(int i=0; i < size; i++) {
+        CodeExceptionGen c = (CodeExceptionGen)exception_vec.get(i);
+        c_exc[i] = c.getCodeException(cp);
+      }
+    } catch(ArrayIndexOutOfBoundsException e) {}
+
+    return c_exc;
+!!!3577090.java!!!	addException(inout class_name : String) : void
+    throws_vec.add(class_name);
+!!!3577218.java!!!	removeException(inout c : String) : void
+    throws_vec.remove(c);
+!!!3577346.java!!!	removeExceptions() : void
+    throws_vec.clear();
+!!!3577474.java!!!	getExceptions() : String
+    String[] e = new String[throws_vec.size()];
+    throws_vec.toArray(e);
+    return e;
+!!!3577602.java!!!	getExceptionTable(inout cp : ConstantPoolGen) : ExceptionTable
+    int   size = throws_vec.size();
+    int[] ex   = new int[size];
+
+    try {
+      for(int i=0; i < size; i++)
+        ex[i] = cp.addClass((String)throws_vec.get(i));
+    } catch(ArrayIndexOutOfBoundsException e) {}
+
+    return new ExceptionTable(cp.addUtf8("Exceptions"),
+                              2 + 2 * size, ex, cp.getConstantPool());
+!!!3577730.java!!!	addCodeAttribute(inout a : Attribute) : void
+ code_attrs_vec.add(a);
+!!!3577858.java!!!	removeCodeAttribute(inout a : Attribute) : void
+ code_attrs_vec.remove(a);
+!!!3577986.java!!!	removeCodeAttributes() : void
+    code_attrs_vec.clear();
+!!!3578114.java!!!	getCodeAttributes() : Attribute
+    Attribute[] attributes = new Attribute[code_attrs_vec.size()];
+    code_attrs_vec.toArray(attributes);
+    return attributes;
+!!!3578242.java!!!	getMethod() : Method
+    String signature       = getSignature();
+    int    name_index      = cp.addUtf8(name);
+    int    signature_index = cp.addUtf8(signature);
+
+    /* Also updates positions of instructions, i.e., their indices
+     */
+    byte[] byte_code = null;
+
+    if(il != null)
+      byte_code = il.getByteCode();
+
+    LineNumberTable    lnt = null;
+    LocalVariableTable lvt = null;
+    LocalVariableTypeTable lvtt = null;
+
+    /* Create LocalVariableTable, LocalvariableTypeTable, and LineNumberTable
+     * attributes (for debuggers, e.g.)
+     */
+    if((variable_vec.size() > 0) && !strip_attributes)
+      addCodeAttribute(lvt = getLocalVariableTable(cp));
+
+    if((type_vec.size() > 0) && !strip_attributes)
+      addCodeAttribute(lvtt = getLocalVariableTypeTable(cp));
+
+    if((line_number_vec.size() > 0) && !strip_attributes)
+      addCodeAttribute(lnt = getLineNumberTable(cp));
+
+    Attribute[] code_attrs = getCodeAttributes();
+
+    /* Each attribute causes 6 additional header bytes
+     */
+    int                attrs_len  = 0;
+    for(int i=0; i < code_attrs.length; i++)
+      attrs_len += (code_attrs[i].getLength() + 6);
+
+    CodeException[] c_exc   = getCodeExceptions();
+    int             exc_len = c_exc.length * 8; // Every entry takes 8 bytes
+
+    Code code = null;
+
+    if((il != null) && !isAbstract()) {
+      // Remove any stale code attribute
+      Attribute[] attributes = getAttributes();
+      for(int i=0; i < attributes.length; i++) {
+        Attribute a = attributes[i];
+
+        if(a instanceof Code)
+          removeAttribute(a);
+      }
+
+      code = new Code(cp.addUtf8("Code"),
+                      8 + byte_code.length + // prologue byte code
+                      2 + exc_len +          // exceptions
+                      2 + attrs_len,         // attributes
+                      max_stack, max_locals,
+                      byte_code, c_exc,
+                      code_attrs,
+                      cp.getConstantPool());
+
+      addAttribute(code);
+    }
+
+    ExceptionTable et = null;
+
+    if(throws_vec.size() > 0)
+      addAttribute(et = getExceptionTable(cp)); // Add `Exceptions' if there are "throws" clauses
+
+    Method m = new Method(access_flags, name_index, signature_index,
+                          getAttributes(), cp.getConstantPool());
+
+    // Undo effects of adding attributes
+    if(lvt != null)  removeCodeAttribute(lvt);
+    if(lvtt != null) removeCodeAttribute(lvtt);
+    if(lnt != null)  removeCodeAttribute(lnt);
+    if(code != null) removeAttribute(code);
+    if(et != null)   removeAttribute(et);
+
+    return m;
+!!!3578370.java!!!	removeNOPs() : void
+    if(il != null) {
+      InstructionHandle next;
+      /* Check branch instructions.
+       */
+      for(InstructionHandle ih = il.getStart(); ih != null; ih = next) {
+        next = ih.next;
+
+        if((next != null) && (ih.getInstruction() instanceof NOP)) {
+          try {
+            il.delete(ih);
+          } catch(TargetLostException e) {
+            InstructionHandle[] targets = e.getTargets();
+
+            for(int i=0; i < targets.length; i++) {
+              InstructionTargeter[] targeters = targets[i].getTargeters();
+
+              for(int j=0; j < targeters.length; j++)
+                targeters[j].updateTarget(targets[i], next);
+            }
+          }
+        }
+      }
+    }
+!!!3578498.java!!!	setMaxLocals(in m : int) : void
+ max_locals = m;
+!!!3578626.java!!!	getMaxLocals() : int
+ return max_locals;
+!!!3578754.java!!!	setMaxStack(in m : int) : void
+ max_stack = m;
+!!!3578882.java!!!	getMaxStack() : int
+ return max_stack;
+!!!3579010.java!!!	getClassName() : String
+ return class_name;
+!!!3579138.java!!!	setClassName(inout class_name : String) : void
+ this.class_name = class_name;
+!!!3579266.java!!!	setReturnType(inout return_type : Type) : void
+ setType(return_type);
+!!!3579394.java!!!	getReturnType() : Type
+ return getType();
+!!!3579522.java!!!	setArgumentTypes(inout arg_types : Type [[]]) : void
+ this.arg_types = arg_types;
+!!!3579650.java!!!	getArgumentTypes() : Type
+ return (Type[])arg_types.clone();
+!!!3579778.java!!!	setArgumentType(in i : int, inout type : Type) : void
+ arg_types[i] = type;
+!!!3579906.java!!!	getArgumentType(in i : int) : Type
+ return arg_types[i];
+!!!3580034.java!!!	setArgumentNames(inout arg_names : String [[]]) : void
+ this.arg_names = arg_names;
+!!!3580162.java!!!	getArgumentNames() : String
+ return (String[])arg_names.clone();
+!!!3580290.java!!!	setArgumentName(in i : int, inout name : String) : void
+ arg_names[i] = name;
+!!!3580418.java!!!	getArgumentName(in i : int) : String
+ return arg_names[i];
+!!!3580546.java!!!	getInstructionList() : InstructionList
+ return il;
+!!!3580674.java!!!	setInstructionList(inout il : InstructionList) : void
+ this.il = il;
+!!!3580802.java!!!	getSignature() : String
+    return Type.getMethodSignature(type, arg_types);
+!!!3580930.java!!!	setMaxStack() : void
+    if(il != null)
+      max_stack = getMaxStack(cp, il, getExceptionHandlers());
+    else
+      max_stack = 0;
+!!!3581058.java!!!	setMaxLocals() : void
+    if(il != null) {
+      int max = isStatic()? 0 : 1;
+
+      if(arg_types != null)
+        for(int i=0; i < arg_types.length; i++)
+          max += arg_types[i].getSize();
+
+      for(InstructionHandle ih = il.getStart(); ih != null; ih = ih.getNext()) {
+        Instruction ins = ih.getInstruction();
+
+        if((ins instanceof LocalVariableInstruction) ||
+           (ins instanceof RET) || (ins instanceof IINC))
+        {
+          int index = ((IndexedInstruction)ins).getIndex() +
+            ((TypedInstruction)ins).getType(cp).getSize();
+
+          if(index > max)
+            max = index;
+        }
+      }
+
+      max_locals = max;
+    } else
+      max_locals = 0;
+!!!3581186.java!!!	stripAttributes(inout flag : boolean) : void
+ strip_attributes = flag;
+!!!3581954.java!!!	getMaxStack(inout cp : ConstantPoolGen, inout il : InstructionList, inout et : CodeExceptionGen [[]]) : int
+    BranchStack branchTargets = new BranchStack();
+
+    /* Initially, populate the branch stack with the exception
+     * handlers, because these aren't (necessarily) branched to
+     * explicitly. in each case, the stack will have depth 1,
+     * containing the exception object.
+     */
+    for (int i = 0; i < et.length; i++) {
+      InstructionHandle handler_pc = et[i].getHandlerPC();
+      if (handler_pc != null)
+        branchTargets.push(handler_pc, 1);
+    }
+
+    int               stackDepth = 0, maxStackDepth = 0;
+    InstructionHandle ih         = il.getStart();
+
+    while(ih != null) {
+      Instruction instruction = ih.getInstruction();
+      short opcode = instruction.getOpcode();
+      int delta = instruction.produceStack(cp) - instruction.consumeStack(cp);
+
+      stackDepth += delta;
+      if(stackDepth > maxStackDepth)
+        maxStackDepth = stackDepth;
+
+      // choose the next instruction based on whether current is a branch.
+      if(instruction instanceof BranchInstruction) {
+        BranchInstruction branch = (BranchInstruction) instruction;
+        if(instruction instanceof Select) {
+          // explore all of the select's targets. the default target is handled below.
+          Select select = (Select) branch;
+          InstructionHandle[] targets = select.getTargets();
+          for (int i = 0; i < targets.length; i++)
+            branchTargets.push(targets[i], stackDepth);
+          // nothing to fall through to.
+          ih = null;
+        } else if(!(branch instanceof IfInstruction)) {
+          // if an instruction that comes back to following PC,
+          // push next instruction, with stack depth reduced by 1.
+          if(opcode == Constants.JSR || opcode == Constants.JSR_W)
+            branchTargets.push(ih.getNext(), stackDepth - 1);
+          ih = null;
+        }
+        // for all branches, the target of the branch is pushed on the branch stack.
+        // conditional branches have a fall through case, selects don't, and
+        // jsr/jsr_w return to the next instruction.
+        branchTargets.push(branch.getTarget(), stackDepth);
+      } else {
+        // check for instructions that terminate the method.
+        if(opcode == Constants.ATHROW || opcode == Constants.RET ||
+           (opcode >= Constants.IRETURN && opcode <= Constants.RETURN))
+          ih = null;
+      }
+      // normal case, go to the next instruction.
+      if(ih != null)
+        ih = ih.getNext();
+      // if we have no more instructions, see if there are any deferred branches to explore.
+      if(ih == null) {
+        BranchTarget bt = branchTargets.pop();
+        if (bt != null) {
+          ih = bt.target;
+          stackDepth = bt.stackDepth;
+        }
+      }
+    }
+
+    return maxStackDepth;
+!!!3582082.java!!!	addObserver(inout o : MethodObserver) : void
+    if(observers == null)
+      observers = new ArrayList();
+
+    observers.add(o);
+!!!3582210.java!!!	removeObserver(inout o : MethodObserver) : void
+    if(observers != null)
+      observers.remove(o);
+!!!3582338.java!!!	update() : void
+    if(observers != null)
+      for(Iterator e = observers.iterator(); e.hasNext(); )
+        ((MethodObserver)e.next()).notify(this);
+!!!3582466.java!!!	toString() : String
+    String access    = Utility.accessToString(access_flags);
+    String signature = Type.getMethodSignature(type, arg_types);
+
+    signature = Utility.methodSignatureToString(signature, name, access,
+                                                true, getLocalVariableTable(cp));
+
+    StringBuffer buf = new StringBuffer(signature);
+
+    if(throws_vec.size() > 0) {
+      for(Iterator e = throws_vec.iterator(); e.hasNext(); )
+        buf.append("\n\t\tthrows " + e.next());
+    }
+
+    return buf.toString();
+!!!3582594.java!!!	copy(inout class_name : String, inout cp : ConstantPoolGen) : MethodGen
+    Method    m  = ((MethodGen)clone()).getMethod();
+    MethodGen mg = new MethodGen(m, class_name, this.cp);
+
+    if(this.cp != cp) {
+      mg.setConstantPool(cp);
+      mg.getInstructionList().replaceConstantPool(this.cp, cp);
+    }
+
+    return mg;

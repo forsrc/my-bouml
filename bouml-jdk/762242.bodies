@@ -1,0 +1,964 @@
+class XMLCipher
+!!!5350786.java!!!	setSerializer(inout serializer : Serializer) : void
+        this.serializer = serializer;
+        serializer.setCanonicalizer(this.canon);
+!!!5350914.java!!!	getSerializer() : Serializer
+        return serializer;
+!!!5351042.java!!!	XMLCipher(inout transformation : String, inout provider : String, inout canonAlg : String, inout digestMethod : String)
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Constructing XMLCipher...");
+        }
+
+        factory = new Factory();
+
+        algorithm = transformation;
+        requestedJCEProvider = provider;
+        digestAlg = digestMethod;
+
+        // Create a canonicalizer - used when serializing DOM to octets
+        // prior to encryption (and for the reverse)
+
+        try {
+            if (canonAlg == null) {
+                // The default is to preserve the physical representation.
+                this.canon = Canonicalizer.getInstance(Canonicalizer.ALGO_ID_C14N_PHYSICAL);
+            } else {
+                this.canon = Canonicalizer.getInstance(canonAlg);
+            }
+        } catch (InvalidCanonicalizerException ice) {
+            throw new XMLEncryptionException("empty", ice);
+        }
+
+        if (serializer == null) {
+            serializer = new DocumentSerializer();
+        }
+        serializer.setCanonicalizer(this.canon);
+
+        if (transformation != null) {
+            contextCipher = constructCipher(transformation, digestMethod);
+        }
+!!!5351170.java!!!	isValidEncryptionAlgorithm(inout algorithm : String) : boolean
+        return (
+            algorithm.equals(TRIPLEDES) ||
+            algorithm.equals(AES_128) ||
+            algorithm.equals(AES_256) ||
+            algorithm.equals(AES_192) ||
+            algorithm.equals(AES_128_GCM) ||
+            algorithm.equals(AES_192_GCM) ||
+            algorithm.equals(AES_256_GCM) ||
+            algorithm.equals(RSA_v1dot5) ||
+            algorithm.equals(RSA_OAEP) ||
+            algorithm.equals(RSA_OAEP_11) ||
+            algorithm.equals(TRIPLEDES_KeyWrap) ||
+            algorithm.equals(AES_128_KeyWrap) ||
+            algorithm.equals(AES_256_KeyWrap) ||
+            algorithm.equals(AES_192_KeyWrap)
+        );
+!!!5351298.java!!!	validateTransformation(inout transformation : String) : void
+        if (null == transformation) {
+            throw new NullPointerException("Transformation unexpectedly null...");
+        }
+        if (!isValidEncryptionAlgorithm(transformation)) {
+            log.log(java.util.logging.Level.WARNING, "Algorithm non-standard, expected one of " + ENC_ALGORITHMS);
+        }
+!!!5351426.java!!!	getInstance(inout transformation : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with transformation");
+        }
+        validateTransformation(transformation);
+        return new XMLCipher(transformation, null, null, null);
+!!!5351554.java!!!	getInstance(inout transformation : String, inout canon : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with transformation and c14n algorithm");
+        }
+        validateTransformation(transformation);
+        return new XMLCipher(transformation, null, canon, null);
+!!!5351682.java!!!	getInstance(inout transformation : String, inout canon : String, inout digestMethod : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with transformation and c14n algorithm");
+        }
+        validateTransformation(transformation);
+        return new XMLCipher(transformation, null, canon, digestMethod);
+!!!5351810.java!!!	getProviderInstance(inout transformation : String, inout provider : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with transformation and provider");
+        }
+        if (null == provider) {
+            throw new NullPointerException("Provider unexpectedly null..");
+        }
+        validateTransformation(transformation);
+        return new XMLCipher(transformation, provider, null, null);
+!!!5351938.java!!!	getProviderInstance(inout transformation : String, inout provider : String, inout canon : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with transformation, provider and c14n algorithm");
+        }
+        if (null == provider) {
+            throw new NullPointerException("Provider unexpectedly null..");
+        }
+        validateTransformation(transformation);
+        return new XMLCipher(transformation, provider, canon, null);
+!!!5352066.java!!!	getProviderInstance(inout transformation : String, inout provider : String, inout canon : String, inout digestMethod : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with transformation, provider and c14n algorithm");
+        }
+        if (null == provider) {
+            throw new NullPointerException("Provider unexpectedly null..");
+        }
+        validateTransformation(transformation);
+        return new XMLCipher(transformation, provider, canon, digestMethod);
+!!!5352194.java!!!	getInstance() : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with no arguments");
+        }
+        return new XMLCipher(null, null, null, null);
+!!!5352322.java!!!	getProviderInstance(inout provider : String) : XMLCipher
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Getting XMLCipher with provider");
+        }
+        return new XMLCipher(null, provider, null, null);
+!!!5352450.java!!!	init(in opmode : int, inout key : Key) : void
+        // sanity checks
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Initializing XMLCipher...");
+        }
+
+        ek = null;
+        ed = null;
+
+        switch (opmode) {
+
+        case ENCRYPT_MODE :
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "opmode = ENCRYPT_MODE");
+            }
+            ed = createEncryptedData(CipherData.VALUE_TYPE, "NO VALUE YET");
+            break;
+        case DECRYPT_MODE :
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "opmode = DECRYPT_MODE");
+            }
+            break;
+        case WRAP_MODE :
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "opmode = WRAP_MODE");
+            }
+            ek = createEncryptedKey(CipherData.VALUE_TYPE, "NO VALUE YET");
+            break;
+        case UNWRAP_MODE :
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "opmode = UNWRAP_MODE");
+            }
+            break;
+        default :
+            log.log(java.util.logging.Level.SEVERE, "Mode unexpectedly invalid");
+            throw new XMLEncryptionException("Invalid mode in init");
+        }
+
+        cipherMode = opmode;
+        this.key = key;
+!!!5352578.java!!!	setSecureValidation(inout secureValidation : boolean) : void
+        this.secureValidation = secureValidation;
+!!!5352706.java!!!	registerInternalKeyResolver(inout keyResolver : KeyResolverSpi) : void
+        if (internalKeyResolvers == null) {
+            internalKeyResolvers = new ArrayList<KeyResolverSpi>();
+        }
+        internalKeyResolvers.add(keyResolver);
+!!!5352834.java!!!	getEncryptedData() : EncryptedData
+        // Sanity checks
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Returning EncryptedData");
+        }
+        return ed;
+!!!5352962.java!!!	getEncryptedKey() : EncryptedKey
+        // Sanity checks
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Returning EncryptedKey");
+        }
+        return ek;
+!!!5353090.java!!!	setKEK(inout kek : Key) : void
+        this.kek = kek;
+!!!5353218.java!!!	martial(inout encryptedData : EncryptedData) : Element
+        return factory.toElement(encryptedData);
+!!!5353346.java!!!	martial(inout context : Document, inout encryptedData : EncryptedData) : Element
+        contextDocument = context;
+        return factory.toElement(encryptedData);
+!!!5353474.java!!!	martial(inout encryptedKey : EncryptedKey) : Element
+        return factory.toElement(encryptedKey);
+!!!5353602.java!!!	martial(inout context : Document, inout encryptedKey : EncryptedKey) : Element
+        contextDocument = context;
+        return factory.toElement(encryptedKey);
+!!!5353730.java!!!	martial(inout referenceList : ReferenceList) : Element
+        return factory.toElement(referenceList);
+!!!5353858.java!!!	martial(inout context : Document, inout referenceList : ReferenceList) : Element
+        contextDocument = context;
+        return factory.toElement(referenceList);
+!!!5353986.java!!!	encryptElement(inout element : Element) : Document
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypting element...");
+        }
+        if (null == element) {
+            log.log(java.util.logging.Level.SEVERE, "Element unexpectedly null...");
+        }
+        if (cipherMode != ENCRYPT_MODE && log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "XMLCipher unexpectedly not in ENCRYPT_MODE...");
+        }
+
+        if (algorithm == null) {
+            throw new XMLEncryptionException("XMLCipher instance without transformation specified");
+        }
+        encryptData(contextDocument, element, false);
+
+        Element encryptedElement = factory.toElement(ed);
+
+        Node sourceParent = element.getParentNode();
+        sourceParent.replaceChild(encryptedElement, element);
+
+        return contextDocument;
+!!!5354114.java!!!	encryptElementContent(inout element : Element) : Document
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypting element content...");
+        }
+        if (null == element) {
+            log.log(java.util.logging.Level.SEVERE, "Element unexpectedly null...");
+        }
+        if (cipherMode != ENCRYPT_MODE && log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "XMLCipher unexpectedly not in ENCRYPT_MODE...");
+        }
+
+        if (algorithm == null) {
+            throw new XMLEncryptionException("XMLCipher instance without transformation specified");
+        }
+        encryptData(contextDocument, element, true);
+
+        Element encryptedElement = factory.toElement(ed);
+
+        removeContent(element);
+        element.appendChild(encryptedElement);
+
+        return contextDocument;
+!!!5354242.java!!!	doFinal(inout context : Document, inout source : Document) : Document
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Processing source document...");
+        }
+        if (null == context) {
+            log.log(java.util.logging.Level.SEVERE, "Context document unexpectedly null...");
+        }
+        if (null == source) {
+            log.log(java.util.logging.Level.SEVERE, "Source document unexpectedly null...");
+        }
+
+        contextDocument = context;
+
+        Document result = null;
+
+        switch (cipherMode) {
+        case DECRYPT_MODE:
+            result = decryptElement(source.getDocumentElement());
+            break;
+        case ENCRYPT_MODE:
+            result = encryptElement(source.getDocumentElement());
+            break;
+        case UNWRAP_MODE:
+        case WRAP_MODE:
+            break;
+        default:
+            throw new XMLEncryptionException("empty", new IllegalStateException());
+        }
+
+        return result;
+!!!5354370.java!!!	doFinal(inout context : Document, inout element : Element) : Document
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Processing source element...");
+        }
+        if (null == context) {
+            log.log(java.util.logging.Level.SEVERE, "Context document unexpectedly null...");
+        }
+        if (null == element) {
+            log.log(java.util.logging.Level.SEVERE, "Source element unexpectedly null...");
+        }
+
+        contextDocument = context;
+
+        Document result = null;
+
+        switch (cipherMode) {
+        case DECRYPT_MODE:
+            result = decryptElement(element);
+            break;
+        case ENCRYPT_MODE:
+            result = encryptElement(element);
+            break;
+        case UNWRAP_MODE:
+        case WRAP_MODE:
+            break;
+        default:
+            throw new XMLEncryptionException("empty", new IllegalStateException());
+        }
+
+        return result;
+!!!5354498.java!!!	doFinal(inout context : Document, inout element : Element, inout content : boolean) : Document
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Processing source element...");
+        }
+        if (null == context) {
+            log.log(java.util.logging.Level.SEVERE, "Context document unexpectedly null...");
+        }
+        if (null == element) {
+            log.log(java.util.logging.Level.SEVERE, "Source element unexpectedly null...");
+        }
+
+        contextDocument = context;
+
+        Document result = null;
+
+        switch (cipherMode) {
+        case DECRYPT_MODE:
+            if (content) {
+                result = decryptElementContent(element);
+            } else {
+                result = decryptElement(element);
+            }
+            break;
+        case ENCRYPT_MODE:
+            if (content) {
+                result = encryptElementContent(element);
+            } else {
+                result = encryptElement(element);
+            }
+            break;
+        case UNWRAP_MODE:
+        case WRAP_MODE:
+            break;
+        default:
+            throw new XMLEncryptionException("empty", new IllegalStateException());
+        }
+
+        return result;
+!!!5354626.java!!!	encryptData(inout context : Document, inout element : Element) : EncryptedData
+        return encryptData(context, element, false);
+!!!5354754.java!!!	encryptData(inout context : Document, inout type : String, inout serializedData : InputStream) : EncryptedData
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypting element...");
+        }
+        if (null == context) {
+            log.log(java.util.logging.Level.SEVERE, "Context document unexpectedly null...");
+        }
+        if (null == serializedData) {
+            log.log(java.util.logging.Level.SEVERE, "Serialized data unexpectedly null...");
+        }
+        if (cipherMode != ENCRYPT_MODE && log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "XMLCipher unexpectedly not in ENCRYPT_MODE...");
+        }
+
+        return encryptData(context, null, type, serializedData);
+!!!5354882.java!!!	encryptData(inout context : Document, inout element : Element, inout contentMode : boolean) : EncryptedData
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypting element...");
+        }
+        if (null == context) {
+            log.log(java.util.logging.Level.SEVERE, "Context document unexpectedly null...");
+        }
+        if (null == element) {
+            log.log(java.util.logging.Level.SEVERE, "Element unexpectedly null...");
+        }
+        if (cipherMode != ENCRYPT_MODE && log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "XMLCipher unexpectedly not in ENCRYPT_MODE...");
+        }
+
+        if (contentMode) {
+            return encryptData(context, element, EncryptionConstants.TYPE_CONTENT, null);
+        } else {
+            return encryptData(context, element, EncryptionConstants.TYPE_ELEMENT, null);
+        }
+!!!5355010.java!!!	encryptData(inout context : Document, inout element : Element, inout type : String, inout serializedData : InputStream) : EncryptedData
+        contextDocument = context;
+
+        if (algorithm == null) {
+            throw new XMLEncryptionException("XMLCipher instance without transformation specified");
+        }
+
+        byte[] serializedOctets = null;
+        if (serializedData == null) {
+            if (type.equals(EncryptionConstants.TYPE_CONTENT)) {
+                NodeList children = element.getChildNodes();
+                if (null != children) {
+                    serializedOctets = serializer.serializeToByteArray(children);
+                } else {
+                    Object exArgs[] = { "Element has no content." };
+                    throw new XMLEncryptionException("empty", exArgs);
+                }
+            } else {
+                serializedOctets = serializer.serializeToByteArray(element);
+            }
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "Serialized octets:\n" + new String(serializedOctets, "UTF-8"));
+            }
+        }
+
+        byte[] encryptedBytes = null;
+
+        // Now create the working cipher if none was created already
+        Cipher c;
+        if (contextCipher == null) {
+            c = constructCipher(algorithm, null);
+        } else {
+            c = contextCipher;
+        }
+        // Now perform the encryption
+
+        try {
+            // The Spec mandates a 96-bit IV for GCM algorithms
+            if (AES_128_GCM.equals(algorithm) || AES_192_GCM.equals(algorithm)
+                || AES_256_GCM.equals(algorithm)) {
+                if (random == null) {
+                    random = SecureRandom.getInstance("SHA1PRNG");
+                }
+                byte[] temp = new byte[12];
+                random.nextBytes(temp);
+                IvParameterSpec paramSpec = new IvParameterSpec(temp);
+                c.init(cipherMode, key, paramSpec);
+            } else {
+                c.init(cipherMode, key);
+            }
+        } catch (InvalidKeyException ike) {
+            throw new XMLEncryptionException("empty", ike);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new XMLEncryptionException("empty", ex);
+        }
+
+        try {
+            if (serializedData != null) {
+                int numBytes;
+                byte[] buf = new byte[8192];
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                while ((numBytes = serializedData.read(buf)) != -1) {
+                    byte[] data = c.update(buf, 0, numBytes);
+                    baos.write(data);
+                }
+                baos.write(c.doFinal());
+                encryptedBytes = baos.toByteArray();
+            } else {
+                encryptedBytes = c.doFinal(serializedOctets);
+                if (log.isLoggable(java.util.logging.Level.FINE)) {
+                    log.log(java.util.logging.Level.FINE, "Expected cipher.outputSize = " +
+                        Integer.toString(c.getOutputSize(serializedOctets.length)));
+                }
+            }
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "Actual cipher.outputSize = "
+                             + Integer.toString(encryptedBytes.length));
+            }
+        } catch (IllegalStateException ise) {
+            throw new XMLEncryptionException("empty", ise);
+        } catch (IllegalBlockSizeException ibse) {
+            throw new XMLEncryptionException("empty", ibse);
+        } catch (BadPaddingException bpe) {
+            throw new XMLEncryptionException("empty", bpe);
+        } catch (UnsupportedEncodingException uee) {
+            throw new XMLEncryptionException("empty", uee);
+        }
+
+        // Now build up to a properly XML Encryption encoded octet stream
+        // IvParameterSpec iv;
+        byte[] iv = c.getIV();
+        byte[] finalEncryptedBytes = new byte[iv.length + encryptedBytes.length];
+        System.arraycopy(iv, 0, finalEncryptedBytes, 0, iv.length);
+        System.arraycopy(encryptedBytes, 0, finalEncryptedBytes, iv.length, encryptedBytes.length);
+        String base64EncodedEncryptedOctets = Base64.encode(finalEncryptedBytes);
+
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypted octets:\n" + base64EncodedEncryptedOctets);
+            log.log(java.util.logging.Level.FINE, "Encrypted octets length = " + base64EncodedEncryptedOctets.length());
+        }
+
+        try {
+            CipherData cd = ed.getCipherData();
+            CipherValue cv = cd.getCipherValue();
+            // cv.setValue(base64EncodedEncryptedOctets.getBytes());
+            cv.setValue(base64EncodedEncryptedOctets);
+
+            if (type != null) {
+                ed.setType(new URI(type).toString());
+            }
+            EncryptionMethod method =
+                factory.newEncryptionMethod(new URI(algorithm).toString());
+            method.setDigestAlgorithm(digestAlg);
+            ed.setEncryptionMethod(method);
+        } catch (URISyntaxException ex) {
+            throw new XMLEncryptionException("empty", ex);
+        }
+        return ed;
+!!!5355138.java!!!	loadEncryptedData(inout context : Document, inout element : Element) : EncryptedData
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Loading encrypted element...");
+        }
+        if (null == context) {
+            throw new NullPointerException("Context document unexpectedly null...");
+        }
+        if (null == element) {
+            throw new NullPointerException("Element unexpectedly null...");
+        }
+        if (cipherMode != DECRYPT_MODE) {
+            throw new XMLEncryptionException("XMLCipher unexpectedly not in DECRYPT_MODE...");
+        }
+
+        contextDocument = context;
+        ed = factory.newEncryptedData(element);
+
+        return ed;
+!!!5355266.java!!!	loadEncryptedKey(inout context : Document, inout element : Element) : EncryptedKey
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Loading encrypted key...");
+        }
+        if (null == context) {
+            throw new NullPointerException("Context document unexpectedly null...");
+        }
+        if (null == element) {
+            throw new NullPointerException("Element unexpectedly null...");
+        }
+        if (cipherMode != UNWRAP_MODE && cipherMode != DECRYPT_MODE) {
+            throw new XMLEncryptionException(
+                "XMLCipher unexpectedly not in UNWRAP_MODE or DECRYPT_MODE..."
+            );
+        }
+
+        contextDocument = context;
+        ek = factory.newEncryptedKey(element);
+        return ek;
+!!!5355394.java!!!	loadEncryptedKey(inout element : Element) : EncryptedKey
+        return loadEncryptedKey(element.getOwnerDocument(), element);
+!!!5355522.java!!!	encryptKey(inout doc : Document, inout key : Key) : EncryptedKey
+        return encryptKey(doc, key, null, null);
+!!!5355650.java!!!	encryptKey(inout doc : Document, inout key : Key, inout mgfAlgorithm : String, inout oaepParams : byte [[]]) : EncryptedKey
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypting key ...");
+        }
+
+        if (null == key) {
+            log.log(java.util.logging.Level.SEVERE, "Key unexpectedly null...");
+        }
+        if (cipherMode != WRAP_MODE) {
+            log.log(java.util.logging.Level.FINE, "XMLCipher unexpectedly not in WRAP_MODE...");
+        }
+        if (algorithm == null) {
+            throw new XMLEncryptionException("XMLCipher instance without transformation specified");
+        }
+
+        contextDocument = doc;
+
+        byte[] encryptedBytes = null;
+        Cipher c;
+
+        if (contextCipher == null) {
+            // Now create the working cipher
+            c = constructCipher(algorithm, null);
+        } else {
+            c = contextCipher;
+        }
+        // Now perform the encryption
+
+        try {
+            // Should internally generate an IV
+            // todo - allow user to set an IV
+            OAEPParameterSpec oaepParameters =
+                constructOAEPParameters(
+                    algorithm, digestAlg, mgfAlgorithm, oaepParams
+                );
+            if (oaepParameters == null) {
+                c.init(Cipher.WRAP_MODE, this.key);
+            } else {
+                c.init(Cipher.WRAP_MODE, this.key, oaepParameters);
+            }
+            encryptedBytes = c.wrap(key);
+        } catch (InvalidKeyException ike) {
+            throw new XMLEncryptionException("empty", ike);
+        } catch (IllegalBlockSizeException ibse) {
+            throw new XMLEncryptionException("empty", ibse);
+        } catch (InvalidAlgorithmParameterException e) {
+            throw new XMLEncryptionException("empty", e);
+        }
+
+        String base64EncodedEncryptedOctets = Base64.encode(encryptedBytes);
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Encrypted key octets:\n" + base64EncodedEncryptedOctets);
+            log.log(java.util.logging.Level.FINE, "Encrypted key octets length = " + base64EncodedEncryptedOctets.length());
+        }
+
+        CipherValue cv = ek.getCipherData().getCipherValue();
+        cv.setValue(base64EncodedEncryptedOctets);
+
+        try {
+            EncryptionMethod method = factory.newEncryptionMethod(new URI(algorithm).toString());
+            method.setDigestAlgorithm(digestAlg);
+            method.setMGFAlgorithm(mgfAlgorithm);
+            method.setOAEPparams(oaepParams);
+            ek.setEncryptionMethod(method);
+        } catch (URISyntaxException ex) {
+            throw new XMLEncryptionException("empty", ex);
+        }
+        return ek;
+!!!5355778.java!!!	decryptKey(inout encryptedKey : EncryptedKey, inout algorithm : String) : Key
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Decrypting key from previously loaded EncryptedKey...");
+        }
+
+        if (cipherMode != UNWRAP_MODE && log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "XMLCipher unexpectedly not in UNWRAP_MODE...");
+        }
+
+        if (algorithm == null) {
+            throw new XMLEncryptionException("Cannot decrypt a key without knowing the algorithm");
+        }
+
+        if (key == null) {
+            if (log.isLoggable(java.util.logging.Level.FINE)) {
+                log.log(java.util.logging.Level.FINE, "Trying to find a KEK via key resolvers");
+            }
+
+            KeyInfo ki = encryptedKey.getKeyInfo();
+            if (ki != null) {
+                ki.setSecureValidation(secureValidation);
+                try {
+                    String keyWrapAlg = encryptedKey.getEncryptionMethod().getAlgorithm();
+                    String keyType = JCEMapper.getJCEKeyAlgorithmFromURI(keyWrapAlg);
+                    if ("RSA".equals(keyType)) {
+                        key = ki.getPrivateKey();
+                    } else {
+                        key = ki.getSecretKey();
+                    }
+                }
+                catch (Exception e) {
+                    if (log.isLoggable(java.util.logging.Level.FINE)) {
+                        log.log(java.util.logging.Level.FINE, e.getMessage(), e);
+                    }
+                }
+            }
+            if (key == null) {
+                log.log(java.util.logging.Level.SEVERE, "XMLCipher::decryptKey called without a KEK and cannot resolve");
+                throw new XMLEncryptionException("Unable to decrypt without a KEK");
+            }
+        }
+
+        // Obtain the encrypted octets
+        XMLCipherInput cipherInput = new XMLCipherInput(encryptedKey);
+        cipherInput.setSecureValidation(secureValidation);
+        byte[] encryptedBytes = cipherInput.getBytes();
+
+        String jceKeyAlgorithm = JCEMapper.getJCEKeyAlgorithmFromURI(algorithm);
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "JCE Key Algorithm: " + jceKeyAlgorithm);
+        }
+
+        Cipher c;
+        if (contextCipher == null) {
+            // Now create the working cipher
+            c =
+                constructCipher(
+                    encryptedKey.getEncryptionMethod().getAlgorithm(),
+                    encryptedKey.getEncryptionMethod().getDigestAlgorithm()
+                );
+        } else {
+            c = contextCipher;
+        }
+
+        Key ret;
+
+        try {
+            EncryptionMethod encMethod = encryptedKey.getEncryptionMethod();
+            OAEPParameterSpec oaepParameters =
+                constructOAEPParameters(
+                    encMethod.getAlgorithm(), encMethod.getDigestAlgorithm(),
+                    encMethod.getMGFAlgorithm(), encMethod.getOAEPparams()
+                );
+            if (oaepParameters == null) {
+                c.init(Cipher.UNWRAP_MODE, key);
+            } else {
+                c.init(Cipher.UNWRAP_MODE, key, oaepParameters);
+            }
+            ret = c.unwrap(encryptedBytes, jceKeyAlgorithm, Cipher.SECRET_KEY);
+        } catch (InvalidKeyException ike) {
+            throw new XMLEncryptionException("empty", ike);
+        } catch (NoSuchAlgorithmException nsae) {
+            throw new XMLEncryptionException("empty", nsae);
+        } catch (InvalidAlgorithmParameterException e) {
+            throw new XMLEncryptionException("empty", e);
+        }
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Decryption of key type " + algorithm + " OK");
+        }
+
+        return ret;
+!!!5355906.java!!!	constructOAEPParameters(inout encryptionAlgorithm : String, inout digestAlgorithm : String, inout mgfAlgorithm : String, inout oaepParams : byte [[]]) : OAEPParameterSpec
+        if (XMLCipher.RSA_OAEP.equals(encryptionAlgorithm)
+            || XMLCipher.RSA_OAEP_11.equals(encryptionAlgorithm)) {
+
+            String jceDigestAlgorithm = "SHA-1";
+            if (digestAlgorithm != null) {
+                jceDigestAlgorithm = JCEMapper.translateURItoJCEID(digestAlgorithm);
+            }
+
+            PSource.PSpecified pSource = PSource.PSpecified.DEFAULT;
+            if (oaepParams != null) {
+                pSource = new PSource.PSpecified(oaepParams);
+            }
+
+            MGF1ParameterSpec mgfParameterSpec = new MGF1ParameterSpec("SHA-1");
+            if (XMLCipher.RSA_OAEP_11.equals(encryptionAlgorithm)) {
+                if (EncryptionConstants.MGF1_SHA256.equals(mgfAlgorithm)) {
+                    mgfParameterSpec = new MGF1ParameterSpec("SHA-256");
+                } else if (EncryptionConstants.MGF1_SHA384.equals(mgfAlgorithm)) {
+                    mgfParameterSpec = new MGF1ParameterSpec("SHA-384");
+                } else if (EncryptionConstants.MGF1_SHA512.equals(mgfAlgorithm)) {
+                    mgfParameterSpec = new MGF1ParameterSpec("SHA-512");
+                }
+            }
+            return new OAEPParameterSpec(jceDigestAlgorithm, "MGF1", mgfParameterSpec, pSource);
+        }
+
+        return null;
+!!!5356034.java!!!	constructCipher(inout algorithm : String, inout digestAlgorithm : String) : Cipher
+        String jceAlgorithm = JCEMapper.translateURItoJCEID(algorithm);
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "JCE Algorithm = " + jceAlgorithm);
+        }
+
+        Cipher c;
+        try {
+            if (requestedJCEProvider == null) {
+                c = Cipher.getInstance(jceAlgorithm);
+            } else {
+                c = Cipher.getInstance(jceAlgorithm, requestedJCEProvider);
+            }
+        } catch (NoSuchAlgorithmException nsae) {
+            // Check to see if an RSA OAEP MGF-1 with SHA-1 algorithm was requested
+            // Some JDKs don't support RSA/ECB/OAEPPadding
+            if (XMLCipher.RSA_OAEP.equals(algorithm)
+                && (digestAlgorithm == null
+                    || MessageDigestAlgorithm.ALGO_ID_DIGEST_SHA1.equals(digestAlgorithm))) {
+                try {
+                    if (requestedJCEProvider == null) {
+                        c = Cipher.getInstance("RSA/ECB/OAEPWithSHA1AndMGF1Padding");
+                    } else {
+                        c = Cipher.getInstance("RSA/ECB/OAEPWithSHA1AndMGF1Padding", requestedJCEProvider);
+                    }
+                } catch (Exception ex) {
+                    throw new XMLEncryptionException("empty", ex);
+                }
+            } else {
+                throw new XMLEncryptionException("empty", nsae);
+            }
+        } catch (NoSuchProviderException nspre) {
+            throw new XMLEncryptionException("empty", nspre);
+        } catch (NoSuchPaddingException nspae) {
+            throw new XMLEncryptionException("empty", nspae);
+        }
+
+        return c;
+!!!5356162.java!!!	decryptKey(inout encryptedKey : EncryptedKey) : Key
+        return decryptKey(encryptedKey, ed.getEncryptionMethod().getAlgorithm());
+!!!5356290.java!!!	removeContent(inout node : Node) : void
+        while (node.hasChildNodes()) {
+            node.removeChild(node.getFirstChild());
+        }
+!!!5356418.java!!!	decryptElement(inout element : Element) : Document
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Decrypting element...");
+        }
+
+        if (cipherMode != DECRYPT_MODE) {
+            log.log(java.util.logging.Level.SEVERE, "XMLCipher unexpectedly not in DECRYPT_MODE...");
+        }
+
+        byte[] octets = decryptToByteArray(element);
+
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Decrypted octets:\n" + new String(octets));
+        }
+
+        Node sourceParent = element.getParentNode();
+        Node decryptedNode = serializer.deserialize(octets, sourceParent);
+
+        // The de-serialiser returns a node whose children we need to take on.
+        if (sourceParent != null && Node.DOCUMENT_NODE == sourceParent.getNodeType()) {
+            // If this is a content decryption, this may have problems
+            contextDocument.removeChild(contextDocument.getDocumentElement());
+            contextDocument.appendChild(decryptedNode);
+        } else if (sourceParent != null) {
+            sourceParent.replaceChild(decryptedNode, element);
+        }
+
+        return contextDocument;
+!!!5356546.java!!!	decryptElementContent(inout element : Element) : Document
+        Element e =
+            (Element) element.getElementsByTagNameNS(
+                EncryptionConstants.EncryptionSpecNS,
+                EncryptionConstants._TAG_ENCRYPTEDDATA
+            ).item(0);
+
+        if (null == e) {
+            throw new XMLEncryptionException("No EncryptedData child element.");
+        }
+
+        return decryptElement(e);
+!!!5356674.java!!!	decryptToByteArray(inout element : Element) : byte
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "Decrypting to ByteArray...");
+        }
+
+        if (cipherMode != DECRYPT_MODE) {
+            log.log(java.util.logging.Level.SEVERE, "XMLCipher unexpectedly not in DECRYPT_MODE...");
+        }
+
+        EncryptedData encryptedData = factory.newEncryptedData(element);
+
+        if (key == null) {
+            KeyInfo ki = encryptedData.getKeyInfo();
+            if (ki != null) {
+                try {
+                    // Add an EncryptedKey resolver
+                    String encMethodAlgorithm = encryptedData.getEncryptionMethod().getAlgorithm();
+                    EncryptedKeyResolver resolver = new EncryptedKeyResolver(encMethodAlgorithm, kek);
+                    if (internalKeyResolvers != null) {
+                        int size = internalKeyResolvers.size();
+                        for (int i = 0; i < size; i++) {
+                            resolver.registerInternalKeyResolver(internalKeyResolvers.get(i));
+                        }
+                    }
+                    ki.registerInternalKeyResolver(resolver);
+                    ki.setSecureValidation(secureValidation);
+                    key = ki.getSecretKey();
+                } catch (KeyResolverException kre) {
+                    if (log.isLoggable(java.util.logging.Level.FINE)) {
+                        log.log(java.util.logging.Level.FINE, kre.getMessage(), kre);
+                    }
+                }
+            }
+
+            if (key == null) {
+                log.log(java.util.logging.Level.SEVERE,
+                    "XMLCipher::decryptElement called without a key and unable to resolve"
+                );
+                throw new XMLEncryptionException("encryption.nokey");
+            }
+        }
+
+        // Obtain the encrypted octets
+        XMLCipherInput cipherInput = new XMLCipherInput(encryptedData);
+        cipherInput.setSecureValidation(secureValidation);
+        byte[] encryptedBytes = cipherInput.getBytes();
+
+        // Now create the working cipher
+        String jceAlgorithm =
+            JCEMapper.translateURItoJCEID(encryptedData.getEncryptionMethod().getAlgorithm());
+        if (log.isLoggable(java.util.logging.Level.FINE)) {
+            log.log(java.util.logging.Level.FINE, "JCE Algorithm = " + jceAlgorithm);
+        }
+
+        Cipher c;
+        try {
+            if (requestedJCEProvider == null) {
+                c = Cipher.getInstance(jceAlgorithm);
+            } else {
+                c = Cipher.getInstance(jceAlgorithm, requestedJCEProvider);
+            }
+        } catch (NoSuchAlgorithmException nsae) {
+            throw new XMLEncryptionException("empty", nsae);
+        } catch (NoSuchProviderException nspre) {
+            throw new XMLEncryptionException("empty", nspre);
+        } catch (NoSuchPaddingException nspae) {
+            throw new XMLEncryptionException("empty", nspae);
+        }
+
+        // Calculate the IV length and copy out
+
+        // For now, we only work with Block ciphers, so this will work.
+        // This should probably be put into the JCE mapper.
+
+        int ivLen = c.getBlockSize();
+        String alg = encryptedData.getEncryptionMethod().getAlgorithm();
+        if (AES_128_GCM.equals(alg) || AES_192_GCM.equals(alg) || AES_256_GCM.equals(alg)) {
+            ivLen = 12;
+        }
+        byte[] ivBytes = new byte[ivLen];
+
+        // You may be able to pass the entire piece in to IvParameterSpec
+        // and it will only take the first x bytes, but no way to be certain
+        // that this will work for every JCE provider, so lets copy the
+        // necessary bytes into a dedicated array.
+
+        System.arraycopy(encryptedBytes, 0, ivBytes, 0, ivLen);
+        IvParameterSpec iv = new IvParameterSpec(ivBytes);
+
+        try {
+            c.init(cipherMode, key, iv);
+        } catch (InvalidKeyException ike) {
+            throw new XMLEncryptionException("empty", ike);
+        } catch (InvalidAlgorithmParameterException iape) {
+            throw new XMLEncryptionException("empty", iape);
+        }
+
+        try {
+            return c.doFinal(encryptedBytes, ivLen, encryptedBytes.length - ivLen);
+        } catch (IllegalBlockSizeException ibse) {
+            throw new XMLEncryptionException("empty", ibse);
+        } catch (BadPaddingException bpe) {
+            throw new XMLEncryptionException("empty", bpe);
+        }
+!!!5356802.java!!!	createEncryptedData(in type : int, inout value : String) : EncryptedData
+        EncryptedData result = null;
+        CipherData data = null;
+
+        switch (type) {
+        case CipherData.REFERENCE_TYPE:
+            CipherReference cipherReference = factory.newCipherReference(value);
+            data = factory.newCipherData(type);
+            data.setCipherReference(cipherReference);
+            result = factory.newEncryptedData(data);
+            break;
+        case CipherData.VALUE_TYPE:
+            CipherValue cipherValue = factory.newCipherValue(value);
+            data = factory.newCipherData(type);
+            data.setCipherValue(cipherValue);
+            result = factory.newEncryptedData(data);
+        }
+
+        return result;
+!!!5356930.java!!!	createEncryptedKey(in type : int, inout value : String) : EncryptedKey
+        EncryptedKey result = null;
+        CipherData data = null;
+
+        switch (type) {
+        case CipherData.REFERENCE_TYPE:
+            CipherReference cipherReference = factory.newCipherReference(value);
+            data = factory.newCipherData(type);
+            data.setCipherReference(cipherReference);
+            result = factory.newEncryptedKey(data);
+            break;
+        case CipherData.VALUE_TYPE:
+            CipherValue cipherValue = factory.newCipherValue(value);
+            data = factory.newCipherData(type);
+            data.setCipherValue(cipherValue);
+            result = factory.newEncryptedKey(data);
+        }
+
+        return result;
+!!!5357058.java!!!	createAgreementMethod(inout algorithm : String) : AgreementMethod
+        return factory.newAgreementMethod(algorithm);
+!!!5357186.java!!!	createCipherData(in type : int) : CipherData
+        return factory.newCipherData(type);
+!!!5357314.java!!!	createCipherReference(inout uri : String) : CipherReference
+        return factory.newCipherReference(uri);
+!!!5357442.java!!!	createCipherValue(inout value : String) : CipherValue
+        return factory.newCipherValue(value);
+!!!5357570.java!!!	createEncryptionMethod(inout algorithm : String) : EncryptionMethod
+        return factory.newEncryptionMethod(algorithm);
+!!!5357698.java!!!	createEncryptionProperties() : EncryptionProperties
+        return factory.newEncryptionProperties();
+!!!5357826.java!!!	createEncryptionProperty() : EncryptionProperty
+        return factory.newEncryptionProperty();
+!!!5357954.java!!!	createReferenceList(in type : int) : ReferenceList
+        return factory.newReferenceList(type);
+!!!5358082.java!!!	createTransforms() : Transforms
+        return factory.newTransforms();
+!!!5358210.java!!!	createTransforms(inout doc : Document) : Transforms
+        return factory.newTransforms(doc);

@@ -1,0 +1,195 @@
+class Builder
+!!!8657538.java!!!	setInstant(in instant : long) : Calendar::Builder
+            if (fields != null) {
+                throw new IllegalStateException();
+            }
+            this.instant = instant;
+            nextStamp = COMPUTED;
+            return this;
+!!!8657666.java!!!	setInstant(inout instant : Date) : Calendar::Builder
+            return setInstant(instant.getTime()); // NPE if instant == null
+!!!8657794.java!!!	set(in field : int, in value : int) : Calendar::Builder
+            // Note: WEEK_YEAR can't be set with this method.
+            if (field < 0 || field >= FIELD_COUNT) {
+                throw new IllegalArgumentException("field is invalid");
+            }
+            if (isInstantSet()) {
+                throw new IllegalStateException("instant has been set");
+            }
+            allocateFields();
+            internalSet(field, value);
+            return this;
+!!!8657922.java!!!	setFields(inout  : int...fieldValuePairs) : Calendar::Builder
+            int len = fieldValuePairs.length;
+            if ((len % 2) != 0) {
+                throw new IllegalArgumentException();
+            }
+            if (isInstantSet()) {
+                throw new IllegalStateException("instant has been set");
+            }
+            if ((nextStamp + len / 2) < 0) {
+                throw new IllegalStateException("stamp counter overflow");
+            }
+            allocateFields();
+            for (int i = 0; i < len; ) {
+                int field = fieldValuePairs[i++];
+                // Note: WEEK_YEAR can't be set with this method.
+                if (field < 0 || field >= FIELD_COUNT) {
+                    throw new IllegalArgumentException("field is invalid");
+                }
+                internalSet(field, fieldValuePairs[i++]);
+            }
+            return this;
+!!!8658050.java!!!	setDate(in year : int, in month : int, in dayOfMonth : int) : Calendar::Builder
+            return setFields(YEAR, year, MONTH, month, DAY_OF_MONTH, dayOfMonth);
+!!!8658178.java!!!	setTimeOfDay(in hourOfDay : int, in minute : int, in second : int) : Calendar::Builder
+            return setTimeOfDay(hourOfDay, minute, second, 0);
+!!!8658306.java!!!	setTimeOfDay(in hourOfDay : int, in minute : int, in second : int, in millis : int) : Calendar::Builder
+            return setFields(HOUR_OF_DAY, hourOfDay, MINUTE, minute,
+                             SECOND, second, MILLISECOND, millis);
+!!!8658434.java!!!	setWeekDate(in weekYear : int, in weekOfYear : int, in dayOfWeek : int) : Calendar::Builder
+            allocateFields();
+            internalSet(WEEK_YEAR, weekYear);
+            internalSet(WEEK_OF_YEAR, weekOfYear);
+            internalSet(DAY_OF_WEEK, dayOfWeek);
+            return this;
+!!!8658562.java!!!	setTimeZone(inout zone : TimeZone) : Calendar::Builder
+            if (zone == null) {
+                throw new NullPointerException();
+            }
+            this.zone = zone;
+            return this;
+!!!8658690.java!!!	setLenient(inout lenient : boolean) : Calendar::Builder
+            this.lenient = lenient;
+            return this;
+!!!8658818.java!!!	setCalendarType(inout type : String) : Calendar::Builder
+            if (type.equals("gregorian")) { // NPE if type == null
+                type = "gregory";
+            }
+            if (!Calendar.getAvailableCalendarTypes().contains(type)
+                    && !type.equals("iso8601")) {
+                throw new IllegalArgumentException("unknown calendar type: " + type);
+            }
+            if (this.type == null) {
+                this.type = type;
+            } else {
+                if (!this.type.equals(type)) {
+                    throw new IllegalStateException("calendar type override");
+                }
+            }
+            return this;
+!!!8658946.java!!!	setLocale(inout locale : Locale) : Calendar::Builder
+            if (locale == null) {
+                throw new NullPointerException();
+            }
+            this.locale = locale;
+            return this;
+!!!8659074.java!!!	setWeekDefinition(in firstDayOfWeek : int, in minimalDaysInFirstWeek : int) : Calendar::Builder
+            if (!isValidWeekParameter(firstDayOfWeek)
+                    || !isValidWeekParameter(minimalDaysInFirstWeek)) {
+                throw new IllegalArgumentException();
+            }
+            this.firstDayOfWeek = firstDayOfWeek;
+            this.minimalDaysInFirstWeek = minimalDaysInFirstWeek;
+            return this;
+!!!8659202.java!!!	build() : Calendar
+            if (locale == null) {
+                locale = Locale.getDefault();
+            }
+            if (zone == null) {
+                zone = TimeZone.getDefault();
+            }
+            Calendar cal;
+            if (type == null) {
+                type = locale.getUnicodeLocaleType("ca");
+            }
+            if (type == null) {
+                if (locale.getCountry() == "TH"
+                    && locale.getLanguage() == "th") {
+                    type = "buddhist";
+                } else {
+                    type = "gregory";
+                }
+            }
+            switch (type) {
+            case "gregory":
+                cal = new GregorianCalendar(zone, locale, true);
+                break;
+            case "iso8601":
+                GregorianCalendar gcal = new GregorianCalendar(zone, locale, true);
+                // make gcal a proleptic Gregorian
+                gcal.setGregorianChange(new Date(Long.MIN_VALUE));
+                // and week definition to be compatible with ISO 8601
+                setWeekDefinition(MONDAY, 4);
+                cal = gcal;
+                break;
+            case "buddhist":
+                cal = new BuddhistCalendar(zone, locale);
+                cal.clear();
+                break;
+            case "japanese":
+                cal = new JapaneseImperialCalendar(zone, locale, true);
+                break;
+            default:
+                throw new IllegalArgumentException("unknown calendar type: " + type);
+            }
+            cal.setLenient(lenient);
+            if (firstDayOfWeek != 0) {
+                cal.setFirstDayOfWeek(firstDayOfWeek);
+                cal.setMinimalDaysInFirstWeek(minimalDaysInFirstWeek);
+            }
+            if (isInstantSet()) {
+                cal.setTimeInMillis(instant);
+                cal.complete();
+                return cal;
+            }
+
+            if (fields != null) {
+                boolean weekDate = isSet(WEEK_YEAR)
+                                       && fields[WEEK_YEAR] > fields[YEAR];
+                if (weekDate && !cal.isWeekDateSupported()) {
+                    throw new IllegalArgumentException("week date is unsupported by " + type);
+                }
+
+                // Set the fields from the min stamp to the max stamp so that
+                // the fields resolution works in the Calendar.
+                for (int stamp = MINIMUM_USER_STAMP; stamp < nextStamp; stamp++) {
+                    for (int index = 0; index <= maxFieldIndex; index++) {
+                        if (fields[index] == stamp) {
+                            cal.set(index, fields[NFIELDS + index]);
+                            break;
+                        }
+                    }
+                }
+
+                if (weekDate) {
+                    int weekOfYear = isSet(WEEK_OF_YEAR) ? fields[NFIELDS + WEEK_OF_YEAR] : 1;
+                    int dayOfWeek = isSet(DAY_OF_WEEK)
+                                    ? fields[NFIELDS + DAY_OF_WEEK] : cal.getFirstDayOfWeek();
+                    cal.setWeekDate(fields[NFIELDS + WEEK_YEAR], weekOfYear, dayOfWeek);
+                }
+                cal.complete();
+            }
+
+            return cal;
+!!!8659330.java!!!	allocateFields() : void
+            if (fields == null) {
+                fields = new int[NFIELDS * 2];
+                nextStamp = MINIMUM_USER_STAMP;
+                maxFieldIndex = -1;
+            }
+!!!8659458.java!!!	internalSet(in field : int, in value : int) : void
+            fields[field] = nextStamp++;
+            if (nextStamp < 0) {
+                throw new IllegalStateException("stamp counter overflow");
+            }
+            fields[NFIELDS + field] = value;
+            if (field > maxFieldIndex && field < WEEK_YEAR) {
+                maxFieldIndex = field;
+            }
+!!!8659586.java!!!	isInstantSet() : boolean
+            return nextStamp == COMPUTED;
+!!!8659714.java!!!	isSet(in index : int) : boolean
+            return fields != null && fields[index] > UNSET;
+!!!8659842.java!!!	isValidWeekParameter(in value : int) : boolean
+            return value > 0 && value <= 7;

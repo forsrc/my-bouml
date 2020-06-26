@@ -1,0 +1,318 @@
+class AbstractChronology
+!!!8448514.java!!!	registerChrono(inout chrono : Chronology) : Chronology
+        return registerChrono(chrono, chrono.getId());
+!!!8448642.java!!!	registerChrono(inout chrono : Chronology, inout id : String) : Chronology
+        Chronology prev = CHRONOS_BY_ID.putIfAbsent(id, chrono);
+        if (prev == null) {
+            String type = chrono.getCalendarType();
+            if (type != null) {
+                CHRONOS_BY_TYPE.putIfAbsent(type, chrono);
+            }
+        }
+        return prev;
+!!!8448770.java!!!	initCache() : boolean
+        if (CHRONOS_BY_ID.get("ISO") == null) {
+            // Initialization is incomplete
+
+            // Register built-in Chronologies
+            registerChrono(HijrahChronology.INSTANCE);
+            registerChrono(JapaneseChronology.INSTANCE);
+            registerChrono(MinguoChronology.INSTANCE);
+            registerChrono(ThaiBuddhistChronology.INSTANCE);
+
+            // Register Chronologies from the ServiceLoader
+            @SuppressWarnings("rawtypes")
+            ServiceLoader<AbstractChronology> loader =  ServiceLoader.load(AbstractChronology.class, null);
+            for (AbstractChronology chrono : loader) {
+                String id = chrono.getId();
+                if (id.equals("ISO") || registerChrono(chrono) != null) {
+                    // Log the attempt to replace an existing Chronology
+                    PlatformLogger logger = PlatformLogger.getLogger("java.time.chrono");
+                    logger.warning("Ignoring duplicate Chronology, from ServiceLoader configuration "  + id);
+                }
+            }
+
+            // finally, register IsoChronology to mark initialization is complete
+            registerChrono(IsoChronology.INSTANCE);
+            return true;
+        }
+        return false;
+!!!8448898.java!!!	ofLocale(inout locale : Locale) : Chronology
+        Objects.requireNonNull(locale, "locale");
+        String type = locale.getUnicodeLocaleType("ca");
+        if (type == null || "iso".equals(type) || "iso8601".equals(type)) {
+            return IsoChronology.INSTANCE;
+        }
+        // Not pre-defined; lookup by the type
+        do {
+            Chronology chrono = CHRONOS_BY_TYPE.get(type);
+            if (chrono != null) {
+                return chrono;
+            }
+            // If not found, do the initialization (once) and repeat the lookup
+        } while (initCache());
+
+        // Look for a Chronology using ServiceLoader of the Thread's ContextClassLoader
+        // Application provided Chronologies must not be cached
+        @SuppressWarnings("rawtypes")
+        ServiceLoader<Chronology> loader = ServiceLoader.load(Chronology.class);
+        for (Chronology chrono : loader) {
+            if (type.equals(chrono.getCalendarType())) {
+                return chrono;
+            }
+        }
+        throw new DateTimeException("Unknown calendar system: " + type);
+!!!8449026.java!!!	of(inout id : String) : Chronology
+        Objects.requireNonNull(id, "id");
+        do {
+            Chronology chrono = of0(id);
+            if (chrono != null) {
+                return chrono;
+            }
+            // If not found, do the initialization (once) and repeat the lookup
+        } while (initCache());
+
+        // Look for a Chronology using ServiceLoader of the Thread's ContextClassLoader
+        // Application provided Chronologies must not be cached
+        @SuppressWarnings("rawtypes")
+        ServiceLoader<Chronology> loader = ServiceLoader.load(Chronology.class);
+        for (Chronology chrono : loader) {
+            if (id.equals(chrono.getId()) || id.equals(chrono.getCalendarType())) {
+                return chrono;
+            }
+        }
+        throw new DateTimeException("Unknown chronology: " + id);
+!!!8449154.java!!!	of0(inout id : String) : Chronology
+        Chronology chrono = CHRONOS_BY_ID.get(id);
+        if (chrono == null) {
+            chrono = CHRONOS_BY_TYPE.get(id);
+        }
+        return chrono;
+!!!8449282.java!!!	getAvailableChronologies() : Set
+        initCache();       // force initialization
+        HashSet<Chronology> chronos = new HashSet<>(CHRONOS_BY_ID.values());
+
+        /// Add in Chronologies from the ServiceLoader configuration
+        @SuppressWarnings("rawtypes")
+        ServiceLoader<Chronology> loader = ServiceLoader.load(Chronology.class);
+        for (Chronology chrono : loader) {
+            chronos.add(chrono);
+        }
+        return chronos;
+!!!8449538.java!!!	resolveDate(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        // check epoch-day before inventing era
+        if (fieldValues.containsKey(EPOCH_DAY)) {
+            return dateEpochDay(fieldValues.remove(EPOCH_DAY));
+        }
+
+        // fix proleptic month before inventing era
+        resolveProlepticMonth(fieldValues, resolverStyle);
+
+        // invent era if necessary to resolve year-of-era
+        ChronoLocalDate resolved = resolveYearOfEra(fieldValues, resolverStyle);
+        if (resolved != null) {
+            return resolved;
+        }
+
+        // build date
+        if (fieldValues.containsKey(YEAR)) {
+            if (fieldValues.containsKey(MONTH_OF_YEAR)) {
+                if (fieldValues.containsKey(DAY_OF_MONTH)) {
+                    return resolveYMD(fieldValues, resolverStyle);
+                }
+                if (fieldValues.containsKey(ALIGNED_WEEK_OF_MONTH)) {
+                    if (fieldValues.containsKey(ALIGNED_DAY_OF_WEEK_IN_MONTH)) {
+                        return resolveYMAA(fieldValues, resolverStyle);
+                    }
+                    if (fieldValues.containsKey(DAY_OF_WEEK)) {
+                        return resolveYMAD(fieldValues, resolverStyle);
+                    }
+                }
+            }
+            if (fieldValues.containsKey(DAY_OF_YEAR)) {
+                return resolveYD(fieldValues, resolverStyle);
+            }
+            if (fieldValues.containsKey(ALIGNED_WEEK_OF_YEAR)) {
+                if (fieldValues.containsKey(ALIGNED_DAY_OF_WEEK_IN_YEAR)) {
+                    return resolveYAA(fieldValues, resolverStyle);
+                }
+                if (fieldValues.containsKey(DAY_OF_WEEK)) {
+                    return resolveYAD(fieldValues, resolverStyle);
+                }
+            }
+        }
+        return null;
+!!!8449666.java!!!	resolveProlepticMonth(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : void
+        Long pMonth = fieldValues.remove(PROLEPTIC_MONTH);
+        if (pMonth != null) {
+            if (resolverStyle != ResolverStyle.LENIENT) {
+                PROLEPTIC_MONTH.checkValidValue(pMonth);
+            }
+            // first day-of-month is likely to be safest for setting proleptic-month
+            // cannot add to year zero, as not all chronologies have a year zero
+            ChronoLocalDate chronoDate = dateNow()
+                    .with(DAY_OF_MONTH, 1).with(PROLEPTIC_MONTH, pMonth);
+            addFieldValue(fieldValues, MONTH_OF_YEAR, chronoDate.get(MONTH_OF_YEAR));
+            addFieldValue(fieldValues, YEAR, chronoDate.get(YEAR));
+        }
+!!!8449794.java!!!	resolveYearOfEra(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        Long yoeLong = fieldValues.remove(YEAR_OF_ERA);
+        if (yoeLong != null) {
+            Long eraLong = fieldValues.remove(ERA);
+            int yoe;
+            if (resolverStyle != ResolverStyle.LENIENT) {
+                yoe = range(YEAR_OF_ERA).checkValidIntValue(yoeLong, YEAR_OF_ERA);
+            } else {
+                yoe = Math.toIntExact(yoeLong);
+            }
+            if (eraLong != null) {
+                Era eraObj = eraOf(range(ERA).checkValidIntValue(eraLong, ERA));
+                addFieldValue(fieldValues, YEAR, prolepticYear(eraObj, yoe));
+            } else {
+                if (fieldValues.containsKey(YEAR)) {
+                    int year = range(YEAR).checkValidIntValue(fieldValues.get(YEAR), YEAR);
+                    ChronoLocalDate chronoDate = dateYearDay(year, 1);
+                    addFieldValue(fieldValues, YEAR, prolepticYear(chronoDate.getEra(), yoe));
+                } else if (resolverStyle == ResolverStyle.STRICT) {
+                    // do not invent era if strict
+                    // reinstate the field removed earlier, no cross-check issues
+                    fieldValues.put(YEAR_OF_ERA, yoeLong);
+                } else {
+                    List<Era> eras = eras();
+                    if (eras.isEmpty()) {
+                        addFieldValue(fieldValues, YEAR, yoe);
+                    } else {
+                        Era eraObj = eras.get(eras.size() - 1);
+                        addFieldValue(fieldValues, YEAR, prolepticYear(eraObj, yoe));
+                    }
+                }
+            }
+        } else if (fieldValues.containsKey(ERA)) {
+            range(ERA).checkValidValue(fieldValues.get(ERA), ERA);  // always validated
+        }
+        return null;
+!!!8449922.java!!!	resolveYMD(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        int y = range(YEAR).checkValidIntValue(fieldValues.remove(YEAR), YEAR);
+        if (resolverStyle == ResolverStyle.LENIENT) {
+            long months = Math.subtractExact(fieldValues.remove(MONTH_OF_YEAR), 1);
+            long days = Math.subtractExact(fieldValues.remove(DAY_OF_MONTH), 1);
+            return date(y, 1, 1).plus(months, MONTHS).plus(days, DAYS);
+        }
+        int moy = range(MONTH_OF_YEAR).checkValidIntValue(fieldValues.remove(MONTH_OF_YEAR), MONTH_OF_YEAR);
+        ValueRange domRange = range(DAY_OF_MONTH);
+        int dom = domRange.checkValidIntValue(fieldValues.remove(DAY_OF_MONTH), DAY_OF_MONTH);
+        if (resolverStyle == ResolverStyle.SMART) {  // previous valid
+            try {
+                return date(y, moy, dom);
+            } catch (DateTimeException ex) {
+                return date(y, moy, 1).with(TemporalAdjusters.lastDayOfMonth());
+            }
+        }
+        return date(y, moy, dom);
+!!!8450050.java!!!	resolveYD(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        int y = range(YEAR).checkValidIntValue(fieldValues.remove(YEAR), YEAR);
+        if (resolverStyle == ResolverStyle.LENIENT) {
+            long days = Math.subtractExact(fieldValues.remove(DAY_OF_YEAR), 1);
+            return dateYearDay(y, 1).plus(days, DAYS);
+        }
+        int doy = range(DAY_OF_YEAR).checkValidIntValue(fieldValues.remove(DAY_OF_YEAR), DAY_OF_YEAR);
+        return dateYearDay(y, doy);  // smart is same as strict
+!!!8450178.java!!!	resolveYMAA(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        int y = range(YEAR).checkValidIntValue(fieldValues.remove(YEAR), YEAR);
+        if (resolverStyle == ResolverStyle.LENIENT) {
+            long months = Math.subtractExact(fieldValues.remove(MONTH_OF_YEAR), 1);
+            long weeks = Math.subtractExact(fieldValues.remove(ALIGNED_WEEK_OF_MONTH), 1);
+            long days = Math.subtractExact(fieldValues.remove(ALIGNED_DAY_OF_WEEK_IN_MONTH), 1);
+            return date(y, 1, 1).plus(months, MONTHS).plus(weeks, WEEKS).plus(days, DAYS);
+        }
+        int moy = range(MONTH_OF_YEAR).checkValidIntValue(fieldValues.remove(MONTH_OF_YEAR), MONTH_OF_YEAR);
+        int aw = range(ALIGNED_WEEK_OF_MONTH).checkValidIntValue(fieldValues.remove(ALIGNED_WEEK_OF_MONTH), ALIGNED_WEEK_OF_MONTH);
+        int ad = range(ALIGNED_DAY_OF_WEEK_IN_MONTH).checkValidIntValue(fieldValues.remove(ALIGNED_DAY_OF_WEEK_IN_MONTH), ALIGNED_DAY_OF_WEEK_IN_MONTH);
+        ChronoLocalDate date = date(y, moy, 1).plus((aw - 1) * 7 + (ad - 1), DAYS);
+        if (resolverStyle == ResolverStyle.STRICT && date.get(MONTH_OF_YEAR) != moy) {
+            throw new DateTimeException("Strict mode rejected resolved date as it is in a different month");
+        }
+        return date;
+!!!8450306.java!!!	resolveYMAD(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        int y = range(YEAR).checkValidIntValue(fieldValues.remove(YEAR), YEAR);
+        if (resolverStyle == ResolverStyle.LENIENT) {
+            long months = Math.subtractExact(fieldValues.remove(MONTH_OF_YEAR), 1);
+            long weeks = Math.subtractExact(fieldValues.remove(ALIGNED_WEEK_OF_MONTH), 1);
+            long dow = Math.subtractExact(fieldValues.remove(DAY_OF_WEEK), 1);
+            return resolveAligned(date(y, 1, 1), months, weeks, dow);
+        }
+        int moy = range(MONTH_OF_YEAR).checkValidIntValue(fieldValues.remove(MONTH_OF_YEAR), MONTH_OF_YEAR);
+        int aw = range(ALIGNED_WEEK_OF_MONTH).checkValidIntValue(fieldValues.remove(ALIGNED_WEEK_OF_MONTH), ALIGNED_WEEK_OF_MONTH);
+        int dow = range(DAY_OF_WEEK).checkValidIntValue(fieldValues.remove(DAY_OF_WEEK), DAY_OF_WEEK);
+        ChronoLocalDate date = date(y, moy, 1).plus((aw - 1) * 7, DAYS).with(nextOrSame(DayOfWeek.of(dow)));
+        if (resolverStyle == ResolverStyle.STRICT && date.get(MONTH_OF_YEAR) != moy) {
+            throw new DateTimeException("Strict mode rejected resolved date as it is in a different month");
+        }
+        return date;
+!!!8450434.java!!!	resolveYAA(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        int y = range(YEAR).checkValidIntValue(fieldValues.remove(YEAR), YEAR);
+        if (resolverStyle == ResolverStyle.LENIENT) {
+            long weeks = Math.subtractExact(fieldValues.remove(ALIGNED_WEEK_OF_YEAR), 1);
+            long days = Math.subtractExact(fieldValues.remove(ALIGNED_DAY_OF_WEEK_IN_YEAR), 1);
+            return dateYearDay(y, 1).plus(weeks, WEEKS).plus(days, DAYS);
+        }
+        int aw = range(ALIGNED_WEEK_OF_YEAR).checkValidIntValue(fieldValues.remove(ALIGNED_WEEK_OF_YEAR), ALIGNED_WEEK_OF_YEAR);
+        int ad = range(ALIGNED_DAY_OF_WEEK_IN_YEAR).checkValidIntValue(fieldValues.remove(ALIGNED_DAY_OF_WEEK_IN_YEAR), ALIGNED_DAY_OF_WEEK_IN_YEAR);
+        ChronoLocalDate date = dateYearDay(y, 1).plus((aw - 1) * 7 + (ad - 1), DAYS);
+        if (resolverStyle == ResolverStyle.STRICT && date.get(YEAR) != y) {
+            throw new DateTimeException("Strict mode rejected resolved date as it is in a different year");
+        }
+        return date;
+!!!8450562.java!!!	resolveYAD(inout fieldValues : Map, inout resolverStyle : ResolverStyle) : ChronoLocalDate
+        int y = range(YEAR).checkValidIntValue(fieldValues.remove(YEAR), YEAR);
+        if (resolverStyle == ResolverStyle.LENIENT) {
+            long weeks = Math.subtractExact(fieldValues.remove(ALIGNED_WEEK_OF_YEAR), 1);
+            long dow = Math.subtractExact(fieldValues.remove(DAY_OF_WEEK), 1);
+            return resolveAligned(dateYearDay(y, 1), 0, weeks, dow);
+        }
+        int aw = range(ALIGNED_WEEK_OF_YEAR).checkValidIntValue(fieldValues.remove(ALIGNED_WEEK_OF_YEAR), ALIGNED_WEEK_OF_YEAR);
+        int dow = range(DAY_OF_WEEK).checkValidIntValue(fieldValues.remove(DAY_OF_WEEK), DAY_OF_WEEK);
+        ChronoLocalDate date = dateYearDay(y, 1).plus((aw - 1) * 7, DAYS).with(nextOrSame(DayOfWeek.of(dow)));
+        if (resolverStyle == ResolverStyle.STRICT && date.get(YEAR) != y) {
+            throw new DateTimeException("Strict mode rejected resolved date as it is in a different year");
+        }
+        return date;
+!!!8450690.java!!!	resolveAligned(inout base : ChronoLocalDate, in months : long, in weeks : long, in dow : long) : ChronoLocalDate
+        ChronoLocalDate date = base.plus(months, MONTHS).plus(weeks, WEEKS);
+        if (dow > 7) {
+            date = date.plus((dow - 1) / 7, WEEKS);
+            dow = ((dow - 1) % 7) + 1;
+        } else if (dow < 1) {
+            date = date.plus(Math.subtractExact(dow,  7) / 7, WEEKS);
+            dow = ((dow + 6) % 7) + 1;
+        }
+        return date.with(nextOrSame(DayOfWeek.of((int) dow)));
+!!!8450818.java!!!	addFieldValue(inout fieldValues : Map, inout field : ChronoField, in value : long) : void
+        Long old = fieldValues.get(field);  // check first for better error message
+        if (old != null && old.longValue() != value) {
+            throw new DateTimeException("Conflict found: " + field + " " + old + " differs from " + field + " " + value);
+        }
+        fieldValues.put(field, value);
+!!!8450946.java!!!	compareTo(inout other : Chronology) : int
+        return getId().compareTo(other.getId());
+!!!8451074.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+           return true;
+        }
+        if (obj instanceof AbstractChronology) {
+            return compareTo((AbstractChronology) obj) == 0;
+        }
+        return false;
+!!!8451202.java!!!	hashCode() : int
+        return getClass().hashCode() ^ getId().hashCode();
+!!!8451330.java!!!	toString() : String
+        return getId();
+!!!8451458.java!!!	writeReplace() : Object
+        return new Ser(Ser.CHRONO_TYPE, this);
+!!!8451586.java!!!	readObject(inout s : ObjectInputStream) : void
+        throw new InvalidObjectException("Deserialization via serialization delegate");
+!!!8451714.java!!!	writeExternal(inout out : DataOutput) : void
+        out.writeUTF(getId());
+!!!8451842.java!!!	readExternal(inout in : DataInput) : Chronology
+        String id = in.readUTF();
+        return Chronology.of(id);

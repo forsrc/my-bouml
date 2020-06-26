@@ -1,0 +1,163 @@
+class ICCMarkerSegment
+!!!1808642.java!!!	ICCMarkerSegment(inout cs : ICC_ColorSpace)
+            super(JPEG.APP2);
+            chunks = null;
+            chunksRead = 0;
+            numChunks = 0;
+            profile = cs.getProfile().getData();
+!!!1808770.java!!!	ICCMarkerSegment(inout buffer : JPEGBuffer)
+            super(buffer);  // gets whole segment or fills the buffer
+            if (debug) {
+                System.out.println("Creating new ICC segment");
+            }
+            buffer.bufPtr += ID_SIZE; // Skip the id
+            buffer.bufAvail -= ID_SIZE;
+            /*
+             * Reduce the stored length by the id size.  The stored
+             * length is used to store the length of the profile
+             * data only.
+             */
+            length -= ID_SIZE;
+
+            // get the chunk number
+            int chunkNum = buffer.buf[buffer.bufPtr] & 0xff;
+            // get the total number of chunks
+            numChunks = buffer.buf[buffer.bufPtr+1] & 0xff;
+
+            if (chunkNum > numChunks) {
+                throw new IIOException
+                    ("Image format Error; chunk num > num chunks");
+            }
+
+            // if there are no more chunks, set up the data
+            if (numChunks == 1) {
+                // reduce the stored length by the two chunk numbering bytes
+                length -= 2;
+                profile = new byte[length];
+                buffer.bufPtr += 2;
+                buffer.bufAvail-=2;
+                buffer.readData(profile);
+                inICC = false;
+            } else {
+                // If we store them away, include the chunk numbering bytes
+                byte [] profileData = new byte[length];
+                // Now reduce the stored length by the
+                // two chunk numbering bytes
+                length -= 2;
+                buffer.readData(profileData);
+                chunks = new ArrayList();
+                chunks.add(profileData);
+                chunksRead = 1;
+                inICC = true;
+            }
+!!!1808898.java!!!	ICCMarkerSegment(inout node : Node)
+            super(JPEG.APP2);
+            if (node instanceof IIOMetadataNode) {
+                IIOMetadataNode ourNode = (IIOMetadataNode) node;
+                ICC_Profile prof = (ICC_Profile) ourNode.getUserObject();
+                if (prof != null) {  // May be null
+                    profile = prof.getData();
+                }
+            }
+!!!1809026.java!!!	clone() : Object
+            ICCMarkerSegment newGuy = (ICCMarkerSegment) super.clone();
+            if (profile != null) {
+                newGuy.profile = (byte[]) profile.clone();
+            }
+            return newGuy;
+!!!1809154.java!!!	addData(inout buffer : JPEGBuffer) : boolean
+            if (debug) {
+                System.out.println("Adding to ICC segment");
+            }
+            // skip the tag
+            buffer.bufPtr++;
+            buffer.bufAvail--;
+            // Get the length, but not in length
+            int dataLen = (buffer.buf[buffer.bufPtr++] & 0xff) << 8;
+            dataLen |= buffer.buf[buffer.bufPtr++] & 0xff;
+            buffer.bufAvail -= 2;
+            // Don't include length itself
+            dataLen -= 2;
+            // skip the id
+            buffer.bufPtr += ID_SIZE; // Skip the id
+            buffer.bufAvail -= ID_SIZE;
+            /*
+             * Reduce the stored length by the id size.  The stored
+             * length is used to store the length of the profile
+             * data only.
+             */
+            dataLen -= ID_SIZE;
+
+            // get the chunk number
+            int chunkNum = buffer.buf[buffer.bufPtr] & 0xff;
+            if (chunkNum > numChunks) {
+                throw new IIOException
+                    ("Image format Error; chunk num > num chunks");
+            }
+
+            // get the number of chunks, which should match
+            int newNumChunks = buffer.buf[buffer.bufPtr+1] & 0xff;
+            if (numChunks != newNumChunks) {
+                throw new IIOException
+                    ("Image format Error; icc num chunks mismatch");
+            }
+            dataLen -= 2;
+            if (debug) {
+                System.out.println("chunkNum: " + chunkNum
+                                   + ", numChunks: " + numChunks
+                                   + ", dataLen: " + dataLen);
+            }
+            boolean retval = false;
+            byte [] profileData = new byte[dataLen];
+            buffer.readData(profileData);
+            chunks.add(profileData);
+            length += dataLen;
+            chunksRead++;
+            if (chunksRead < numChunks) {
+                inICC = true;
+            } else {
+                if (debug) {
+                    System.out.println("Completing profile; total length is "
+                                       + length);
+                }
+                // create an array for the whole thing
+                profile = new byte[length];
+                // copy the existing chunks, releasing them
+                // Note that they may be out of order
+
+                int index = 0;
+                for (int i = 1; i <= numChunks; i++) {
+                    boolean foundIt = false;
+                    for (int chunk = 0; chunk < chunks.size(); chunk++) {
+                        byte [] chunkData = (byte []) chunks.get(chunk);
+                        if (chunkData[0] == i) { // Right one
+                            System.arraycopy(chunkData, 2,
+                                             profile, index,
+                                             chunkData.length-2);
+                            index += chunkData.length-2;
+                            foundIt = true;
+                        }
+                    }
+                    if (foundIt == false) {
+                        throw new IIOException
+                            ("Image Format Error: Missing ICC chunk num " + i);
+                    }
+                }
+
+                chunks = null;
+                chunksRead = 0;
+                numChunks = 0;
+                inICC = false;
+                retval = true;
+            }
+            return retval;
+!!!1809282.java!!!	getNativeNode() : IIOMetadataNode
+            IIOMetadataNode node = new IIOMetadataNode("app2ICC");
+            if (profile != null) {
+                node.setUserObject(ICC_Profile.getInstance(profile));
+            }
+            return node;
+!!!1809410.java!!!	write(inout ios : ImageOutputStream) : void
+            // No-op
+!!!1809538.java!!!	print() : void
+            printTag("ICC Profile APP2");

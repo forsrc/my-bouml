@@ -1,0 +1,63 @@
+class CopyMoveHelper
+!!!7825538.java!!!	convertMoveToCopyOptions(inout  : CopyOption...options) : CopyOption
+        int len = options.length;
+        CopyOption[] newOptions = new CopyOption[len+2];
+        for (int i=0; i<len; i++) {
+            CopyOption option = options[i];
+            if (option == StandardCopyOption.ATOMIC_MOVE) {
+                throw new AtomicMoveNotSupportedException(null, null,
+                    "Atomic move between providers is not supported");
+            }
+            newOptions[i] = option;
+        }
+        newOptions[len] = LinkOption.NOFOLLOW_LINKS;
+        newOptions[len+1] = StandardCopyOption.COPY_ATTRIBUTES;
+        return newOptions;
+!!!7825666.java!!!	copyToForeignTarget(inout source : Path, inout target : Path, inout  : CopyOption...options) : void
+        CopyOptions opts = CopyOptions.parse(options);
+        LinkOption[] linkOptions = (opts.followLinks) ? new LinkOption[0] :
+            new LinkOption[] { LinkOption.NOFOLLOW_LINKS };
+
+        // attributes of source file
+        BasicFileAttributes attrs = Files.readAttributes(source,
+                                                         BasicFileAttributes.class,
+                                                         linkOptions);
+        if (attrs.isSymbolicLink())
+            throw new IOException("Copying of symbolic links not supported");
+
+        // delete target if it exists and REPLACE_EXISTING is specified
+        if (opts.replaceExisting) {
+            Files.deleteIfExists(target);
+        } else if (Files.exists(target))
+            throw new FileAlreadyExistsException(target.toString());
+
+        // create directory or copy file
+        if (attrs.isDirectory()) {
+            Files.createDirectory(target);
+        } else {
+            try (InputStream in = Files.newInputStream(source)) {
+                Files.copy(in, target);
+            }
+        }
+
+        // copy basic attributes to target
+        if (opts.copyAttributes) {
+            BasicFileAttributeView view =
+                Files.getFileAttributeView(target, BasicFileAttributeView.class);
+            try {
+                view.setTimes(attrs.lastModifiedTime(),
+                              attrs.lastAccessTime(),
+                              attrs.creationTime());
+            } catch (Throwable x) {
+                // rollback
+                try {
+                    Files.delete(target);
+                } catch (Throwable suppressed) {
+                    x.addSuppressed(suppressed);
+                }
+                throw x;
+            }
+        }
+!!!7825794.java!!!	moveToForeignTarget(inout source : Path, inout target : Path, inout  : CopyOption...options) : void
+        copyToForeignTarget(source, target, convertMoveToCopyOptions(options));
+        Files.delete(source);

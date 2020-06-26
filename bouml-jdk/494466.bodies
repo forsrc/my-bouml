@@ -1,0 +1,302 @@
+class Introspector
+!!!2956802.java!!!	Introspector()
+
+        // ------------------------------
+        // ------------------------------
+
+!!!2956930.java!!!	isDynamic(in c : Class) : boolean
+        // Check if the MBean implements the DynamicMBean interface
+        return javax.management.DynamicMBean.class.isAssignableFrom(c);
+!!!2957058.java!!!	testCreation(inout c : Class) : void
+        // Check if the class is a concrete class
+        final int mods = c.getModifiers();
+        if (Modifier.isAbstract(mods) || Modifier.isInterface(mods)) {
+            throw new NotCompliantMBeanException("MBean class must be concrete");
+        }
+
+        // Check if the MBean has a public constructor
+        final Constructor<?>[] consList = c.getConstructors();
+        if (consList.length == 0) {
+            throw new NotCompliantMBeanException("MBean class must have public constructor");
+        }
+!!!2957186.java!!!	checkCompliance(inout mbeanClass : Class) : void
+        // Is DynamicMBean?
+        //
+        if (DynamicMBean.class.isAssignableFrom(mbeanClass))
+            return;
+        // Is Standard MBean?
+        //
+        final Exception mbeanException;
+        try {
+            getStandardMBeanInterface(mbeanClass);
+            return;
+        } catch (NotCompliantMBeanException e) {
+            mbeanException = e;
+        }
+        // Is MXBean?
+        //
+        final Exception mxbeanException;
+        try {
+            getMXBeanInterface(mbeanClass);
+            return;
+        } catch (NotCompliantMBeanException e) {
+            mxbeanException = e;
+        }
+        final String msg =
+            "MBean class " + mbeanClass.getName() + " does not implement " +
+            "DynamicMBean, and neither follows the Standard MBean conventions (" +
+            mbeanException.toString() + ") nor the MXBean conventions (" +
+            mxbeanException.toString() + ")";
+        throw new NotCompliantMBeanException(msg);
+!!!2957314.java!!!	makeDynamicMBean(inout mbean : T) : DynamicMBean
+        if (mbean instanceof DynamicMBean)
+            return (DynamicMBean) mbean;
+        final Class<?> mbeanClass = mbean.getClass();
+        Class<? super T> c = null;
+        try {
+            c = Util.cast(getStandardMBeanInterface(mbeanClass));
+        } catch (NotCompliantMBeanException e) {
+            // Ignore exception - we need to check whether
+            // mbean is an MXBean first.
+        }
+        if (c != null)
+            return new StandardMBeanSupport(mbean, c);
+
+        try {
+            c = Util.cast(getMXBeanInterface(mbeanClass));
+        } catch (NotCompliantMBeanException e) {
+            // Ignore exception - we cannot decide whether mbean was supposed
+            // to be an MBean or an MXBean. We will call checkCompliance()
+            // to generate the appropriate exception.
+        }
+        if (c != null)
+            return new MXBeanSupport(mbean, c);
+        checkCompliance(mbeanClass);
+        throw new NotCompliantMBeanException("Not compliant"); // not reached
+!!!2957442.java!!!	testCompliance(inout baseClass : Class) : MBeanInfo
+
+        // ------------------------------
+        // ------------------------------
+
+        // Check if the MBean implements the MBean or the Dynamic
+        // MBean interface
+        if (isDynamic(baseClass))
+            return null;
+
+        return testCompliance(baseClass, null);
+!!!2957570.java!!!	testComplianceMXBeanInterface(inout interfaceClass : Class) : void
+        MXBeanIntrospector.getInstance().getAnalyzer(interfaceClass);
+!!!2957698.java!!!	testComplianceMBeanInterface(inout interfaceClass : Class) : void
+        StandardMBeanIntrospector.getInstance().getAnalyzer(interfaceClass);
+!!!2957826.java!!!	testCompliance(in baseClass : Class, inout mbeanInterface : Class) : MBeanInfo
+        if (mbeanInterface == null)
+            mbeanInterface = getStandardMBeanInterface(baseClass);
+        ReflectUtil.checkPackageAccess(mbeanInterface);
+        MBeanIntrospector<?> introspector = StandardMBeanIntrospector.getInstance();
+        return getClassMBeanInfo(introspector, baseClass, mbeanInterface);
+!!!2957954.java!!!	getClassMBeanInfo(inout introspector : MBeanIntrospector, inout baseClass : Class, inout mbeanInterface : Class) : MBeanInfo
+        PerInterface<M> perInterface = introspector.getPerInterface(mbeanInterface);
+        return introspector.getClassMBeanInfo(baseClass, perInterface);
+!!!2958082.java!!!	getMBeanInterface(inout baseClass : Class) : Class
+        // Check if the given class implements the MBean interface
+        // or the Dynamic MBean interface
+        if (isDynamic(baseClass)) return null;
+        try {
+            return getStandardMBeanInterface(baseClass);
+        } catch (NotCompliantMBeanException e) {
+            return null;
+        }
+!!!2958210.java!!!	getStandardMBeanInterface(inout baseClass : Class) : Class
+            Class<? super T> current = baseClass;
+            Class<? super T> mbeanInterface = null;
+            while (current != null) {
+                mbeanInterface =
+                    findMBeanInterface(current, current.getName());
+                if (mbeanInterface != null) break;
+                current = current.getSuperclass();
+            }
+                if (mbeanInterface != null) {
+                    return mbeanInterface;
+            } else {
+            final String msg =
+                "Class " + baseClass.getName() +
+                " is not a JMX compliant Standard MBean";
+            throw new NotCompliantMBeanException(msg);
+        }
+!!!2958338.java!!!	getMXBeanInterface(inout baseClass : Class) : Class
+        try {
+            return MXBeanSupport.findMXBeanInterface(baseClass);
+        } catch (Exception e) {
+            throw throwException(baseClass,e);
+        }
+!!!2958466.java!!!	findMBeanInterface(inout aClass : Class, inout aName : String) : Class
+        Class<? super T> current = aClass;
+        while (current != null) {
+            final Class<?>[] interfaces = current.getInterfaces();
+            final int len = interfaces.length;
+            for (int i=0;i<len;i++)  {
+                Class<? super T> inter = Util.cast(interfaces[i]);
+                inter = implementsMBean(inter, aName);
+                if (inter != null) return inter;
+            }
+            current = current.getSuperclass();
+        }
+        return null;
+!!!2958594.java!!!	descriptorForElement(in elmt : AnnotatedElement) : Descriptor
+        if (elmt == null)
+            return ImmutableDescriptor.EMPTY_DESCRIPTOR;
+        final Annotation[] annots = elmt.getAnnotations();
+        return descriptorForAnnotations(annots);
+!!!2958722.java!!!	descriptorForAnnotations(inout annots : Annotation [[]]) : Descriptor
+        if (annots.length == 0)
+            return ImmutableDescriptor.EMPTY_DESCRIPTOR;
+        Map<String, Object> descriptorMap = new HashMap<String, Object>();
+        for (Annotation a : annots) {
+            Class<? extends Annotation> c = a.annotationType();
+            Method[] elements = c.getMethods();
+            boolean packageAccess = false;
+            for (Method element : elements) {
+                DescriptorKey key = element.getAnnotation(DescriptorKey.class);
+                if (key != null) {
+                    String name = key.value();
+                    Object value;
+                    try {
+                        // Avoid checking access more than once per annotation
+                        if (!packageAccess) {
+                            ReflectUtil.checkPackageAccess(c);
+                            packageAccess = true;
+                        }
+                        value = MethodUtil.invoke(element, a, null);
+                    } catch (RuntimeException e) {
+                        // we don't expect this - except for possibly
+                        // security exceptions?
+                        // RuntimeExceptions shouldn't be "UndeclaredThrowable".
+                        // anyway...
+                        //
+                        throw e;
+                    } catch (Exception e) {
+                        // we don't expect this
+                        throw new UndeclaredThrowableException(e);
+                    }
+                    value = annotationToField(value);
+                    Object oldValue = descriptorMap.put(name, value);
+                    if (oldValue != null && !equals(oldValue, value)) {
+                        final String msg =
+                            "Inconsistent values for descriptor field " + name +
+                            " from annotations: " + value + " :: " + oldValue;
+                        throw new IllegalArgumentException(msg);
+                    }
+                }
+            }
+        }
+
+        if (descriptorMap.isEmpty())
+            return ImmutableDescriptor.EMPTY_DESCRIPTOR;
+        else
+            return new ImmutableDescriptor(descriptorMap);
+!!!2958850.java!!!	throwException(inout notCompliant : Class, inout cause : Throwable) : NotCompliantMBeanException
+        if (cause instanceof SecurityException)
+            throw (SecurityException) cause;
+        if (cause instanceof NotCompliantMBeanException)
+            throw (NotCompliantMBeanException)cause;
+        final String classname =
+                (notCompliant==null)?"null class":notCompliant.getName();
+        final String reason =
+                (cause==null)?"Not compliant":cause.getMessage();
+        final NotCompliantMBeanException res =
+                new NotCompliantMBeanException(classname+": "+reason);
+        res.initCause(cause);
+        throw res;
+!!!2958978.java!!!	annotationToField(inout x : Object) : Object
+        // An annotation element cannot have a null value but never mind
+        if (x == null)
+            return null;
+        if (x instanceof Number || x instanceof String ||
+                x instanceof Character || x instanceof Boolean ||
+                x instanceof String[])
+            return x;
+        // Remaining possibilities: array of primitive (e.g. int[]),
+        // enum, class, array of enum or class.
+        Class<?> c = x.getClass();
+        if (c.isArray()) {
+            if (c.getComponentType().isPrimitive())
+                return x;
+            Object[] xx = (Object[]) x;
+            String[] ss = new String[xx.length];
+            for (int i = 0; i < xx.length; i++)
+                ss[i] = (String) annotationToField(xx[i]);
+            return ss;
+        }
+        if (x instanceof Class<?>)
+            return ((Class<?>) x).getName();
+        if (x instanceof Enum<?>)
+            return ((Enum<?>) x).name();
+        // The only other possibility is that the value is another
+        // annotation, or that the language has evolved since this code
+        // was written.  We don't allow for either of those currently.
+        // If it is indeed another annotation, then x will be a proxy
+        // with an unhelpful name like $Proxy2.  So we extract the
+        // proxy's interface to use that in the exception message.
+        if (Proxy.isProxyClass(c))
+            c = c.getInterfaces()[0];  // array "can't be empty"
+        throw new IllegalArgumentException("Illegal type for annotation " +
+                "element using @DescriptorKey: " + c.getName());
+!!!2959106.java!!!	equals(inout x : Object, inout y : Object) : boolean
+        return Arrays.deepEquals(new Object[] {x}, new Object[] {y});
+!!!2959234.java!!!	implementsMBean(inout c : Class, inout clName : String) : Class
+        String clMBeanName = clName + "MBean";
+        if (c.getName().equals(clMBeanName)) {
+            return c;
+        }
+        Class<?>[] interfaces = c.getInterfaces();
+        for (int i = 0;i < interfaces.length; i++) {
+            if (interfaces[i].getName().equals(clMBeanName) &&
+                (Modifier.isPublic(interfaces[i].getModifiers()) ||
+                 ALLOW_NONPUBLIC_MBEAN)) {
+                return Util.cast(interfaces[i]);
+            }
+        }
+
+        return null;
+!!!2959362.java!!!	elementFromComplex(inout complex : Object, inout element : String) : Object
+        try {
+            if (complex.getClass().isArray() && element.equals("length")) {
+                return Array.getLength(complex);
+            } else if (complex instanceof CompositeData) {
+                return ((CompositeData) complex).get(element);
+            } else {
+                // Java Beans introspection
+                //
+                Class<?> clazz = complex.getClass();
+                Method readMethod = null;
+                if (BeansHelper.isAvailable()) {
+                    Object bi = BeansHelper.getBeanInfo(clazz);
+                    Object[] pds = BeansHelper.getPropertyDescriptors(bi);
+                    for (Object pd: pds) {
+                        if (BeansHelper.getPropertyName(pd).equals(element)) {
+                            readMethod = BeansHelper.getReadMethod(pd);
+                            break;
+                        }
+                    }
+                } else {
+                    // Java Beans not available so use simple introspection
+                    // to locate method
+                    readMethod = SimpleIntrospector.getReadMethod(clazz, element);
+                }
+                if (readMethod != null) {
+                    ReflectUtil.checkPackageAccess(readMethod.getDeclaringClass());
+                    return MethodUtil.invoke(readMethod, complex, new Class[0]);
+                }
+
+                throw new AttributeNotFoundException(
+                    "Could not find the getter method for the property " +
+                    element + " using the Java Beans introspector");
+            }
+        } catch (InvocationTargetException e) {
+            throw new IllegalArgumentException(e);
+        } catch (AttributeNotFoundException e) {
+            throw e;
+        } catch (Exception e) {
+            throw EnvHelp.initCause(
+                new AttributeNotFoundException(e.getMessage()), e);
+        }

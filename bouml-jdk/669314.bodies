@@ -1,0 +1,535 @@
+class FragmentContentDriver
+!!!4359554.java!!!	startOfMarkup() : void
+            fMarkupDepth++;
+            final int ch = fEntityScanner.peekChar();
+
+            if (isValidNameStartChar(ch) || isValidNameStartHighSurrogate(ch)) {
+                setScannerState(SCANNER_STATE_START_ELEMENT_TAG);
+            } else {
+                switch(ch){
+                    case '?' :{
+                        setScannerState(SCANNER_STATE_PI);
+                        fEntityScanner.skipChar(ch, null);
+                        break;
+                    }
+                    case '!' :{
+                        fEntityScanner.skipChar(ch, null);
+                        if (fEntityScanner.skipChar('-', null)) {
+                            if (!fEntityScanner.skipChar('-', NameType.COMMENT)) {
+                                reportFatalError("InvalidCommentStart",
+                                        null);
+                            }
+                            setScannerState(SCANNER_STATE_COMMENT);
+                        } else if (fEntityScanner.skipString(cdata)) {
+                            setScannerState(SCANNER_STATE_CDATA );
+                        } else if (!scanForDoctypeHook()) {
+                            reportFatalError("MarkupNotRecognizedInContent",
+                                    null);
+                        }
+                        break;
+                    }
+                    case '/' :{
+                        setScannerState(SCANNER_STATE_END_ELEMENT_TAG);
+                        fEntityScanner.skipChar(ch, NameType.ELEMENTEND);
+                        break;
+                    }
+                    default :{
+                        reportFatalError("MarkupNotRecognizedInContent", null);
+                    }
+                }
+            }
+
+!!!4359682.java!!!	startOfContent() : void
+            if (fEntityScanner.skipChar('<', null)) {
+                setScannerState(SCANNER_STATE_START_OF_MARKUP);
+            } else if (fEntityScanner.skipChar('&', NameType.REFERENCE)) {
+                setScannerState(SCANNER_STATE_REFERENCE) ; //XMLEvent.ENTITY_REFERENCE ); //SCANNER_STATE_REFERENCE
+            } else {
+                //element content is there..
+                setScannerState(SCANNER_STATE_CHARACTER_DATA);
+            }
+!!!4359810.java!!!	decideSubState() : void
+            while( fScannerState == SCANNER_STATE_CONTENT || fScannerState == SCANNER_STATE_START_OF_MARKUP){
+
+                switch (fScannerState) {
+
+                    case SCANNER_STATE_CONTENT: {
+                        startOfContent() ;
+                        break;
+                    }
+
+                    case SCANNER_STATE_START_OF_MARKUP: {
+                        startOfMarkup() ;
+                        break;
+                    }
+                }
+            }
+!!!4359938.java!!!	next() : int
+            while (true) {
+            try {
+                if(DEBUG_NEXT){
+                    System.out.println("NOW IN FragmentContentDriver");
+                    System.out.println("Entering the FragmentContentDriver with = " + getScannerStateName(fScannerState));
+                }
+
+                //decide the actual sub state of the scanner.For more information refer to the javadoc of
+                //decideSubState.
+
+                switch (fScannerState) {
+                    case SCANNER_STATE_CONTENT: {
+                        final int ch = fEntityScanner.peekChar();
+                        if (ch == '<') {
+                            fEntityScanner.scanChar(null);
+                            setScannerState(SCANNER_STATE_START_OF_MARKUP);
+                        } else if (ch == '&') {
+                            fEntityScanner.scanChar(NameType.REFERENCE);
+                            setScannerState(SCANNER_STATE_REFERENCE) ; //XMLEvent.ENTITY_REFERENCE ); //SCANNER_STATE_REFERENCE
+                            break;
+                        } else {
+                            //element content is there..
+                            setScannerState(SCANNER_STATE_CHARACTER_DATA);
+                            break;
+                        }
+                    }
+
+                    case SCANNER_STATE_START_OF_MARKUP: {
+                        startOfMarkup();
+                        break;
+                    }//case: SCANNER_STATE_START_OF_MARKUP
+
+                }//end of switch
+                //decideSubState() ;
+
+                //do some special handling if isCoalesce is set to true.
+                if(fIsCoalesce){
+                    fUsebuffer = true ;
+                    //if the last section was character data
+                    if(fLastSectionWasCharacterData){
+
+                        //if we dont encounter any CDATA or ENITY REFERENCE and current state is also not SCANNER_STATE_CHARACTER_DATA
+                        //return the last scanned charactrer data.
+                        if((fScannerState != SCANNER_STATE_CDATA) && (fScannerState != SCANNER_STATE_REFERENCE)
+                        && (fScannerState != SCANNER_STATE_CHARACTER_DATA)){
+                            fLastSectionWasCharacterData = false;
+                            return XMLEvent.CHARACTERS;
+                        }
+                    }//if last section was CDATA or ENTITY REFERENCE
+                    //xxx: there might be another entity reference or CDATA after this
+                    //<foo>blah blah &amp;&lt;<![CDATA[[aa]]>blah blah</foo>
+                    else if((fLastSectionWasCData || fLastSectionWasEntityReference)){
+                        //and current state is not SCANNER_STATE_CHARACTER_DATA
+                        //or SCANNER_STATE_CDATA or SCANNER_STATE_REFERENCE
+                        //this means there is nothing more to be coalesced.
+                        //return the CHARACTERS event.
+                        if((fScannerState != SCANNER_STATE_CDATA) && (fScannerState != SCANNER_STATE_REFERENCE)
+                        && (fScannerState != SCANNER_STATE_CHARACTER_DATA)){
+
+                            fLastSectionWasCData = false;
+                            fLastSectionWasEntityReference = false;
+                            return XMLEvent.CHARACTERS;
+                        }
+                    }
+                }
+
+
+                if(DEBUG_NEXT){
+                    System.out.println("Actual scanner state set by decideSubState is = " + getScannerStateName(fScannerState));
+                }
+
+                switch(fScannerState){
+
+                    case XMLEvent.START_DOCUMENT :
+                        return XMLEvent.START_DOCUMENT;
+
+                    case SCANNER_STATE_START_ELEMENT_TAG :{
+
+                        //xxx this function returns true when element is empty.. can be linked to end element event.
+                        //returns true if the element is empty
+                        fEmptyElement = scanStartElement() ;
+                        //if the element is empty the next event is "end element"
+                        if(fEmptyElement){
+                            setScannerState(SCANNER_STATE_END_ELEMENT_TAG);
+                        }else{
+                            //set the next possible state
+                            setScannerState(SCANNER_STATE_CONTENT);
+                        }
+                        return XMLEvent.START_ELEMENT ;
+                    }
+
+                    case SCANNER_STATE_CHARACTER_DATA: {
+                        if(DEBUG_COALESCE){
+                            System.out.println("fLastSectionWasCData = " + fLastSectionWasCData);
+                            System.out.println("fIsCoalesce = " + fIsCoalesce);
+                        }
+                        //if last section was either entity reference or cdata or character data we should be using buffer
+                        fUsebuffer = fLastSectionWasEntityReference || fLastSectionWasCData || fLastSectionWasCharacterData ;
+
+                        //When coalesce is set to true and last state was REFERENCE or CDATA or CHARACTER_DATA, buffer should not be cleared.
+                        if( fIsCoalesce && (fLastSectionWasEntityReference || fLastSectionWasCData || fLastSectionWasCharacterData) ){
+                            fLastSectionWasEntityReference = false;
+                            fLastSectionWasCData = false;
+                            fLastSectionWasCharacterData = true ;
+                            fUsebuffer = true;
+                        }else{
+                            //clear the buffer
+                            fContentBuffer.clear();
+                        }
+
+                        //set the fTempString length to 0 before passing it on to scanContent
+                        //scanContent sets the correct co-ordinates as per the content read
+                        fTempString.length = 0;
+                        int c = fEntityScanner.scanContent(fTempString);
+                        if(DEBUG){
+                            System.out.println("fTempString = " + fTempString);
+                        }
+                        if(fEntityScanner.skipChar('<', null)){
+                            //check if we have reached end of element
+                            if(fEntityScanner.skipChar('/', NameType.ELEMENTEND)){
+                                //increase the mark up depth
+                                fMarkupDepth++;
+                                fLastSectionWasCharacterData = false;
+                                setScannerState(SCANNER_STATE_END_ELEMENT_TAG);
+                                //check if its start of new element
+                            }else if(XMLChar.isNameStart(fEntityScanner.peekChar())){
+                                fMarkupDepth++;
+                                fLastSectionWasCharacterData = false;
+                                setScannerState(SCANNER_STATE_START_ELEMENT_TAG);
+                            }else{
+                                setScannerState(SCANNER_STATE_START_OF_MARKUP);
+                                //there can be cdata ahead if coalesce is true we should call again
+                                if(fIsCoalesce){
+                                    fUsebuffer = true;
+                                    fLastSectionWasCharacterData = true;
+                                    fContentBuffer.append(fTempString);
+                                    fTempString.length = 0;
+                                    continue;
+                                }
+                            }
+                            //in case last section was either entity reference or cdata or character data -- we should be using buffer
+                            if(fUsebuffer){
+                                fContentBuffer.append(fTempString);
+                                fTempString.length = 0;
+                            }
+                            if(DEBUG){
+                                System.out.println("NOT USING THE BUFFER, STRING = " + fTempString.toString());
+                            }
+                            if(dtdGrammarUtil!= null && dtdGrammarUtil.isIgnorableWhiteSpace(fContentBuffer)){
+                                if(DEBUG)System.out.println("Return SPACE EVENT");
+                                return XMLEvent.SPACE;
+                            }else
+                                return XMLEvent.CHARACTERS;
+
+                        } else{
+                            fUsebuffer = true ;
+                            if(DEBUG){
+                                System.out.println("fContentBuffer = " + fContentBuffer);
+                                System.out.println("fTempString = " + fTempString);
+                            }
+                            fContentBuffer.append(fTempString);
+                            fTempString.length = 0;
+                        }
+                        if (c == '\r') {
+                            if(DEBUG){
+                                System.out.println("'\r' character found");
+                            }
+                            // happens when there is the character reference &#13;
+                            //xxx: We know the next chracter.. we should just skip it and add ']' directlry
+                            fEntityScanner.scanChar(null);
+                            fUsebuffer = true;
+                            fContentBuffer.append((char)c);
+                            c = -1 ;
+                        } else if (c == ']') {
+                            //fStringBuffer.clear();
+                            //xxx: We know the next chracter.. we should just skip it and add ']' directlry
+                            fUsebuffer = true;
+                            fContentBuffer.append((char)fEntityScanner.scanChar(null));
+                            // remember where we are in case we get an endEntity before we
+                            // could flush the buffer out - this happens when we're parsing an
+                            // entity which ends with a ]
+                            fInScanContent = true;
+
+                            // We work on a single character basis to handle cases such as:
+                            // ']]]>' which we might otherwise miss.
+                            //
+                            if (fEntityScanner.skipChar(']', null)) {
+                                fContentBuffer.append(']');
+                                while (fEntityScanner.skipChar(']', null)) {
+                                    fContentBuffer.append(']');
+                                }
+                                if (fEntityScanner.skipChar('>', null)) {
+                                    reportFatalError("CDEndInContent", null);
+                                }
+                            }
+                            c = -1 ;
+                            fInScanContent = false;
+                        }
+
+                        do{
+                            //xxx: we should be using only one buffer..
+                            // we need not to grow the buffer only when isCoalesce() is not true;
+
+                            if (c == '<') {
+                                fEntityScanner.scanChar(null);
+                                setScannerState(SCANNER_STATE_START_OF_MARKUP);
+                                break;
+                            }//xxx what should be the behavior if entity reference is present in the content ?
+                            else if (c == '&') {
+                                fEntityScanner.scanChar(NameType.REFERENCE);
+                                setScannerState(SCANNER_STATE_REFERENCE);
+                                break;
+                            }///xxx since this part is also characters, it should be merged...
+                            else if (c != -1 && isInvalidLiteral(c)) {
+                                if (XMLChar.isHighSurrogate(c)) {
+                                    // special case: surrogates
+                                    scanSurrogates(fContentBuffer) ;
+                                    setScannerState(SCANNER_STATE_CONTENT);
+                                } else {
+                                    reportFatalError("InvalidCharInContent",
+                                            new Object[] {
+                                        Integer.toString(c, 16)});
+                                        fEntityScanner.scanChar(null);
+                                }
+                                break;
+                            }
+                            //xxx: scanContent also gives character callback.
+                            c = scanContent(fContentBuffer) ;
+                            //we should not be iterating again if fIsCoalesce is not set to true
+
+                            if(!fIsCoalesce){
+                                setScannerState(SCANNER_STATE_CONTENT);
+                                break;
+                            }
+
+                        }while(true);
+
+                        //if (fDocumentHandler != null) {
+                        //  fDocumentHandler.characters(fContentBuffer, null);
+                        //}
+                        if(DEBUG)System.out.println("USING THE BUFFER, STRING START=" + fContentBuffer.toString() +"=END");
+                        //if fIsCoalesce is true there might be more data so call fDriver.next()
+                        if(fIsCoalesce){
+                            fLastSectionWasCharacterData = true ;
+                            continue;
+                        }else{
+                            if(dtdGrammarUtil!= null && dtdGrammarUtil.isIgnorableWhiteSpace(fContentBuffer)){
+                                if(DEBUG)System.out.println("Return SPACE EVENT");
+                                return XMLEvent.SPACE;
+                            } else
+                                return XMLEvent.CHARACTERS ;
+                        }
+                    }
+
+                    case SCANNER_STATE_END_ELEMENT_TAG :{
+                        if(fEmptyElement){
+                            //set it back to false.
+                            fEmptyElement = false;
+                            setScannerState(SCANNER_STATE_CONTENT);
+                            //check the case when there is comment after single element document
+                            //<foo/> and some comment after this
+                            return (fMarkupDepth == 0 && elementDepthIsZeroHook() ) ? XMLEvent.END_ELEMENT : XMLEvent.END_ELEMENT ;
+
+                        } else if(scanEndElement() == 0) {
+                            //It is last element of the document
+                            if (elementDepthIsZeroHook()) {
+                                //if element depth is zero , it indicates the end of the document
+                                //the state shouldn't be set, because it is set by elementDepthIsZeroHook() function
+                                //xxx understand this point once again..
+                                return XMLEvent.END_ELEMENT ;
+                            }
+
+                        }
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        return XMLEvent.END_ELEMENT ;
+                    }
+
+                    case SCANNER_STATE_COMMENT: { //SCANNER_STATE_COMMENT:
+                        scanComment();
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        return XMLEvent.COMMENT;
+                        //break;
+                    }
+                    case SCANNER_STATE_PI:{ //SCANNER_STATE_PI: {
+                        //clear the buffer first
+                        fContentBuffer.clear() ;
+                        //xxx: which buffer should be passed. Ideally we shouldn't have
+                        //more than two buffers --
+                        //xxx: where should we add the switch for buffering.
+                        scanPI(fContentBuffer);
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        return XMLEvent.PROCESSING_INSTRUCTION;
+                        //break;
+                    }
+                    case SCANNER_STATE_CDATA :{ //SCANNER_STATE_CDATA: {
+                        //xxx: What if CDATA is the first event
+                        //<foo><![CDATA[hello<><>]]>append</foo>
+
+                        //we should not clear the buffer only when the last state was either SCANNER_STATE_REFERENCE or
+                        //SCANNER_STATE_CHARACTER_DATA or SCANNER_STATE_REFERENCE
+                        if(fIsCoalesce && ( fLastSectionWasEntityReference || fLastSectionWasCData || fLastSectionWasCharacterData)){
+                            fLastSectionWasCData = true ;
+                            fLastSectionWasEntityReference = false;
+                            fLastSectionWasCharacterData = false;
+                        }//if we dont need to coalesce clear the buffer
+                        else{
+                            fContentBuffer.clear();
+                        }
+                        fUsebuffer = true;
+                        //CDATA section is completely read in all the case.
+                        scanCDATASection(fContentBuffer , true);
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        //1. if fIsCoalesce is set to true we set the variable fLastSectionWasCData to true
+                        //and just call fDispatche.next(). Since we have set the scanner state to
+                        //SCANNER_STATE_CONTENT (super state) parser will automatically recover and
+                        //behave appropriately. When isCoalesce is set to true we dont need to reportCDATA event
+                        //2. Check if application has set for reporting CDATA event
+                        //3. if the application has neither set the fIsCoalesce to true nor fReportCdataEvent
+                        //return the cdata event as characters.
+                        if(fIsCoalesce){
+                            fLastSectionWasCData = true ;
+                            //there might be more data to coalesce.
+                            continue;
+                        }else if(fReportCdataEvent){
+                            return XMLEvent.CDATA;
+                        } else{
+                            return XMLEvent.CHARACTERS;
+                        }
+                    }
+
+                    case SCANNER_STATE_REFERENCE :{
+                        fMarkupDepth++;
+                        foundBuiltInRefs = false;
+
+                        //we should not clear the buffer only when the last state was either CDATA or
+                        //SCANNER_STATE_CHARACTER_DATA or SCANNER_STATE_REFERENCE
+                        if(fIsCoalesce && ( fLastSectionWasEntityReference || fLastSectionWasCData || fLastSectionWasCharacterData)){
+                            //fLastSectionWasEntityReference or fLastSectionWasCData are only
+                            //used when fIsCoalesce is set to true.
+                            fLastSectionWasEntityReference = true ;
+                            fLastSectionWasCData = false;
+                            fLastSectionWasCharacterData = false;
+                        }//if we dont need to coalesce clear the buffer
+                        else{
+                            fContentBuffer.clear();
+                        }
+                        fUsebuffer = true ;
+                        //take care of character reference
+                        if (fEntityScanner.skipChar('#', NameType.REFERENCE)) {
+                            scanCharReferenceValue(fContentBuffer, null);
+                            fMarkupDepth--;
+                            if(!fIsCoalesce){
+                                setScannerState(SCANNER_STATE_CONTENT);
+                                return XMLEvent.CHARACTERS;
+                            }
+                        } else {
+                            // this function also starts new entity
+                            scanEntityReference(fContentBuffer);
+                            //if there was built-in entity reference & coalesce is not true
+                            //return CHARACTERS
+                            if(fScannerState == SCANNER_STATE_BUILT_IN_REFS && !fIsCoalesce){
+                                setScannerState(SCANNER_STATE_CONTENT);
+                                return XMLEvent.CHARACTERS;
+                            }
+
+                            //if there was a text declaration, call next() it will be taken care.
+                            if(fScannerState == SCANNER_STATE_TEXT_DECL){
+                                fLastSectionWasEntityReference = true ;
+                                continue;
+                            }
+
+                            if(fScannerState == SCANNER_STATE_REFERENCE){
+                                setScannerState(SCANNER_STATE_CONTENT);
+                                if (fReplaceEntityReferences && fEntityStore.isDeclaredEntity(fCurrentEntityName)) {
+                                    // Skip the entity reference, we don't care
+                                    continue;
+                                }
+                                return XMLEvent.ENTITY_REFERENCE;
+                            }
+                        }
+                        //Wether it was character reference, entity reference or built-in entity
+                        //set the next possible state to SCANNER_STATE_CONTENT
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        fLastSectionWasEntityReference = true ;
+                        continue;
+                    }
+
+                    case SCANNER_STATE_TEXT_DECL: {
+                        // scan text decl
+                        if (fEntityScanner.skipString("<?xml")) {
+                            fMarkupDepth++;
+                            // NOTE: special case where entity starts with a PI
+                            //       whose name starts with "xml" (e.g. "xmlfoo")
+                            if (isValidNameChar(fEntityScanner.peekChar())) {
+                                fStringBuffer.clear();
+                                fStringBuffer.append("xml");
+
+                                if (fNamespaces) {
+                                    while (isValidNCName(fEntityScanner.peekChar())) {
+                                        fStringBuffer.append((char)fEntityScanner.scanChar(null));
+                                    }
+                                } else {
+                                    while (isValidNameChar(fEntityScanner.peekChar())) {
+                                        fStringBuffer.append((char)fEntityScanner.scanChar(null));
+                                    }
+                                }
+                                String target = fSymbolTable.addSymbol(fStringBuffer.ch, fStringBuffer.offset, fStringBuffer.length);
+                                fContentBuffer.clear();
+                                scanPIData(target, fContentBuffer);
+                            }
+
+                            // standard text declaration
+                            else {
+                                //xxx: this function gives callback
+                                scanXMLDeclOrTextDecl(true);
+                            }
+                        }
+                        // now that we've straightened out the readers, we can read in chunks:
+                        fEntityManager.fCurrentEntity.mayReadChunks = true;
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        //xxx: we don't return any state, so how do we get to know about TEXT declarations.
+                        //it seems we have to careful when to allow function issue a callback
+                        //and when to allow adapter issue a callback.
+                        continue;
+                    }
+
+
+                    case SCANNER_STATE_ROOT_ELEMENT: {
+                        if (scanRootElementHook()) {
+                            fEmptyElement = true;
+                            //rest would be taken care by fTrailingMiscDriver set by scanRootElementHook
+                            return XMLEvent.START_ELEMENT;
+                        }
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        return XMLEvent.START_ELEMENT ;
+                    }
+                    case SCANNER_STATE_CHAR_REFERENCE : {
+                        fContentBuffer.clear();
+                        scanCharReferenceValue(fContentBuffer, null);
+                        fMarkupDepth--;
+                        setScannerState(SCANNER_STATE_CONTENT);
+                        return XMLEvent.CHARACTERS;
+                    }
+                    default:
+                        throw new XNIException("Scanner State " + fScannerState + " not Recognized ");
+
+                }//switch
+            }
+            // premature end of file
+            catch (EOFException e) {
+                endOfFileHook(e);
+                return -1;
+            }
+            } //while loop
+!!!4360066.java!!!	scanForDoctypeHook() : boolean
+            return false;
+!!!4360194.java!!!	elementDepthIsZeroHook() : boolean
+            return false;
+!!!4360322.java!!!	scanRootElementHook() : boolean
+            return false;
+!!!4360450.java!!!	endOfFileHook(inout e : EOFException) : void
+
+            // NOTE: An end of file is only only an error if we were
+            //       in the middle of scanning some markup. -Ac
+            if (fMarkupDepth != 0) {
+                reportFatalError("PrematureEOF", null);
+            }
+

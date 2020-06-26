@@ -1,0 +1,428 @@
+class MethodHandles
+!!!7265922.java!!!	lookup() : MethodHandles::Lookup
+        return new Lookup(Reflection.getCallerClass());
+!!!7266050.java!!!	publicLookup() : MethodHandles::Lookup
+        return Lookup.PUBLIC_LOOKUP;
+!!!7266178.java!!!	reflectAs(inout expected : Class, inout target : MethodHandle) : T
+        SecurityManager smgr = System.getSecurityManager();
+        if (smgr != null)  smgr.checkPermission(ACCESS_PERMISSION);
+        Lookup lookup = Lookup.IMPL_LOOKUP;  // use maximally privileged lookup
+        return lookup.revealDirect(target).reflectAs(expected, lookup);
+!!!7273474.java!!!	arrayElementGetter(inout arrayClass : Class) : MethodHandle
+        return MethodHandleImpl.makeArrayElementAccessor(arrayClass, false);
+!!!7273602.java!!!	arrayElementSetter(inout arrayClass : Class) : MethodHandle
+        return MethodHandleImpl.makeArrayElementAccessor(arrayClass, true);
+!!!7273730.java!!!	spreadInvoker(inout type : MethodType, in leadingArgCount : int) : MethodHandle
+        if (leadingArgCount < 0 || leadingArgCount > type.parameterCount())
+            throw newIllegalArgumentException("bad argument count", leadingArgCount);
+        type = type.asSpreaderType(Object[].class, type.parameterCount() - leadingArgCount);
+        return type.invokers().spreadInvoker(leadingArgCount);
+!!!7273858.java!!!	exactInvoker(inout type : MethodType) : MethodHandle
+        return type.invokers().exactInvoker();
+!!!7273986.java!!!	invoker(inout type : MethodType) : MethodHandle
+        return type.invokers().genericInvoker();
+!!!7274114.java!!!	basicInvoker(inout type : MethodType) : MethodHandle
+        return type.invokers().basicInvoker();
+!!!7274242.java!!!	explicitCastArguments(inout target : MethodHandle, inout newType : MethodType) : MethodHandle
+        explicitCastArgumentsChecks(target, newType);
+        // use the asTypeCache when possible:
+        MethodType oldType = target.type();
+        if (oldType == newType)  return target;
+        if (oldType.explicitCastEquivalentToAsType(newType)) {
+            return target.asFixedArity().asType(newType);
+        }
+        return MethodHandleImpl.makePairwiseConvert(target, newType, false);
+!!!7274370.java!!!	explicitCastArgumentsChecks(inout target : MethodHandle, inout newType : MethodType) : void
+        if (target.type().parameterCount() != newType.parameterCount()) {
+            throw new WrongMethodTypeException("cannot explicitly cast " + target + " to " + newType);
+        }
+!!!7274498.java!!!	permuteArguments(inout target : MethodHandle, inout newType : MethodType, inout  : int...reorder) : MethodHandle
+        reorder = reorder.clone();  // get a private copy
+        MethodType oldType = target.type();
+        permuteArgumentChecks(reorder, newType, oldType);
+        // first detect dropped arguments and handle them separately
+        int[] originalReorder = reorder;
+        BoundMethodHandle result = target.rebind();
+        LambdaForm form = result.form;
+        int newArity = newType.parameterCount();
+        // Normalize the reordering into a real permutation,
+        // by removing duplicates and adding dropped elements.
+        // This somewhat improves lambda form caching, as well
+        // as simplifying the transform by breaking it up into steps.
+        for (int ddIdx; (ddIdx = findFirstDupOrDrop(reorder, newArity)) != 0; ) {
+            if (ddIdx > 0) {
+                // We found a duplicated entry at reorder[ddIdx].
+                // Example:  (x,y,z)->asList(x,y,z)
+                // permuted by [1*,0,1] => (a0,a1)=>asList(a1,a0,a1)
+                // permuted by [0,1,0*] => (a0,a1)=>asList(a0,a1,a0)
+                // The starred element corresponds to the argument
+                // deleted by the dupArgumentForm transform.
+                int srcPos = ddIdx, dstPos = srcPos, dupVal = reorder[srcPos];
+                boolean killFirst = false;
+                for (int val; (val = reorder[--dstPos]) != dupVal; ) {
+                    // Set killFirst if the dup is larger than an intervening position.
+                    // This will remove at least one inversion from the permutation.
+                    if (dupVal > val) killFirst = true;
+                }
+                if (!killFirst) {
+                    srcPos = dstPos;
+                    dstPos = ddIdx;
+                }
+                form = form.editor().dupArgumentForm(1 + srcPos, 1 + dstPos);
+                assert (reorder[srcPos] == reorder[dstPos]);
+                oldType = oldType.dropParameterTypes(dstPos, dstPos + 1);
+                // contract the reordering by removing the element at dstPos
+                int tailPos = dstPos + 1;
+                System.arraycopy(reorder, tailPos, reorder, dstPos, reorder.length - tailPos);
+                reorder = Arrays.copyOf(reorder, reorder.length - 1);
+            } else {
+                int dropVal = ~ddIdx, insPos = 0;
+                while (insPos < reorder.length && reorder[insPos] < dropVal) {
+                    // Find first element of reorder larger than dropVal.
+                    // This is where we will insert the dropVal.
+                    insPos += 1;
+                }
+                Class<?> ptype = newType.parameterType(dropVal);
+                form = form.editor().addArgumentForm(1 + insPos, BasicType.basicType(ptype));
+                oldType = oldType.insertParameterTypes(insPos, ptype);
+                // expand the reordering by inserting an element at insPos
+                int tailPos = insPos + 1;
+                reorder = Arrays.copyOf(reorder, reorder.length + 1);
+                System.arraycopy(reorder, insPos, reorder, tailPos, reorder.length - tailPos);
+                reorder[insPos] = dropVal;
+            }
+            assert (permuteArgumentChecks(reorder, newType, oldType));
+        }
+        assert (reorder.length == newArity);  // a perfect permutation
+        // Note:  This may cache too many distinct LFs. Consider backing off to varargs code.
+        form = form.editor().permuteArgumentsForm(1, reorder);
+        if (newType == result.type() && form == result.internalForm())
+            return result;
+        return result.copyWith(newType, form);
+!!!7274626.java!!!	findFirstDupOrDrop(inout reorder : int [[]], in newArity : int) : int
+        final int BIT_LIMIT = 63;  // max number of bits in bit mask
+        if (newArity < BIT_LIMIT) {
+            long mask = 0;
+            for (int i = 0; i < reorder.length; i++) {
+                int arg = reorder[i];
+                if (arg >= newArity) {
+                    return reorder.length;
+                }
+                long bit = 1L << arg;
+                if ((mask & bit) != 0) {
+                    return i;  // >0 indicates a dup
+                }
+                mask |= bit;
+            }
+            if (mask == (1L << newArity) - 1) {
+                assert(Long.numberOfTrailingZeros(Long.lowestOneBit(~mask)) == newArity);
+                return 0;
+            }
+            // find first zero
+            long zeroBit = Long.lowestOneBit(~mask);
+            int zeroPos = Long.numberOfTrailingZeros(zeroBit);
+            assert(zeroPos <= newArity);
+            if (zeroPos == newArity) {
+                return 0;
+            }
+            return ~zeroPos;
+        } else {
+            // same algorithm, different bit set
+            BitSet mask = new BitSet(newArity);
+            for (int i = 0; i < reorder.length; i++) {
+                int arg = reorder[i];
+                if (arg >= newArity) {
+                    return reorder.length;
+                }
+                if (mask.get(arg)) {
+                    return i;  // >0 indicates a dup
+                }
+                mask.set(arg);
+            }
+            int zeroPos = mask.nextClearBit(0);
+            assert(zeroPos <= newArity);
+            if (zeroPos == newArity) {
+                return 0;
+            }
+            return ~zeroPos;
+        }
+!!!7274754.java!!!	permuteArgumentChecks(inout reorder : int [[]], inout newType : MethodType, inout oldType : MethodType) : boolean
+        if (newType.returnType() != oldType.returnType())
+            throw newIllegalArgumentException("return types do not match",
+                    oldType, newType);
+        if (reorder.length == oldType.parameterCount()) {
+            int limit = newType.parameterCount();
+            boolean bad = false;
+            for (int j = 0; j < reorder.length; j++) {
+                int i = reorder[j];
+                if (i < 0 || i >= limit) {
+                    bad = true; break;
+                }
+                Class<?> src = newType.parameterType(i);
+                Class<?> dst = oldType.parameterType(j);
+                if (src != dst)
+                    throw newIllegalArgumentException("parameter types do not match after reorder",
+                            oldType, newType);
+            }
+            if (!bad)  return true;
+        }
+        throw newIllegalArgumentException("bad reorder array: "+Arrays.toString(reorder));
+!!!7274882.java!!!	constant(inout type : Class, inout value : Object) : MethodHandle
+        if (type.isPrimitive()) {
+            if (type == void.class)
+                throw newIllegalArgumentException("void type");
+            Wrapper w = Wrapper.forPrimitiveType(type);
+            value = w.convert(value, type);
+            if (w.zero().equals(value))
+                return zero(w, type);
+            return insertArguments(identity(type), 0, value);
+        } else {
+            if (value == null)
+                return zero(Wrapper.OBJECT, type);
+            return identity(type).bindTo(value);
+        }
+!!!7275010.java!!!	identity(inout type : Class) : MethodHandle
+        Wrapper btw = (type.isPrimitive() ? Wrapper.forPrimitiveType(type) : Wrapper.OBJECT);
+        int pos = btw.ordinal();
+        MethodHandle ident = IDENTITY_MHS[pos];
+        if (ident == null) {
+            ident = setCachedMethodHandle(IDENTITY_MHS, pos, makeIdentity(btw.primitiveType()));
+        }
+        if (ident.type().returnType() == type)
+            return ident;
+        // something like identity(Foo.class); do not bother to intern these
+        assert(btw == Wrapper.OBJECT);
+        return makeIdentity(type);
+!!!7275138.java!!!	makeIdentity(inout ptype : Class) : MethodHandle
+        MethodType mtype = MethodType.methodType(ptype, ptype);
+        LambdaForm lform = LambdaForm.identityForm(BasicType.basicType(ptype));
+        return MethodHandleImpl.makeIntrinsic(mtype, lform, Intrinsic.IDENTITY);
+!!!7275266.java!!!	zero(inout btw : Wrapper, inout rtype : Class) : MethodHandle
+        int pos = btw.ordinal();
+        MethodHandle zero = ZERO_MHS[pos];
+        if (zero == null) {
+            zero = setCachedMethodHandle(ZERO_MHS, pos, makeZero(btw.primitiveType()));
+        }
+        if (zero.type().returnType() == rtype)
+            return zero;
+        assert(btw == Wrapper.OBJECT);
+        return makeZero(rtype);
+!!!7275394.java!!!	makeZero(inout rtype : Class) : MethodHandle
+        MethodType mtype = MethodType.methodType(rtype);
+        LambdaForm lform = LambdaForm.zeroForm(BasicType.basicType(rtype));
+        return MethodHandleImpl.makeIntrinsic(mtype, lform, Intrinsic.ZERO);
+!!!7275522.java!!!	setCachedMethodHandle(inout cache : MethodHandle [[]], in pos : int, inout value : MethodHandle) : MethodHandle
+        // Simulate a CAS, to avoid racy duplication of results.
+        MethodHandle prev = cache[pos];
+        if (prev != null) return prev;
+        return cache[pos] = value;
+!!!7275650.java!!!	insertArguments(inout target : MethodHandle, in pos : int, inout  : Object...values) : MethodHandle
+        int insCount = values.length;
+        Class<?>[] ptypes = insertArgumentsChecks(target, insCount, pos);
+        if (insCount == 0)  return target;
+        BoundMethodHandle result = target.rebind();
+        for (int i = 0; i < insCount; i++) {
+            Object value = values[i];
+            Class<?> ptype = ptypes[pos+i];
+            if (ptype.isPrimitive()) {
+                result = insertArgumentPrimitive(result, pos, ptype, value);
+            } else {
+                value = ptype.cast(value);  // throw CCE if needed
+                result = result.bindArgumentL(pos, value);
+            }
+        }
+        return result;
+!!!7275778.java!!!	insertArgumentPrimitive(inout result : BoundMethodHandle, in pos : int, inout ptype : Class, inout value : Object) : BoundMethodHandle
+        Wrapper w = Wrapper.forPrimitiveType(ptype);
+        // perform unboxing and/or primitive conversion
+        value = w.convert(value, ptype);
+        switch (w) {
+        case INT:     return result.bindArgumentI(pos, (int)value);
+        case LONG:    return result.bindArgumentJ(pos, (long)value);
+        case FLOAT:   return result.bindArgumentF(pos, (float)value);
+        case DOUBLE:  return result.bindArgumentD(pos, (double)value);
+        default:      return result.bindArgumentI(pos, ValueConversions.widenSubword(value));
+        }
+!!!7275906.java!!!	insertArgumentsChecks(inout target : MethodHandle, in insCount : int, in pos : int) : Class
+        MethodType oldType = target.type();
+        int outargs = oldType.parameterCount();
+        int inargs  = outargs - insCount;
+        if (inargs < 0)
+            throw newIllegalArgumentException("too many values to insert");
+        if (pos < 0 || pos > inargs)
+            throw newIllegalArgumentException("no argument type to append");
+        return oldType.ptypes();
+!!!7276034.java!!!	dropArguments(inout target : MethodHandle, in pos : int, inout valueTypes : List) : MethodHandle
+        valueTypes = copyTypes(valueTypes);
+        MethodType oldType = target.type();  // get NPE
+        int dropped = dropArgumentChecks(oldType, pos, valueTypes);
+        MethodType newType = oldType.insertParameterTypes(pos, valueTypes);
+        if (dropped == 0)  return target;
+        BoundMethodHandle result = target.rebind();
+        LambdaForm lform = result.form;
+        int insertFormArg = 1 + pos;
+        for (Class<?> ptype : valueTypes) {
+            lform = lform.editor().addArgumentForm(insertFormArg++, BasicType.basicType(ptype));
+        }
+        result = result.copyWith(newType, lform);
+        return result;
+!!!7276162.java!!!	copyTypes(inout types : List) : List
+        Object[] a = types.toArray();
+        return Arrays.asList(Arrays.copyOf(a, a.length, Class[].class));
+!!!7276290.java!!!	dropArgumentChecks(inout oldType : MethodType, in pos : int, inout valueTypes : List) : int
+        int dropped = valueTypes.size();
+        MethodType.checkSlotCount(dropped);
+        int outargs = oldType.parameterCount();
+        int inargs  = outargs + dropped;
+        if (pos < 0 || pos > outargs)
+            throw newIllegalArgumentException("no argument type to remove"
+                    + Arrays.asList(oldType, pos, valueTypes, inargs, outargs)
+                    );
+        return dropped;
+!!!7276418.java!!!	dropArguments(inout target : MethodHandle, in pos : int, inout valueTypes : Class<?>...) : MethodHandle
+        return dropArguments(target, pos, Arrays.asList(valueTypes));
+!!!7276546.java!!!	filterArguments(inout target : MethodHandle, in pos : int, inout  : MethodHandle...filters) : MethodHandle
+        filterArgumentsCheckArity(target, pos, filters);
+        MethodHandle adapter = target;
+        int curPos = pos-1;  // pre-incremented
+        for (MethodHandle filter : filters) {
+            curPos += 1;
+            if (filter == null)  continue;  // ignore null elements of filters
+            adapter = filterArgument(adapter, curPos, filter);
+        }
+        return adapter;
+!!!7276674.java!!!	filterArgument(inout target : MethodHandle, in pos : int, inout filter : MethodHandle) : MethodHandle
+        filterArgumentChecks(target, pos, filter);
+        MethodType targetType = target.type();
+        MethodType filterType = filter.type();
+        BoundMethodHandle result = target.rebind();
+        Class<?> newParamType = filterType.parameterType(0);
+        LambdaForm lform = result.editor().filterArgumentForm(1 + pos, BasicType.basicType(newParamType));
+        MethodType newType = targetType.changeParameterType(pos, newParamType);
+        result = result.copyWithExtendL(newType, lform, filter);
+        return result;
+!!!7276802.java!!!	filterArgumentsCheckArity(inout target : MethodHandle, in pos : int, inout filters : MethodHandle [[]]) : void
+        MethodType targetType = target.type();
+        int maxPos = targetType.parameterCount();
+        if (pos + filters.length > maxPos)
+            throw newIllegalArgumentException("too many filters");
+!!!7276930.java!!!	filterArgumentChecks(inout target : MethodHandle, in pos : int, inout filter : MethodHandle) : void
+        MethodType targetType = target.type();
+        MethodType filterType = filter.type();
+        if (filterType.parameterCount() != 1
+            || filterType.returnType() != targetType.parameterType(pos))
+            throw newIllegalArgumentException("target and filter types do not match", targetType, filterType);
+!!!7277058.java!!!	collectArguments(inout target : MethodHandle, in pos : int, inout filter : MethodHandle) : MethodHandle
+        MethodType newType = collectArgumentsChecks(target, pos, filter);
+        MethodType collectorType = filter.type();
+        BoundMethodHandle result = target.rebind();
+        LambdaForm lform;
+        if (collectorType.returnType().isArray() && filter.intrinsicName() == Intrinsic.NEW_ARRAY) {
+            lform = result.editor().collectArgumentArrayForm(1 + pos, filter);
+            if (lform != null) {
+                return result.copyWith(newType, lform);
+            }
+        }
+        lform = result.editor().collectArgumentsForm(1 + pos, collectorType.basicType());
+        return result.copyWithExtendL(newType, lform, filter);
+!!!7277186.java!!!	collectArgumentsChecks(inout target : MethodHandle, in pos : int, inout filter : MethodHandle) : MethodType
+        MethodType targetType = target.type();
+        MethodType filterType = filter.type();
+        Class<?> rtype = filterType.returnType();
+        List<Class<?>> filterArgs = filterType.parameterList();
+        if (rtype == void.class) {
+            return targetType.insertParameterTypes(pos, filterArgs);
+        }
+        if (rtype != targetType.parameterType(pos)) {
+            throw newIllegalArgumentException("target and filter types do not match", targetType, filterType);
+        }
+        return targetType.dropParameterTypes(pos, pos+1).insertParameterTypes(pos, filterArgs);
+!!!7277314.java!!!	filterReturnValue(inout target : MethodHandle, inout filter : MethodHandle) : MethodHandle
+        MethodType targetType = target.type();
+        MethodType filterType = filter.type();
+        filterReturnValueChecks(targetType, filterType);
+        BoundMethodHandle result = target.rebind();
+        BasicType rtype = BasicType.basicType(filterType.returnType());
+        LambdaForm lform = result.editor().filterReturnForm(rtype, false);
+        MethodType newType = targetType.changeReturnType(filterType.returnType());
+        result = result.copyWithExtendL(newType, lform, filter);
+        return result;
+!!!7277442.java!!!	filterReturnValueChecks(inout targetType : MethodType, inout filterType : MethodType) : void
+        Class<?> rtype = targetType.returnType();
+        int filterValues = filterType.parameterCount();
+        if (filterValues == 0
+                ? (rtype != void.class)
+                : (rtype != filterType.parameterType(0) || filterValues != 1))
+            throw newIllegalArgumentException("target and filter types do not match", targetType, filterType);
+!!!7277570.java!!!	foldArguments(inout target : MethodHandle, inout combiner : MethodHandle) : MethodHandle
+        int foldPos = 0;
+        MethodType targetType = target.type();
+        MethodType combinerType = combiner.type();
+        Class<?> rtype = foldArgumentChecks(foldPos, targetType, combinerType);
+        BoundMethodHandle result = target.rebind();
+        boolean dropResult = (rtype == void.class);
+        // Note:  This may cache too many distinct LFs. Consider backing off to varargs code.
+        LambdaForm lform = result.editor().foldArgumentsForm(1 + foldPos, dropResult, combinerType.basicType());
+        MethodType newType = targetType;
+        if (!dropResult)
+            newType = newType.dropParameterTypes(foldPos, foldPos + 1);
+        result = result.copyWithExtendL(newType, lform, combiner);
+        return result;
+!!!7277698.java!!!	foldArgumentChecks(in foldPos : int, inout targetType : MethodType, inout combinerType : MethodType) : Class
+        int foldArgs   = combinerType.parameterCount();
+        Class<?> rtype = combinerType.returnType();
+        int foldVals = rtype == void.class ? 0 : 1;
+        int afterInsertPos = foldPos + foldVals;
+        boolean ok = (targetType.parameterCount() >= afterInsertPos + foldArgs);
+        if (ok && !(combinerType.parameterList()
+                    .equals(targetType.parameterList().subList(afterInsertPos,
+                                                               afterInsertPos + foldArgs))))
+            ok = false;
+        if (ok && foldVals != 0 && combinerType.returnType() != targetType.parameterType(0))
+            ok = false;
+        if (!ok)
+            throw misMatchedTypes("target and combiner types", targetType, combinerType);
+        return rtype;
+!!!7277826.java!!!	guardWithTest(inout test : MethodHandle, inout target : MethodHandle, inout fallback : MethodHandle) : MethodHandle
+        MethodType gtype = test.type();
+        MethodType ttype = target.type();
+        MethodType ftype = fallback.type();
+        if (!ttype.equals(ftype))
+            throw misMatchedTypes("target and fallback types", ttype, ftype);
+        if (gtype.returnType() != boolean.class)
+            throw newIllegalArgumentException("guard type is not a predicate "+gtype);
+        List<Class<?>> targs = ttype.parameterList();
+        List<Class<?>> gargs = gtype.parameterList();
+        if (!targs.equals(gargs)) {
+            int gpc = gargs.size(), tpc = targs.size();
+            if (gpc >= tpc || !targs.subList(0, gpc).equals(gargs))
+                throw misMatchedTypes("target and test types", ttype, gtype);
+            test = dropArguments(test, gpc, targs.subList(gpc, tpc));
+            gtype = test.type();
+        }
+        return MethodHandleImpl.makeGuardWithTest(test, target, fallback);
+!!!7277954.java!!!	misMatchedTypes(inout what : String, inout t1 : MethodType, inout t2 : MethodType) : RuntimeException
+        return newIllegalArgumentException(what + " must match: " + t1 + " != " + t2);
+!!!7278082.java!!!	catchException(inout target : MethodHandle, inout exType : Class, inout handler : MethodHandle) : MethodHandle
+        MethodType ttype = target.type();
+        MethodType htype = handler.type();
+        if (htype.parameterCount() < 1 ||
+            !htype.parameterType(0).isAssignableFrom(exType))
+            throw newIllegalArgumentException("handler does not accept exception type "+exType);
+        if (htype.returnType() != ttype.returnType())
+            throw misMatchedTypes("target and handler return types", ttype, htype);
+        List<Class<?>> targs = ttype.parameterList();
+        List<Class<?>> hargs = htype.parameterList();
+        hargs = hargs.subList(1, hargs.size());  // omit leading parameter from handler
+        if (!targs.equals(hargs)) {
+            int hpc = hargs.size(), tpc = targs.size();
+            if (hpc >= tpc || !targs.subList(0, hpc).equals(hargs))
+                throw misMatchedTypes("target and handler types", ttype, htype);
+            handler = dropArguments(handler, 1+hpc, targs.subList(hpc, tpc));
+            htype = handler.type();
+        }
+        return MethodHandleImpl.makeGuardWithCatch(target, exType, handler);
+!!!7278210.java!!!	throwException(inout returnType : Class, inout exType : Class) : MethodHandle
+        if (!Throwable.class.isAssignableFrom(exType))
+            throw new ClassCastException(exType.getName());
+        return MethodHandleImpl.throwException(MethodType.methodType(returnType, exType));

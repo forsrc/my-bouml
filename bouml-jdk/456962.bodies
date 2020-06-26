@@ -1,0 +1,209 @@
+class AnimationController
+!!!2750466.java!!!	getAnimationController() : AnimationController
+        AppContext appContext = AppContext.getAppContext();
+        Object obj = appContext.get(ANIMATION_CONTROLLER_KEY);
+        if (obj == null) {
+            obj = new AnimationController();
+            appContext.put(ANIMATION_CONTROLLER_KEY, obj);
+        }
+        return (AnimationController) obj;
+!!!2750594.java!!!	AnimationController()
+        timer.setRepeats(true);
+        timer.setCoalesce(true);
+        //we need to dispose the controller on l&f change
+        UIManager.addPropertyChangeListener(this);
+!!!2750722.java!!!	triggerAnimation(inout c : JComponent, inout part : TMSchema::Part, inout newState : TMSchema::State) : void
+        if (c instanceof javax.swing.JTabbedPane
+            || part == Part.TP_BUTTON) {
+            //idk: we can not handle tabs animation because
+            //the same (component,part) is used to handle all the tabs
+            //and we can not track the states
+            //Vista theme might have transition duration for toolbar buttons
+            //but native application does not seem to animate them
+            return;
+        }
+        AnimationController controller =
+            AnimationController.getAnimationController();
+        State oldState = controller.getState(c, part);
+        if (oldState != newState) {
+            controller.putState(c, part, newState);
+            if (newState == State.DEFAULTED) {
+                // it seems for DEFAULTED button state Vista does animation from
+                // HOT
+                oldState = State.HOT;
+            }
+            if (oldState != null) {
+                long duration;
+                if (newState == State.DEFAULTED) {
+                    //Only button might have DEFAULTED state
+                    //idk: do not know how to get the value from Vista
+                    //one second seems plausible value
+                    duration = 1000;
+                } else {
+                    XPStyle xp = XPStyle.getXP();
+                    duration = (xp != null)
+                               ? xp.getThemeTransitionDuration(
+                                       c, part,
+                                       normalizeState(oldState),
+                                       normalizeState(newState),
+                                       Prop.TRANSITIONDURATIONS)
+                               : 1000;
+                }
+                controller.startAnimation(c, part, oldState, newState, duration);
+            }
+        }
+!!!2750850.java!!!	normalizeState(inout state : TMSchema::State) : TMSchema::State
+        State rv;
+        switch (state) {
+        case DOWNPRESSED:
+            /* falls through */
+        case LEFTPRESSED:
+            /* falls through */
+        case RIGHTPRESSED:
+            rv = UPPRESSED;
+            break;
+
+        case DOWNDISABLED:
+            /* falls through */
+        case LEFTDISABLED:
+            /* falls through */
+        case RIGHTDISABLED:
+            rv = UPDISABLED;
+            break;
+
+        case DOWNHOT:
+            /* falls through */
+        case LEFTHOT:
+            /* falls through */
+        case RIGHTHOT:
+            rv = UPHOT;
+            break;
+
+        case DOWNNORMAL:
+            /* falls through */
+        case LEFTNORMAL:
+            /* falls through */
+        case RIGHTNORMAL:
+            rv = UPNORMAL;
+            break;
+
+        default :
+            rv = state;
+            break;
+        }
+        return rv;
+!!!2750978.java!!!	getState(inout component : JComponent, inout part : TMSchema::Part) : TMSchema::State
+        State rv = null;
+        Object tmpObject =
+            component.getClientProperty(PartUIClientPropertyKey.getKey(part));
+        if (tmpObject instanceof State) {
+            rv = (State) tmpObject;
+        }
+        return rv;
+!!!2751106.java!!!	putState(inout component : JComponent, inout part : TMSchema::Part, inout state : TMSchema::State) : void
+        component.putClientProperty(PartUIClientPropertyKey.getKey(part),
+                                    state);
+!!!2751234.java!!!	startAnimation(inout component : JComponent, inout part : TMSchema::Part, inout startState : TMSchema::State, inout endState : TMSchema::State, in millis : long) : void
+        boolean isForwardAndReverse = false;
+        if (endState == State.DEFAULTED) {
+            isForwardAndReverse = true;
+        }
+        Map<Part, AnimationState> map = animationStateMap.get(component);
+        if (millis <= 0) {
+            if (map != null) {
+                map.remove(part);
+                if (map.size() == 0) {
+                    animationStateMap.remove(component);
+                }
+            }
+            return;
+        }
+        if (map == null) {
+            map = new EnumMap<Part, AnimationState>(Part.class);
+            animationStateMap.put(component, map);
+        }
+        map.put(part,
+                new AnimationState(startState, millis, isForwardAndReverse));
+        if (! timer.isRunning()) {
+            timer.start();
+        }
+!!!2751362.java!!!	paintSkin(inout component : JComponent, inout skin : XPStyle::Skin, inout g : Graphics, in dx : int, in dy : int, in dw : int, in dh : int, inout state : TMSchema::State) : void
+        if (VISTA_ANIMATION_DISABLED) {
+            skin.paintSkinRaw(g, dx, dy, dw, dh, state);
+            return;
+        }
+        triggerAnimation(component, skin.part, state);
+        AnimationController controller = getAnimationController();
+        synchronized (controller) {
+            AnimationState animationState = null;
+            Map<Part, AnimationState> map =
+                controller.animationStateMap.get(component);
+            if (map != null) {
+                animationState = map.get(skin.part);
+            }
+            if (animationState != null) {
+                animationState.paintSkin(skin, g, dx, dy, dw, dh, state);
+            } else {
+                skin.paintSkinRaw(g, dx, dy, dw, dh, state);
+            }
+        }
+!!!2751490.java!!!	propertyChange(inout e : PropertyChangeEvent) : void
+        if ("lookAndFeel" == e.getPropertyName()
+            && ! (e.getNewValue() instanceof WindowsLookAndFeel) ) {
+            dispose();
+        }
+!!!2751618.java!!!	actionPerformed(inout e : ActionEvent) : void
+        java.util.List<JComponent> componentsToRemove = null;
+        java.util.List<Part> partsToRemove = null;
+        for (JComponent component : animationStateMap.keySet()) {
+            component.repaint();
+            if (partsToRemove != null) {
+                partsToRemove.clear();
+            }
+            Map<Part, AnimationState> map = animationStateMap.get(component);
+            if (! component.isShowing()
+                  || map == null
+                  || map.size() == 0) {
+                if (componentsToRemove == null) {
+                    componentsToRemove = new ArrayList<JComponent>();
+                }
+                componentsToRemove.add(component);
+                continue;
+            }
+            for (Part part : map.keySet()) {
+                if (map.get(part).isDone()) {
+                    if (partsToRemove == null) {
+                        partsToRemove = new ArrayList<Part>();
+                    }
+                    partsToRemove.add(part);
+                }
+            }
+            if (partsToRemove != null) {
+                if (partsToRemove.size() == map.size()) {
+                    //animation is done for the component
+                    if (componentsToRemove == null) {
+                        componentsToRemove = new ArrayList<JComponent>();
+                    }
+                    componentsToRemove.add(component);
+                } else {
+                    for (Part part : partsToRemove) {
+                        map.remove(part);
+                    }
+                }
+            }
+        }
+        if (componentsToRemove != null) {
+            for (JComponent component : componentsToRemove) {
+                animationStateMap.remove(component);
+            }
+        }
+        if (animationStateMap.size() == 0) {
+            timer.stop();
+        }
+!!!2751746.java!!!	dispose() : void
+        timer.stop();
+        UIManager.removePropertyChangeListener(this);
+        synchronized (AnimationController.class) {
+            AppContext.getAppContext()
+                .put(ANIMATION_CONTROLLER_KEY, null);
+        }

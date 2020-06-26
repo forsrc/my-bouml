@@ -1,0 +1,360 @@
+class Resolver
+!!!5264770.java!!!	setupReaders() : void
+    SAXParserFactory spf = catalogManager.useServicesMechanism() ?
+                    SAXParserFactory.newInstance() : new SAXParserFactoryImpl();
+    spf.setNamespaceAware(true);
+    spf.setValidating(false);
+
+    SAXCatalogReader saxReader = new SAXCatalogReader(spf);
+
+    saxReader.setCatalogParser(null, "XMLCatalog",
+                               "com.sun.org.apache.xml.internal.resolver.readers.XCatalogReader");
+
+    saxReader.setCatalogParser(OASISXMLCatalogReader.namespaceName,
+                               "catalog",
+                               "com.sun.org.apache.xml.internal.resolver.readers.ExtendedXMLCatalogReader");
+
+    addReader("application/xml", saxReader);
+
+    TR9401CatalogReader textReader = new TR9401CatalogReader();
+    addReader("text/plain", textReader);
+!!!5264898.java!!!	addEntry(inout entry : CatalogEntry) : void
+    int type = entry.getEntryType();
+
+    if (type == URISUFFIX) {
+      String suffix = normalizeURI(entry.getEntryArg(0));
+      String fsi = makeAbsolute(normalizeURI(entry.getEntryArg(1)));
+
+      entry.setEntryArg(1, fsi);
+
+      catalogManager.debug.message(4, "URISUFFIX", suffix, fsi);
+    } else if (type == SYSTEMSUFFIX) {
+      String suffix = normalizeURI(entry.getEntryArg(0));
+      String fsi = makeAbsolute(normalizeURI(entry.getEntryArg(1)));
+
+      entry.setEntryArg(1, fsi);
+
+      catalogManager.debug.message(4, "SYSTEMSUFFIX", suffix, fsi);
+    }
+
+    super.addEntry(entry);
+!!!5265026.java!!!	resolveURI(inout uri : String) : String
+
+    String resolved = super.resolveURI(uri);
+    if (resolved != null) {
+      return resolved;
+    }
+
+    Enumeration en = catalogEntries.elements();
+    while (en.hasMoreElements()) {
+      CatalogEntry e = (CatalogEntry) en.nextElement();
+      if (e.getEntryType() == RESOLVER) {
+        resolved = resolveExternalSystem(uri, e.getEntryArg(0));
+        if (resolved != null) {
+          return resolved;
+        }
+      } else if (e.getEntryType() == URISUFFIX) {
+        String suffix = e.getEntryArg(0);
+        String result = e.getEntryArg(1);
+
+        if (suffix.length() <= uri.length()
+            && uri.substring(uri.length()-suffix.length()).equals(suffix)) {
+          return result;
+        }
+      }
+    }
+
+    // Otherwise, look in the subordinate catalogs
+    return resolveSubordinateCatalogs(Catalog.URI,
+                                      null,
+                                      null,
+                                      uri);
+!!!5265154.java!!!	resolveSystem(inout systemId : String) : String
+
+    String resolved = super.resolveSystem(systemId);
+    if (resolved != null) {
+      return resolved;
+    }
+
+    Enumeration en = catalogEntries.elements();
+    while (en.hasMoreElements()) {
+      CatalogEntry e = (CatalogEntry) en.nextElement();
+      if (e.getEntryType() == RESOLVER) {
+        resolved = resolveExternalSystem(systemId, e.getEntryArg(0));
+        if (resolved != null) {
+          return resolved;
+        }
+      } else if (e.getEntryType() == SYSTEMSUFFIX) {
+        String suffix = e.getEntryArg(0);
+        String result = e.getEntryArg(1);
+
+        if (suffix.length() <= systemId.length()
+            && systemId.substring(systemId.length()-suffix.length()).equals(suffix)) {
+          return result;
+        }
+      }
+    }
+
+    return resolveSubordinateCatalogs(Catalog.SYSTEM,
+                                      null,
+                                      null,
+                                      systemId);
+!!!5265282.java!!!	resolvePublic(inout publicId : String, inout systemId : String) : String
+
+    String resolved = super.resolvePublic(publicId, systemId);
+    if (resolved != null) {
+      return resolved;
+    }
+
+    Enumeration en = catalogEntries.elements();
+    while (en.hasMoreElements()) {
+      CatalogEntry e = (CatalogEntry) en.nextElement();
+      if (e.getEntryType() == RESOLVER) {
+        if (systemId != null) {
+          resolved = resolveExternalSystem(systemId,
+                                           e.getEntryArg(0));
+          if (resolved != null) {
+            return resolved;
+          }
+        }
+        resolved = resolveExternalPublic(publicId, e.getEntryArg(0));
+        if (resolved != null) {
+          return resolved;
+        }
+      }
+    }
+
+    return resolveSubordinateCatalogs(Catalog.PUBLIC,
+                                      null,
+                                      publicId,
+                                      systemId);
+!!!5265410.java!!!	resolveExternalSystem(inout systemId : String, inout resolver : String) : String
+        Resolver r = queryResolver(resolver, "i2l", systemId, null);
+        if (r != null) {
+            return r.resolveSystem(systemId);
+        } else {
+            return null;
+        }
+!!!5265538.java!!!	resolveExternalPublic(inout publicId : String, inout resolver : String) : String
+        Resolver r = queryResolver(resolver, "fpi2l", publicId, null);
+        if (r != null) {
+            return r.resolvePublic(publicId, null);
+        } else {
+            return null;
+        }
+!!!5265666.java!!!	queryResolver(inout resolver : String, inout command : String, inout arg1 : String, inout arg2 : String) : Resolver
+        InputStream iStream = null;
+        String RFC2483 = resolver + "?command=" + command
+            + "&format=tr9401&uri=" + arg1
+            + "&uri2=" + arg2;
+        String line = null;
+
+        try {
+            URL url = new URL(RFC2483);
+
+            URLConnection urlCon = url.openConnection();
+
+            urlCon.setUseCaches(false);
+
+            Resolver r = (Resolver) newCatalog();
+
+            String cType = urlCon.getContentType();
+
+            // I don't care about the character set or subtype
+            if (cType.indexOf(";") > 0) {
+                cType = cType.substring(0, cType.indexOf(";"));
+            }
+
+            r.parseCatalog(cType, urlCon.getInputStream());
+
+            return r;
+        } catch (CatalogException cex) {
+          if (cex.getExceptionType() == CatalogException.UNPARSEABLE) {
+            catalogManager.debug.message(1, "Unparseable catalog: " + RFC2483);
+          } else if (cex.getExceptionType()
+                     == CatalogException.UNKNOWN_FORMAT) {
+            catalogManager.debug.message(1, "Unknown catalog format: " + RFC2483);
+          }
+          return null;
+        } catch (MalformedURLException mue) {
+            catalogManager.debug.message(1, "Malformed resolver URL: " + RFC2483);
+            return null;
+        } catch (IOException ie) {
+            catalogManager.debug.message(1, "I/O Exception opening resolver: " + RFC2483);
+            return null;
+        }
+!!!5265794.java!!!	appendVector(inout vec : Vector, inout appvec : Vector) : Vector
+        if (appvec != null) {
+            for (int count = 0; count < appvec.size(); count++) {
+                vec.addElement(appvec.elementAt(count));
+            }
+        }
+        return vec;
+!!!5265922.java!!!	resolveAllSystemReverse(inout systemId : String) : Vector
+        Vector resolved = new Vector();
+
+        // If there's a SYSTEM entry in this catalog, use it
+        if (systemId != null) {
+            Vector localResolved = resolveLocalSystemReverse(systemId);
+            resolved = appendVector(resolved, localResolved);
+        }
+
+        // Otherwise, look in the subordinate catalogs
+        Vector subResolved = resolveAllSubordinateCatalogs(SYSTEMREVERSE,
+                                                           null,
+                                                           null,
+                                                           systemId);
+
+        return appendVector(resolved, subResolved);
+!!!5266050.java!!!	resolveSystemReverse(inout systemId : String) : String
+        Vector resolved = resolveAllSystemReverse(systemId);
+        if (resolved != null && resolved.size() > 0) {
+            return (String) resolved.elementAt(0);
+        } else {
+            return null;
+        }
+!!!5266178.java!!!	resolveAllSystem(inout systemId : String) : Vector
+        Vector resolutions = new Vector();
+
+        // If there are SYSTEM entries in this catalog, start with them
+        if (systemId != null) {
+            Vector localResolutions = resolveAllLocalSystem(systemId);
+            resolutions = appendVector(resolutions, localResolutions);
+        }
+
+        // Then look in the subordinate catalogs
+        Vector subResolutions = resolveAllSubordinateCatalogs(SYSTEM,
+                                                              null,
+                                                              null,
+                                                              systemId);
+        resolutions = appendVector(resolutions, subResolutions);
+
+        if (resolutions.size() > 0) {
+            return resolutions;
+        } else {
+            return null;
+        }
+!!!5266306.java!!!	resolveAllLocalSystem(inout systemId : String) : Vector
+        Vector map = new Vector();
+        String osname = SecuritySupport.getSystemProperty("os.name");
+        boolean windows = (osname.indexOf("Windows") >= 0);
+        Enumeration en = catalogEntries.elements();
+        while (en.hasMoreElements()) {
+            CatalogEntry e = (CatalogEntry) en.nextElement();
+            if (e.getEntryType() == SYSTEM
+                && (e.getEntryArg(0).equals(systemId)
+                    || (windows
+                        && e.getEntryArg(0).equalsIgnoreCase(systemId)))) {
+                map.addElement(e.getEntryArg(1));
+            }
+        }
+        if (map.size() == 0) {
+            return null;
+        } else {
+            return map;
+        }
+!!!5266434.java!!!	resolveLocalSystemReverse(inout systemId : String) : Vector
+        Vector map = new Vector();
+        String osname = SecuritySupport.getSystemProperty("os.name");
+        boolean windows = (osname.indexOf("Windows") >= 0);
+        Enumeration en = catalogEntries.elements();
+        while (en.hasMoreElements()) {
+            CatalogEntry e = (CatalogEntry) en.nextElement();
+            if (e.getEntryType() == SYSTEM
+                && (e.getEntryArg(1).equals(systemId)
+                    || (windows
+                        && e.getEntryArg(1).equalsIgnoreCase(systemId)))) {
+                map.addElement(e.getEntryArg(0));
+            }
+        }
+        if (map.size() == 0) {
+            return null;
+        } else {
+            return map;
+        }
+!!!5266562.java!!!	resolveAllSubordinateCatalogs(in entityType : int, inout entityName : String, inout publicId : String, inout systemId : String) : Vector
+
+        Vector resolutions = new Vector();
+
+        for (int catPos = 0; catPos < catalogs.size(); catPos++) {
+            Resolver c = null;
+
+            try {
+                c = (Resolver) catalogs.elementAt(catPos);
+            } catch (ClassCastException e) {
+                String catfile = (String) catalogs.elementAt(catPos);
+                c = (Resolver) newCatalog();
+
+                try {
+                    c.parseCatalog(catfile);
+                } catch (MalformedURLException mue) {
+                    catalogManager.debug.message(1, "Malformed Catalog URL", catfile);
+                } catch (FileNotFoundException fnfe) {
+                    catalogManager.debug.message(1, "Failed to load catalog, file not found",
+                          catfile);
+                } catch (IOException ioe) {
+                    catalogManager.debug.message(1, "Failed to load catalog, I/O error", catfile);
+                }
+
+                catalogs.setElementAt(c, catPos);
+            }
+
+            String resolved = null;
+
+            // Ok, now what are we supposed to call here?
+            if (entityType == DOCTYPE) {
+                resolved = c.resolveDoctype(entityName,
+                                            publicId,
+                                            systemId);
+                if (resolved != null) {
+                    // Only find one DOCTYPE resolution
+                    resolutions.addElement(resolved);
+                    return resolutions;
+                }
+            } else if (entityType == DOCUMENT) {
+                resolved = c.resolveDocument();
+                if (resolved != null) {
+                    // Only find one DOCUMENT resolution
+                    resolutions.addElement(resolved);
+                    return resolutions;
+                }
+            } else if (entityType == ENTITY) {
+                resolved = c.resolveEntity(entityName,
+                                           publicId,
+                                           systemId);
+                if (resolved != null) {
+                    // Only find one ENTITY resolution
+                    resolutions.addElement(resolved);
+                    return resolutions;
+                }
+            } else if (entityType == NOTATION) {
+                resolved = c.resolveNotation(entityName,
+                                             publicId,
+                                             systemId);
+                if (resolved != null) {
+                    // Only find one NOTATION resolution
+                    resolutions.addElement(resolved);
+                    return resolutions;
+                }
+            } else if (entityType == PUBLIC) {
+                resolved = c.resolvePublic(publicId, systemId);
+                if (resolved != null) {
+                    // Only find one PUBLIC resolution
+                    resolutions.addElement(resolved);
+                    return resolutions;
+                }
+            } else if (entityType == SYSTEM) {
+                Vector localResolutions = c.resolveAllSystem(systemId);
+                resolutions = appendVector(resolutions, localResolutions);
+                break;
+            } else if (entityType == SYSTEMREVERSE) {
+                Vector localResolutions = c.resolveAllSystemReverse(systemId);
+                resolutions = appendVector(resolutions, localResolutions);
+            }
+        }
+
+        if (resolutions != null) {
+            return resolutions;
+        } else {
+            return null;
+        }

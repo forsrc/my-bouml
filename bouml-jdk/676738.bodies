@@ -1,0 +1,808 @@
+class XMLDTDProcessor
+!!!4449154.java!!!	XMLDTDProcessor()
+
+        // initialize data
+
+!!!4449282.java!!!	reset(inout componentManager : XMLComponentManager) : void
+
+        boolean parser_settings = componentManager.getFeature(PARSER_SETTINGS, true);
+
+        if (!parser_settings) {
+            // parser settings have not been changed
+            reset();
+            return;
+        }
+
+        // sax features
+        fValidation = componentManager.getFeature(VALIDATION, false);
+
+        fDTDValidation =
+                !(componentManager
+                    .getFeature(
+                        Constants.XERCES_FEATURE_PREFIX + Constants.SCHEMA_VALIDATION_FEATURE, false));
+
+        // Xerces features
+
+        fWarnDuplicateAttdef = componentManager.getFeature(WARN_ON_DUPLICATE_ATTDEF, false);
+        fWarnOnUndeclaredElemdef = componentManager.getFeature(WARN_ON_UNDECLARED_ELEMDEF, false);
+
+        // get needed components
+        fErrorReporter =
+            (XMLErrorReporter) componentManager.getProperty(
+                Constants.XERCES_PROPERTY_PREFIX + Constants.ERROR_REPORTER_PROPERTY);
+        fSymbolTable =
+            (SymbolTable) componentManager.getProperty(
+                Constants.XERCES_PROPERTY_PREFIX + Constants.SYMBOL_TABLE_PROPERTY);
+
+        fGrammarPool = (XMLGrammarPool) componentManager.getProperty(GRAMMAR_POOL, null);
+
+        try {
+            fValidator = (XMLDTDValidator) componentManager.getProperty(DTD_VALIDATOR, null);
+        } catch (ClassCastException e) {
+            fValidator = null;
+        }
+        // we get our grammarBucket from the validator...
+        if (fValidator != null) {
+            fGrammarBucket = fValidator.getGrammarBucket();
+        } else {
+            fGrammarBucket = null;
+        }
+        reset();
+
+!!!4449410.java!!!	reset() : void
+        // clear grammars
+        fDTDGrammar = null;
+        // initialize state
+        fInDTDIgnore = false;
+
+        fNDataDeclNotations.clear();
+
+        // datatype validators
+        if (fValidation) {
+
+            if (fNotationEnumVals == null) {
+                fNotationEnumVals = new HashMap();
+            }
+            fNotationEnumVals.clear();
+
+            fTableOfIDAttributeNames = new HashMap();
+            fTableOfNOTATIONAttributeNames = new HashMap();
+        }
+
+!!!4449538.java!!!	getRecognizedFeatures() : String
+        return (String[])(RECOGNIZED_FEATURES.clone());
+!!!4449794.java!!!	getRecognizedProperties() : String
+        return (String[])(RECOGNIZED_PROPERTIES.clone());
+!!!4450050.java!!!	getFeatureDefault(inout featureId : String) : Boolean
+        for (int i = 0; i < RECOGNIZED_FEATURES.length; i++) {
+            if (RECOGNIZED_FEATURES[i].equals(featureId)) {
+                return FEATURE_DEFAULTS[i];
+            }
+        }
+        return null;
+!!!4450178.java!!!	getPropertyDefault(inout propertyId : String) : Object
+        for (int i = 0; i < RECOGNIZED_PROPERTIES.length; i++) {
+            if (RECOGNIZED_PROPERTIES[i].equals(propertyId)) {
+                return PROPERTY_DEFAULTS[i];
+            }
+        }
+        return null;
+!!!4450306.java!!!	setDTDHandler(inout dtdHandler : XMLDTDHandler) : void
+        fDTDHandler = dtdHandler;
+!!!4450434.java!!!	getDTDHandler() : XMLDTDHandler
+        return fDTDHandler;
+!!!4450562.java!!!	setDTDContentModelHandler(inout dtdContentModelHandler : XMLDTDContentModelHandler) : void
+        fDTDContentModelHandler = dtdContentModelHandler;
+!!!4450690.java!!!	getDTDContentModelHandler() : XMLDTDContentModelHandler
+        return fDTDContentModelHandler;
+!!!4450818.java!!!	startExternalSubset(inout identifier : XMLResourceIdentifier, inout augs : Augmentations) : void
+        if(fDTDGrammar != null)
+            fDTDGrammar.startExternalSubset(identifier, augs);
+        if(fDTDHandler != null){
+            fDTDHandler.startExternalSubset(identifier, augs);
+        }
+!!!4450946.java!!!	endExternalSubset(inout augs : Augmentations) : void
+        if(fDTDGrammar != null)
+            fDTDGrammar.endExternalSubset(augs);
+        if(fDTDHandler != null){
+            fDTDHandler.endExternalSubset(augs);
+        }
+!!!4451074.java!!!	checkStandaloneEntityRef(inout name : String, inout grammar : DTDGrammar, inout tempEntityDecl : XMLEntityDecl, inout errorReporter : XMLErrorReporter) : void
+        // check VC: Standalone Document Declartion, entities references appear in the document.
+        int entIndex = grammar.getEntityDeclIndex(name);
+        if (entIndex > -1) {
+            grammar.getEntityDecl(entIndex, tempEntityDecl);
+            if (tempEntityDecl.inExternal) {
+                errorReporter.reportError( XMLMessageFormatter.XML_DOMAIN,
+                                            "MSG_REFERENCE_TO_EXTERNALLY_DECLARED_ENTITY_WHEN_STANDALONE",
+                                            new Object[]{name}, XMLErrorReporter.SEVERITY_ERROR);
+            }
+        }
+!!!4451202.java!!!	comment(inout text : XMLString, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.comment(text, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.comment(text, augs);
+        }
+
+!!!4451330.java!!!	processingInstruction(inout target : String, inout data : XMLString, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.processingInstruction(target, data, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.processingInstruction(target, data, augs);
+        }
+!!!4451458.java!!!	startDTD(inout locator : XMLLocator, inout augs : Augmentations) : void
+
+
+        // initialize state
+        fNDataDeclNotations.clear();
+        fDTDElementDecls.clear();
+
+        // the grammar bucket's DTDGrammar will now be the
+        // one we want, whether we're constructing it or not.
+        // if we're not constructing it, then we should not have a reference
+        // to it!
+       if( !fGrammarBucket.getActiveGrammar().isImmutable()) {
+            fDTDGrammar = fGrammarBucket.getActiveGrammar();
+        }
+
+        // call handlers
+        if(fDTDGrammar != null )
+            fDTDGrammar.startDTD(locator, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.startDTD(locator, augs);
+        }
+
+!!!4451586.java!!!	ignoredCharacters(inout text : XMLString, inout augs : Augmentations) : void
+
+        // ignored characters in DTD
+        if(fDTDGrammar != null )
+            fDTDGrammar.ignoredCharacters(text, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.ignoredCharacters(text, augs);
+        }
+!!!4451714.java!!!	textDecl(inout version : String, inout encoding : String, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null )
+            fDTDGrammar.textDecl(version, encoding, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.textDecl(version, encoding, augs);
+        }
+!!!4451842.java!!!	startParameterEntity(inout name : String, inout identifier : XMLResourceIdentifier, inout encoding : String, inout augs : Augmentations) : void
+
+        if (fPerformValidation && fDTDGrammar != null &&
+                fGrammarBucket.getStandalone()) {
+            checkStandaloneEntityRef(name, fDTDGrammar, fEntityDecl, fErrorReporter);
+        }
+        // call handlers
+        if(fDTDGrammar != null )
+            fDTDGrammar.startParameterEntity(name, identifier, encoding, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.startParameterEntity(name, identifier, encoding, augs);
+        }
+!!!4451970.java!!!	endParameterEntity(inout name : String, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null )
+            fDTDGrammar.endParameterEntity(name, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.endParameterEntity(name, augs);
+        }
+!!!4452098.java!!!	elementDecl(inout name : String, inout contentModel : String, inout augs : Augmentations) : void
+
+        //check VC: Unique Element Declaration
+        if (fValidation) {
+            if (fDTDElementDecls.contains(name)) {
+                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                           "MSG_ELEMENT_ALREADY_DECLARED",
+                                           new Object[]{ name},
+                                           XMLErrorReporter.SEVERITY_ERROR);
+            }
+            else {
+                fDTDElementDecls.add(name);
+            }
+        }
+
+        // call handlers
+        if(fDTDGrammar != null )
+            fDTDGrammar.elementDecl(name, contentModel, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.elementDecl(name, contentModel, augs);
+        }
+
+!!!4452226.java!!!	startAttlist(inout elementName : String, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null )
+            fDTDGrammar.startAttlist(elementName, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.startAttlist(elementName, augs);
+        }
+
+!!!4452354.java!!!	attributeDecl(inout elementName : String, inout attributeName : String, inout type : String, inout enumeration : String [[]], inout defaultType : String, inout defaultValue : XMLString, inout nonNormalizedDefaultValue : XMLString, inout augs : Augmentations) : void
+
+        if (type != XMLSymbols.fCDATASymbol && defaultValue != null) {
+            normalizeDefaultAttrValue(defaultValue);
+        }
+
+        if (fValidation) {
+
+                boolean duplicateAttributeDef = false ;
+
+                //Get Grammar index to grammar array
+                DTDGrammar grammar = (fDTDGrammar != null? fDTDGrammar:fGrammarBucket.getActiveGrammar());
+                int elementIndex       = grammar.getElementDeclIndex( elementName);
+                if (grammar.getAttributeDeclIndex(elementIndex, attributeName) != -1) {
+                    //more than one attribute definition is provided for the same attribute of a given element type.
+                    duplicateAttributeDef = true ;
+
+                    //this feature works only when validation is true.
+                    if(fWarnDuplicateAttdef){
+                        fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                                 "MSG_DUPLICATE_ATTRIBUTE_DEFINITION",
+                                                 new Object[]{ elementName, attributeName },
+                                                 XMLErrorReporter.SEVERITY_WARNING );
+                    }
+                }
+
+
+            //
+            // a) VC: One ID per Element Type, If duplicate ID attribute
+            // b) VC: ID attribute Default. if there is a declareared attribute
+            //        default for ID it should be of type #IMPLIED or #REQUIRED
+            if (type == XMLSymbols.fIDSymbol) {
+                if (defaultValue != null && defaultValue.length != 0) {
+                    if (defaultType == null ||
+                        !(defaultType == XMLSymbols.fIMPLIEDSymbol ||
+                          defaultType == XMLSymbols.fREQUIREDSymbol)) {
+                        fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                                   "IDDefaultTypeInvalid",
+                                                   new Object[]{ attributeName},
+                                                   XMLErrorReporter.SEVERITY_ERROR);
+                    }
+                }
+
+                if (!fTableOfIDAttributeNames.containsKey(elementName)) {
+                    fTableOfIDAttributeNames.put(elementName, attributeName);
+                }
+                else {
+                        //we should not report an error, when there is duplicate attribute definition for given element type
+                        //according to XML 1.0 spec, When more than one definition is provided for the same attribute of a given
+                        //element type, the first declaration is binding and later declaration are *ignored*. So processor should
+                        //ignore the second declarations, however an application would be warned of the duplicate attribute defintion
+                        // if http://apache.org/xml/features/validation/warn-on-duplicate-attdef feature is set to true,
+                        // one typical case where this could be a  problem, when any XML file
+                        // provide the ID type information through internal subset so that it is available to the parser which read
+                        //only internal subset. Now that attribute declaration(ID Type) can again be part of external parsed entity
+                        //referenced. At that time if parser doesn't make this distinction it will throw an error for VC One ID per
+                        //Element Type, which (second defintion) actually should be ignored. Application behavior may differ on the
+                        //basis of error or warning thrown. - nb.
+
+                        if(!duplicateAttributeDef){
+                                String previousIDAttributeName = (String)fTableOfIDAttributeNames.get( elementName );//rule a)
+                                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               "MSG_MORE_THAN_ONE_ID_ATTRIBUTE",
+                                               new Object[]{ elementName, previousIDAttributeName, attributeName},
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                        }
+                }
+            }
+
+            //
+            //  VC: One Notation Per Element Type, should check if there is a
+            //      duplicate NOTATION attribute
+
+            if (type == XMLSymbols.fNOTATIONSymbol) {
+                // VC: Notation Attributes: all notation names in the
+                //     (attribute) declaration must be declared.
+                for (int i=0; i<enumeration.length; i++) {
+                    fNotationEnumVals.put(enumeration[i], attributeName);
+                }
+
+                if (fTableOfNOTATIONAttributeNames.containsKey( elementName ) == false) {
+                    fTableOfNOTATIONAttributeNames.put( elementName, attributeName);
+                }
+                else {
+                        //we should not report an error, when there is duplicate attribute definition for given element type
+                        //according to XML 1.0 spec, When more than one definition is provided for the same attribute of a given
+                        //element type, the first declaration is binding and later declaration are *ignored*. So processor should
+                        //ignore the second declarations, however an application would be warned of the duplicate attribute definition
+                        // if http://apache.org/xml/features/validation/warn-on-duplicate-attdef feature is set to true, Application behavior may differ on the basis of error or
+                        //warning thrown. - nb.
+
+                        if(!duplicateAttributeDef){
+
+                                String previousNOTATIONAttributeName = (String) fTableOfNOTATIONAttributeNames.get( elementName );
+                                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               "MSG_MORE_THAN_ONE_NOTATION_ATTRIBUTE",
+                                               new Object[]{ elementName, previousNOTATIONAttributeName, attributeName},
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                         }
+                }
+            }
+
+            // VC: No Duplicate Tokens
+            // XML 1.0 SE Errata - E2
+            if (type == XMLSymbols.fENUMERATIONSymbol || type == XMLSymbols.fNOTATIONSymbol) {
+                outer:
+                    for (int i = 0; i < enumeration.length; ++i) {
+                        for (int j = i + 1; j < enumeration.length; ++j) {
+                            if (enumeration[i].equals(enumeration[j])) {
+                                // Only report the first uniqueness violation. There could be others,
+                                // but additional overhead would be incurred tracking unique tokens
+                                // that have already been encountered. -- mrglavas
+                                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               type == XMLSymbols.fENUMERATIONSymbol
+                                                   ? "MSG_DISTINCT_TOKENS_IN_ENUMERATION"
+                                                   : "MSG_DISTINCT_NOTATION_IN_ENUMERATION",
+                                               new Object[]{ elementName, enumeration[i], attributeName },
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                                break outer;
+                            }
+                        }
+                    }
+            }
+
+            // VC: Attribute Default Legal
+            boolean ok = true;
+            if (defaultValue != null &&
+                (defaultType == null ||
+                 (defaultType != null && defaultType == XMLSymbols.fFIXEDSymbol))) {
+
+                String value = defaultValue.toString();
+                if (type == XMLSymbols.fNMTOKENSSymbol ||
+                    type == XMLSymbols.fENTITIESSymbol ||
+                    type == XMLSymbols.fIDREFSSymbol) {
+
+                    StringTokenizer tokenizer = new StringTokenizer(value," ");
+                    if (tokenizer.hasMoreTokens()) {
+                        while (true) {
+                            String nmtoken = tokenizer.nextToken();
+                            if (type == XMLSymbols.fNMTOKENSSymbol) {
+                                if (!isValidNmtoken(nmtoken)) {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                            else if (type == XMLSymbols.fENTITIESSymbol ||
+                                     type == XMLSymbols.fIDREFSSymbol) {
+                                if (!isValidName(nmtoken)) {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                            if (!tokenizer.hasMoreTokens()) {
+                                break;
+                            }
+                        }
+                    }
+
+                }
+                else {
+                    if (type == XMLSymbols.fENTITYSymbol ||
+                        type == XMLSymbols.fIDSymbol ||
+                        type == XMLSymbols.fIDREFSymbol ||
+                        type == XMLSymbols.fNOTATIONSymbol) {
+
+                        if (!isValidName(value)) {
+                            ok = false;
+                        }
+
+                    }
+                    else if (type == XMLSymbols.fNMTOKENSymbol ||
+                             type == XMLSymbols.fENUMERATIONSymbol) {
+
+                        if (!isValidNmtoken(value)) {
+                            ok = false;
+                        }
+                    }
+
+                    if (type == XMLSymbols.fNOTATIONSymbol ||
+                        type == XMLSymbols.fENUMERATIONSymbol) {
+                        ok = false;
+                        for (int i=0; i<enumeration.length; i++) {
+                            if (defaultValue.equals(enumeration[i])) {
+                                ok = true;
+                            }
+                        }
+                    }
+
+                }
+                if (!ok) {
+                    fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               "MSG_ATT_DEFAULT_INVALID",
+                                               new Object[]{attributeName, value},
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                }
+            }
+        }
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.attributeDecl(elementName, attributeName,
+                                  type, enumeration,
+                                  defaultType, defaultValue, nonNormalizedDefaultValue, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.attributeDecl(elementName, attributeName,
+                                      type, enumeration,
+                                      defaultType, defaultValue, nonNormalizedDefaultValue, augs);
+        }
+
+!!!4452482.java!!!	endAttlist(inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.endAttlist(augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.endAttlist(augs);
+        }
+
+!!!4452610.java!!!	internalEntityDecl(inout name : String, inout text : XMLString, inout nonNormalizedText : XMLString, inout augs : Augmentations) : void
+
+        DTDGrammar grammar = (fDTDGrammar != null? fDTDGrammar: fGrammarBucket.getActiveGrammar());
+        int index = grammar.getEntityDeclIndex(name) ;
+
+        //If the same entity is declared more than once, the first declaration
+        //encountered is binding, SAX requires only effective(first) declaration
+        //to be reported to the application
+
+        //REVISIT: Does it make sense to pass duplicate Entity information across
+        //the pipeline -- nb?
+
+        //its a new entity and hasn't been declared.
+        if(index == -1){
+            //store internal entity declaration in grammar
+            if(fDTDGrammar != null)
+                fDTDGrammar.internalEntityDecl(name, text, nonNormalizedText, augs);
+            // call handlers
+            if (fDTDHandler != null) {
+                fDTDHandler.internalEntityDecl(name, text, nonNormalizedText, augs);
+            }
+        }
+
+!!!4452738.java!!!	externalEntityDecl(inout name : String, inout identifier : XMLResourceIdentifier, inout augs : Augmentations) : void
+
+        DTDGrammar grammar = (fDTDGrammar != null? fDTDGrammar:  fGrammarBucket.getActiveGrammar());
+        int index = grammar.getEntityDeclIndex(name) ;
+
+        //If the same entity is declared more than once, the first declaration
+        //encountered is binding, SAX requires only effective(first) declaration
+        //to be reported to the application
+
+        //REVISIT: Does it make sense to pass duplicate entity information across
+        //the pipeline -- nb?
+
+        //its a new entity and hasn't been declared.
+        if(index == -1){
+            //store external entity declaration in grammar
+            if(fDTDGrammar != null)
+                fDTDGrammar.externalEntityDecl(name, identifier, augs);
+            // call handlers
+            if (fDTDHandler != null) {
+                fDTDHandler.externalEntityDecl(name, identifier, augs);
+            }
+        }
+
+!!!4452866.java!!!	unparsedEntityDecl(inout name : String, inout identifier : XMLResourceIdentifier, inout notation : String, inout augs : Augmentations) : void
+
+        // VC: Notation declared,  in the production of NDataDecl
+        if (fValidation) {
+            fNDataDeclNotations.put(name, notation);
+        }
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.unparsedEntityDecl(name, identifier, notation, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.unparsedEntityDecl(name, identifier, notation, augs);
+        }
+
+!!!4452994.java!!!	notationDecl(inout name : String, inout identifier : XMLResourceIdentifier, inout augs : Augmentations) : void
+
+        // VC: Unique Notation Name
+        if (fValidation) {
+            DTDGrammar grammar = (fDTDGrammar != null ? fDTDGrammar : fGrammarBucket.getActiveGrammar());
+            if (grammar.getNotationDeclIndex(name) != -1) {
+                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                           "UniqueNotationName",
+                                           new Object[]{name},
+                                           XMLErrorReporter.SEVERITY_ERROR);
+            }
+        }
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.notationDecl(name, identifier, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.notationDecl(name, identifier, augs);
+        }
+
+!!!4453122.java!!!	startConditional(in type : short, inout augs : Augmentations) : void
+
+        // set state
+        fInDTDIgnore = type == XMLDTDHandler.CONDITIONAL_IGNORE;
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.startConditional(type, augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.startConditional(type, augs);
+        }
+
+!!!4453250.java!!!	endConditional(inout augs : Augmentations) : void
+
+        // set state
+        fInDTDIgnore = false;
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.endConditional(augs);
+        if (fDTDHandler != null) {
+            fDTDHandler.endConditional(augs);
+        }
+
+!!!4453378.java!!!	endDTD(inout augs : Augmentations) : void
+
+
+        // save grammar
+        if(fDTDGrammar != null) {
+            fDTDGrammar.endDTD(augs);
+            if(fGrammarPool != null)
+                fGrammarPool.cacheGrammars(XMLGrammarDescription.XML_DTD, new Grammar[] {fDTDGrammar});
+        }
+        if (fValidation) {
+            DTDGrammar grammar = (fDTDGrammar != null? fDTDGrammar: fGrammarBucket.getActiveGrammar());
+
+            // VC : Notation Declared. for external entity declaration [Production 76].
+            Iterator entities = fNDataDeclNotations.entrySet().iterator();
+            while (entities.hasNext()) {
+                Map.Entry entry = (Map.Entry) entities.next();
+                String notation = (String) entry.getValue();
+                if (grammar.getNotationDeclIndex(notation) == -1) {
+                    String entity = (String) entry.getKey();
+                    fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               "MSG_NOTATION_NOT_DECLARED_FOR_UNPARSED_ENTITYDECL",
+                                               new Object[]{entity, notation},
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                }
+            }
+
+            // VC: Notation Attributes:
+            //     all notation names in the (attribute) declaration must be declared.
+            Iterator notationVals = fNotationEnumVals.entrySet().iterator();
+            while (notationVals.hasNext()) {
+                Map.Entry entry = (Map.Entry) notationVals.next();
+                String notation = (String) entry.getKey();
+                if (grammar.getNotationDeclIndex(notation) == -1) {
+                    String attributeName = (String) entry.getValue();
+                    fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               "MSG_NOTATION_NOT_DECLARED_FOR_NOTATIONTYPE_ATTRIBUTE",
+                                               new Object[]{attributeName, notation},
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                }
+            }
+
+            // VC: No Notation on Empty Element
+            // An attribute of type NOTATION must not be declared on an element declared EMPTY.
+            Iterator elementsWithNotations = fTableOfNOTATIONAttributeNames.entrySet().iterator();
+            while (elementsWithNotations.hasNext()) {
+                Map.Entry entry = (Map.Entry) elementsWithNotations.next();
+                String elementName = (String) entry.getKey();
+                int elementIndex = grammar.getElementDeclIndex(elementName);
+                if (grammar.getContentSpecType(elementIndex) == XMLElementDecl.TYPE_EMPTY) {
+                    String attributeName = (String) entry.getValue();
+                    fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                               "NoNotationOnEmptyElement",
+                                               new Object[]{elementName, attributeName},
+                                               XMLErrorReporter.SEVERITY_ERROR);
+                }
+            }
+
+            // should be safe to release these references
+            fTableOfIDAttributeNames = null;
+            fTableOfNOTATIONAttributeNames = null;
+
+            // check whether each element referenced in a content model is declared
+            if (fWarnOnUndeclaredElemdef) {
+                checkDeclaredElements(grammar);
+            }
+        }
+
+        // call handlers
+        if (fDTDHandler != null) {
+            fDTDHandler.endDTD(augs);
+        }
+
+!!!4453506.java!!!	setDTDSource(inout source : XMLDTDSource) : void
+        fDTDSource = source;
+!!!4453634.java!!!	getDTDSource() : XMLDTDSource
+        return fDTDSource;
+!!!4453762.java!!!	setDTDContentModelSource(inout source : XMLDTDContentModelSource) : void
+        fDTDContentModelSource = source;
+!!!4453890.java!!!	getDTDContentModelSource() : XMLDTDContentModelSource
+        return fDTDContentModelSource;
+!!!4454018.java!!!	startContentModel(inout elementName : String, inout augs : Augmentations) : void
+
+        if (fValidation) {
+            fDTDElementDeclName = elementName;
+            fMixedElementTypes.clear();
+        }
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.startContentModel(elementName, augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.startContentModel(elementName, augs);
+        }
+
+!!!4454146.java!!!	any(inout augs : Augmentations) : void
+        if(fDTDGrammar != null)
+            fDTDGrammar.any(augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.any(augs);
+        }
+!!!4454274.java!!!	empty(inout augs : Augmentations) : void
+        if(fDTDGrammar != null)
+            fDTDGrammar.empty(augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.empty(augs);
+        }
+!!!4454402.java!!!	startGroup(inout augs : Augmentations) : void
+
+        fMixed = false;
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.startGroup(augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.startGroup(augs);
+        }
+
+!!!4454530.java!!!	pcdata(inout augs : Augmentations) : void
+        fMixed = true;
+        if(fDTDGrammar != null)
+            fDTDGrammar.pcdata(augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.pcdata(augs);
+        }
+!!!4454658.java!!!	element(inout elementName : String, inout augs : Augmentations) : void
+
+        // check VC: No duplicate Types, in a single mixed-content declaration
+        if (fMixed && fValidation) {
+            if (fMixedElementTypes.contains(elementName)) {
+                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                                           "DuplicateTypeInMixedContent",
+                                           new Object[]{fDTDElementDeclName, elementName},
+                                           XMLErrorReporter.SEVERITY_ERROR);
+            }
+            else {
+                fMixedElementTypes.add(elementName);
+            }
+        }
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.element(elementName, augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.element(elementName, augs);
+        }
+
+!!!4454786.java!!!	separator(in separator : short, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.separator(separator, augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.separator(separator, augs);
+        }
+
+!!!4454914.java!!!	occurrence(in occurrence : short, inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.occurrence(occurrence, augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.occurrence(occurrence, augs);
+        }
+
+!!!4455042.java!!!	endGroup(inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.endGroup(augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.endGroup(augs);
+        }
+
+!!!4455170.java!!!	endContentModel(inout augs : Augmentations) : void
+
+        // call handlers
+        if(fDTDGrammar != null)
+            fDTDGrammar.endContentModel(augs);
+        if (fDTDContentModelHandler != null) {
+            fDTDContentModelHandler.endContentModel(augs);
+        }
+
+!!!4455298.java!!!	normalizeDefaultAttrValue(inout value : XMLString) : boolean
+
+        boolean skipSpace = true; // skip leading spaces
+        int current = value.offset;
+        int end = value.offset + value.length;
+        for (int i = value.offset; i < end; i++) {
+            if (value.ch[i] == ' ') {
+                if (!skipSpace) {
+                    // take the first whitespace as a space and skip the others
+                    value.ch[current++] = ' ';
+                    skipSpace = true;
+                }
+                else {
+                    // just skip it.
+                }
+            }
+            else {
+                // simply shift non space chars if needed
+                if (current != i) {
+                    value.ch[current] = value.ch[i];
+                }
+                current++;
+                skipSpace = false;
+            }
+        }
+        if (current != end) {
+            if (skipSpace) {
+                // if we finished on a space trim it
+                current--;
+            }
+            // set the new value length
+            value.length = current - value.offset;
+            return true;
+        }
+        return false;
+!!!4455426.java!!!	isValidNmtoken(inout nmtoken : String) : boolean
+        return XMLChar.isValidNmtoken(nmtoken);
+!!!4455554.java!!!	isValidName(inout name : String) : boolean
+        return XMLChar.isValidName(name);
+!!!4455682.java!!!	checkDeclaredElements(inout grammar : DTDGrammar) : void
+        int elementIndex = grammar.getFirstElementDeclIndex();
+        XMLContentSpec contentSpec = new XMLContentSpec();
+        while (elementIndex >= 0) {
+            int type = grammar.getContentSpecType(elementIndex);
+            if (type == XMLElementDecl.TYPE_CHILDREN || type == XMLElementDecl.TYPE_MIXED) {
+                checkDeclaredElements(grammar,
+                        elementIndex,
+                        grammar.getContentSpecIndex(elementIndex),
+                        contentSpec);
+            }
+            elementIndex = grammar.getNextElementDeclIndex(elementIndex);
+        }
+!!!4455810.java!!!	checkDeclaredElements(inout grammar : DTDGrammar, in elementIndex : int, in contentSpecIndex : int, inout contentSpec : XMLContentSpec) : void
+        grammar.getContentSpec(contentSpecIndex, contentSpec);
+        if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+            String value = (String) contentSpec.value;
+            if (value != null && grammar.getElementDeclIndex(value) == -1) {
+                fErrorReporter.reportError(XMLMessageFormatter.XML_DOMAIN,
+                        "UndeclaredElementInContentSpec",
+                        new Object[]{grammar.getElementDeclName(elementIndex).rawname, value},
+                        XMLErrorReporter.SEVERITY_WARNING);
+            }
+        }
+        // It's not a leaf, so we have to recurse its left and maybe right
+        // nodes. Save both values before we recurse and trash the node.
+        else if ((contentSpec.type == XMLContentSpec.CONTENTSPECNODE_CHOICE)
+                || (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_SEQ)) {
+            final int leftNode = ((int[])contentSpec.value)[0];
+            final int rightNode = ((int[])contentSpec.otherValue)[0];
+            //  Recurse on both children.
+            checkDeclaredElements(grammar, elementIndex, leftNode, contentSpec);
+            checkDeclaredElements(grammar, elementIndex, rightNode, contentSpec);
+        }
+        else if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE
+                || contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE
+                || contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE) {
+            final int leftNode = ((int[])contentSpec.value)[0];
+            checkDeclaredElements(grammar, elementIndex, leftNode, contentSpec);
+        }

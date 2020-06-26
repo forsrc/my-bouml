@@ -1,0 +1,144 @@
+class RMINotifClient
+!!!9973378.java!!!	RMINotifClient(inout cl : ClassLoader, inout env : Map)
+            super(cl, env);
+!!!9973506.java!!!	fetchNotifs(in clientSequenceNumber : long, in maxNotifications : int, in timeout : long) : NotificationResult
+
+            boolean retried = false;
+            while (true) { // used for a successful re-connection
+                           // or a transient network problem
+                try {
+                    return connection.fetchNotifications(clientSequenceNumber,
+                            maxNotifications,
+                            timeout); // return normally
+                } catch (IOException ioe) {
+                    // Examine the chain of exceptions to determine whether this
+                    // is a deserialization issue. If so - we propagate the
+                    // appropriate exception to the caller, who will then
+                    // proceed with fetching notifications one by one
+                    rethrowDeserializationException(ioe);
+
+                    try {
+                        communicatorAdmin.gotIOException(ioe);
+                        // reconnection OK, back to "while" to do again
+                    } catch (IOException ee) {
+                        boolean toClose = false;
+
+                        synchronized (this) {
+                            if (terminated) {
+                                // the connection is closed.
+                                throw ioe;
+                            } else if (retried) {
+                                toClose = true;
+                            }
+                        }
+
+                        if (toClose) {
+                            // JDK-8049303
+                            // We received an IOException - but the communicatorAdmin
+                            // did not close the connection - possibly because
+                            // the original exception was raised by a transient network
+                            // problem?
+                            // We already know that this exception is not due to a deserialization
+                            // issue as we already took care of that before involving the
+                            // communicatorAdmin. Moreover - we already made one retry attempt
+                            // at fetching the same batch of notifications - and the
+                            // problem persisted.
+                            // Since trying again doesn't seem to solve the issue, we will now
+                            // close the connection. Doing otherwise might cause the
+                            // NotifFetcher thread to die silently.
+                            final Notification failedNotif =
+                                    new JMXConnectionNotification(
+                                    JMXConnectionNotification.FAILED,
+                                    this,
+                                    connectionId,
+                                    clientNotifSeqNo++,
+                                    "Failed to communicate with the server: " + ioe.toString(),
+                                    ioe);
+
+                            sendNotification(failedNotif);
+
+                            try {
+                                close(true);
+                            } catch (Exception e) {
+                                // OK.
+                                // We are closing
+                            }
+                            throw ioe; // the connection is closed here.
+                        } else {
+                            // JDK-8049303 possible transient network problem,
+                            // let's try one more time
+                            retried = true;
+                        }
+                    }
+                }
+            }
+!!!9973634.java!!!	rethrowDeserializationException(inout ioe : IOException) : void
+            // specially treating for an UnmarshalException
+            if (ioe instanceof UnmarshalException) {
+                throw ioe; // the fix of 6937053 made ClientNotifForwarder.fetchNotifs
+                           // fetch one by one with UnmarshalException
+            } else if (ioe instanceof MarshalException) {
+                // IIOP will throw MarshalException wrapping a NotSerializableException
+                // when a server fails to serialize a response.
+                MarshalException me = (MarshalException)ioe;
+                if (me.detail instanceof NotSerializableException) {
+                    throw (NotSerializableException)me.detail;
+                }
+            }
+
+            // Not serialization problem, return.
+!!!9973762.java!!!	addListenerForMBeanRemovedNotif() : Integer
+            NotificationFilterSupport clientFilter =
+                    new NotificationFilterSupport();
+            clientFilter.enableType(
+                    MBeanServerNotification.UNREGISTRATION_NOTIFICATION);
+            MarshalledObject<NotificationFilter> sFilter =
+                new MarshalledObject<NotificationFilter>(clientFilter);
+
+            Integer[] listenerIDs;
+            final ObjectName[] names =
+                new ObjectName[] {MBeanServerDelegate.DELEGATE_NAME};
+            final MarshalledObject<NotificationFilter>[] filters =
+                Util.cast(new MarshalledObject<?>[] {sFilter});
+            final Subject[] subjects = new Subject[] {null};
+            try {
+                listenerIDs =
+                        connection.addNotificationListeners(names,
+                        filters,
+                        subjects);
+
+            } catch (IOException ioe) {
+                communicatorAdmin.gotIOException(ioe);
+
+                listenerIDs =
+                        connection.addNotificationListeners(names,
+                        filters,
+                        subjects);
+            }
+            return listenerIDs[0];
+!!!9973890.java!!!	removeListenerForMBeanRemovedNotif(inout id : Integer) : void
+            try {
+                connection.removeNotificationListeners(
+                        MBeanServerDelegate.DELEGATE_NAME,
+                        new Integer[] {id},
+                        null);
+            } catch (IOException ioe) {
+                communicatorAdmin.gotIOException(ioe);
+
+                connection.removeNotificationListeners(
+                        MBeanServerDelegate.DELEGATE_NAME,
+                        new Integer[] {id},
+                        null);
+            }
+
+!!!9974018.java!!!	lostNotifs(inout message : String, in number : long) : void
+            final String notifType = JMXConnectionNotification.NOTIFS_LOST;
+
+            final JMXConnectionNotification n =
+                new JMXConnectionNotification(notifType,
+                                              RMIConnector.this,
+                                              connectionId,
+                                              clientNotifCounter++,
+                                              message,
+                                              Long.valueOf(number));
+            sendNotification(n);

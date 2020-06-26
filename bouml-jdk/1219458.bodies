@@ -1,0 +1,311 @@
+class NamingManager
+!!!10092162.java!!!	setObjectFactoryBuilder(inout builder : ObjectFactoryBuilder) : void
+        if (object_factory_builder != null)
+            throw new IllegalStateException("ObjectFactoryBuilder already set");
+
+        SecurityManager security = System.getSecurityManager();
+        if (security != null) {
+            security.checkSetFactory();
+        }
+        object_factory_builder = builder;
+!!!10092290.java!!!	getObjectFactoryBuilder() : ObjectFactoryBuilder
+        return object_factory_builder;
+!!!10092418.java!!!	getObjectFactoryFromReference(inout ref : Reference, inout factoryName : String) : ObjectFactory
+        Class<?> clas = null;
+
+        // Try to use current class loader
+        try {
+             clas = helper.loadClass(factoryName);
+        } catch (ClassNotFoundException e) {
+            // ignore and continue
+            // e.printStackTrace();
+        }
+        // All other exceptions are passed up.
+
+        // Not in class path; try to use codebase
+        String codebase;
+        if (clas == null &&
+                (codebase = ref.getFactoryClassLocation()) != null) {
+            try {
+                clas = helper.loadClass(factoryName, codebase);
+            } catch (ClassNotFoundException e) {
+            }
+        }
+
+        return (clas != null) ? (ObjectFactory) clas.newInstance() : null;
+!!!10092546.java!!!	createObjectFromFactories(inout obj : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Object
+
+        FactoryEnumeration factories = ResourceManager.getFactories(
+            Context.OBJECT_FACTORIES, environment, nameCtx);
+
+        if (factories == null)
+            return null;
+
+        // Try each factory until one succeeds
+        ObjectFactory factory;
+        Object answer = null;
+        while (answer == null && factories.hasMore()) {
+            factory = (ObjectFactory)factories.next();
+            answer = factory.getObjectInstance(obj, name, nameCtx, environment);
+        }
+        return answer;
+!!!10092674.java!!!	getURLScheme(inout str : String) : String
+        int colon_posn = str.indexOf(':');
+        int slash_posn = str.indexOf('/');
+
+        if (colon_posn > 0 && (slash_posn == -1 || colon_posn < slash_posn))
+            return str.substring(0, colon_posn);
+        return null;
+!!!10092802.java!!!	getObjectInstance(inout refInfo : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Object
+
+        ObjectFactory factory;
+
+        // Use builder if installed
+        ObjectFactoryBuilder builder = getObjectFactoryBuilder();
+        if (builder != null) {
+            // builder must return non-null factory
+            factory = builder.createObjectFactory(refInfo, environment);
+            return factory.getObjectInstance(refInfo, name, nameCtx,
+                environment);
+        }
+
+        // Use reference if possible
+        Reference ref = null;
+        if (refInfo instanceof Reference) {
+            ref = (Reference) refInfo;
+        } else if (refInfo instanceof Referenceable) {
+            ref = ((Referenceable)(refInfo)).getReference();
+        }
+
+        Object answer;
+
+        if (ref != null) {
+            String f = ref.getFactoryClassName();
+            if (f != null) {
+                // if reference identifies a factory, use exclusively
+
+                factory = getObjectFactoryFromReference(ref, f);
+                if (factory != null) {
+                    return factory.getObjectInstance(ref, name, nameCtx,
+                                                     environment);
+                }
+                // No factory found, so return original refInfo.
+                // Will reach this point if factory class is not in
+                // class path and reference does not contain a URL for it
+                return refInfo;
+
+            } else {
+                // if reference has no factory, check for addresses
+                // containing URLs
+
+                answer = processURLAddrs(ref, name, nameCtx, environment);
+                if (answer != null) {
+                    return answer;
+                }
+            }
+        }
+
+        // try using any specified factories
+        answer =
+            createObjectFromFactories(refInfo, name, nameCtx, environment);
+        return (answer != null) ? answer : refInfo;
+!!!10092930.java!!!	processURLAddrs(inout ref : Reference, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Object
+
+        for (int i = 0; i < ref.size(); i++) {
+            RefAddr addr = ref.get(i);
+            if (addr instanceof StringRefAddr &&
+                addr.getType().equalsIgnoreCase("URL")) {
+
+                String url = (String)addr.getContent();
+                Object answer = processURL(url, name, nameCtx, environment);
+                if (answer != null) {
+                    return answer;
+                }
+            }
+        }
+        return null;
+!!!10093058.java!!!	processURL(inout refInfo : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Object
+        Object answer;
+
+        // If refInfo is a URL string, try to use its URL context factory
+        // If no context found, continue to try object factories.
+        if (refInfo instanceof String) {
+            String url = (String)refInfo;
+            String scheme = getURLScheme(url);
+            if (scheme != null) {
+                answer = getURLObject(scheme, refInfo, name, nameCtx,
+                                      environment);
+                if (answer != null) {
+                    return answer;
+                }
+            }
+        }
+
+        // If refInfo is an array of URL strings,
+        // try to find a context factory for any one of its URLs.
+        // If no context found, continue to try object factories.
+        if (refInfo instanceof String[]) {
+            String[] urls = (String[])refInfo;
+            for (int i = 0; i <urls.length; i++) {
+                String scheme = getURLScheme(urls[i]);
+                if (scheme != null) {
+                    answer = getURLObject(scheme, refInfo, name, nameCtx,
+                                          environment);
+                    if (answer != null)
+                        return answer;
+                }
+            }
+        }
+        return null;
+!!!10093186.java!!!	getContext(inout obj : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Context
+        Object answer;
+
+        if (obj instanceof Context) {
+            // %%% Ignore environment for now.  OK since method not public.
+            return (Context)obj;
+        }
+
+        try {
+            answer = getObjectInstance(obj, name, nameCtx, environment);
+        } catch (NamingException e) {
+            throw e;
+        } catch (Exception e) {
+            NamingException ne = new NamingException();
+            ne.setRootCause(e);
+            throw ne;
+        }
+
+        return (answer instanceof Context)
+            ? (Context)answer
+            : null;
+!!!10093314.java!!!	getResolver(inout obj : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Resolver
+        Object answer;
+
+        if (obj instanceof Resolver) {
+            // %%% Ignore environment for now.  OK since method not public.
+            return (Resolver)obj;
+        }
+
+        try {
+            answer = getObjectInstance(obj, name, nameCtx, environment);
+        } catch (NamingException e) {
+            throw e;
+        } catch (Exception e) {
+            NamingException ne = new NamingException();
+            ne.setRootCause(e);
+            throw ne;
+        }
+
+        return (answer instanceof Resolver)
+            ? (Resolver)answer
+            : null;
+!!!10093442.java!!!	getURLContext(inout scheme : String, inout environment : Hashtable) : Context
+        // pass in 'null' to indicate creation of generic context for scheme
+        // (i.e. not specific to a URL).
+
+            Object answer = getURLObject(scheme, null, null, null, environment);
+            if (answer instanceof Context) {
+                return (Context)answer;
+            } else {
+                return null;
+            }
+!!!10093570.java!!!	getURLObject(inout scheme : String, inout urlInfo : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Object
+
+        // e.g. "ftpURLContextFactory"
+        ObjectFactory factory = (ObjectFactory)ResourceManager.getFactory(
+            Context.URL_PKG_PREFIXES, environment, nameCtx,
+            "." + scheme + "." + scheme + "URLContextFactory", defaultPkgPrefix);
+
+        if (factory == null)
+          return null;
+
+        // Found object factory
+        try {
+            return factory.getObjectInstance(urlInfo, name, nameCtx, environment);
+        } catch (NamingException e) {
+            throw e;
+        } catch (Exception e) {
+            NamingException ne = new NamingException();
+            ne.setRootCause(e);
+            throw ne;
+        }
+
+!!!10093698.java!!!	getInitialContextFactoryBuilder() : InitialContextFactoryBuilder
+        return initctx_factory_builder;
+!!!10093826.java!!!	getInitialContext(inout env : Hashtable) : Context
+        InitialContextFactory factory;
+
+        InitialContextFactoryBuilder builder = getInitialContextFactoryBuilder();
+        if (builder == null) {
+            // No factory installed, use property
+            // Get initial context factory class name
+
+            String className = env != null ?
+                (String)env.get(Context.INITIAL_CONTEXT_FACTORY) : null;
+            if (className == null) {
+                NoInitialContextException ne = new NoInitialContextException(
+                    "Need to specify class name in environment or system " +
+                    "property, or as an applet parameter, or in an " +
+                    "application resource file:  " +
+                    Context.INITIAL_CONTEXT_FACTORY);
+                throw ne;
+            }
+
+            try {
+                factory = (InitialContextFactory)
+                    helper.loadClass(className).newInstance();
+            } catch(Exception e) {
+                NoInitialContextException ne =
+                    new NoInitialContextException(
+                        "Cannot instantiate class: " + className);
+                ne.setRootCause(e);
+                throw ne;
+            }
+        } else {
+            factory = builder.createInitialContextFactory(env);
+        }
+
+        return factory.getInitialContext(env);
+!!!10093954.java!!!	setInitialContextFactoryBuilder(inout builder : InitialContextFactoryBuilder) : void
+            if (initctx_factory_builder != null)
+                throw new IllegalStateException(
+                    "InitialContextFactoryBuilder already set");
+
+            SecurityManager security = System.getSecurityManager();
+            if (security != null) {
+                security.checkSetFactory();
+            }
+            initctx_factory_builder = builder;
+!!!10094082.java!!!	hasInitialContextFactoryBuilder() : boolean
+        return (getInitialContextFactoryBuilder() != null);
+!!!10094210.java!!!	getContinuationContext(inout cpe : CannotProceedException) : Context
+
+        Hashtable<Object,Object> env = (Hashtable<Object,Object>)cpe.getEnvironment();
+        if (env == null) {
+            env = new Hashtable<>(7);
+        } else {
+            // Make a (shallow) copy of the environment.
+            env = (Hashtable<Object,Object>)env.clone();
+        }
+        env.put(CPE, cpe);
+
+        ContinuationContext cctx = new ContinuationContext(cpe, env);
+        return cctx.getTargetContext();
+!!!10094338.java!!!	getStateToBind(inout obj : Object, inout name : Name, inout nameCtx : Context, inout environment : Hashtable) : Object
+
+        FactoryEnumeration factories = ResourceManager.getFactories(
+            Context.STATE_FACTORIES, environment, nameCtx);
+
+        if (factories == null) {
+            return obj;
+        }
+
+        // Try each factory until one succeeds
+        StateFactory factory;
+        Object answer = null;
+        while (answer == null && factories.hasMore()) {
+            factory = (StateFactory)factories.next();
+            answer = factory.getStateToBind(obj, name, nameCtx, environment);
+        }
+
+        return (answer != null) ? answer : obj;

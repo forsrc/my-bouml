@@ -1,0 +1,101 @@
+class ClientCommunicatorAdmin
+!!!3007234.java!!!	ClientCommunicatorAdmin(in period : long)
+        this.period = period;
+
+        if (period > 0) {
+            checker = new Checker();
+
+            Thread t = new Thread(checker, "JMX client heartbeat " + ++threadNo);
+            t.setDaemon(true);
+            t.start();
+        } else
+            checker = null;
+!!!3007362.java!!!	gotIOException(inout ioe : IOException) : void
+        restart(ioe);
+!!!3007874.java!!!	terminate() : void
+        synchronized(lock) {
+            if (state == TERMINATED) {
+                return;
+            }
+
+            state = TERMINATED;
+
+            lock.notifyAll();
+
+            if (checker != null)
+                checker.stop();
+        }
+!!!3008002.java!!!	restart(inout ioe : IOException) : void
+        // check state
+        synchronized(lock) {
+            if (state == TERMINATED) {
+                throw new IOException("The client has been closed.");
+            } else if (state == FAILED) { // already failed to re-start by another thread
+                throw ioe;
+            } else if (state == RE_CONNECTING) {
+                // restart process has been called by another thread
+                // we need to wait
+                while(state == RE_CONNECTING) {
+                    try {
+                        lock.wait();
+                    } catch (InterruptedException ire) {
+                        // be asked to give up
+                        InterruptedIOException iioe = new InterruptedIOException(ire.toString());
+                        EnvHelp.initCause(iioe, ire);
+
+                        throw iioe;
+                    }
+                }
+
+                if (state == TERMINATED) {
+                    throw new IOException("The client has been closed.");
+                } else if (state != CONNECTED) {
+                    // restarted is failed by another thread
+                    throw ioe;
+                }
+                return;
+            } else {
+                state = RE_CONNECTING;
+                lock.notifyAll();
+            }
+        }
+
+        // re-starting
+        try {
+            doStart();
+            synchronized(lock) {
+                if (state == TERMINATED) {
+                    throw new IOException("The client has been closed.");
+                }
+
+                state = CONNECTED;
+
+                lock.notifyAll();
+            }
+
+            return;
+        } catch (Exception e) {
+            logger.warning("restart", "Failed to restart: " + e);
+            logger.debug("restart",e);
+
+            synchronized(lock) {
+                if (state == TERMINATED) {
+                    throw new IOException("The client has been closed.");
+                }
+
+                state = FAILED;
+
+                lock.notifyAll();
+            }
+
+            try {
+                doStop();
+            } catch (Exception eee) {
+                // OK.
+                // We know there is a problem.
+            }
+
+            terminate();
+
+            throw ioe;
+        }

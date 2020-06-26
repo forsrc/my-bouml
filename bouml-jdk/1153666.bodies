@@ -1,0 +1,255 @@
+class AbstractPipeline
+!!!9479042.java!!!	AbstractPipeline(inout source : Supplier, in sourceFlags : int, inout parallel : boolean)
+        this.previousStage = null;
+        this.sourceSupplier = source;
+        this.sourceStage = this;
+        this.sourceOrOpFlags = sourceFlags & StreamOpFlag.STREAM_MASK;
+        // The following is an optimization of:
+        // StreamOpFlag.combineOpFlags(sourceOrOpFlags, StreamOpFlag.INITIAL_OPS_VALUE);
+        this.combinedFlags = (~(sourceOrOpFlags << 1)) & StreamOpFlag.INITIAL_OPS_VALUE;
+        this.depth = 0;
+        this.parallel = parallel;
+!!!9479170.java!!!	AbstractPipeline(inout source : Spliterator, in sourceFlags : int, inout parallel : boolean)
+        this.previousStage = null;
+        this.sourceSpliterator = source;
+        this.sourceStage = this;
+        this.sourceOrOpFlags = sourceFlags & StreamOpFlag.STREAM_MASK;
+        // The following is an optimization of:
+        // StreamOpFlag.combineOpFlags(sourceOrOpFlags, StreamOpFlag.INITIAL_OPS_VALUE);
+        this.combinedFlags = (~(sourceOrOpFlags << 1)) & StreamOpFlag.INITIAL_OPS_VALUE;
+        this.depth = 0;
+        this.parallel = parallel;
+!!!9479298.java!!!	AbstractPipeline(inout previousStage : AbstractPipeline, in opFlags : int)
+        if (previousStage.linkedOrConsumed)
+            throw new IllegalStateException(MSG_STREAM_LINKED);
+        previousStage.linkedOrConsumed = true;
+        previousStage.nextStage = this;
+
+        this.previousStage = previousStage;
+        this.sourceOrOpFlags = opFlags & StreamOpFlag.OP_MASK;
+        this.combinedFlags = StreamOpFlag.combineOpFlags(opFlags, previousStage.combinedFlags);
+        this.sourceStage = previousStage.sourceStage;
+        if (opIsStateful())
+            sourceStage.sourceAnyStateful = true;
+        this.depth = previousStage.depth + 1;
+!!!9479426.java!!!	evaluate(inout terminalOp : TerminalOp) : R
+        assert getOutputShape() == terminalOp.inputShape();
+        if (linkedOrConsumed)
+            throw new IllegalStateException(MSG_STREAM_LINKED);
+        linkedOrConsumed = true;
+
+        return isParallel()
+               ? terminalOp.evaluateParallel(this, sourceSpliterator(terminalOp.getOpFlags()))
+               : terminalOp.evaluateSequential(this, sourceSpliterator(terminalOp.getOpFlags()));
+!!!9479554.java!!!	evaluateToArrayNode(inout generator : IntFunction) : Node
+        if (linkedOrConsumed)
+            throw new IllegalStateException(MSG_STREAM_LINKED);
+        linkedOrConsumed = true;
+
+        // If the last intermediate operation is stateful then
+        // evaluate directly to avoid an extra collection step
+        if (isParallel() && previousStage != null && opIsStateful()) {
+            // Set the depth of this, last, pipeline stage to zero to slice the
+            // pipeline such that this operation will not be included in the
+            // upstream slice and upstream operations will not be included
+            // in this slice
+            depth = 0;
+            return opEvaluateParallel(previousStage, previousStage.sourceSpliterator(0), generator);
+        }
+        else {
+            return evaluate(sourceSpliterator(0), true, generator);
+        }
+!!!9479682.java!!!	sourceStageSpliterator() : Spliterator
+        if (this != sourceStage)
+            throw new IllegalStateException();
+
+        if (linkedOrConsumed)
+            throw new IllegalStateException(MSG_STREAM_LINKED);
+        linkedOrConsumed = true;
+
+        if (sourceStage.sourceSpliterator != null) {
+            @SuppressWarnings("unchecked")
+            Spliterator<E_OUT> s = sourceStage.sourceSpliterator;
+            sourceStage.sourceSpliterator = null;
+            return s;
+        }
+        else if (sourceStage.sourceSupplier != null) {
+            @SuppressWarnings("unchecked")
+            Spliterator<E_OUT> s = (Spliterator<E_OUT>) sourceStage.sourceSupplier.get();
+            sourceStage.sourceSupplier = null;
+            return s;
+        }
+        else {
+            throw new IllegalStateException(MSG_CONSUMED);
+        }
+!!!9479810.java!!!	sequential() : S
+        sourceStage.parallel = false;
+        return (S) this;
+!!!9479938.java!!!	parallel() : S
+        sourceStage.parallel = true;
+        return (S) this;
+!!!9480066.java!!!	close() : void
+        linkedOrConsumed = true;
+        sourceSupplier = null;
+        sourceSpliterator = null;
+        if (sourceStage.sourceCloseAction != null) {
+            Runnable closeAction = sourceStage.sourceCloseAction;
+            sourceStage.sourceCloseAction = null;
+            closeAction.run();
+        }
+!!!9480194.java!!!	onClose(inout closeHandler : Runnable) : S
+        Runnable existingHandler = sourceStage.sourceCloseAction;
+        sourceStage.sourceCloseAction =
+                (existingHandler == null)
+                ? closeHandler
+                : Streams.composeWithExceptions(existingHandler, closeHandler);
+        return (S) this;
+!!!9480322.java!!!	spliterator() : Spliterator
+        if (linkedOrConsumed)
+            throw new IllegalStateException(MSG_STREAM_LINKED);
+        linkedOrConsumed = true;
+
+        if (this == sourceStage) {
+            if (sourceStage.sourceSpliterator != null) {
+                @SuppressWarnings("unchecked")
+                Spliterator<E_OUT> s = (Spliterator<E_OUT>) sourceStage.sourceSpliterator;
+                sourceStage.sourceSpliterator = null;
+                return s;
+            }
+            else if (sourceStage.sourceSupplier != null) {
+                @SuppressWarnings("unchecked")
+                Supplier<Spliterator<E_OUT>> s = (Supplier<Spliterator<E_OUT>>) sourceStage.sourceSupplier;
+                sourceStage.sourceSupplier = null;
+                return lazySpliterator(s);
+            }
+            else {
+                throw new IllegalStateException(MSG_CONSUMED);
+            }
+        }
+        else {
+            return wrap(this, () -> sourceSpliterator(0), isParallel());
+        }
+!!!9480450.java!!!	isParallel() : boolean
+        return sourceStage.parallel;
+!!!9480578.java!!!	getStreamFlags() : int
+        return StreamOpFlag.toStreamFlags(combinedFlags);
+!!!9480706.java!!!	sourceSpliterator(in terminalFlags : int) : Spliterator
+        // Get the source spliterator of the pipeline
+        Spliterator<?> spliterator = null;
+        if (sourceStage.sourceSpliterator != null) {
+            spliterator = sourceStage.sourceSpliterator;
+            sourceStage.sourceSpliterator = null;
+        }
+        else if (sourceStage.sourceSupplier != null) {
+            spliterator = (Spliterator<?>) sourceStage.sourceSupplier.get();
+            sourceStage.sourceSupplier = null;
+        }
+        else {
+            throw new IllegalStateException(MSG_CONSUMED);
+        }
+
+        if (isParallel() && sourceStage.sourceAnyStateful) {
+            // Adapt the source spliterator, evaluating each stateful op
+            // in the pipeline up to and including this pipeline stage.
+            // The depth and flags of each pipeline stage are adjusted accordingly.
+            int depth = 1;
+            for (@SuppressWarnings("rawtypes") AbstractPipeline u = sourceStage, p = sourceStage.nextStage, e = this;
+                 u != e;
+                 u = p, p = p.nextStage) {
+
+                int thisOpFlags = p.sourceOrOpFlags;
+                if (p.opIsStateful()) {
+                    depth = 0;
+
+                    if (StreamOpFlag.SHORT_CIRCUIT.isKnown(thisOpFlags)) {
+                        // Clear the short circuit flag for next pipeline stage
+                        // This stage encapsulates short-circuiting, the next
+                        // stage may not have any short-circuit operations, and
+                        // if so spliterator.forEachRemaining should be used
+                        // for traversal
+                        thisOpFlags = thisOpFlags & ~StreamOpFlag.IS_SHORT_CIRCUIT;
+                    }
+
+                    spliterator = p.opEvaluateParallelLazy(u, spliterator);
+
+                    // Inject or clear SIZED on the source pipeline stage
+                    // based on the stage's spliterator
+                    thisOpFlags = spliterator.hasCharacteristics(Spliterator.SIZED)
+                            ? (thisOpFlags & ~StreamOpFlag.NOT_SIZED) | StreamOpFlag.IS_SIZED
+                            : (thisOpFlags & ~StreamOpFlag.IS_SIZED) | StreamOpFlag.NOT_SIZED;
+                }
+                p.depth = depth++;
+                p.combinedFlags = StreamOpFlag.combineOpFlags(thisOpFlags, u.combinedFlags);
+            }
+        }
+
+        if (terminalFlags != 0)  {
+            // Apply flags from the terminal operation to last pipeline stage
+            combinedFlags = StreamOpFlag.combineOpFlags(terminalFlags, combinedFlags);
+        }
+
+        return spliterator;
+!!!9480834.java!!!	getSourceShape() : StreamShape
+        @SuppressWarnings("rawtypes")
+        AbstractPipeline p = AbstractPipeline.this;
+        while (p.depth > 0) {
+            p = p.previousStage;
+        }
+        return p.getOutputShape();
+!!!9480962.java!!!	exactOutputSizeIfKnown(inout spliterator : Spliterator) : long
+        return StreamOpFlag.SIZED.isKnown(getStreamAndOpFlags()) ? spliterator.getExactSizeIfKnown() : -1;
+!!!9481090.java!!!	wrapAndCopyInto(inout sink : S, inout spliterator : Spliterator) : S
+        copyInto(wrapSink(Objects.requireNonNull(sink)), spliterator);
+        return sink;
+!!!9481218.java!!!	copyInto(inout wrappedSink : Sink, inout spliterator : Spliterator) : void
+        Objects.requireNonNull(wrappedSink);
+
+        if (!StreamOpFlag.SHORT_CIRCUIT.isKnown(getStreamAndOpFlags())) {
+            wrappedSink.begin(spliterator.getExactSizeIfKnown());
+            spliterator.forEachRemaining(wrappedSink);
+            wrappedSink.end();
+        }
+        else {
+            copyIntoWithCancel(wrappedSink, spliterator);
+        }
+!!!9481346.java!!!	copyIntoWithCancel(inout wrappedSink : Sink, inout spliterator : Spliterator) : void
+        @SuppressWarnings({"rawtypes","unchecked"})
+        AbstractPipeline p = AbstractPipeline.this;
+        while (p.depth > 0) {
+            p = p.previousStage;
+        }
+        wrappedSink.begin(spliterator.getExactSizeIfKnown());
+        p.forEachWithCancel(spliterator, wrappedSink);
+        wrappedSink.end();
+!!!9481474.java!!!	getStreamAndOpFlags() : int
+        return combinedFlags;
+!!!9481602.java!!!	isOrdered() : boolean
+        return StreamOpFlag.ORDERED.isKnown(combinedFlags);
+!!!9481730.java!!!	wrapSink(inout sink : Sink) : Sink
+        Objects.requireNonNull(sink);
+
+        for ( @SuppressWarnings("rawtypes") AbstractPipeline p=AbstractPipeline.this; p.depth > 0; p=p.previousStage) {
+            sink = p.opWrapSink(p.previousStage.combinedFlags, sink);
+        }
+        return (Sink<P_IN>) sink;
+!!!9481858.java!!!	wrapSpliterator(inout sourceSpliterator : Spliterator) : Spliterator
+        if (depth == 0) {
+            return (Spliterator<E_OUT>) sourceSpliterator;
+        }
+        else {
+            return wrap(this, () -> sourceSpliterator, isParallel());
+        }
+!!!9481986.java!!!	evaluate(inout spliterator : Spliterator, inout flatten : boolean, inout generator : IntFunction) : Node
+        if (isParallel()) {
+            // @@@ Optimize if op of this pipeline stage is a stateful op
+            return evaluateToNode(this, spliterator, flatten, generator);
+        }
+        else {
+            Node.Builder<E_OUT> nb = makeNodeBuilder(
+                    exactOutputSizeIfKnown(spliterator), generator);
+            return wrapAndCopyInto(nb, spliterator).build();
+        }
+!!!9483138.java!!!	opEvaluateParallel(inout helper : PipelineHelper, inout spliterator : Spliterator, inout generator : IntFunction) : Node
+        throw new UnsupportedOperationException("Parallel evaluation is not supported");
+!!!9483266.java!!!	opEvaluateParallelLazy(inout helper : PipelineHelper, inout spliterator : Spliterator) : Spliterator
+        return opEvaluateParallel(helper, spliterator, i -> (E_OUT[]) new Object[i]).spliterator();

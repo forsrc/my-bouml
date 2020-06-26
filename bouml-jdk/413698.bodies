@@ -1,0 +1,284 @@
+class ListPainter
+!!!2429442.java!!!	ListPainter(inout attr : AttributeSet, inout ss : StyleSheet)
+            this.ss = ss;
+            /* Get the image to use as a list bullet */
+            String imgstr = (String)attr.getAttribute(CSS.Attribute.
+                                                      LIST_STYLE_IMAGE);
+            type = null;
+            if (imgstr != null && !imgstr.equals("none")) {
+                String tmpstr = null;
+                try {
+                    StringTokenizer st = new StringTokenizer(imgstr, "()");
+                    if (st.hasMoreTokens())
+                        tmpstr = st.nextToken();
+                    if (st.hasMoreTokens())
+                        tmpstr = st.nextToken();
+                    URL u = new URL(tmpstr);
+                    img = new ImageIcon(u);
+                } catch (MalformedURLException e) {
+                    if (tmpstr != null && ss != null && ss.getBase() != null) {
+                        try {
+                            URL u = new URL(ss.getBase(), tmpstr);
+                            img = new ImageIcon(u);
+                        } catch (MalformedURLException murle) {
+                            img = null;
+                        }
+                    }
+                    else {
+                        img = null;
+                    }
+                }
+            }
+
+            /* Get the type of bullet to use in the list */
+            if (img == null) {
+                type = (CSS.Value)attr.getAttribute(CSS.Attribute.
+                                                    LIST_STYLE_TYPE);
+            }
+            start = 1;
+
+            paintRect = new Rectangle();
+!!!2429570.java!!!	getChildType(inout childView : View) : CSS::Value
+            CSS.Value childtype = (CSS.Value)childView.getAttributes().
+                                  getAttribute(CSS.Attribute.LIST_STYLE_TYPE);
+
+            if (childtype == null) {
+                if (type == null) {
+                    // Parent view.
+                    View v = childView.getParent();
+                    HTMLDocument doc = (HTMLDocument)v.getDocument();
+                    if (doc.matchNameAttribute(v.getElement().getAttributes(),
+                                               HTML.Tag.OL)) {
+                        childtype = CSS.Value.DECIMAL;
+                    } else {
+                        childtype = CSS.Value.DISC;
+                    }
+                } else {
+                    childtype = type;
+                }
+            }
+            return childtype;
+!!!2429698.java!!!	getStart(inout parent : View) : void
+            checkedForStart = true;
+            Element element = parent.getElement();
+            if (element != null) {
+                AttributeSet attr = element.getAttributes();
+                Object startValue;
+                if (attr != null && attr.isDefined(HTML.Attribute.START) &&
+                    (startValue = attr.getAttribute
+                     (HTML.Attribute.START)) != null &&
+                    (startValue instanceof String)) {
+
+                    try {
+                        start = Integer.parseInt((String)startValue);
+                    }
+                    catch (NumberFormatException nfe) {}
+                }
+            }
+!!!2429826.java!!!	getRenderIndex(inout parentView : View, in childIndex : int) : int
+            if (!checkedForStart) {
+                getStart(parentView);
+            }
+            int retIndex = childIndex;
+            for (int counter = childIndex; counter >= 0; counter--) {
+                AttributeSet as = parentView.getElement().getElement(counter).
+                                  getAttributes();
+                if (as.getAttribute(StyleConstants.NameAttribute) !=
+                    HTML.Tag.LI) {
+                    retIndex--;
+                } else if (as.isDefined(HTML.Attribute.VALUE)) {
+                    Object value = as.getAttribute(HTML.Attribute.VALUE);
+                    if (value != null &&
+                        (value instanceof String)) {
+                        try {
+                            int iValue = Integer.parseInt((String)value);
+                            return retIndex - counter + iValue;
+                        }
+                        catch (NumberFormatException nfe) {}
+                    }
+                }
+            }
+            return retIndex + start;
+!!!2429954.java!!!	paint(inout g : Graphics, in x : float, in y : float, in w : float, in h : float, inout v : View, in item : int) : void
+            View cv = v.getView(item);
+            Container host = v.getContainer();
+            Object name = cv.getElement().getAttributes().getAttribute
+                         (StyleConstants.NameAttribute);
+            // Only draw something if the View is a list item. This won't
+            // be the case for comments.
+            if (!(name instanceof HTML.Tag) ||
+                name != HTML.Tag.LI) {
+                return;
+            }
+            // deside on what side draw bullets, etc.
+            isLeftToRight =
+                host.getComponentOrientation().isLeftToRight();
+
+            // How the list indicator is aligned is not specified, it is
+            // left up to the UA. IE and NS differ on this behavior.
+            // This is closer to NS where we align to the first line of text.
+            // If the child is not text we draw the indicator at the
+            // origin (0).
+            float align = 0;
+            if (cv.getViewCount() > 0) {
+                View pView = cv.getView(0);
+                Object cName = pView.getElement().getAttributes().
+                               getAttribute(StyleConstants.NameAttribute);
+                if ((cName == HTML.Tag.P || cName == HTML.Tag.IMPLIED) &&
+                              pView.getViewCount() > 0) {
+                    paintRect.setBounds((int)x, (int)y, (int)w, (int)h);
+                    Shape shape = cv.getChildAllocation(0, paintRect);
+                    if (shape != null && (shape = pView.getView(0).
+                                 getChildAllocation(0, shape)) != null) {
+                        Rectangle rect = (shape instanceof Rectangle) ?
+                                         (Rectangle)shape : shape.getBounds();
+
+                        align = pView.getView(0).getAlignment(View.Y_AXIS);
+                        y = rect.y;
+                        h = rect.height;
+                    }
+                }
+            }
+
+            // set the color of a decoration
+            Color c = (host.isEnabled()
+                ? (ss != null
+                    ? ss.getForeground(cv.getAttributes())
+                    : host.getForeground())
+                : UIManager.getColor("textInactiveText"));
+            g.setColor(c);
+
+            if (img != null) {
+                drawIcon(g, (int) x, (int) y, (int) w, (int) h, align, host);
+                return;
+            }
+            CSS.Value childtype = getChildType(cv);
+            Font font = ((StyledDocument)cv.getDocument()).
+                                         getFont(cv.getAttributes());
+            if (font != null) {
+                g.setFont(font);
+            }
+            if (childtype == CSS.Value.SQUARE || childtype == CSS.Value.CIRCLE
+                || childtype == CSS.Value.DISC) {
+                drawShape(g, childtype, (int) x, (int) y,
+                          (int) w, (int) h, align);
+            } else if (childtype == CSS.Value.DECIMAL) {
+                drawLetter(g, '1', (int) x, (int) y, (int) w, (int) h, align,
+                           getRenderIndex(v, item));
+            } else if (childtype == CSS.Value.LOWER_ALPHA) {
+                drawLetter(g, 'a', (int) x, (int) y, (int) w, (int) h, align,
+                           getRenderIndex(v, item));
+            } else if (childtype == CSS.Value.UPPER_ALPHA) {
+                drawLetter(g, 'A', (int) x, (int) y, (int) w, (int) h, align,
+                           getRenderIndex(v, item));
+            } else if (childtype == CSS.Value.LOWER_ROMAN) {
+                drawLetter(g, 'i', (int) x, (int) y, (int) w, (int) h, align,
+                           getRenderIndex(v, item));
+            } else if (childtype == CSS.Value.UPPER_ROMAN) {
+                drawLetter(g, 'I', (int) x, (int) y, (int) w, (int) h, align,
+                           getRenderIndex(v, item));
+            }
+!!!2430082.java!!!	drawIcon(inout g : Graphics, in ax : int, in ay : int, in aw : int, in ah : int, in align : float, inout c : Component) : void
+            // Align to bottom of icon.
+            int gap = isLeftToRight ? - (img.getIconWidth() + bulletgap) :
+                                        (aw + bulletgap);
+            int x = ax + gap;
+            int y = Math.max(ay, ay + (int)(align * ah) -img.getIconHeight());
+
+            img.paintIcon(c, g, x, y);
+!!!2430210.java!!!	drawShape(inout g : Graphics, inout type : CSS::Value, in ax : int, in ay : int, in aw : int, in ah : int, in align : float) : void
+            // Align to bottom of shape.
+            int gap = isLeftToRight ? - (bulletgap + 8) : (aw + bulletgap);
+            int x = ax + gap;
+            int y = Math.max(ay, ay + (int)(align * ah) - 8);
+
+            if (type == CSS.Value.SQUARE) {
+                g.drawRect(x, y, 8, 8);
+            } else if (type == CSS.Value.CIRCLE) {
+                g.drawOval(x, y, 8, 8);
+            } else {
+                g.fillOval(x, y, 8, 8);
+            }
+!!!2430338.java!!!	drawLetter(inout g : Graphics, in letter : char, in ax : int, in ay : int, in aw : int, in ah : int, in align : float, in index : int) : void
+            String str = formatItemNum(index, letter);
+            str = isLeftToRight ? str + "." : "." + str;
+            FontMetrics fm = SwingUtilities2.getFontMetrics(null, g);
+            int stringwidth = SwingUtilities2.stringWidth(null, fm, str);
+            int gap = isLeftToRight ? - (stringwidth + bulletgap) :
+                                        (aw + bulletgap);
+            int x = ax + gap;
+            int y = Math.max(ay + fm.getAscent(), ay + (int)(ah * align));
+            SwingUtilities2.drawString(null, g, str, x, y);
+!!!2430466.java!!!	formatItemNum(in itemNum : int, in type : char) : String
+            String numStyle = "1";
+
+            boolean uppercase = false;
+
+            String formattedNum;
+
+            switch (type) {
+            case '1':
+            default:
+                formattedNum = String.valueOf(itemNum);
+                break;
+
+            case 'A':
+                uppercase = true;
+                // fall through
+            case 'a':
+                formattedNum = formatAlphaNumerals(itemNum);
+                break;
+
+            case 'I':
+                uppercase = true;
+                // fall through
+            case 'i':
+                formattedNum = formatRomanNumerals(itemNum);
+            }
+
+            if (uppercase) {
+                formattedNum = formattedNum.toUpperCase();
+            }
+
+            return formattedNum;
+!!!2430594.java!!!	formatAlphaNumerals(in itemNum : int) : String
+            String result;
+
+            if (itemNum > 26) {
+                result = formatAlphaNumerals(itemNum / 26) +
+                    formatAlphaNumerals(itemNum % 26);
+            } else {
+                // -1 because item is 1 based.
+                result = String.valueOf((char)('a' + itemNum - 1));
+            }
+
+            return result;
+!!!2430722.java!!!	formatRomanNumerals(in num : int) : String
+            return formatRomanNumerals(0, num);
+!!!2430850.java!!!	formatRomanNumerals(in level : int, in num : int) : String
+            if (num < 10) {
+                return formatRomanDigit(level, num);
+            } else {
+                return formatRomanNumerals(level + 1, num / 10) +
+                    formatRomanDigit(level, num % 10);
+            }
+!!!2430978.java!!!	formatRomanDigit(in level : int, in digit : int) : String
+            String result = "";
+            if (digit == 9) {
+                result = result + romanChars[level][0];
+                result = result + romanChars[level + 1][0];
+                return result;
+            } else if (digit == 4) {
+                result = result + romanChars[level][0];
+                result = result + romanChars[level][1];
+                return result;
+            } else if (digit >= 5) {
+                result = result + romanChars[level][1];
+                digit -= 5;
+            }
+
+            for (int i = 0; i < digit; i++) {
+                result = result + romanChars[level][0];
+            }
+
+            return result;

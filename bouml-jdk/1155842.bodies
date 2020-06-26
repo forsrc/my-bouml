@@ -1,0 +1,295 @@
+class ReferencePipeline
+!!!9558018.java!!!	ReferencePipeline(inout source : Supplier, in sourceFlags : int, inout parallel : boolean)
+        super(source, sourceFlags, parallel);
+!!!9558146.java!!!	ReferencePipeline(inout source : Spliterator, in sourceFlags : int, inout parallel : boolean)
+        super(source, sourceFlags, parallel);
+!!!9558274.java!!!	ReferencePipeline(inout upstream : AbstractPipeline, in opFlags : int)
+        super(upstream, opFlags);
+!!!9558402.java!!!	getOutputShape() : StreamShape
+        return StreamShape.REFERENCE;
+!!!9558530.java!!!	evaluateToNode(inout helper : PipelineHelper, inout spliterator : Spliterator, inout flattenTree : boolean, inout generator : IntFunction) : Node
+        return Nodes.collect(helper, spliterator, flattenTree, generator);
+!!!9558658.java!!!	wrap(inout ph : PipelineHelper, inout supplier : Supplier, inout isParallel : boolean) : Spliterator
+        return new StreamSpliterators.WrappingSpliterator<>(ph, supplier, isParallel);
+!!!9558786.java!!!	lazySpliterator(inout supplier : Supplier) : Spliterator
+        return new StreamSpliterators.DelegatingSpliterator<>(supplier);
+!!!9558914.java!!!	forEachWithCancel(inout spliterator : Spliterator, inout sink : Sink) : void
+        do { } while (!sink.cancellationRequested() && spliterator.tryAdvance(sink));
+!!!9559042.java!!!	makeNodeBuilder(in exactSizeIfKnown : long, inout generator : IntFunction) : Node::Builder
+        return Nodes.builder(exactSizeIfKnown, generator);
+!!!9559170.java!!!	iterator() : Iterator
+        return Spliterators.iterator(spliterator());
+!!!9559298.java!!!	unordered() : Stream
+        if (!isOrdered())
+            return this;
+        return new StatelessOp<P_OUT, P_OUT>(this, StreamShape.REFERENCE, StreamOpFlag.NOT_ORDERED) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<P_OUT> sink) {
+                return sink;
+            }
+        };
+!!!9559426.java!!!	filter(inout predicate : Predicate) : Stream
+        Objects.requireNonNull(predicate);
+        return new StatelessOp<P_OUT, P_OUT>(this, StreamShape.REFERENCE,
+                                     StreamOpFlag.NOT_SIZED) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<P_OUT> sink) {
+                return new Sink.ChainedReference<P_OUT, P_OUT>(sink) {
+                    @Override
+                    public void begin(long size) {
+                        downstream.begin(-1);
+                    }
+
+                    @Override
+                    public void accept(P_OUT u) {
+                        if (predicate.test(u))
+                            downstream.accept(u);
+                    }
+                };
+            }
+        };
+!!!9559554.java!!!	map(inout mapper : Function) : Stream
+        Objects.requireNonNull(mapper);
+        return new StatelessOp<P_OUT, R>(this, StreamShape.REFERENCE,
+                                     StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<R> sink) {
+                return new Sink.ChainedReference<P_OUT, R>(sink) {
+                    @Override
+                    public void accept(P_OUT u) {
+                        downstream.accept(mapper.apply(u));
+                    }
+                };
+            }
+        };
+!!!9559682.java!!!	mapToInt(inout mapper : ToIntFunction) : IntStream
+        Objects.requireNonNull(mapper);
+        return new IntPipeline.StatelessOp<P_OUT>(this, StreamShape.REFERENCE,
+                                              StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<Integer> sink) {
+                return new Sink.ChainedReference<P_OUT, Integer>(sink) {
+                    @Override
+                    public void accept(P_OUT u) {
+                        downstream.accept(mapper.applyAsInt(u));
+                    }
+                };
+            }
+        };
+!!!9559810.java!!!	mapToLong(inout mapper : ToLongFunction) : LongStream
+        Objects.requireNonNull(mapper);
+        return new LongPipeline.StatelessOp<P_OUT>(this, StreamShape.REFERENCE,
+                                      StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<Long> sink) {
+                return new Sink.ChainedReference<P_OUT, Long>(sink) {
+                    @Override
+                    public void accept(P_OUT u) {
+                        downstream.accept(mapper.applyAsLong(u));
+                    }
+                };
+            }
+        };
+!!!9559938.java!!!	mapToDouble(inout mapper : ToDoubleFunction) : DoubleStream
+        Objects.requireNonNull(mapper);
+        return new DoublePipeline.StatelessOp<P_OUT>(this, StreamShape.REFERENCE,
+                                        StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<Double> sink) {
+                return new Sink.ChainedReference<P_OUT, Double>(sink) {
+                    @Override
+                    public void accept(P_OUT u) {
+                        downstream.accept(mapper.applyAsDouble(u));
+                    }
+                };
+            }
+        };
+!!!9560066.java!!!	flatMap(inout mapper : Function) : Stream
+        Objects.requireNonNull(mapper);
+        // We can do better than this, by polling cancellationRequested when stream is infinite
+        return new StatelessOp<P_OUT, R>(this, StreamShape.REFERENCE,
+                                     StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT | StreamOpFlag.NOT_SIZED) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<R> sink) {
+                return new Sink.ChainedReference<P_OUT, R>(sink) {
+                    @Override
+                    public void begin(long size) {
+                        downstream.begin(-1);
+                    }
+
+                    @Override
+                    public void accept(P_OUT u) {
+                        try (Stream<? extends R> result = mapper.apply(u)) {
+                            // We can do better that this too; optimize for depth=0 case and just grab spliterator and forEach it
+                            if (result != null)
+                                result.sequential().forEach(downstream);
+                        }
+                    }
+                };
+            }
+        };
+!!!9560194.java!!!	flatMapToInt(inout mapper : Function) : IntStream
+        Objects.requireNonNull(mapper);
+        // We can do better than this, by polling cancellationRequested when stream is infinite
+        return new IntPipeline.StatelessOp<P_OUT>(this, StreamShape.REFERENCE,
+                                              StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT | StreamOpFlag.NOT_SIZED) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<Integer> sink) {
+                return new Sink.ChainedReference<P_OUT, Integer>(sink) {
+                    IntConsumer downstreamAsInt = downstream::accept;
+                    @Override
+                    public void begin(long size) {
+                        downstream.begin(-1);
+                    }
+
+                    @Override
+                    public void accept(P_OUT u) {
+                        try (IntStream result = mapper.apply(u)) {
+                            // We can do better that this too; optimize for depth=0 case and just grab spliterator and forEach it
+                            if (result != null)
+                                result.sequential().forEach(downstreamAsInt);
+                        }
+                    }
+                };
+            }
+        };
+!!!9560322.java!!!	flatMapToDouble(inout mapper : Function) : DoubleStream
+        Objects.requireNonNull(mapper);
+        // We can do better than this, by polling cancellationRequested when stream is infinite
+        return new DoublePipeline.StatelessOp<P_OUT>(this, StreamShape.REFERENCE,
+                                                     StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT | StreamOpFlag.NOT_SIZED) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<Double> sink) {
+                return new Sink.ChainedReference<P_OUT, Double>(sink) {
+                    DoubleConsumer downstreamAsDouble = downstream::accept;
+                    @Override
+                    public void begin(long size) {
+                        downstream.begin(-1);
+                    }
+
+                    @Override
+                    public void accept(P_OUT u) {
+                        try (DoubleStream result = mapper.apply(u)) {
+                            // We can do better that this too; optimize for depth=0 case and just grab spliterator and forEach it
+                            if (result != null)
+                                result.sequential().forEach(downstreamAsDouble);
+                        }
+                    }
+                };
+            }
+        };
+!!!9560450.java!!!	flatMapToLong(inout mapper : Function) : LongStream
+        Objects.requireNonNull(mapper);
+        // We can do better than this, by polling cancellationRequested when stream is infinite
+        return new LongPipeline.StatelessOp<P_OUT>(this, StreamShape.REFERENCE,
+                                                   StreamOpFlag.NOT_SORTED | StreamOpFlag.NOT_DISTINCT | StreamOpFlag.NOT_SIZED) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<Long> sink) {
+                return new Sink.ChainedReference<P_OUT, Long>(sink) {
+                    LongConsumer downstreamAsLong = downstream::accept;
+                    @Override
+                    public void begin(long size) {
+                        downstream.begin(-1);
+                    }
+
+                    @Override
+                    public void accept(P_OUT u) {
+                        try (LongStream result = mapper.apply(u)) {
+                            // We can do better that this too; optimize for depth=0 case and just grab spliterator and forEach it
+                            if (result != null)
+                                result.sequential().forEach(downstreamAsLong);
+                        }
+                    }
+                };
+            }
+        };
+!!!9560578.java!!!	peek(inout action : Consumer) : Stream
+        Objects.requireNonNull(action);
+        return new StatelessOp<P_OUT, P_OUT>(this, StreamShape.REFERENCE,
+                                     0) {
+            @Override
+            Sink<P_OUT> opWrapSink(int flags, Sink<P_OUT> sink) {
+                return new Sink.ChainedReference<P_OUT, P_OUT>(sink) {
+                    @Override
+                    public void accept(P_OUT u) {
+                        action.accept(u);
+                        downstream.accept(u);
+                    }
+                };
+            }
+        };
+!!!9560706.java!!!	distinct() : Stream
+        return DistinctOps.makeRef(this);
+!!!9560834.java!!!	sorted() : Stream
+        return SortedOps.makeRef(this);
+!!!9560962.java!!!	sorted(inout comparator : Comparator) : Stream
+        return SortedOps.makeRef(this, comparator);
+!!!9561090.java!!!	limit(in maxSize : long) : Stream
+        if (maxSize < 0)
+            throw new IllegalArgumentException(Long.toString(maxSize));
+        return SliceOps.makeRef(this, 0, maxSize);
+!!!9561218.java!!!	skip(in n : long) : Stream
+        if (n < 0)
+            throw new IllegalArgumentException(Long.toString(n));
+        if (n == 0)
+            return this;
+        else
+            return SliceOps.makeRef(this, n, -1);
+!!!9561346.java!!!	forEach(inout action : Consumer) : void
+        evaluate(ForEachOps.makeRef(action, false));
+!!!9561474.java!!!	forEachOrdered(inout action : Consumer) : void
+        evaluate(ForEachOps.makeRef(action, true));
+!!!9561602.java!!!	toArray(inout generator : IntFunction) : A
+        // Since A has no relation to U (not possible to declare that A is an upper bound of U)
+        // there will be no static type checking.
+        // Therefore use a raw type and assume A == U rather than propagating the separation of A and U
+        // throughout the code-base.
+        // The runtime type of U is never checked for equality with the component type of the runtime type of A[].
+        // Runtime checking will be performed when an element is stored in A[], thus if A is not a
+        // super type of U an ArrayStoreException will be thrown.
+        @SuppressWarnings("rawtypes")
+        IntFunction rawGenerator = (IntFunction) generator;
+        return (A[]) Nodes.flatten(evaluateToArrayNode(rawGenerator), rawGenerator)
+                              .asArray(rawGenerator);
+!!!9561730.java!!!	toArray() : Object
+        return toArray(Object[]::new);
+!!!9561858.java!!!	anyMatch(inout predicate : Predicate) : boolean
+        return evaluate(MatchOps.makeRef(predicate, MatchOps.MatchKind.ANY));
+!!!9561986.java!!!	allMatch(inout predicate : Predicate) : boolean
+        return evaluate(MatchOps.makeRef(predicate, MatchOps.MatchKind.ALL));
+!!!9562114.java!!!	noneMatch(inout predicate : Predicate) : boolean
+        return evaluate(MatchOps.makeRef(predicate, MatchOps.MatchKind.NONE));
+!!!9562242.java!!!	findFirst() : Optional
+        return evaluate(FindOps.makeRef(true));
+!!!9562370.java!!!	findAny() : Optional
+        return evaluate(FindOps.makeRef(false));
+!!!9562498.java!!!	reduce(in identity : P_OUT, in accumulator : BinaryOperator) : P_OUT
+        return evaluate(ReduceOps.makeRef(identity, accumulator, accumulator));
+!!!9562626.java!!!	reduce(inout accumulator : BinaryOperator) : Optional
+        return evaluate(ReduceOps.makeRef(accumulator));
+!!!9562754.java!!!	reduce(inout identity : R, inout accumulator : BiFunction, inout combiner : BinaryOperator) : R
+        return evaluate(ReduceOps.makeRef(identity, accumulator, combiner));
+!!!9562882.java!!!	collect(inout collector : Collector) : R
+        A container;
+        if (isParallel()
+                && (collector.characteristics().contains(Collector.Characteristics.CONCURRENT))
+                && (!isOrdered() || collector.characteristics().contains(Collector.Characteristics.UNORDERED))) {
+            container = collector.supplier().get();
+            BiConsumer<A, ? super P_OUT> accumulator = collector.accumulator();
+            forEach(u -> accumulator.accept(container, u));
+        }
+        else {
+            container = evaluate(ReduceOps.makeRef(collector));
+        }
+        return collector.characteristics().contains(Collector.Characteristics.IDENTITY_FINISH)
+               ? (R) container
+               : collector.finisher().apply(container);
+!!!9563010.java!!!	collect(inout supplier : Supplier, inout accumulator : BiConsumer, inout combiner : BiConsumer) : R
+        return evaluate(ReduceOps.makeRef(supplier, accumulator, combiner));
+!!!9563138.java!!!	max(inout comparator : Comparator) : Optional
+        return reduce(BinaryOperator.maxBy(comparator));
+!!!9563266.java!!!	min(inout comparator : Comparator) : Optional
+        return reduce(BinaryOperator.minBy(comparator));
+
+!!!9563394.java!!!	count() : long
+        return mapToLong(e -> 1L).sum();

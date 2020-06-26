@@ -1,0 +1,223 @@
+class URLPermission
+!!!7569922.java!!!	URLPermission(inout url : String, inout actions : String)
+        super(url);
+        init(actions);
+!!!7570050.java!!!	init(inout actions : String) : void
+        parseURI(getName());
+        int colon = actions.indexOf(':');
+        if (actions.lastIndexOf(':') != colon) {
+            throw new IllegalArgumentException(
+                "Invalid actions string: \"" + actions + "\"");
+        }
+
+        String methods, headers;
+        if (colon == -1) {
+            methods = actions;
+            headers = "";
+        } else {
+            methods = actions.substring(0, colon);
+            headers = actions.substring(colon+1);
+        }
+
+        List<String> l = normalizeMethods(methods);
+        Collections.sort(l);
+        this.methods = Collections.unmodifiableList(l);
+
+        l = normalizeHeaders(headers);
+        Collections.sort(l);
+        this.requestHeaders = Collections.unmodifiableList(l);
+
+        this.actions = actions();
+!!!7570178.java!!!	URLPermission(inout url : String)
+        this(url, "*:*");
+!!!7570306.java!!!	getActions() : String
+        return actions;
+!!!7570434.java!!!	implies(inout p : Permission) : boolean
+        if (! (p instanceof URLPermission)) {
+            return false;
+        }
+
+        URLPermission that = (URLPermission)p;
+
+        if (!this.methods.get(0).equals("*") &&
+                Collections.indexOfSubList(this.methods, that.methods) == -1) {
+            return false;
+        }
+
+        if (this.requestHeaders.isEmpty() && !that.requestHeaders.isEmpty()) {
+            return false;
+        }
+
+        if (!this.requestHeaders.isEmpty() &&
+            !this.requestHeaders.get(0).equals("*") &&
+             Collections.indexOfSubList(this.requestHeaders,
+                                        that.requestHeaders) == -1) {
+            return false;
+        }
+
+        if (!this.scheme.equals(that.scheme)) {
+            return false;
+        }
+
+        if (this.ssp.equals("*")) {
+            return true;
+        }
+
+        if (!this.authority.implies(that.authority)) {
+            return false;
+        }
+
+        if (this.path == null) {
+            return that.path == null;
+        }
+        if (that.path == null) {
+            return false;
+        }
+
+        if (this.path.endsWith("/-")) {
+            String thisprefix = this.path.substring(0, this.path.length() - 1);
+            return that.path.startsWith(thisprefix);
+            }
+
+        if (this.path.endsWith("/*")) {
+            String thisprefix = this.path.substring(0, this.path.length() - 1);
+            if (!that.path.startsWith(thisprefix)) {
+                return false;
+            }
+            String thatsuffix = that.path.substring(thisprefix.length());
+            // suffix must not contain '/' chars
+            if (thatsuffix.indexOf('/') != -1) {
+                return false;
+            }
+            if (thatsuffix.equals("-")) {
+                return false;
+            }
+            return true;
+        }
+        return this.path.equals(that.path);
+!!!7570562.java!!!	equals(inout p : Object) : boolean
+        if (!(p instanceof URLPermission)) {
+            return false;
+        }
+        URLPermission that = (URLPermission)p;
+        if (!this.scheme.equals(that.scheme)) {
+            return false;
+        }
+        if (!this.getActions().equals(that.getActions())) {
+            return false;
+        }
+        if (!this.authority.equals(that.authority)) {
+            return false;
+        }
+        if (this.path != null) {
+            return this.path.equals(that.path);
+        } else {
+            return that.path == null;
+        }
+!!!7570690.java!!!	hashCode() : int
+        return getActions().hashCode()
+            + scheme.hashCode()
+            + authority.hashCode()
+            + (path == null ? 0 : path.hashCode());
+!!!7570818.java!!!	normalizeMethods(inout methods : String) : List
+        List<String> l = new ArrayList<>();
+        StringBuilder b = new StringBuilder();
+        for (int i=0; i<methods.length(); i++) {
+            char c = methods.charAt(i);
+            if (c == ',') {
+                String s = b.toString();
+                if (s.length() > 0)
+                    l.add(s);
+                b = new StringBuilder();
+            } else if (c == ' ' || c == '\t') {
+                throw new IllegalArgumentException(
+                    "White space not allowed in methods: \"" + methods + "\"");
+            } else {
+                if (c >= 'a' && c <= 'z') {
+                    c += 'A' - 'a';
+                }
+                b.append(c);
+            }
+        }
+        String s = b.toString();
+        if (s.length() > 0)
+            l.add(s);
+        return l;
+!!!7570946.java!!!	normalizeHeaders(inout headers : String) : List
+        List<String> l = new ArrayList<>();
+        StringBuilder b = new StringBuilder();
+        boolean capitalizeNext = true;
+        for (int i=0; i<headers.length(); i++) {
+            char c = headers.charAt(i);
+            if (c >= 'a' && c <= 'z') {
+                if (capitalizeNext) {
+                    c += 'A' - 'a';
+                    capitalizeNext = false;
+                }
+                b.append(c);
+            } else if (c == ' ' || c == '\t') {
+                throw new IllegalArgumentException(
+                    "White space not allowed in headers: \"" + headers + "\"");
+            } else if (c == '-') {
+                    capitalizeNext = true;
+                b.append(c);
+            } else if (c == ',') {
+                String s = b.toString();
+                if (s.length() > 0)
+                    l.add(s);
+                b = new StringBuilder();
+                capitalizeNext = true;
+            } else {
+                capitalizeNext = false;
+                b.append(c);
+            }
+        }
+        String s = b.toString();
+        if (s.length() > 0)
+            l.add(s);
+        return l;
+!!!7571074.java!!!	parseURI(inout url : String) : void
+        int len = url.length();
+        int delim = url.indexOf(':');
+        if (delim == -1 || delim + 1 == len) {
+            throw new IllegalArgumentException(
+                "Invalid URL string: \"" + url + "\"");
+        }
+        scheme = url.substring(0, delim).toLowerCase();
+        this.ssp = url.substring(delim + 1);
+
+        if (!ssp.startsWith("//")) {
+            if (!ssp.equals("*")) {
+                throw new IllegalArgumentException(
+                    "Invalid URL string: \"" + url + "\"");
+            }
+            this.authority = new Authority(scheme, "*");
+            return;
+        }
+        String authpath = ssp.substring(2);
+
+        delim = authpath.indexOf('/');
+        String auth;
+        if (delim == -1) {
+            this.path = "";
+            auth = authpath;
+        } else {
+            auth = authpath.substring(0, delim);
+            this.path = authpath.substring(delim);
+        }
+        this.authority = new Authority(scheme, auth.toLowerCase());
+!!!7571202.java!!!	actions() : String
+        StringBuilder b = new StringBuilder();
+        for (String s : methods) {
+            b.append(s);
+        }
+        b.append(":");
+        for (String s : requestHeaders) {
+            b.append(s);
+        }
+        return b.toString();
+!!!7571330.java!!!	readObject(inout s : ObjectInputStream) : void
+        ObjectInputStream.GetField fields = s.readFields();
+        String actions = (String)fields.get("actions", null);
+
+        init(actions);

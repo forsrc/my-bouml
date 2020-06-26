@@ -1,0 +1,123 @@
+class BufferManagerWriteCollect
+!!!325634.java!!!	BufferManagerWriteCollect(inout orb : ORB)
+        super(orb);
+         if (orb != null)
+            debug = orb.transportDebugFlag;
+!!!325762.java!!!	sentFragment() : boolean
+        return sentFragment;
+!!!325890.java!!!	getBufferSize() : int
+        return orb.getORBData().getGIOPFragmentSize();
+!!!326018.java!!!	overflow(inout bbwi : ByteBufferWithInfo) : void
+        // Set the fragment's moreFragments field to true
+        MessageBase.setFlag(bbwi.byteBuffer, Message.MORE_FRAGMENTS_BIT);
+
+        // Enqueue the previous fragment
+        queue.enqueue(bbwi);
+
+        // Create a new bbwi
+        ByteBufferWithInfo newBbwi = new ByteBufferWithInfo(orb, this);
+        newBbwi.fragmented = true;
+
+        // XREVISIT - Downcast
+        ((CDROutputObject)outputObject).setByteBufferWithInfo(newBbwi);
+
+        // Now we must marshal in the fragment header/GIOP header
+
+        // REVISIT - we can optimize this by not creating the fragment message
+        // each time.
+
+        // XREVISIT - Downcast
+        FragmentMessage header =
+              ((CDROutputObject)outputObject).getMessageHeader()
+                                             .createFragmentMessage();
+
+        header.write((CDROutputObject)outputObject);
+!!!326146.java!!!	sendMessage() : void
+        // Enqueue the last fragment
+        queue.enqueue(((CDROutputObject)outputObject).getByteBufferWithInfo());
+
+        Iterator bufs = iterator();
+
+        Connection conn =
+                          ((OutputObject)outputObject).getMessageMediator().
+                                                       getConnection();
+
+        // With the collect strategy, we must lock the connection
+        // while fragments are being sent.  This is so that there are
+        // no interleved fragments in GIOP 1.1.
+        //
+        // Note that this thread must not call writeLock again in any
+        // of its send methods!
+        conn.writeLock();
+
+        try {
+
+            // Get a reference to ByteBufferPool so that the ByteBufferWithInfo
+            // ByteBuffer can be released to the ByteBufferPool
+            ByteBufferPool byteBufferPool = orb.getByteBufferPool();
+
+            while (bufs.hasNext()) {
+
+                ByteBufferWithInfo bbwi = (ByteBufferWithInfo)bufs.next();
+                ((CDROutputObject)outputObject).setByteBufferWithInfo(bbwi);
+
+                conn.sendWithoutLock(((CDROutputObject)outputObject));
+
+                sentFragment = true;
+
+                // Release ByteBufferWithInfo's ByteBuffer back to the pool
+                // of ByteBuffers.
+                if (debug)
+                {
+                    // print address of ByteBuffer being released
+                    int bbAddress = System.identityHashCode(bbwi.byteBuffer);
+                    StringBuffer sb = new StringBuffer(80);
+                    sb.append("sendMessage() - releasing ByteBuffer id (");
+                    sb.append(bbAddress).append(") to ByteBufferPool.");
+                    String msg = sb.toString();
+                    dprint(msg);
+                }
+                byteBufferPool.releaseByteBuffer(bbwi.byteBuffer);
+                bbwi.byteBuffer = null;
+                bbwi = null;
+            }
+
+            sentFullMessage = true;
+
+        } finally {
+
+            conn.writeUnlock();
+        }
+!!!326274.java!!!	close() : void
+        // iterate thru queue and release any ByteBufferWithInfo's
+        // ByteBuffer that may be remaining on the queue to the
+        // ByteBufferPool.
+
+        Iterator bufs = iterator();
+
+        ByteBufferPool byteBufferPool = orb.getByteBufferPool();
+
+        while (bufs.hasNext())
+        {
+            ByteBufferWithInfo bbwi = (ByteBufferWithInfo)bufs.next();
+            if (bbwi != null && bbwi.byteBuffer != null)
+            {
+                if (debug)
+                {
+                    // print address of ByteBuffer being released
+                    int bbAddress = System.identityHashCode(bbwi.byteBuffer);
+                    StringBuffer sb = new StringBuffer(80);
+                    sb.append("close() - releasing ByteBuffer id (");
+                    sb.append(bbAddress).append(") to ByteBufferPool.");
+                    String msg = sb.toString();
+                    dprint(msg);
+                }
+                 byteBufferPool.releaseByteBuffer(bbwi.byteBuffer);
+                 bbwi.byteBuffer = null;
+                 bbwi = null;
+            }
+        }
+!!!326402.java!!!	dprint(inout msg : String) : void
+        ORBUtility.dprint("BufferManagerWriteCollect", msg);
+!!!326530.java!!!	iterator() : Iterator
+        return new BufferManagerWriteCollectIterator();

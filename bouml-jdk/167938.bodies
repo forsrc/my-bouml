@@ -1,0 +1,95 @@
+class JavaCTBConverter
+!!!397186.java!!!	JavaCTBConverter(inout codeset : OSFCodeSetRegistry::Entry, in alignmentForEncoding : int)
+
+            try {
+                ctb = cache.getCharToByteConverter(codeset.getName());
+                if (ctb == null) {
+                    Charset tmpCharset = Charset.forName(codeset.getName());
+                    ctb = tmpCharset.newEncoder();
+                    cache.setConverter(codeset.getName(), ctb);
+                }
+            } catch(IllegalCharsetNameException icne) {
+
+                // This can only happen if one of our Entries has
+                // an invalid name.
+                throw wrapper.invalidCtbConverterName(icne,codeset.getName());
+            } catch(UnsupportedCharsetException ucne) {
+
+                // This can only happen if one of our Entries has
+                // an unsupported name.
+                throw wrapper.invalidCtbConverterName(ucne,codeset.getName());
+            }
+
+            this.codeset = codeset;
+            alignment = alignmentForEncoding;
+!!!397314.java!!!	getMaxBytesPerChar() : float
+            return ctb.maxBytesPerChar();
+!!!397442.java!!!	convert(in chToConvert : char) : void
+            if (chars == null)
+                chars = new char[1];
+
+            // The CharToByteConverter only takes a char[]
+            chars[0] = chToConvert;
+            numChars = 1;
+
+            convertCharArray();
+!!!397570.java!!!	convert(inout strToConvert : String) : void
+            // Try to save a memory allocation if possible.  Usual
+            // space/time trade off.  If we could get the char[] out of
+            // the String without copying, that would be great, but
+            // it's forbidden since String is immutable.
+            if (chars == null || chars.length < strToConvert.length())
+                chars = new char[strToConvert.length()];
+
+            numChars = strToConvert.length();
+
+            strToConvert.getChars(0, numChars, chars, 0);
+
+            convertCharArray();
+!!!397698.java!!!	getNumBytes() : int
+            return numBytes;
+!!!397826.java!!!	getAlignment() : int
+            return alignment;
+!!!397954.java!!!	isFixedWidthEncoding() : boolean
+            return codeset.isFixedWidth();
+!!!398082.java!!!	getBytes() : byte
+            // Note that you can't use buffer.length since the buffer might
+            // be larger than the actual number of converted bytes depending
+            // on the encoding.
+            return buffer.array();
+!!!398210.java!!!	convertCharArray() : void
+            try {
+
+                // Possible optimization of directly converting into the CDR buffer.
+                // However, that means the CDR code would have to reserve
+                // a 4 byte string length ahead of time, and we'd need a
+                // confusing partial conversion scheme for when we couldn't
+                // fit everything in the buffer but needed to know the
+                // converted length before proceeding due to fragmentation.
+                // Then there's the issue of the chunking code.
+                //
+                // For right now, this is less messy and basic tests don't
+                // show more than a 1 ms penalty worst case.  Less than a
+                // factor of 2 increase.
+
+                // Convert the characters
+                buffer = ctb.encode(CharBuffer.wrap(chars,0,numChars));
+
+                // ByteBuffer returned by the encoder will set its limit
+                // to byte immediately after the last written byte.
+                numBytes = buffer.limit();
+
+            } catch (IllegalStateException ise) {
+                // an encoding operation is already in progress
+                throw wrapper.ctbConverterFailure( ise ) ;
+            } catch (MalformedInputException mie) {
+                // There were illegal Unicode char pairs
+                throw wrapper.badUnicodePair( mie ) ;
+            } catch (UnmappableCharacterException uce) {
+                // A character doesn't map to the desired code set
+                // CORBA formal 00-11-03.
+                throw omgWrapper.charNotInCodeset( uce ) ;
+            } catch (CharacterCodingException cce) {
+                // If this happens, then some other encoding error occured
+                throw wrapper.ctbConverterFailure( cce ) ;
+            }

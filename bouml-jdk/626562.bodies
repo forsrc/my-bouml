@@ -1,0 +1,1051 @@
+class DTMDefaultBase
+!!!4005890.java!!!	DTMDefaultBase(inout mgr : DTMManager, inout source : Source, in dtmIdentity : int, inout whiteSpaceFilter : DTMWSFilter, inout xstringfactory : XMLStringFactory, inout doIndexing : boolean)
+    this(mgr, source, dtmIdentity, whiteSpaceFilter, xstringfactory,
+         doIndexing, DEFAULT_BLOCKSIZE, true, false);
+!!!4006018.java!!!	DTMDefaultBase(inout mgr : DTMManager, inout source : Source, in dtmIdentity : int, inout whiteSpaceFilter : DTMWSFilter, inout xstringfactory : XMLStringFactory, inout doIndexing : boolean, in blocksize : int, inout usePrevsib : boolean, inout newNameTable : boolean)
+    // Use smaller sizes for the internal node arrays if the block size
+    // is small.
+    int numblocks;
+    if (blocksize <= 64)
+    {
+      numblocks = DEFAULT_NUMBLOCKS_SMALL;
+      m_dtmIdent= new SuballocatedIntVector(4, 1);
+    }
+    else
+    {
+      numblocks = DEFAULT_NUMBLOCKS;
+      m_dtmIdent= new SuballocatedIntVector(32);
+    }
+
+    m_exptype = new SuballocatedIntVector(blocksize, numblocks);
+    m_firstch = new SuballocatedIntVector(blocksize, numblocks);
+    m_nextsib = new SuballocatedIntVector(blocksize, numblocks);
+    m_parent  = new SuballocatedIntVector(blocksize, numblocks);
+
+    // Only create the m_prevsib array if the usePrevsib flag is true.
+    // Some DTM implementations (e.g. SAXImpl) do not need this array.
+    // We can save the time to build it in those cases.
+    if (usePrevsib)
+      m_prevsib = new SuballocatedIntVector(blocksize, numblocks);
+
+    m_mgr = mgr;
+    if(mgr instanceof DTMManagerDefault)
+      m_mgrDefault=(DTMManagerDefault)mgr;
+
+    m_documentBaseURI = (null != source) ? source.getSystemId() : null;
+    m_dtmIdent.setElementAt(dtmIdentity,0);
+    m_wsfilter = whiteSpaceFilter;
+    m_xstrf = xstringfactory;
+    m_indexing = doIndexing;
+
+    if (doIndexing)
+    {
+      m_expandedNameTable = new ExpandedNameTable();
+    }
+    else
+    {
+      // Note that this fails if we aren't talking to an instance of
+      // DTMManagerDefault
+      m_expandedNameTable = m_mgrDefault.getExpandedNameTable(this);
+    }
+
+    if (null != whiteSpaceFilter)
+    {
+      m_shouldStripWhitespaceStack = new BoolStack();
+
+      pushShouldStripWhitespace(false);
+    }
+!!!4006146.java!!!	ensureSizeOfIndex(in namespaceID : int, in LocalNameID : int) : void
+
+    if (null == m_elemIndexes)
+    {
+      m_elemIndexes = new int[namespaceID + 20][][];
+    }
+    else if (m_elemIndexes.length <= namespaceID)
+    {
+      int[][][] indexes = m_elemIndexes;
+
+      m_elemIndexes = new int[namespaceID + 20][][];
+
+      System.arraycopy(indexes, 0, m_elemIndexes, 0, indexes.length);
+    }
+
+    int[][] localNameIndex = m_elemIndexes[namespaceID];
+
+    if (null == localNameIndex)
+    {
+      localNameIndex = new int[LocalNameID + 100][];
+      m_elemIndexes[namespaceID] = localNameIndex;
+    }
+    else if (localNameIndex.length <= LocalNameID)
+    {
+      int[][] indexes = localNameIndex;
+
+      localNameIndex = new int[LocalNameID + 100][];
+
+      System.arraycopy(indexes, 0, localNameIndex, 0, indexes.length);
+
+      m_elemIndexes[namespaceID] = localNameIndex;
+    }
+
+    int[] elemHandles = localNameIndex[LocalNameID];
+
+    if (null == elemHandles)
+    {
+      elemHandles = new int[128];
+      localNameIndex[LocalNameID] = elemHandles;
+      elemHandles[0] = 1;
+    }
+    else if (elemHandles.length <= elemHandles[0] + 1)
+    {
+      int[] indexes = elemHandles;
+
+      elemHandles = new int[elemHandles[0] + 1024];
+
+      System.arraycopy(indexes, 0, elemHandles, 0, indexes.length);
+
+      localNameIndex[LocalNameID] = elemHandles;
+    }
+!!!4006274.java!!!	indexNode(in expandedTypeID : int, in identity : int) : void
+
+    ExpandedNameTable ent = m_expandedNameTable;
+    short type = ent.getType(expandedTypeID);
+
+    if (DTM.ELEMENT_NODE == type)
+    {
+      int namespaceID = ent.getNamespaceID(expandedTypeID);
+      int localNameID = ent.getLocalNameID(expandedTypeID);
+
+      ensureSizeOfIndex(namespaceID, localNameID);
+
+      int[] index = m_elemIndexes[namespaceID][localNameID];
+
+      index[index[0]] = identity;
+
+      index[0]++;
+    }
+!!!4006402.java!!!	findGTE(inout list : int [[]], in start : int, in len : int, in value : int) : int
+
+    int low = start;
+    int high = start + (len - 1);
+    int end = high;
+
+    while (low <= high)
+    {
+      int mid = (low + high) / 2;
+      int c = list[mid];
+
+      if (c > value)
+        high = mid - 1;
+      else if (c < value)
+        low = mid + 1;
+      else
+        return mid;
+    }
+
+    return (low <= end && list[low] > value) ? low : -1;
+!!!4006530.java!!!	findElementFromIndex(in nsIndex : int, in lnIndex : int, in firstPotential : int) : int
+
+    int[][][] indexes = m_elemIndexes;
+
+    if (null != indexes && nsIndex < indexes.length)
+    {
+      int[][] lnIndexs = indexes[nsIndex];
+
+      if (null != lnIndexs && lnIndex < lnIndexs.length)
+      {
+        int[] elems = lnIndexs[lnIndex];
+
+        if (null != elems)
+        {
+          int pos = findGTE(elems, 1, elems[0], firstPotential);
+
+          if (pos > -1)
+          {
+            return elems[pos];
+          }
+        }
+      }
+    }
+
+    return NOTPROCESSED;
+!!!4007042.java!!!	_type(in identity : int) : short
+
+    int info = _exptype(identity);
+
+    if (NULL != info)
+      return m_expandedNameTable.getType(info);
+    else
+      return NULL;
+!!!4007170.java!!!	_exptype(in identity : int) : int
+        if (identity == DTM.NULL)
+        return NULL;
+    // Reorganized test and loop into single flow
+    // Tiny performance improvement, saves a few bytes of code, clearer.
+    // %OPT% Other internal getters could be treated simliarly
+    while (identity>=m_size)
+    {
+      if (!nextNode() && identity >= m_size)
+        return NULL;
+    }
+    return m_exptype.elementAt(identity);
+
+!!!4007298.java!!!	_level(in identity : int) : int
+    while (identity>=m_size)
+    {
+      boolean isMore = nextNode();
+      if (!isMore && identity >= m_size)
+        return NULL;
+    }
+
+    int i=0;
+    while(NULL != (identity=_parent(identity)))
+      ++i;
+    return i;
+!!!4007426.java!!!	_firstch(in identity : int) : int
+
+    // Boiler-plate code for each of the _xxx functions, except for the array.
+    int info = (identity >= m_size) ? NOTPROCESSED : m_firstch.elementAt(identity);
+
+    // Check to see if the information requested has been processed, and,
+    // if not, advance the iterator until we the information has been
+    // processed.
+    while (info == NOTPROCESSED)
+    {
+      boolean isMore = nextNode();
+
+      if (identity >= m_size &&!isMore)
+        return NULL;
+      else
+      {
+        info = m_firstch.elementAt(identity);
+        if(info == NOTPROCESSED && !isMore)
+          return NULL;
+      }
+    }
+
+    return info;
+!!!4007554.java!!!	_nextsib(in identity : int) : int
+    // Boiler-plate code for each of the _xxx functions, except for the array.
+    int info = (identity >= m_size) ? NOTPROCESSED : m_nextsib.elementAt(identity);
+
+    // Check to see if the information requested has been processed, and,
+    // if not, advance the iterator until we the information has been
+    // processed.
+    while (info == NOTPROCESSED)
+    {
+      boolean isMore = nextNode();
+
+      if (identity >= m_size &&!isMore)
+        return NULL;
+      else
+      {
+        info = m_nextsib.elementAt(identity);
+        if(info == NOTPROCESSED && !isMore)
+          return NULL;
+      }
+    }
+
+    return info;
+!!!4007682.java!!!	_prevsib(in identity : int) : int
+
+    if (identity < m_size)
+      return m_prevsib.elementAt(identity);
+
+    // Check to see if the information requested has been processed, and,
+    // if not, advance the iterator until we the information has been
+    // processed.
+    while (true)
+    {
+      boolean isMore = nextNode();
+
+      if (identity >= m_size && !isMore)
+        return NULL;
+      else if (identity < m_size)
+        return m_prevsib.elementAt(identity);
+    }
+!!!4007810.java!!!	_parent(in identity : int) : int
+
+    if (identity < m_size)
+      return m_parent.elementAt(identity);
+
+    // Check to see if the information requested has been processed, and,
+    // if not, advance the iterator until we the information has been
+    // processed.
+    while (true)
+    {
+      boolean isMore = nextNode();
+
+      if (identity >= m_size && !isMore)
+        return NULL;
+      else if (identity < m_size)
+        return m_parent.elementAt(identity);
+    }
+!!!4007938.java!!!	dumpDTM(inout os : OutputStream) : void
+    try
+    {
+      if(os==null)
+      {
+              File f = new File("DTMDump"+((Object)this).hashCode()+".txt");
+              System.err.println("Dumping... "+f.getAbsolutePath());
+              os=new FileOutputStream(f);
+      }
+      PrintStream ps = new PrintStream(os);
+
+      while (nextNode()){}
+
+      int nRecords = m_size;
+
+      ps.println("Total nodes: " + nRecords);
+
+      for (int index = 0; index < nRecords; ++index)
+      {
+        int i=makeNodeHandle(index);
+        ps.println("=========== index=" + index + " handle=" + i + " ===========");
+        ps.println("NodeName: " + getNodeName(i));
+        ps.println("NodeNameX: " + getNodeNameX(i));
+        ps.println("LocalName: " + getLocalName(i));
+        ps.println("NamespaceURI: " + getNamespaceURI(i));
+        ps.println("Prefix: " + getPrefix(i));
+
+        int exTypeID = _exptype(index);
+
+        ps.println("Expanded Type ID: "
+                           + Integer.toHexString(exTypeID));
+
+        int type = _type(index);
+        String typestring;
+
+        switch (type)
+        {
+        case DTM.ATTRIBUTE_NODE :
+          typestring = "ATTRIBUTE_NODE";
+          break;
+        case DTM.CDATA_SECTION_NODE :
+          typestring = "CDATA_SECTION_NODE";
+          break;
+        case DTM.COMMENT_NODE :
+          typestring = "COMMENT_NODE";
+          break;
+        case DTM.DOCUMENT_FRAGMENT_NODE :
+          typestring = "DOCUMENT_FRAGMENT_NODE";
+          break;
+        case DTM.DOCUMENT_NODE :
+          typestring = "DOCUMENT_NODE";
+          break;
+        case DTM.DOCUMENT_TYPE_NODE :
+          typestring = "DOCUMENT_NODE";
+          break;
+        case DTM.ELEMENT_NODE :
+          typestring = "ELEMENT_NODE";
+          break;
+        case DTM.ENTITY_NODE :
+          typestring = "ENTITY_NODE";
+          break;
+        case DTM.ENTITY_REFERENCE_NODE :
+          typestring = "ENTITY_REFERENCE_NODE";
+          break;
+        case DTM.NAMESPACE_NODE :
+          typestring = "NAMESPACE_NODE";
+          break;
+        case DTM.NOTATION_NODE :
+          typestring = "NOTATION_NODE";
+          break;
+        case DTM.NULL :
+          typestring = "NULL";
+          break;
+        case DTM.PROCESSING_INSTRUCTION_NODE :
+          typestring = "PROCESSING_INSTRUCTION_NODE";
+          break;
+        case DTM.TEXT_NODE :
+          typestring = "TEXT_NODE";
+          break;
+        default :
+          typestring = "Unknown!";
+          break;
+        }
+
+        ps.println("Type: " + typestring);
+
+        int firstChild = _firstch(index);
+
+        if (DTM.NULL == firstChild)
+          ps.println("First child: DTM.NULL");
+        else if (NOTPROCESSED == firstChild)
+          ps.println("First child: NOTPROCESSED");
+        else
+          ps.println("First child: " + firstChild);
+
+        if (m_prevsib != null)
+        {
+          int prevSibling = _prevsib(index);
+
+          if (DTM.NULL == prevSibling)
+            ps.println("Prev sibling: DTM.NULL");
+          else if (NOTPROCESSED == prevSibling)
+            ps.println("Prev sibling: NOTPROCESSED");
+          else
+            ps.println("Prev sibling: " + prevSibling);
+        }
+
+        int nextSibling = _nextsib(index);
+
+        if (DTM.NULL == nextSibling)
+          ps.println("Next sibling: DTM.NULL");
+        else if (NOTPROCESSED == nextSibling)
+          ps.println("Next sibling: NOTPROCESSED");
+        else
+          ps.println("Next sibling: " + nextSibling);
+
+        int parent = _parent(index);
+
+        if (DTM.NULL == parent)
+          ps.println("Parent: DTM.NULL");
+        else if (NOTPROCESSED == parent)
+          ps.println("Parent: NOTPROCESSED");
+        else
+          ps.println("Parent: " + parent);
+
+        int level = _level(index);
+
+        ps.println("Level: " + level);
+        ps.println("Node Value: " + getNodeValue(i));
+        ps.println("String Value: " + getStringValue(i));
+      }
+    }
+    catch(IOException ioe)
+    {
+      ioe.printStackTrace(System.err);
+        throw new RuntimeException(ioe.getMessage());
+    }
+!!!4008066.java!!!	dumpNode(in nodeHandle : int) : String
+          if(nodeHandle==DTM.NULL)
+                  return "[null]";
+
+        String typestring;
+        switch (getNodeType(nodeHandle))
+        {
+        case DTM.ATTRIBUTE_NODE :
+          typestring = "ATTR";
+          break;
+        case DTM.CDATA_SECTION_NODE :
+          typestring = "CDATA";
+          break;
+        case DTM.COMMENT_NODE :
+          typestring = "COMMENT";
+          break;
+        case DTM.DOCUMENT_FRAGMENT_NODE :
+          typestring = "DOC_FRAG";
+          break;
+        case DTM.DOCUMENT_NODE :
+          typestring = "DOC";
+          break;
+        case DTM.DOCUMENT_TYPE_NODE :
+          typestring = "DOC_TYPE";
+          break;
+        case DTM.ELEMENT_NODE :
+          typestring = "ELEMENT";
+          break;
+        case DTM.ENTITY_NODE :
+          typestring = "ENTITY";
+          break;
+        case DTM.ENTITY_REFERENCE_NODE :
+          typestring = "ENT_REF";
+          break;
+        case DTM.NAMESPACE_NODE :
+          typestring = "NAMESPACE";
+          break;
+        case DTM.NOTATION_NODE :
+          typestring = "NOTATION";
+          break;
+        case DTM.NULL :
+          typestring = "null";
+          break;
+        case DTM.PROCESSING_INSTRUCTION_NODE :
+          typestring = "PI";
+          break;
+        case DTM.TEXT_NODE :
+          typestring = "TEXT";
+          break;
+        default :
+          typestring = "Unknown!";
+          break;
+        }
+
+      return "[" + nodeHandle + ": " + typestring +
+              "(0x" + Integer.toHexString(getExpandedTypeID(nodeHandle)) + ") " +
+              getNodeNameX(nodeHandle) + " {" + getNamespaceURI(nodeHandle) + "}" +
+              "=\"" + getNodeValue(nodeHandle) + "\"]";
+!!!4008322.java!!!	hasChildNodes(in nodeHandle : int) : boolean
+
+    int identity = makeNodeIdentity(nodeHandle);
+    int firstChild = _firstch(identity);
+
+    return firstChild != DTM.NULL;
+!!!4008450.java!!!	makeNodeHandle(in nodeIdentity : int) : int
+    if(NULL==nodeIdentity) return NULL;
+
+    if(JJK_DEBUG && nodeIdentity>DTMManager.IDENT_NODE_DEFAULT)
+      System.err.println("GONK! (only useful in limited situations)");
+
+    return m_dtmIdent.elementAt(nodeIdentity >>> DTMManager.IDENT_DTM_NODE_BITS)
+      + (nodeIdentity & DTMManager.IDENT_NODE_DEFAULT) ;
+!!!4008578.java!!!	makeNodeIdentity(in nodeHandle : int) : int
+    if(NULL==nodeHandle) return NULL;
+
+    if(m_mgrDefault!=null)
+    {
+      // Optimization: use the DTMManagerDefault's fast DTMID-to-offsets
+      // table.  I'm not wild about this solution but this operation
+      // needs need extreme speed.
+
+      int whichDTMindex=nodeHandle>>>DTMManager.IDENT_DTM_NODE_BITS;
+
+      // %REVIEW% Wish I didn't have to perform the pre-test, but
+      // someone is apparently asking DTMs whether they contain nodes
+      // which really don't belong to them. That's probably a bug
+      // which should be fixed, but until it is:
+      if(m_mgrDefault.m_dtms[whichDTMindex]!=this)
+        return NULL;
+      else
+        return
+          m_mgrDefault.m_dtm_offsets[whichDTMindex]
+          | (nodeHandle & DTMManager.IDENT_NODE_DEFAULT);
+    }
+
+    int whichDTMid=m_dtmIdent.indexOf(nodeHandle & DTMManager.IDENT_DTM_DEFAULT);
+    return (whichDTMid==NULL)
+      ? NULL
+      : (whichDTMid << DTMManager.IDENT_DTM_NODE_BITS)
+      + (nodeHandle & DTMManager.IDENT_NODE_DEFAULT);
+!!!4008706.java!!!	getFirstChild(in nodeHandle : int) : int
+
+    int identity = makeNodeIdentity(nodeHandle);
+    int firstChild = _firstch(identity);
+
+    return makeNodeHandle(firstChild);
+!!!4008834.java!!!	getTypedFirstChild(in nodeHandle : int, in nodeType : int) : int
+
+    int firstChild, eType;
+    if (nodeType < DTM.NTYPES) {
+      for (firstChild = _firstch(makeNodeIdentity(nodeHandle));
+           firstChild != DTM.NULL;
+           firstChild = _nextsib(firstChild)) {
+        eType = _exptype(firstChild);
+        if (eType == nodeType
+               || (eType >= DTM.NTYPES
+                      && m_expandedNameTable.getType(eType) == nodeType)) {
+          return makeNodeHandle(firstChild);
+        }
+      }
+    } else {
+      for (firstChild = _firstch(makeNodeIdentity(nodeHandle));
+           firstChild != DTM.NULL;
+           firstChild = _nextsib(firstChild)) {
+        if (_exptype(firstChild) == nodeType) {
+          return makeNodeHandle(firstChild);
+        }
+      }
+    }
+    return DTM.NULL;
+!!!4008962.java!!!	getLastChild(in nodeHandle : int) : int
+
+    int identity = makeNodeIdentity(nodeHandle);
+    int child = _firstch(identity);
+    int lastChild = DTM.NULL;
+
+    while (child != DTM.NULL)
+    {
+      lastChild = child;
+      child = _nextsib(child);
+    }
+
+    return makeNodeHandle(lastChild);
+!!!4009218.java!!!	getFirstAttribute(in nodeHandle : int) : int
+    int nodeID = makeNodeIdentity(nodeHandle);
+
+    return makeNodeHandle(getFirstAttributeIdentity(nodeID));
+!!!4009346.java!!!	getFirstAttributeIdentity(in identity : int) : int
+    int type = _type(identity);
+
+    if (DTM.ELEMENT_NODE == type)
+    {
+      // Assume that attributes and namespaces immediately follow the element.
+      while (DTM.NULL != (identity = getNextNodeIdentity(identity)))
+      {
+
+        // Assume this can not be null.
+        type = _type(identity);
+
+        if (type == DTM.ATTRIBUTE_NODE)
+        {
+          return identity;
+        }
+        else if (DTM.NAMESPACE_NODE != type)
+        {
+          break;
+        }
+      }
+    }
+
+    return DTM.NULL;
+!!!4009474.java!!!	getTypedAttribute(in nodeHandle : int, in attType : int) : int
+    int type = getNodeType(nodeHandle);
+    if (DTM.ELEMENT_NODE == type) {
+      int identity = makeNodeIdentity(nodeHandle);
+
+      while (DTM.NULL != (identity = getNextNodeIdentity(identity)))
+      {
+        type = _type(identity);
+
+        if (type == DTM.ATTRIBUTE_NODE)
+        {
+          if (_exptype(identity) == attType) return makeNodeHandle(identity);
+        }
+        else if (DTM.NAMESPACE_NODE != type)
+        {
+          break;
+        }
+      }
+    }
+
+    return DTM.NULL;
+!!!4009602.java!!!	getNextSibling(in nodeHandle : int) : int
+        if (nodeHandle == DTM.NULL)
+        return DTM.NULL;
+    return makeNodeHandle(_nextsib(makeNodeIdentity(nodeHandle)));
+!!!4009730.java!!!	getTypedNextSibling(in nodeHandle : int, in nodeType : int) : int
+        if (nodeHandle == DTM.NULL)
+        return DTM.NULL;
+        int node = makeNodeIdentity(nodeHandle);
+        int eType;
+        while ((node = _nextsib(node)) != DTM.NULL &&
+        ((eType = _exptype(node)) != nodeType &&
+        m_expandedNameTable.getType(eType)!= nodeType));
+        //_type(node) != nodeType));
+
+    return (node == DTM.NULL ? DTM.NULL : makeNodeHandle(node));
+!!!4009858.java!!!	getPreviousSibling(in nodeHandle : int) : int
+    if (nodeHandle == DTM.NULL)
+      return DTM.NULL;
+
+    if (m_prevsib != null)
+      return makeNodeHandle(_prevsib(makeNodeIdentity(nodeHandle)));
+    else
+    {
+      // If the previous sibling array is not built, we get at
+      // the previous sibling using the parent, firstch and
+      // nextsib arrays.
+      int nodeID = makeNodeIdentity(nodeHandle);
+      int parent = _parent(nodeID);
+      int node = _firstch(parent);
+      int result = DTM.NULL;
+      while (node != nodeID)
+      {
+        result = node;
+        node = _nextsib(node);
+      }
+      return makeNodeHandle(result);
+    }
+!!!4009986.java!!!	getNextAttribute(in nodeHandle : int) : int
+    int nodeID = makeNodeIdentity(nodeHandle);
+
+    if (_type(nodeID) == DTM.ATTRIBUTE_NODE) {
+      return makeNodeHandle(getNextAttributeIdentity(nodeID));
+    }
+
+    return DTM.NULL;
+!!!4010114.java!!!	getNextAttributeIdentity(in identity : int) : int
+    // Assume that attributes and namespace nodes immediately follow the element
+    while (DTM.NULL != (identity = getNextNodeIdentity(identity))) {
+      int type = _type(identity);
+
+      if (type == DTM.ATTRIBUTE_NODE) {
+        return identity;
+      } else if (type != DTM.NAMESPACE_NODE) {
+        break;
+      }
+    }
+
+    return DTM.NULL;
+!!!4010242.java!!!	declareNamespaceInContext(in elementNodeIndex : int, in namespaceNodeIndex : int) : void
+    SuballocatedIntVector nsList=null;
+    if(m_namespaceDeclSets==null)
+      {
+
+        // First
+        m_namespaceDeclSetElements=new SuballocatedIntVector(32);
+        m_namespaceDeclSetElements.addElement(elementNodeIndex);
+        m_namespaceDeclSets=new Vector();
+        nsList=new SuballocatedIntVector(32);
+        m_namespaceDeclSets.addElement(nsList);
+      }
+    else
+      {
+        // Most recent. May be -1 (none) if DTM was pruned.
+        // %OPT% Is there a lastElement() method? Should there be?
+        int last=m_namespaceDeclSetElements.size()-1;
+
+        if(last>=0 && elementNodeIndex==m_namespaceDeclSetElements.elementAt(last))
+          {
+            nsList=(SuballocatedIntVector)m_namespaceDeclSets.elementAt(last);
+          }
+      }
+    if(nsList==null)
+      {
+        m_namespaceDeclSetElements.addElement(elementNodeIndex);
+
+        SuballocatedIntVector inherited =
+                                findNamespaceContext(_parent(elementNodeIndex));
+
+        if (inherited!=null) {
+            // %OPT% Count-down might be faster, but debuggability may
+            // be better this way, and if we ever decide we want to
+            // keep this ordered by expanded-type...
+            int isize=inherited.size();
+
+            // Base the size of a new namespace list on the
+            // size of the inherited list - but within reason!
+            nsList=new SuballocatedIntVector(Math.max(Math.min(isize+16,2048),
+                                                      32));
+
+            for(int i=0;i<isize;++i)
+              {
+                nsList.addElement(inherited.elementAt(i));
+              }
+        } else {
+            nsList=new SuballocatedIntVector(32);
+        }
+
+        m_namespaceDeclSets.addElement(nsList);
+      }
+
+    // Handle overwriting inherited.
+    // %OPT% Keep sorted? (By expanded-name rather than by doc order...)
+    // Downside: Would require insertElementAt if not found,
+    // which has recopying costs. But these are generally short lists...
+    int newEType=_exptype(namespaceNodeIndex);
+
+    for(int i=nsList.size()-1;i>=0;--i)
+      {
+        if(newEType==getExpandedTypeID(nsList.elementAt(i)))
+          {
+            nsList.setElementAt(makeNodeHandle(namespaceNodeIndex),i);
+            return;
+          }
+      }
+    nsList.addElement(makeNodeHandle(namespaceNodeIndex));
+!!!4010370.java!!!	findNamespaceContext(in elementNodeIndex : int) : SuballocatedIntVector
+    if (null!=m_namespaceDeclSetElements)
+      {
+        // %OPT% Is binary-search really saving us a lot versus linear?
+        // (... It may be, in large docs with many NS decls.)
+        int wouldBeAt=findInSortedSuballocatedIntVector(m_namespaceDeclSetElements,
+                                            elementNodeIndex);
+        if(wouldBeAt>=0) // Found it
+          return (SuballocatedIntVector) m_namespaceDeclSets.elementAt(wouldBeAt);
+        if(wouldBeAt == -1) // -1-wouldbeat == 0
+          return null; // Not after anything; definitely not found
+
+        // Not found, but we know where it should have been.
+        // Search back until we find an ancestor or run out.
+        wouldBeAt=-1-wouldBeAt;
+
+        // Decrement wouldBeAt to find last possible ancestor
+        int candidate=m_namespaceDeclSetElements.elementAt(-- wouldBeAt);
+        int ancestor=_parent(elementNodeIndex);
+
+        // Special case: if the candidate is before the given node, and
+        // is in the earliest possible position in the document, it
+        // must have the namespace declarations we're interested in.
+        if (wouldBeAt == 0 && candidate < ancestor) {
+          int rootHandle = getDocumentRoot(makeNodeHandle(elementNodeIndex));
+          int rootID = makeNodeIdentity(rootHandle);
+          int uppermostNSCandidateID;
+
+          if (getNodeType(rootHandle) == DTM.DOCUMENT_NODE) {
+            int ch = _firstch(rootID);
+            uppermostNSCandidateID = (ch != DTM.NULL) ? ch : rootID;
+          } else {
+            uppermostNSCandidateID = rootID;
+          }
+
+          if (candidate == uppermostNSCandidateID) {
+            return (SuballocatedIntVector)m_namespaceDeclSets.elementAt(wouldBeAt);
+          }
+        }
+
+        while(wouldBeAt>=0 && ancestor>0)
+          {
+            if (candidate==ancestor) {
+                // Found ancestor in list
+                return (SuballocatedIntVector)m_namespaceDeclSets.elementAt(wouldBeAt);
+            } else if (candidate<ancestor) {
+                // Too deep in tree
+                do {
+                  ancestor=_parent(ancestor);
+                } while (candidate < ancestor);
+            } else if(wouldBeAt > 0){
+              // Too late in list
+              candidate=m_namespaceDeclSetElements.elementAt(--wouldBeAt);
+            }
+            else
+                break;
+          }
+      }
+
+    return null; // No namespaces known at this node
+!!!4010498.java!!!	findInSortedSuballocatedIntVector(inout vector : SuballocatedIntVector, in lookfor : int) : int
+    // Binary search
+    int i = 0;
+    if(vector != null) {
+      int first = 0;
+      int last  = vector.size() - 1;
+
+      while (first <= last) {
+        i = (first + last) / 2;
+        int test = lookfor-vector.elementAt(i);
+        if(test == 0) {
+          return i; // Name found
+        }
+        else if (test < 0) {
+          last = i - 1; // looked too late
+        }
+        else {
+          first = i + 1; // looked ot early
+        }
+      }
+
+      if (first > i) {
+        i = first; // Clean up at loop end
+      }
+    }
+
+    return -1 - i; // not-found has to be encoded.
+!!!4010626.java!!!	getFirstNamespaceNode(in nodeHandle : int, inout inScope : boolean) : int
+        if(inScope)
+        {
+            int identity = makeNodeIdentity(nodeHandle);
+            if (_type(identity) == DTM.ELEMENT_NODE)
+            {
+              SuballocatedIntVector nsContext=findNamespaceContext(identity);
+              if(nsContext==null || nsContext.size()<1)
+                return NULL;
+
+              return nsContext.elementAt(0);
+            }
+            else
+              return NULL;
+          }
+        else
+          {
+            // Assume that attributes and namespaces immediately
+            // follow the element.
+            //
+            // %OPT% Would things be faster if all NS nodes were built
+            // before all Attr nodes? Some costs at build time for 2nd
+            // pass...
+            int identity = makeNodeIdentity(nodeHandle);
+            if (_type(identity) == DTM.ELEMENT_NODE)
+            {
+              while (DTM.NULL != (identity = getNextNodeIdentity(identity)))
+              {
+                int type = _type(identity);
+                if (type == DTM.NAMESPACE_NODE)
+                    return makeNodeHandle(identity);
+                else if (DTM.ATTRIBUTE_NODE != type)
+                    break;
+              }
+              return NULL;
+            }
+            else
+              return NULL;
+          }
+!!!4010754.java!!!	getNextNamespaceNode(in baseHandle : int, in nodeHandle : int, inout inScope : boolean) : int
+        if(inScope)
+          {
+            //Since we've been given the base, try direct lookup
+            //(could look from nodeHandle but this is at least one
+            //comparison/get-parent faster)
+            //SuballocatedIntVector nsContext=findNamespaceContext(nodeHandle & m_mask);
+
+                SuballocatedIntVector nsContext=findNamespaceContext(makeNodeIdentity(baseHandle));
+
+            if(nsContext==null)
+              return NULL;
+            int i=1 + nsContext.indexOf(nodeHandle);
+            if(i<=0 || i==nsContext.size())
+              return NULL;
+
+            return nsContext.elementAt(i);
+          }
+        else
+          {
+            // Assume that attributes and namespace nodes immediately follow the element.
+            int identity = makeNodeIdentity(nodeHandle);
+            while (DTM.NULL != (identity = getNextNodeIdentity(identity)))
+              {
+                int type = _type(identity);
+                if (type == DTM.NAMESPACE_NODE)
+                  {
+                    return makeNodeHandle(identity);
+                  }
+                else if (type != DTM.ATTRIBUTE_NODE)
+                  {
+                    break;
+                  }
+              }
+          }
+     return DTM.NULL;
+!!!4010882.java!!!	getParent(in nodeHandle : int) : int
+
+    int identity = makeNodeIdentity(nodeHandle);
+
+    if (identity > 0)
+      return makeNodeHandle(_parent(identity));
+    else
+      return DTM.NULL;
+!!!4011010.java!!!	getDocument() : int
+    return m_dtmIdent.elementAt(0); // makeNodeHandle(0)
+!!!4011138.java!!!	getOwnerDocument(in nodeHandle : int) : int
+
+    if (DTM.DOCUMENT_NODE == getNodeType(nodeHandle))
+            return DTM.NULL;
+
+    return getDocumentRoot(nodeHandle);
+!!!4011266.java!!!	getDocumentRoot(in nodeHandle : int) : int
+    return getManager().getDTM(nodeHandle).getDocument();
+!!!4011522.java!!!	getStringValueChunkCount(in nodeHandle : int) : int
+
+    // %TBD%
+    error(XMLMessages.createXMLMessage(XMLErrorResources.ER_METHOD_NOT_SUPPORTED, null));//("getStringValueChunkCount not yet supported!");
+
+    return 0;
+!!!4011650.java!!!	getStringValueChunk(in nodeHandle : int, in chunkIndex : int, inout startAndLen : int [[]]) : char
+
+    // %TBD%
+    error(XMLMessages.createXMLMessage(XMLErrorResources.ER_METHOD_NOT_SUPPORTED, null));//"getStringValueChunk not yet supported!");
+
+    return null;
+!!!4011778.java!!!	getExpandedTypeID(in nodeHandle : int) : int
+    // %REVIEW% This _should_ only be null if someone asked the wrong DTM about the node...
+    // which one would hope would never happen...
+    int id=makeNodeIdentity(nodeHandle);
+    if(id==NULL)
+      return NULL;
+    return _exptype(id);
+!!!4011906.java!!!	getExpandedTypeID(inout namespace : String, inout localName : String, in type : int) : int
+
+    ExpandedNameTable ent = m_expandedNameTable;
+
+    return ent.getExpandedTypeID(namespace, localName, type);
+!!!4012034.java!!!	getLocalNameFromExpandedNameID(in expandedNameID : int) : String
+    return m_expandedNameTable.getLocalName(expandedNameID);
+!!!4012162.java!!!	getNamespaceFromExpandedNameID(in expandedNameID : int) : String
+    return m_expandedNameTable.getNamespace(expandedNameID);
+!!!4012290.java!!!	getNamespaceType(in nodeHandle : int) : int
+
+    int identity = makeNodeIdentity(nodeHandle);
+    int expandedNameID = _exptype(identity);
+
+    return m_expandedNameTable.getNamespaceID(expandedNameID);
+!!!4012546.java!!!	getNodeNameX(in nodeHandle : int) : String
+
+    /** @todo: implement this com.sun.org.apache.xml.internal.dtm.DTMDefaultBase abstract method */
+    error(XMLMessages.createXMLMessage(XMLErrorResources.ER_METHOD_NOT_SUPPORTED, null));//"Not yet supported!");
+
+    return null;
+!!!4013186.java!!!	getNodeType(in nodeHandle : int) : short
+        if (nodeHandle == DTM.NULL)
+        return DTM.NULL;
+    return m_expandedNameTable.getType(_exptype(makeNodeIdentity(nodeHandle)));
+!!!4013314.java!!!	getLevel(in nodeHandle : int) : short
+    // Apparently, the axis walker stuff requires levels to count from 1.
+    int identity = makeNodeIdentity(nodeHandle);
+    return (short) (_level(identity) + 1);
+!!!4013442.java!!!	getNodeIdent(in nodeHandle : int) : int
+    /*if (nodeHandle != DTM.NULL)
+      return nodeHandle & m_mask;
+    else
+      return DTM.NULL;*/
+
+      return makeNodeIdentity(nodeHandle);
+!!!4013570.java!!!	getNodeHandle(in nodeId : int) : int
+    /*if (nodeId != DTM.NULL)
+      return nodeId | m_dtmIdent;
+    else
+      return DTM.NULL;*/
+
+      return makeNodeHandle(nodeId);
+!!!4013698.java!!!	isSupported(inout feature : String, inout version : String) : boolean
+
+    // %TBD%
+    return false;
+!!!4013826.java!!!	getDocumentBaseURI() : String
+    return m_documentBaseURI;
+!!!4013954.java!!!	setDocumentBaseURI(inout baseURI : String) : void
+    m_documentBaseURI = baseURI;
+!!!4014082.java!!!	getDocumentSystemIdentifier(in nodeHandle : int) : String
+
+    // %REVIEW%  OK? -sb
+    return m_documentBaseURI;
+!!!4014210.java!!!	getDocumentEncoding(in nodeHandle : int) : String
+
+    // %REVIEW%  OK??  -sb
+    return "UTF-8";
+!!!4014338.java!!!	getDocumentStandalone(in nodeHandle : int) : String
+    return null;
+!!!4014466.java!!!	getDocumentVersion(in documentHandle : int) : String
+    return null;
+!!!4014594.java!!!	getDocumentAllDeclarationsProcessed() : boolean
+
+    // %REVIEW% OK?
+    return true;
+!!!4015234.java!!!	supportsPreStripping() : boolean
+    return true;
+!!!4015362.java!!!	isNodeAfter(in nodeHandle1 : int, in nodeHandle2 : int) : boolean
+                // These return NULL if the node doesn't belong to this document.
+    int index1 = makeNodeIdentity(nodeHandle1);
+    int index2 = makeNodeIdentity(nodeHandle2);
+
+    return index1!=NULL && index2!=NULL && index1 <= index2;
+!!!4015490.java!!!	isCharacterElementContentWhitespace(in nodeHandle : int) : boolean
+
+    // %TBD%
+    return false;
+!!!4015618.java!!!	isDocumentAllDeclarationsProcessed(in documentHandle : int) : boolean
+    return true;
+!!!4016130.java!!!	getNode(in nodeHandle : int) : Node
+    return new DTMNodeProxy(this, nodeHandle);
+!!!4016258.java!!!	appendChild(in newChild : int, inout clone : boolean, inout cloneDepth : boolean) : void
+    error(XMLMessages.createXMLMessage(XMLErrorResources.ER_METHOD_NOT_SUPPORTED, null));//"appendChild not yet supported!");
+!!!4016386.java!!!	appendTextChild(inout str : String) : void
+    error(XMLMessages.createXMLMessage(XMLErrorResources.ER_METHOD_NOT_SUPPORTED, null));//"appendTextChild not yet supported!");
+!!!4016514.java!!!	error(inout msg : String) : void
+    throw new DTMException(msg);
+!!!4016642.java!!!	getShouldStripWhitespace() : boolean
+    return m_shouldStripWS;
+!!!4016770.java!!!	pushShouldStripWhitespace(inout shouldStrip : boolean) : void
+
+    m_shouldStripWS = shouldStrip;
+
+    if (null != m_shouldStripWhitespaceStack)
+      m_shouldStripWhitespaceStack.push(shouldStrip);
+!!!4016898.java!!!	popShouldStripWhitespace() : void
+    if (null != m_shouldStripWhitespaceStack)
+      m_shouldStripWS = m_shouldStripWhitespaceStack.popAndTop();
+!!!4017026.java!!!	setShouldStripWhitespace(inout shouldStrip : boolean) : void
+
+    m_shouldStripWS = shouldStrip;
+
+    if (null != m_shouldStripWhitespaceStack)
+      m_shouldStripWhitespaceStack.setTop(shouldStrip);
+!!!4017410.java!!!	migrateTo(inout mgr : DTMManager) : void
+     m_mgr = mgr;
+     if(mgr instanceof DTMManagerDefault)
+       m_mgrDefault=(DTMManagerDefault)mgr;
+!!!4017538.java!!!	getManager() : DTMManager
+                 return m_mgr;
+!!!4017666.java!!!	getDTMIDs() : SuballocatedIntVector
+                 if(m_mgr==null) return null;
+                 return m_dtmIdent;

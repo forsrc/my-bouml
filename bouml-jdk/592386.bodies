@@ -1,0 +1,87 @@
+class Expression
+!!!3692674.java!!!	getType() : Type
+        return _type;
+!!!3692930.java!!!	hasPositionCall() : boolean
+        return false;           // default should be 'false' for StepPattern
+!!!3693058.java!!!	hasLastCall() : boolean
+        return false;
+!!!3693186.java!!!	evaluateAtCompileTime() : Object
+        return null;
+!!!3693314.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        return typeCheckContents(stable);
+!!!3693442.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        ErrorMsg msg = new ErrorMsg(ErrorMsg.NOT_IMPLEMENTED_ERR,
+                                    getClass(), this);
+        getParser().reportError(FATAL, msg);
+!!!3693570.java!!!	compile(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : InstructionList
+        final InstructionList result, save = methodGen.getInstructionList();
+        methodGen.setInstructionList(result = new InstructionList());
+        translate(classGen, methodGen);
+        methodGen.setInstructionList(save);
+        return result;
+!!!3693698.java!!!	translateDesynthesized(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        translate(classGen, methodGen);
+        if (_type instanceof BooleanType) {
+            desynthesize(classGen, methodGen);
+        }
+!!!3693826.java!!!	startIterator(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        // Ignore if type is not node-set
+        if (_type instanceof NodeSetType == false) {
+            return;
+        }
+
+        // setStartNode() should not be called if expr is a variable ref
+        Expression expr = this;
+        if (expr instanceof CastExpr) {
+            expr = ((CastExpr) expr).getExpr();
+        }
+        if (expr instanceof VariableRefBase == false) {
+            final InstructionList il = methodGen.getInstructionList();
+            il.append(methodGen.loadContextNode());
+            il.append(methodGen.setStartNode());
+        }
+!!!3693954.java!!!	synthesize(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+        _trueList.backPatch(il.append(ICONST_1));
+        final BranchHandle truec = il.append(new GOTO_W(null));
+        _falseList.backPatch(il.append(ICONST_0));
+        truec.setTarget(il.append(NOP));
+!!!3694082.java!!!	desynthesize(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final InstructionList il = methodGen.getInstructionList();
+        _falseList.add(il.append(new IFEQ(null)));
+!!!3694210.java!!!	getFalseList() : FlowList
+        return _falseList;
+!!!3694338.java!!!	getTrueList() : FlowList
+        return _trueList;
+!!!3694466.java!!!	backPatchFalseList(inout ih : InstructionHandle) : void
+        _falseList.backPatch(ih);
+!!!3694594.java!!!	backPatchTrueList(inout ih : InstructionHandle) : void
+        _trueList.backPatch(ih);
+!!!3694722.java!!!	lookupPrimop(inout stable : SymbolTable, inout op : String, inout ctype : MethodType) : MethodType
+        MethodType result = null;
+        final Vector primop = stable.lookupPrimop(op);
+        if (primop != null) {
+            final int n = primop.size();
+            int minDistance = Integer.MAX_VALUE;
+            for (int i = 0; i < n; i++) {
+                final MethodType ptype = (MethodType) primop.elementAt(i);
+                // Skip if different arity
+                if (ptype.argsCount() != ctype.argsCount()) {
+                    continue;
+                }
+
+                // The first method with the right arity is the default
+                if (result == null) {
+                    result = ptype;             // default method
+                }
+
+                // Check if better than last one found
+                final int distance = ctype.distanceTo(ptype);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    result = ptype;
+                }
+            }
+        }
+        return result;

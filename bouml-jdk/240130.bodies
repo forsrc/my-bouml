@@ -1,0 +1,308 @@
+class Properties
+!!!7923458.java!!!	Properties()
+        this(null);
+!!!7923586.java!!!	Properties(inout defaults : Properties)
+        this.defaults = defaults;
+!!!7923714.java!!!	setProperty(inout key : String, inout value : String) : Object
+        return put(key, value);
+!!!7923842.java!!!	load(inout reader : Reader) : void
+        load0(new LineReader(reader));
+!!!7923970.java!!!	load(inout inStream : InputStream) : void
+        load0(new LineReader(inStream));
+!!!7924098.java!!!	load0(inout lr : Properties::LineReader) : void
+        char[] convtBuf = new char[1024];
+        int limit;
+        int keyLen;
+        int valueStart;
+        char c;
+        boolean hasSep;
+        boolean precedingBackslash;
+
+        while ((limit = lr.readLine()) >= 0) {
+            c = 0;
+            keyLen = 0;
+            valueStart = limit;
+            hasSep = false;
+
+            //System.out.println("line=<" + new String(lineBuf, 0, limit) + ">");
+            precedingBackslash = false;
+            while (keyLen < limit) {
+                c = lr.lineBuf[keyLen];
+                //need check if escaped.
+                if ((c == '=' ||  c == ':') && !precedingBackslash) {
+                    valueStart = keyLen + 1;
+                    hasSep = true;
+                    break;
+                } else if ((c == ' ' || c == '\t' ||  c == '\f') && !precedingBackslash) {
+                    valueStart = keyLen + 1;
+                    break;
+                }
+                if (c == '\\') {
+                    precedingBackslash = !precedingBackslash;
+                } else {
+                    precedingBackslash = false;
+                }
+                keyLen++;
+            }
+            while (valueStart < limit) {
+                c = lr.lineBuf[valueStart];
+                if (c != ' ' && c != '\t' &&  c != '\f') {
+                    if (!hasSep && (c == '=' ||  c == ':')) {
+                        hasSep = true;
+                    } else {
+                        break;
+                    }
+                }
+                valueStart++;
+            }
+            String key = loadConvert(lr.lineBuf, 0, keyLen, convtBuf);
+            String value = loadConvert(lr.lineBuf, valueStart, limit - valueStart, convtBuf);
+            put(key, value);
+        }
+!!!7924610.java!!!	loadConvert(inout in : char [[]], in off : int, in len : int, inout convtBuf : char [[]]) : String
+        if (convtBuf.length < len) {
+            int newLen = len * 2;
+            if (newLen < 0) {
+                newLen = Integer.MAX_VALUE;
+            }
+            convtBuf = new char[newLen];
+        }
+        char aChar;
+        char[] out = convtBuf;
+        int outLen = 0;
+        int end = off + len;
+
+        while (off < end) {
+            aChar = in[off++];
+            if (aChar == '\\') {
+                aChar = in[off++];
+                if(aChar == 'u') {
+                    // Read the xxxx
+                    int value=0;
+                    for (int i=0; i<4; i++) {
+                        aChar = in[off++];
+                        switch (aChar) {
+                          case '0': case '1': case '2': case '3': case '4':
+                          case '5': case '6': case '7': case '8': case '9':
+                             value = (value << 4) + aChar - '0';
+                             break;
+                          case 'a': case 'b': case 'c':
+                          case 'd': case 'e': case 'f':
+                             value = (value << 4) + 10 + aChar - 'a';
+                             break;
+                          case 'A': case 'B': case 'C':
+                          case 'D': case 'E': case 'F':
+                             value = (value << 4) + 10 + aChar - 'A';
+                             break;
+                          default:
+                              throw new IllegalArgumentException(
+                                           "Malformed \\uxxxx encoding.");
+                        }
+                     }
+                    out[outLen++] = (char)value;
+                } else {
+                    if (aChar == 't') aChar = '\t';
+                    else if (aChar == 'r') aChar = '\r';
+                    else if (aChar == 'n') aChar = '\n';
+                    else if (aChar == 'f') aChar = '\f';
+                    out[outLen++] = aChar;
+                }
+            } else {
+                out[outLen++] = aChar;
+            }
+        }
+        return new String (out, 0, outLen);
+!!!7924738.java!!!	saveConvert(inout theString : String, inout escapeSpace : boolean, inout escapeUnicode : boolean) : String
+        int len = theString.length();
+        int bufLen = len * 2;
+        if (bufLen < 0) {
+            bufLen = Integer.MAX_VALUE;
+        }
+        StringBuffer outBuffer = new StringBuffer(bufLen);
+
+        for(int x=0; x<len; x++) {
+            char aChar = theString.charAt(x);
+            // Handle common case first, selecting largest block that
+            // avoids the specials below
+            if ((aChar > 61) && (aChar < 127)) {
+                if (aChar == '\\') {
+                    outBuffer.append('\\'); outBuffer.append('\\');
+                    continue;
+                }
+                outBuffer.append(aChar);
+                continue;
+            }
+            switch(aChar) {
+                case ' ':
+                    if (x == 0 || escapeSpace)
+                        outBuffer.append('\\');
+                    outBuffer.append(' ');
+                    break;
+                case '\t':outBuffer.append('\\'); outBuffer.append('t');
+                          break;
+                case '\n':outBuffer.append('\\'); outBuffer.append('n');
+                          break;
+                case '\r':outBuffer.append('\\'); outBuffer.append('r');
+                          break;
+                case '\f':outBuffer.append('\\'); outBuffer.append('f');
+                          break;
+                case '=': // Fall through
+                case ':': // Fall through
+                case '#': // Fall through
+                case '!':
+                    outBuffer.append('\\'); outBuffer.append(aChar);
+                    break;
+                default:
+                    if (((aChar < 0x0020) || (aChar > 0x007e)) & escapeUnicode ) {
+                        outBuffer.append('\\');
+                        outBuffer.append('u');
+                        outBuffer.append(toHex((aChar >> 12) & 0xF));
+                        outBuffer.append(toHex((aChar >>  8) & 0xF));
+                        outBuffer.append(toHex((aChar >>  4) & 0xF));
+                        outBuffer.append(toHex( aChar        & 0xF));
+                    } else {
+                        outBuffer.append(aChar);
+                    }
+            }
+        }
+        return outBuffer.toString();
+!!!7924866.java!!!	writeComments(inout bw : BufferedWriter, inout comments : String) : void
+        bw.write("#");
+        int len = comments.length();
+        int current = 0;
+        int last = 0;
+        char[] uu = new char[6];
+        uu[0] = '\\';
+        uu[1] = 'u';
+        while (current < len) {
+            char c = comments.charAt(current);
+            if (c > '\u00ff' || c == '\n' || c == '\r') {
+                if (last != current)
+                    bw.write(comments.substring(last, current));
+                if (c > '\u00ff') {
+                    uu[2] = toHex((c >> 12) & 0xf);
+                    uu[3] = toHex((c >>  8) & 0xf);
+                    uu[4] = toHex((c >>  4) & 0xf);
+                    uu[5] = toHex( c        & 0xf);
+                    bw.write(new String(uu));
+                } else {
+                    bw.newLine();
+                    if (c == '\r' &&
+                        current != len - 1 &&
+                        comments.charAt(current + 1) == '\n') {
+                        current++;
+                    }
+                    if (current == len - 1 ||
+                        (comments.charAt(current + 1) != '#' &&
+                        comments.charAt(current + 1) != '!'))
+                        bw.write("#");
+                }
+                last = current + 1;
+            }
+            current++;
+        }
+        if (last != current)
+            bw.write(comments.substring(last, current));
+        bw.newLine();
+!!!7924994.java!!!	save(inout out : OutputStream, inout comments : String) : void
+        try {
+            store(out, comments);
+        } catch (IOException e) {
+        }
+!!!7925122.java!!!	store(inout writer : Writer, inout comments : String) : void
+        store0((writer instanceof BufferedWriter)?(BufferedWriter)writer
+                                                 : new BufferedWriter(writer),
+               comments,
+               false);
+!!!7925250.java!!!	store(inout out : OutputStream, inout comments : String) : void
+        store0(new BufferedWriter(new OutputStreamWriter(out, "8859_1")),
+               comments,
+               true);
+!!!7925378.java!!!	store0(inout bw : BufferedWriter, inout comments : String, inout escUnicode : boolean) : void
+        if (comments != null) {
+            writeComments(bw, comments);
+        }
+        bw.write("#" + new Date().toString());
+        bw.newLine();
+        synchronized (this) {
+            for (Enumeration<?> e = keys(); e.hasMoreElements();) {
+                String key = (String)e.nextElement();
+                String val = (String)get(key);
+                key = saveConvert(key, true, escUnicode);
+                /* No need to escape embedded and trailing spaces for value, hence
+                 * pass false to flag.
+                 */
+                val = saveConvert(val, false, escUnicode);
+                bw.write(key + "=" + val);
+                bw.newLine();
+            }
+        }
+        bw.flush();
+!!!7925506.java!!!	loadFromXML(inout in : InputStream) : void
+        XmlSupport.load(this, Objects.requireNonNull(in));
+        in.close();
+!!!7925634.java!!!	storeToXML(inout os : OutputStream, inout comment : String) : void
+        storeToXML(os, comment, "UTF-8");
+!!!7925762.java!!!	storeToXML(inout os : OutputStream, inout comment : String, inout encoding : String) : void
+        XmlSupport.save(this, Objects.requireNonNull(os), comment,
+                        Objects.requireNonNull(encoding));
+!!!7925890.java!!!	getProperty(inout key : String) : String
+        Object oval = super.get(key);
+        String sval = (oval instanceof String) ? (String)oval : null;
+        return ((sval == null) && (defaults != null)) ? defaults.getProperty(key) : sval;
+!!!7926018.java!!!	getProperty(inout key : String, inout defaultValue : String) : String
+        String val = getProperty(key);
+        return (val == null) ? defaultValue : val;
+!!!7926146.java!!!	propertyNames() : Enumeration
+        Hashtable<String,Object> h = new Hashtable<>();
+        enumerate(h);
+        return h.keys();
+!!!7926274.java!!!	stringPropertyNames() : Set
+        Hashtable<String, String> h = new Hashtable<>();
+        enumerateStringProperties(h);
+        return h.keySet();
+!!!7926402.java!!!	list(inout out : PrintStream) : void
+        out.println("-- listing properties --");
+        Hashtable<String,Object> h = new Hashtable<>();
+        enumerate(h);
+        for (Enumeration<String> e = h.keys() ; e.hasMoreElements() ;) {
+            String key = e.nextElement();
+            String val = (String)h.get(key);
+            if (val.length() > 40) {
+                val = val.substring(0, 37) + "...";
+            }
+            out.println(key + "=" + val);
+        }
+!!!7926530.java!!!	list(inout out : PrintWriter) : void
+        out.println("-- listing properties --");
+        Hashtable<String,Object> h = new Hashtable<>();
+        enumerate(h);
+        for (Enumeration<String> e = h.keys() ; e.hasMoreElements() ;) {
+            String key = e.nextElement();
+            String val = (String)h.get(key);
+            if (val.length() > 40) {
+                val = val.substring(0, 37) + "...";
+            }
+            out.println(key + "=" + val);
+        }
+!!!7926658.java!!!	enumerate(inout h : Hashtable) : void
+        if (defaults != null) {
+            defaults.enumerate(h);
+        }
+        for (Enumeration<?> e = keys() ; e.hasMoreElements() ;) {
+            String key = (String)e.nextElement();
+            h.put(key, get(key));
+        }
+!!!7926786.java!!!	enumerateStringProperties(inout h : Hashtable) : void
+        if (defaults != null) {
+            defaults.enumerateStringProperties(h);
+        }
+        for (Enumeration<?> e = keys() ; e.hasMoreElements() ;) {
+            Object k = e.nextElement();
+            Object v = get(k);
+            if (k instanceof String && v instanceof String) {
+                h.put((String) k, (String) v);
+            }
+        }
+!!!7926914.java!!!	toHex(in nibble : int) : char
+        return hexDigit[(nibble & 0xF)];

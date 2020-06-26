@@ -1,0 +1,154 @@
+class ApproveSelectionAction
+!!!2453506.java!!!	ApproveSelectionAction()
+            super(FilePane.ACTION_APPROVE_SELECTION);
+!!!2453634.java!!!	actionPerformed(inout e : ActionEvent) : void
+            if (isDirectorySelected()) {
+                File dir = getDirectory();
+                if (dir != null) {
+                    try {
+                        // Strip trailing ".."
+                        dir = ShellFolder.getNormalizedFile(dir);
+                    } catch (IOException ex) {
+                        // Ok, use f as is
+                    }
+                    changeDirectory(dir);
+                    return;
+                }
+            }
+
+            JFileChooser chooser = getFileChooser();
+
+            String filename = getFileName();
+            FileSystemView fs = chooser.getFileSystemView();
+            File dir = chooser.getCurrentDirectory();
+
+            if (filename != null) {
+                // Remove whitespaces from end of filename
+                int i = filename.length() - 1;
+
+                while (i >=0 && filename.charAt(i) <= ' ') {
+                    i--;
+                }
+
+                filename = filename.substring(0, i + 1);
+            }
+
+            if (filename == null || filename.length() == 0) {
+                // no file selected, multiple selection off, therefore cancel the approve action
+                resetGlobFilter();
+                return;
+            }
+
+            File selectedFile = null;
+            File[] selectedFiles = null;
+
+            // Unix: Resolve '~' to user's home directory
+            if (File.separatorChar == '/') {
+                if (filename.startsWith("~/")) {
+                    filename = System.getProperty("user.home") + filename.substring(1);
+                } else if (filename.equals("~")) {
+                    filename = System.getProperty("user.home");
+                }
+            }
+
+            if (chooser.isMultiSelectionEnabled() && filename.length() > 1 &&
+                    filename.charAt(0) == '"' && filename.charAt(filename.length() - 1) == '"') {
+                List<File> fList = new ArrayList<File>();
+
+                String[] files = filename.substring(1, filename.length() - 1).split("\" \"");
+                // Optimize searching files by names in "children" array
+                Arrays.sort(files);
+
+                File[] children = null;
+                int childIndex = 0;
+
+                for (String str : files) {
+                    File file = fs.createFileObject(str);
+                    if (!file.isAbsolute()) {
+                        if (children == null) {
+                            children = fs.getFiles(dir, false);
+                            Arrays.sort(children);
+                        }
+                        for (int k = 0; k < children.length; k++) {
+                            int l = (childIndex + k) % children.length;
+                            if (children[l].getName().equals(str)) {
+                                file = children[l];
+                                childIndex = l + 1;
+                                break;
+                            }
+                        }
+                    }
+                    fList.add(file);
+                }
+
+                if (!fList.isEmpty()) {
+                    selectedFiles = fList.toArray(new File[fList.size()]);
+                }
+                resetGlobFilter();
+            } else {
+                selectedFile = fs.createFileObject(filename);
+                if (!selectedFile.isAbsolute()) {
+                    selectedFile = fs.getChild(dir, filename);
+                }
+                // check for wildcard pattern
+                FileFilter currentFilter = chooser.getFileFilter();
+                if (!selectedFile.exists() && isGlobPattern(filename)) {
+                    changeDirectory(selectedFile.getParentFile());
+                    if (globFilter == null) {
+                        globFilter = new GlobFilter();
+                    }
+                    try {
+                        globFilter.setPattern(selectedFile.getName());
+                        if (!(currentFilter instanceof GlobFilter)) {
+                            actualFileFilter = currentFilter;
+                        }
+                        chooser.setFileFilter(null);
+                        chooser.setFileFilter(globFilter);
+                        return;
+                    } catch (PatternSyntaxException pse) {
+                        // Not a valid glob pattern. Abandon filter.
+                    }
+                }
+
+                resetGlobFilter();
+
+                // Check for directory change action
+                boolean isDir = (selectedFile != null && selectedFile.isDirectory());
+                boolean isTrav = (selectedFile != null && chooser.isTraversable(selectedFile));
+                boolean isDirSelEnabled = chooser.isDirectorySelectionEnabled();
+                boolean isFileSelEnabled = chooser.isFileSelectionEnabled();
+                boolean isCtrl = (e != null && (e.getModifiers() &
+                            Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()) != 0);
+
+                if (isDir && isTrav && (isCtrl || !isDirSelEnabled)) {
+                    changeDirectory(selectedFile);
+                    return;
+                } else if ((isDir || !isFileSelEnabled)
+                        && (!isDir || !isDirSelEnabled)
+                        && (!isDirSelEnabled || selectedFile.exists())) {
+                    selectedFile = null;
+                }
+            }
+
+            if (selectedFiles != null || selectedFile != null) {
+                if (selectedFiles != null || chooser.isMultiSelectionEnabled()) {
+                    if (selectedFiles == null) {
+                        selectedFiles = new File[] { selectedFile };
+                    }
+                    chooser.setSelectedFiles(selectedFiles);
+                    // Do it again. This is a fix for bug 4949273 to force the
+                    // selected value in case the ListSelectionModel clears it
+                    // for non-existing file names.
+                    chooser.setSelectedFiles(selectedFiles);
+                } else {
+                    chooser.setSelectedFile(selectedFile);
+                }
+                chooser.approveSelection();
+            } else {
+                if (chooser.isMultiSelectionEnabled()) {
+                    chooser.setSelectedFiles(null);
+                } else {
+                    chooser.setSelectedFile(null);
+                }
+                chooser.cancelSelection();
+            }

@@ -1,0 +1,110 @@
+class ActivateLinkAction
+!!!10956930.java!!!	ActivateLinkAction(inout actionName : String)
+            super(actionName);
+!!!10957058.java!!!	activateLink(inout href : String, inout doc : HTMLDocument, inout editor : JEditorPane, in offset : int) : void
+            try {
+                URL page =
+                    (URL)doc.getProperty(Document.StreamDescriptionProperty);
+                URL url = new URL(page, href);
+                HyperlinkEvent linkEvent = new HyperlinkEvent
+                    (editor, HyperlinkEvent.EventType.
+                     ACTIVATED, url, url.toExternalForm(),
+                     doc.getCharacterElement(offset));
+                editor.fireHyperlinkUpdate(linkEvent);
+            } catch (MalformedURLException m) {
+            }
+!!!10957186.java!!!	doObjectAction(inout editor : JEditorPane, inout elem : Element) : void
+            View view = getView(editor, elem);
+            if (view != null && view instanceof ObjectView) {
+                Component comp = ((ObjectView)view).getComponent();
+                if (comp != null && comp instanceof Accessible) {
+                    AccessibleContext ac = comp.getAccessibleContext();
+                    if (ac != null) {
+                        AccessibleAction aa = ac.getAccessibleAction();
+                        if (aa != null) {
+                            aa.doAccessibleAction(0);
+                        }
+                    }
+                }
+            }
+!!!10957314.java!!!	getRootView(inout editor : JEditorPane) : View
+            return editor.getUI().getRootView(editor);
+!!!10957442.java!!!	getView(inout editor : JEditorPane, inout elem : Element) : View
+            Object lock = lock(editor);
+            try {
+                View rootView = getRootView(editor);
+                int start = elem.getStartOffset();
+                if (rootView != null) {
+                    return getView(rootView, elem, start);
+                }
+                return null;
+            } finally {
+                unlock(lock);
+            }
+!!!10957570.java!!!	getView(inout parent : View, inout elem : Element, in start : int) : View
+            if (parent.getElement() == elem) {
+                return parent;
+            }
+            int index = parent.getViewIndex(start, Position.Bias.Forward);
+
+            if (index != -1 && index < parent.getViewCount()) {
+                return getView(parent.getView(index), elem, start);
+            }
+            return null;
+!!!10957698.java!!!	lock(inout editor : JEditorPane) : Object
+            Document document = editor.getDocument();
+
+            if (document instanceof AbstractDocument) {
+                ((AbstractDocument)document).readLock();
+                return document;
+            }
+            return null;
+!!!10957826.java!!!	unlock(inout key : Object) : void
+            if (key != null) {
+                ((AbstractDocument)key).readUnlock();
+            }
+!!!10957954.java!!!	actionPerformed(inout e : ActionEvent) : void
+
+            JTextComponent c = getTextComponent(e);
+            if (c.isEditable() || !(c instanceof JEditorPane)) {
+                return;
+            }
+            JEditorPane editor = (JEditorPane)c;
+
+            Document d = editor.getDocument();
+            if (d == null || !(d instanceof HTMLDocument)) {
+                return;
+            }
+            HTMLDocument doc = (HTMLDocument)d;
+
+            ElementIterator ei = new ElementIterator(doc);
+            int currentOffset = editor.getCaretPosition();
+
+            // invoke the next link or object action
+            String urlString = null;
+            String objString = null;
+            Element currentElement;
+            while ((currentElement = ei.next()) != null) {
+                String name = currentElement.getName();
+                AttributeSet attr = currentElement.getAttributes();
+
+                Object href = getAttrValue(attr, HTML.Attribute.HREF);
+                if (href != null) {
+                    if (currentOffset >= currentElement.getStartOffset() &&
+                        currentOffset <= currentElement.getEndOffset()) {
+
+                        activateLink((String)href, doc, editor, currentOffset);
+                        return;
+                    }
+                } else if (name.equals(HTML.Tag.OBJECT.toString())) {
+                    Object obj = getAttrValue(attr, HTML.Attribute.CLASSID);
+                    if (obj != null) {
+                        if (currentOffset >= currentElement.getStartOffset() &&
+                            currentOffset <= currentElement.getEndOffset()) {
+
+                            doObjectAction(editor, currentElement);
+                            return;
+                        }
+                    }
+                }
+            }

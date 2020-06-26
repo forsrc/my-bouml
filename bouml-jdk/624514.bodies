@@ -1,0 +1,329 @@
+class MultiDOM
+!!!3993346.java!!!	MultiDOM(inout main : DOM)
+        _size = INITIAL_SIZE;
+        _free = 1;
+        _adapters = new DOM[INITIAL_SIZE];
+        DOMAdapter adapter = (DOMAdapter)main;
+        _adapters[0] = adapter;
+        _main = adapter;
+        DOM dom = adapter.getDOMImpl();
+        if (dom instanceof DTMDefaultBase) {
+            _dtmManager = ((DTMDefaultBase)dom).getManager();
+        }
+
+        // %HZ% %REVISIT% Is this the right thing to do here?  In the old
+        // %HZ% %REVISIT% version, the main document did not get added through
+        // %HZ% %REVISIT% a call to addDOMAdapter, which meant it couldn't be
+        // %HZ% %REVISIT% found by a call to getDocumentMask.  The problem is
+        // %HZ% %REVISIT% TransformerHandler is typically constructed with a
+        // %HZ% %REVISIT% system ID equal to the stylesheet's URI; with SAX
+        // %HZ% %REVISIT% input, it ends up giving that URI to the document.
+        // %HZ% %REVISIT% Then, any references to document('') are resolved
+        // %HZ% %REVISIT% using the stylesheet's URI.
+        // %HZ% %REVISIT% MultiDOM.getDocumentMask is called to verify that
+        // %HZ% %REVISIT% a document associated with that URI has not been
+        // %HZ% %REVISIT% encountered, and that method ends up returning the
+        // %HZ% %REVISIT% mask of the main document, when what we really what
+        // %HZ% %REVISIT% is to read the stylesheet itself!
+        addDOMAdapter(adapter, false);
+!!!3993474.java!!!	nextMask() : int
+        return _free;
+!!!3993602.java!!!	setupMapping(inout names : String [[]], inout uris : String [[]], inout types : int [[]], inout namespaces : String [[]]) : void
+        // This method only has a function in DOM adapters
+!!!3993730.java!!!	addDOMAdapter(inout adapter : DOMAdapter) : int
+        return addDOMAdapter(adapter, true);
+!!!3993858.java!!!	addDOMAdapter(inout adapter : DOMAdapter, inout indexByURI : boolean) : int
+        // Add the DOM adapter to the array of DOMs
+        DOM dom = adapter.getDOMImpl();
+
+        int domNo = 1;
+        int dtmSize = 1;
+        SuballocatedIntVector dtmIds = null;
+        if (dom instanceof DTMDefaultBase) {
+            DTMDefaultBase dtmdb = (DTMDefaultBase)dom;
+            dtmIds = dtmdb.getDTMIDs();
+            dtmSize = dtmIds.size();
+            domNo = dtmIds.elementAt(dtmSize-1) >>> DTMManager.IDENT_DTM_NODE_BITS;
+        }
+        else if (dom instanceof SimpleResultTreeImpl) {
+            SimpleResultTreeImpl simpleRTF = (SimpleResultTreeImpl)dom;
+            domNo = simpleRTF.getDocument() >>> DTMManager.IDENT_DTM_NODE_BITS;
+        }
+
+        if (domNo >= _size) {
+            int oldSize = _size;
+            do {
+                _size *= 2;
+            } while (_size <= domNo);
+
+            final DOMAdapter[] newArray = new DOMAdapter[_size];
+            System.arraycopy(_adapters, 0, newArray, 0, oldSize);
+            _adapters = newArray;
+        }
+
+        _free = domNo + 1;
+
+        if (dtmSize == 1) {
+            _adapters[domNo] = adapter;
+        }
+        else if (dtmIds != null) {
+            int domPos = 0;
+            for (int i = dtmSize - 1; i >= 0; i--) {
+                domPos = dtmIds.elementAt(i) >>> DTMManager.IDENT_DTM_NODE_BITS;
+                _adapters[domPos] = adapter;
+            }
+            domNo = domPos;
+        }
+
+        // Store reference to document (URI) in the Map
+        if (indexByURI) {
+            String uri = adapter.getDocumentURI(0);
+            _documents.put(uri, domNo);
+        }
+
+        // If the dom is an AdaptiveResultTreeImpl, we need to create a
+        // DOMAdapter around its nested dom object (if it is non-null) and
+        // add the DOMAdapter to the list.
+        if (dom instanceof AdaptiveResultTreeImpl) {
+            AdaptiveResultTreeImpl adaptiveRTF = (AdaptiveResultTreeImpl)dom;
+            DOM nestedDom = adaptiveRTF.getNestedDOM();
+            if (nestedDom != null) {
+                DOMAdapter newAdapter = new DOMAdapter(nestedDom,
+                                                       adapter.getNamesArray(),
+                                                       adapter.getUrisArray(),
+                                                       adapter.getTypesArray(),
+                                                       adapter.getNamespaceArray());
+                addDOMAdapter(newAdapter);
+            }
+        }
+
+        return domNo;
+!!!3993986.java!!!	getDocumentMask(inout uri : String) : int
+        Integer domIdx = _documents.get(uri);
+        if (domIdx == null) {
+            return(-1);
+        } else {
+            return domIdx.intValue();
+        }
+!!!3994114.java!!!	getDOMAdapter(inout uri : String) : DOM
+        Integer domIdx = _documents.get(uri);
+        if (domIdx == null) {
+            return(null);
+        } else {
+            return(_adapters[domIdx.intValue()]);
+        }
+!!!3994242.java!!!	getDocument() : int
+        return _main.getDocument();
+!!!3994370.java!!!	getDTMManager() : DTMManager
+        return _dtmManager;
+!!!3994498.java!!!	getIterator() : DTMAxisIterator
+        // main source document @ 0
+        return _main.getIterator();
+!!!3994626.java!!!	getStringValue() : String
+        return _main.getStringValue();
+!!!3994754.java!!!	getChildren(in node : int) : DTMAxisIterator
+        return _adapters[getDTMId(node)].getChildren(node);
+!!!3994882.java!!!	getTypedChildren(in type : int) : DTMAxisIterator
+        return new AxisIterator(Axis.CHILD, type);
+!!!3995010.java!!!	getAxisIterator(in axis : int) : DTMAxisIterator
+        return new AxisIterator(axis, NO_TYPE);
+!!!3995138.java!!!	getTypedAxisIterator(in axis : int, in type : int) : DTMAxisIterator
+        return new AxisIterator(axis, type);
+!!!3995266.java!!!	getNthDescendant(in node : int, in n : int, inout includeself : boolean) : DTMAxisIterator
+        return _adapters[getDTMId(node)].getNthDescendant(node, n, includeself);
+!!!3995394.java!!!	getNodeValueIterator(inout iterator : DTMAxisIterator, in type : int, inout value : String, inout op : boolean) : DTMAxisIterator
+        return(new NodeValueIterator(iterator, type, value, op));
+!!!3995522.java!!!	getNamespaceAxisIterator(in axis : int, in ns : int) : DTMAxisIterator
+        DTMAxisIterator iterator = _main.getNamespaceAxisIterator(axis, ns);
+        return(iterator);
+!!!3995650.java!!!	orderNodes(inout source : DTMAxisIterator, in node : int) : DTMAxisIterator
+        return _adapters[getDTMId(node)].orderNodes(source, node);
+!!!3995778.java!!!	getExpandedTypeID(in node : int) : int
+        if (node != DTM.NULL) {
+            return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getExpandedTypeID(node);
+        }
+        else {
+            return DTM.NULL;
+        }
+!!!3995906.java!!!	getNamespaceType(in node : int) : int
+        return _adapters[getDTMId(node)].getNamespaceType(node);
+!!!3996034.java!!!	getNSType(in node : int) : int
+        return _adapters[getDTMId(node)].getNSType(node);
+!!!3996162.java!!!	getParent(in node : int) : int
+        if (node == DTM.NULL) {
+            return DTM.NULL;
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getParent(node);
+!!!3996290.java!!!	getAttributeNode(in type : int, in el : int) : int
+        if (el == DTM.NULL) {
+            return DTM.NULL;
+        }
+        return _adapters[el >>> DTMManager.IDENT_DTM_NODE_BITS].getAttributeNode(type, el);
+!!!3996418.java!!!	getNodeName(in node : int) : String
+        if (node == DTM.NULL) {
+            return "";
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getNodeName(node);
+!!!3996546.java!!!	getNodeNameX(in node : int) : String
+        if (node == DTM.NULL) {
+            return "";
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getNodeNameX(node);
+!!!3996674.java!!!	getNamespaceName(in node : int) : String
+        if (node == DTM.NULL) {
+            return "";
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getNamespaceName(node);
+!!!3996802.java!!!	getStringValueX(in node : int) : String
+        if (node == DTM.NULL) {
+            return "";
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getStringValueX(node);
+!!!3996930.java!!!	copy(in node : int, inout handler : SerializationHandler) : void
+        if (node != DTM.NULL) {
+            _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].copy(node, handler);
+        }
+!!!3997058.java!!!	copy(inout nodes : DTMAxisIterator, inout handler : SerializationHandler) : void
+        int node;
+        while ((node = nodes.next()) != DTM.NULL) {
+            _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].copy(node, handler);
+        }
+!!!3997186.java!!!	shallowCopy(in node : int, inout handler : SerializationHandler) : String
+        if (node == DTM.NULL) {
+            return "";
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].shallowCopy(node, handler);
+!!!3997314.java!!!	lessThan(in node1 : int, in node2 : int) : boolean
+        if (node1 == DTM.NULL) {
+            return true;
+        }
+        if (node2 == DTM.NULL) {
+            return false;
+        }
+        final int dom1 = getDTMId(node1);
+        final int dom2 = getDTMId(node2);
+        return dom1 == dom2 ? _adapters[dom1].lessThan(node1, node2)
+                            : dom1 < dom2;
+!!!3997442.java!!!	characters(in textNode : int, inout handler : SerializationHandler) : void
+        if (textNode != DTM.NULL) {
+            _adapters[textNode >>> DTMManager.IDENT_DTM_NODE_BITS].characters(textNode, handler);
+        }
+!!!3997570.java!!!	setFilter(inout filter : StripFilter) : void
+        for (int dom=0; dom<_free; dom++) {
+            if (_adapters[dom] != null) {
+                _adapters[dom].setFilter(filter);
+            }
+        }
+!!!3997698.java!!!	makeNode(in index : int) : Node
+        if (index == DTM.NULL) {
+            return null;
+        }
+        return _adapters[getDTMId(index)].makeNode(index);
+!!!3997826.java!!!	makeNode(inout iter : DTMAxisIterator) : Node
+        // TODO: gather nodes from all DOMs ?
+        return _main.makeNode(iter);
+!!!3997954.java!!!	makeNodeList(in index : int) : NodeList
+        if (index == DTM.NULL) {
+            return null;
+        }
+        return _adapters[getDTMId(index)].makeNodeList(index);
+!!!3998082.java!!!	makeNodeList(inout iter : DTMAxisIterator) : NodeList
+        int index = iter.next();
+        if (index == DTM.NULL) {
+            return new DTMAxisIterNodeList(null, null);
+        }
+        iter.reset();
+        return _adapters[getDTMId(index)].makeNodeList(iter);
+!!!3998210.java!!!	getLanguage(in node : int) : String
+        return _adapters[getDTMId(node)].getLanguage(node);
+!!!3998338.java!!!	getSize() : int
+        int size = 0;
+        for (int i=0; i<_size; i++) {
+            size += _adapters[i].getSize();
+        }
+        return(size);
+!!!3998466.java!!!	getDocumentURI(in node : int) : String
+        if (node == DTM.NULL) {
+            node = DOM.NULL;
+        }
+        return _adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].getDocumentURI(0);
+!!!3998594.java!!!	isElement(in node : int) : boolean
+        if (node == DTM.NULL) {
+            return false;
+        }
+        return(_adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].isElement(node));
+!!!3998722.java!!!	isAttribute(in node : int) : boolean
+        if (node == DTM.NULL) {
+            return false;
+        }
+        return(_adapters[node >>> DTMManager.IDENT_DTM_NODE_BITS].isAttribute(node));
+!!!3998850.java!!!	getDTMId(in nodeHandle : int) : int
+        if (nodeHandle == DTM.NULL)
+            return 0;
+
+        int id = nodeHandle >>> DTMManager.IDENT_DTM_NODE_BITS;
+        while (id >= 2 && _adapters[id] == _adapters[id-1]) {
+            id--;
+        }
+        return id;
+!!!3998978.java!!!	getDTM(in nodeHandle : int) : DOM
+        return _adapters[getDTMId(nodeHandle)];
+!!!3999106.java!!!	getNodeIdent(in nodeHandle : int) : int
+        return _adapters[nodeHandle >>> DTMManager.IDENT_DTM_NODE_BITS].getNodeIdent(nodeHandle);
+!!!3999234.java!!!	getNodeHandle(in nodeId : int) : int
+        return _main.getNodeHandle(nodeId);
+!!!3999362.java!!!	getResultTreeFrag(in initSize : int, in rtfType : int) : DOM
+        return _main.getResultTreeFrag(initSize, rtfType);
+!!!3999490.java!!!	getResultTreeFrag(in initSize : int, in rtfType : int, inout addToManager : boolean) : DOM
+        return _main.getResultTreeFrag(initSize, rtfType, addToManager);
+!!!3999618.java!!!	getMain() : DOM
+        return _main;
+!!!3999746.java!!!	getOutputDomBuilder() : SerializationHandler
+        return _main.getOutputDomBuilder();
+!!!3999874.java!!!	lookupNamespace(in node : int, inout prefix : String) : String
+        return _main.lookupNamespace(node, prefix);
+!!!4000002.java!!!	getUnparsedEntityURI(inout entity : String) : String
+        return _main.getUnparsedEntityURI(entity);
+!!!4000130.java!!!	getElementsWithIDs() : Map
+        return _main.getElementsWithIDs();
+!!!4000258.java!!!	release() : void
+        _main.release();
+!!!4000386.java!!!	isMatchingAdapterEntry(inout entry : DOM, inout adapter : DOMAdapter) : boolean
+        DOM dom = adapter.getDOMImpl();
+
+        return (entry == adapter) || (
+            /*
+             * Method addDOMAdapter overwrites for AdaptiveResultTreeImpl
+             * objects the usual entry with an adapter to the nested
+             * DOM, so we must check this here. See last 'if' statement
+             * of addDOMAdapter.
+             */
+            (dom instanceof AdaptiveResultTreeImpl) &&
+            (entry instanceof DOMAdapter) &&
+            (((AdaptiveResultTreeImpl)dom).getNestedDOM() == ((DOMAdapter)entry).getDOMImpl())
+        );
+!!!4000514.java!!!	removeDOMAdapter(inout adapter : DOMAdapter) : void
+        _documents.remove(adapter.getDocumentURI(0));
+        DOM dom = adapter.getDOMImpl();
+
+        if (dom instanceof DTMDefaultBase) {
+            SuballocatedIntVector ids = ((DTMDefaultBase) dom).getDTMIDs();
+            int idsSize = ids.size();
+            for (int i = 0; i < idsSize; i++) {
+                _adapters[ids.elementAt(i) >>> DTMManager.IDENT_DTM_NODE_BITS] = null;
+            }
+        } else {
+            int id = dom.getDocument() >>> DTMManager.IDENT_DTM_NODE_BITS;
+            if ((id > 0) && (id < _adapters.length) && isMatchingAdapterEntry(_adapters[id], adapter)) {
+                _adapters[id] = null;
+            } else {
+                boolean found = false;
+                for (int i = 0; i < _adapters.length; i++) {
+                    if (isMatchingAdapterEntry(_adapters[id], adapter)) {
+                        _adapters[i] = null;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }

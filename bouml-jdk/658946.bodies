@@ -1,0 +1,192 @@
+class XMLErrorReporter
+!!!4403330.java!!!	XMLErrorReporter()
+
+        // REVISIT: [Q] Should the locator be passed to the reportError
+        //              method? Otherwise, there is no way for a parser
+        //              component to store information about where an
+        //              error occurred so as to report it later.
+        //
+        //              An example would be to record the location of
+        //              IDREFs so that, at the end of the document, if
+        //              there is no associated ID declared, the error
+        //              could report the location information of the
+        //              reference. -Ac
+        //
+        // NOTE: I added another reportError method that allows the
+        //       caller to specify the location of the error being
+        //       reported. -Ac
+
+        fMessageFormatters = new HashMap<>();
+
+!!!4403458.java!!!	setLocale(inout locale : Locale) : void
+        fLocale = locale;
+!!!4403586.java!!!	getLocale() : Locale
+        return fLocale ;
+!!!4403714.java!!!	setDocumentLocator(inout locator : XMLLocator) : void
+        fLocator = locator;
+!!!4403842.java!!!	putMessageFormatter(inout domain : String, inout messageFormatter : MessageFormatter) : void
+        fMessageFormatters.put(domain, messageFormatter);
+!!!4403970.java!!!	getMessageFormatter(inout domain : String) : MessageFormatter
+        return fMessageFormatters.get(domain);
+!!!4404098.java!!!	removeMessageFormatter(inout domain : String) : MessageFormatter
+        return fMessageFormatters.remove(domain);
+!!!4404226.java!!!	reportError(inout domain : String, inout key : String, inout arguments : Object [[]], in severity : short) : String
+        return reportError(fLocator, domain, key, arguments, severity);
+!!!4404354.java!!!	reportError(inout domain : String, inout key : String, inout arguments : Object [[]], in severity : short, inout exception : Exception) : String
+        return reportError(fLocator, domain, key, arguments, severity, exception);
+!!!4404482.java!!!	reportError(inout location : XMLLocator, inout domain : String, inout key : String, inout arguments : Object [[]], in severity : short) : String
+        return reportError(location, domain, key, arguments, severity, null);
+!!!4404610.java!!!	reportError(inout location : XMLLocator, inout domain : String, inout key : String, inout arguments : Object [[]], in severity : short, inout exception : Exception) : String
+
+        // REVISIT: [Q] Should we do anything about invalid severity
+        //              parameter? -Ac
+
+        // format error message and create parse exception
+        MessageFormatter messageFormatter = getMessageFormatter(domain);
+        String message;
+        if (messageFormatter != null) {
+            message = messageFormatter.formatMessage(fLocale, key, arguments);
+        }
+        else {
+            StringBuffer str = new StringBuffer();
+            str.append(domain);
+            str.append('#');
+            str.append(key);
+            int argCount = arguments != null ? arguments.length : 0;
+            if (argCount > 0) {
+                str.append('?');
+                for (int i = 0; i < argCount; i++) {
+                    str.append(arguments[i]);
+                    if (i < argCount -1) {
+                        str.append('&');
+                    }
+                }
+            }
+            message = str.toString();
+        }
+        XMLParseException parseException = (exception != null) ?
+            new XMLParseException(location, message, exception) :
+            new XMLParseException(location, message);
+
+        // get error handler
+        XMLErrorHandler errorHandler = fErrorHandler;
+        if (errorHandler == null) {
+            if (fDefaultErrorHandler == null) {
+                fDefaultErrorHandler = new DefaultErrorHandler();
+            }
+            errorHandler = fDefaultErrorHandler;
+        }
+
+        // call error handler
+        switch (severity) {
+            case SEVERITY_WARNING: {
+                errorHandler.warning(domain, key, parseException);
+                break;
+            }
+            case SEVERITY_ERROR: {
+                errorHandler.error(domain, key, parseException);
+                break;
+            }
+            case SEVERITY_FATAL_ERROR: {
+                errorHandler.fatalError(domain, key, parseException);
+                if (!fContinueAfterFatalError) {
+                    throw parseException;
+                }
+                break;
+            }
+        }
+        return message;
+
+!!!4404738.java!!!	reset(inout componentManager : XMLComponentManager) : void
+
+        // features
+        fContinueAfterFatalError = componentManager.getFeature(CONTINUE_AFTER_FATAL_ERROR, false);
+
+        // properties
+        fErrorHandler = (XMLErrorHandler)componentManager.getProperty(ERROR_HANDLER);
+
+!!!4404866.java!!!	getRecognizedFeatures() : String
+        return (String[])(RECOGNIZED_FEATURES.clone());
+!!!4404994.java!!!	setFeature(inout featureId : String, inout state : boolean) : void
+
+        //
+        // Xerces features
+        //
+
+        if (featureId.startsWith(Constants.XERCES_FEATURE_PREFIX)) {
+            final int suffixLength = featureId.length() - Constants.XERCES_FEATURE_PREFIX.length();
+
+            //
+            // http://apache.org/xml/features/continue-after-fatal-error
+            //   Allows the parser to continue after a fatal error.
+            //   Normally, a fatal error would stop the parse.
+            //
+            if (suffixLength == Constants.CONTINUE_AFTER_FATAL_ERROR_FEATURE.length() &&
+                featureId.endsWith(Constants.CONTINUE_AFTER_FATAL_ERROR_FEATURE)) {
+                fContinueAfterFatalError = state;
+            }
+        }
+
+!!!4405122.java!!!	getFeature(inout featureId : String) : boolean
+
+        //
+        // Xerces features
+        //
+
+        if (featureId.startsWith(Constants.XERCES_FEATURE_PREFIX)) {
+                final int suffixLength = featureId.length() - Constants.XERCES_FEATURE_PREFIX.length();
+
+            //
+            // http://apache.org/xml/features/continue-after-fatal-error
+            //   Allows the parser to continue after a fatal error.
+            //   Normally, a fatal error would stop the parse.
+            //
+            if (suffixLength == Constants.CONTINUE_AFTER_FATAL_ERROR_FEATURE.length() &&
+                featureId.endsWith(Constants.CONTINUE_AFTER_FATAL_ERROR_FEATURE)) {
+                return fContinueAfterFatalError ;
+            }
+        }
+        return false;
+
+!!!4405250.java!!!	getRecognizedProperties() : String
+        return (String[])(RECOGNIZED_PROPERTIES.clone());
+!!!4405378.java!!!	setProperty(inout propertyId : String, inout value : Object) : void
+
+        //
+        // Xerces properties
+        //
+
+        if (propertyId.startsWith(Constants.XERCES_PROPERTY_PREFIX)) {
+            final int suffixLength = propertyId.length() - Constants.XERCES_PROPERTY_PREFIX.length();
+
+            if (suffixLength == Constants.ERROR_HANDLER_PROPERTY.length() &&
+                propertyId.endsWith(Constants.ERROR_HANDLER_PROPERTY)) {
+                fErrorHandler = (XMLErrorHandler)value;
+            }
+        }
+
+!!!4405506.java!!!	getFeatureDefault(inout featureId : String) : Boolean
+        for (int i = 0; i < RECOGNIZED_FEATURES.length; i++) {
+            if (RECOGNIZED_FEATURES[i].equals(featureId)) {
+                return FEATURE_DEFAULTS[i];
+            }
+        }
+        return null;
+!!!4405634.java!!!	getPropertyDefault(inout propertyId : String) : Object
+        for (int i = 0; i < RECOGNIZED_PROPERTIES.length; i++) {
+            if (RECOGNIZED_PROPERTIES[i].equals(propertyId)) {
+                return PROPERTY_DEFAULTS[i];
+            }
+        }
+        return null;
+!!!4405762.java!!!	getErrorHandler() : XMLErrorHandler
+        return fErrorHandler;
+!!!4405890.java!!!	getSAXErrorHandler() : ErrorHandler
+        if (fSaxProxy == null) {
+            fSaxProxy = new ErrorHandlerProxy() {
+                protected XMLErrorHandler getErrorHandler() {
+                    return fErrorHandler;
+                }
+            };
+        }
+        return fSaxProxy;

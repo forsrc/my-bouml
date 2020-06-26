@@ -1,0 +1,231 @@
+class IDN
+!!!7476994.java!!!	toASCII(inout input : String, in flag : int) : String
+        int p = 0, q = 0;
+        StringBuffer out = new StringBuffer();
+
+        if (isRootLabel(input)) {
+            return ".";
+        }
+
+        while (p < input.length()) {
+            q = searchDots(input, p);
+            out.append(toASCIIInternal(input.substring(p, q),  flag));
+            if (q != (input.length())) {
+               // has more labels, or keep the trailing dot as at present
+               out.append('.');
+            }
+            p = q + 1;
+        }
+
+        return out.toString();
+!!!7477122.java!!!	toASCII(inout input : String) : String
+        return toASCII(input, 0);
+!!!7477250.java!!!	toUnicode(inout input : String, in flag : int) : String
+        int p = 0, q = 0;
+        StringBuffer out = new StringBuffer();
+
+        if (isRootLabel(input)) {
+            return ".";
+        }
+
+        while (p < input.length()) {
+            q = searchDots(input, p);
+            out.append(toUnicodeInternal(input.substring(p, q),  flag));
+            if (q != (input.length())) {
+               // has more labels, or keep the trailing dot as at present
+               out.append('.');
+            }
+            p = q + 1;
+        }
+
+        return out.toString();
+!!!7477378.java!!!	toUnicode(inout input : String) : String
+        return toUnicode(input, 0);
+!!!7477634.java!!!	toASCIIInternal(inout label : String, in flag : int) : String
+        // step 1
+        // Check if the string contains code points outside the ASCII range 0..0x7c.
+        boolean isASCII  = isAllASCII(label);
+        StringBuffer dest;
+
+        // step 2
+        // perform the nameprep operation; flag ALLOW_UNASSIGNED is used here
+        if (!isASCII) {
+            UCharacterIterator iter = UCharacterIterator.getInstance(label);
+            try {
+                dest = namePrep.prepare(iter, flag);
+            } catch (java.text.ParseException e) {
+                throw new IllegalArgumentException(e);
+            }
+        } else {
+            dest = new StringBuffer(label);
+        }
+
+        // step 8, move forward to check the smallest number of the code points
+        // the length must be inside 1..63
+        if (dest.length() == 0) {
+            throw new IllegalArgumentException(
+                        "Empty label is not a legal name");
+        }
+
+        // step 3
+        // Verify the absence of non-LDH ASCII code points
+        //   0..0x2c, 0x2e..0x2f, 0x3a..0x40, 0x5b..0x60, 0x7b..0x7f
+        // Verify the absence of leading and trailing hyphen
+        boolean useSTD3ASCIIRules = ((flag & USE_STD3_ASCII_RULES) != 0);
+        if (useSTD3ASCIIRules) {
+            for (int i = 0; i < dest.length(); i++) {
+                int c = dest.charAt(i);
+                if (isNonLDHAsciiCodePoint(c)) {
+                    throw new IllegalArgumentException(
+                        "Contains non-LDH ASCII characters");
+                }
+            }
+
+            if (dest.charAt(0) == '-' ||
+                dest.charAt(dest.length() - 1) == '-') {
+
+                throw new IllegalArgumentException(
+                        "Has leading or trailing hyphen");
+            }
+        }
+
+        if (!isASCII) {
+            // step 4
+            // If all code points are inside 0..0x7f, skip to step 8
+            if (!isAllASCII(dest.toString())) {
+                // step 5
+                // verify the sequence does not begin with ACE prefix
+                if(!startsWithACEPrefix(dest)){
+
+                    // step 6
+                    // encode the sequence with punycode
+                    try {
+                        dest = Punycode.encode(dest, null);
+                    } catch (java.text.ParseException e) {
+                        throw new IllegalArgumentException(e);
+                    }
+
+                    dest = toASCIILower(dest);
+
+                    // step 7
+                    // prepend the ACE prefix
+                    dest.insert(0, ACE_PREFIX);
+                } else {
+                    throw new IllegalArgumentException("The input starts with the ACE Prefix");
+                }
+
+            }
+        }
+
+        // step 8
+        // the length must be inside 1..63
+        if (dest.length() > MAX_LABEL_LENGTH) {
+            throw new IllegalArgumentException("The label in the input is too long");
+        }
+
+        return dest.toString();
+!!!7477762.java!!!	toUnicodeInternal(inout label : String, in flag : int) : String
+        boolean[] caseFlags = null;
+        StringBuffer dest;
+
+        // step 1
+        // find out if all the codepoints in input are ASCII
+        boolean isASCII = isAllASCII(label);
+
+        if(!isASCII){
+            // step 2
+            // perform the nameprep operation; flag ALLOW_UNASSIGNED is used here
+            try {
+                UCharacterIterator iter = UCharacterIterator.getInstance(label);
+                dest = namePrep.prepare(iter, flag);
+            } catch (Exception e) {
+                // toUnicode never fails; if any step fails, return the input string
+                return label;
+            }
+        } else {
+            dest = new StringBuffer(label);
+        }
+
+        // step 3
+        // verify ACE Prefix
+        if(startsWithACEPrefix(dest)) {
+
+            // step 4
+            // Remove the ACE Prefix
+            String temp = dest.substring(ACE_PREFIX_LENGTH, dest.length());
+
+            try {
+                // step 5
+                // Decode using punycode
+                StringBuffer decodeOut = Punycode.decode(new StringBuffer(temp), null);
+
+                // step 6
+                // Apply toASCII
+                String toASCIIOut = toASCII(decodeOut.toString(), flag);
+
+                // step 7
+                // verify
+                if (toASCIIOut.equalsIgnoreCase(dest.toString())) {
+                    // step 8
+                    // return output of step 5
+                    return decodeOut.toString();
+                }
+            } catch (Exception ignored) {
+                // no-op
+            }
+        }
+
+        // just return the input
+        return label;
+!!!7477890.java!!!	isNonLDHAsciiCodePoint(in ch : int) : boolean
+        return (0x0000 <= ch && ch <= 0x002C) ||
+               (0x002E <= ch && ch <= 0x002F) ||
+               (0x003A <= ch && ch <= 0x0040) ||
+               (0x005B <= ch && ch <= 0x0060) ||
+               (0x007B <= ch && ch <= 0x007F);
+!!!7478018.java!!!	searchDots(inout s : String, in start : int) : int
+        int i;
+        for (i = start; i < s.length(); i++) {
+            if (isLabelSeparator(s.charAt(i))) {
+                break;
+            }
+        }
+
+        return i;
+!!!7478146.java!!!	isRootLabel(inout s : String) : boolean
+        return (s.length() == 1 && isLabelSeparator(s.charAt(0)));
+!!!7478274.java!!!	isLabelSeparator(in c : char) : boolean
+        return (c == '.' || c == '\u3002' || c == '\uFF0E' || c == '\uFF61');
+!!!7478402.java!!!	isAllASCII(inout input : String) : boolean
+        boolean isASCII = true;
+        for (int i = 0; i < input.length(); i++) {
+            int c = input.charAt(i);
+            if (c > 0x7F) {
+                isASCII = false;
+                break;
+            }
+        }
+        return isASCII;
+!!!7478530.java!!!	startsWithACEPrefix(inout input : StringBuffer) : boolean
+        boolean startsWithPrefix = true;
+
+        if(input.length() < ACE_PREFIX_LENGTH){
+            return false;
+        }
+        for(int i = 0; i < ACE_PREFIX_LENGTH; i++){
+            if(toASCIILower(input.charAt(i)) != ACE_PREFIX.charAt(i)){
+                startsWithPrefix = false;
+            }
+        }
+        return startsWithPrefix;
+!!!7478658.java!!!	toASCIILower(in ch : char) : char
+        if('A' <= ch && ch <= 'Z'){
+            return (char)(ch + 'a' - 'A');
+        }
+        return ch;
+!!!7478786.java!!!	toASCIILower(inout input : StringBuffer) : StringBuffer
+        StringBuffer dest = new StringBuffer();
+        for(int i = 0; i < input.length();i++){
+            dest.append(toASCIILower(input.charAt(i)));
+        }
+        return dest;

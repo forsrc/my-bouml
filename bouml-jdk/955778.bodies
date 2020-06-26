@@ -1,0 +1,114 @@
+class PlatformComponent
+!!!7312898.java!!!	getGcMXBeanList(inout gcMXBeanIntf : Class) : List
+        List<GarbageCollectorMXBean> list =
+            ManagementFactoryHelper.getGarbageCollectorMXBeans();
+        List<T> result = new ArrayList<>(list.size());
+        for (GarbageCollectorMXBean m : list) {
+            if (gcMXBeanIntf.isInstance(m)) {
+                result.add(gcMXBeanIntf.cast(m));
+            }
+        }
+        return result;
+!!!7313026.java!!!	getOSMXBeanList(inout osMXBeanIntf : Class) : List
+        OperatingSystemMXBean m =
+            ManagementFactoryHelper.getOperatingSystemMXBean();
+        if (osMXBeanIntf.isInstance(m)) {
+            return Collections.singletonList(osMXBeanIntf.cast(m));
+        } else {
+            return Collections.emptyList();
+        }
+!!!7313154.java!!!	PlatformComponent(inout intfName : String, inout domain : String, inout type : String, inout keyProperties : Set, inout singleton : boolean, inout fetcher : PlatformComponent::MXBeanFetcher, inout  : PlatformComponent...subComponents)
+        this.mxbeanInterfaceName = intfName;
+        this.domain = domain;
+        this.type = type;
+        this.keyProperties = keyProperties;
+        this.singleton = singleton;
+        this.fetcher = fetcher;
+        this.subComponents = subComponents;
+!!!7313282.java!!!	defaultKeyProperties() : Set
+        if (defaultKeyProps == null) {
+            defaultKeyProps = Collections.singleton("type");
+        }
+        return defaultKeyProps;
+!!!7313410.java!!!	keyProperties(inout  : String...keyNames) : Set
+        Set<String> set = new HashSet<>();
+        set.add("type");
+        for (String s : keyNames) {
+            set.add(s);
+        }
+        return set;
+!!!7313538.java!!!	isSingleton() : boolean
+        return singleton;
+!!!7313666.java!!!	getMXBeanInterfaceName() : String
+        return mxbeanInterfaceName;
+!!!7313794.java!!!	getMXBeanInterface() : Class
+        try {
+            // Lazy loading the MXBean interface only when it is needed
+            return (Class<? extends PlatformManagedObject>)
+                       Class.forName(mxbeanInterfaceName, false,
+                                     PlatformManagedObject.class.getClassLoader());
+        } catch (ClassNotFoundException x) {
+            throw new AssertionError(x);
+        }
+!!!7313922.java!!!	getMXBeans(inout mxbeanInterface : Class) : List
+        return (List<T>) fetcher.getMXBeans();
+!!!7314050.java!!!	getSingletonMXBean(inout mxbeanInterface : Class) : T
+        if (!singleton)
+            throw new IllegalArgumentException(mxbeanInterfaceName +
+                " can have zero or more than one instances");
+
+        List<T> list = getMXBeans(mxbeanInterface);
+        assert list.size() == 1;
+        return list.isEmpty() ? null : list.get(0);
+!!!7314178.java!!!	getSingletonMXBean(inout mbs : MBeanServerConnection, inout mxbeanInterface : Class) : T
+        if (!singleton)
+            throw new IllegalArgumentException(mxbeanInterfaceName +
+                " can have zero or more than one instances");
+
+        // ObjectName of a singleton MXBean contains only domain and type
+        assert keyProperties.size() == 1;
+        String on = domain + ":type=" + type;
+        return ManagementFactory.newPlatformMXBeanProxy(mbs,
+                                                        on,
+                                                        mxbeanInterface);
+!!!7314306.java!!!	getMXBeans(inout mbs : MBeanServerConnection, inout mxbeanInterface : Class) : List
+        List<T> result = new ArrayList<>();
+        for (ObjectName on : getObjectNames(mbs)) {
+            result.add(ManagementFactory.
+                newPlatformMXBeanProxy(mbs,
+                                       on.getCanonicalName(),
+                                       mxbeanInterface)
+            );
+        }
+        return result;
+!!!7314434.java!!!	getObjectNames(inout mbs : MBeanServerConnection) : Set
+        String domainAndType = domain + ":type=" + type;
+        if (keyProperties.size() > 1) {
+            // if there are more than 1 key properties (i.e. other than "type")
+            domainAndType += ",*";
+        }
+        ObjectName on = Util.newObjectName(domainAndType);
+        Set<ObjectName> set =  mbs.queryNames(on, null);
+        for (PlatformComponent pc : subComponents) {
+            set.addAll(pc.getObjectNames(mbs));
+        }
+        return set;
+!!!7314562.java!!!	ensureInitialized() : void
+        if (enumMap == null) {
+            enumMap = new HashMap<>();
+            for (PlatformComponent pc: PlatformComponent.values()) {
+                // Use String as the key rather than Class<?> to avoid
+                // causing unnecessary class loading of management interface
+                enumMap.put(pc.getMXBeanInterfaceName(), pc);
+            }
+        }
+!!!7314690.java!!!	isPlatformMXBean(inout cn : String) : boolean
+        ensureInitialized();
+        return enumMap.containsKey(cn);
+!!!7314818.java!!!	getPlatformComponent(inout mxbeanInterface : Class) : PlatformComponent
+        ensureInitialized();
+        String cn = mxbeanInterface.getName();
+        PlatformComponent pc = enumMap.get(cn);
+        if (pc != null && pc.getMXBeanInterface() == mxbeanInterface)
+            return pc;
+        return null;

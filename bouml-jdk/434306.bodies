@@ -1,0 +1,599 @@
+class BasicProgressBarUI
+!!!2591746.java!!!	createUI(inout x : JComponent) : ComponentUI
+        return new BasicProgressBarUI();
+!!!2591874.java!!!	installUI(inout c : JComponent) : void
+        progressBar = (JProgressBar)c;
+        installDefaults();
+        installListeners();
+        if (progressBar.isIndeterminate()) {
+            initIndeterminateValues();
+        }
+!!!2592002.java!!!	uninstallUI(inout c : JComponent) : void
+        if (progressBar.isIndeterminate()) {
+            cleanUpIndeterminateValues();
+        }
+        uninstallDefaults();
+        uninstallListeners();
+        progressBar = null;
+!!!2592130.java!!!	installDefaults() : void
+        LookAndFeel.installProperty(progressBar, "opaque", Boolean.TRUE);
+        LookAndFeel.installBorder(progressBar,"ProgressBar.border");
+        LookAndFeel.installColorsAndFont(progressBar,
+                                         "ProgressBar.background",
+                                         "ProgressBar.foreground",
+                                         "ProgressBar.font");
+        cellLength = UIManager.getInt("ProgressBar.cellLength");
+        if (cellLength == 0) cellLength = 1;
+        cellSpacing = UIManager.getInt("ProgressBar.cellSpacing");
+        selectionForeground = UIManager.getColor("ProgressBar.selectionForeground");
+        selectionBackground = UIManager.getColor("ProgressBar.selectionBackground");
+!!!2592258.java!!!	uninstallDefaults() : void
+        LookAndFeel.uninstallBorder(progressBar);
+!!!2592386.java!!!	installListeners() : void
+        //Listen for changes in the progress bar's data.
+        changeListener = getHandler();
+        progressBar.addChangeListener(changeListener);
+
+        //Listen for changes between determinate and indeterminate state.
+        progressBar.addPropertyChangeListener(getHandler());
+!!!2592514.java!!!	getHandler() : BasicProgressBarUI::Handler
+        if (handler == null) {
+            handler = new Handler();
+        }
+        return handler;
+!!!2592642.java!!!	startAnimationTimer() : void
+        if (animator == null) {
+            animator = new Animator();
+        }
+
+        animator.start(getRepaintInterval());
+!!!2592770.java!!!	stopAnimationTimer() : void
+        if (animator != null) {
+            animator.stop();
+        }
+!!!2592898.java!!!	uninstallListeners() : void
+        progressBar.removeChangeListener(changeListener);
+        progressBar.removePropertyChangeListener(getHandler());
+        handler = null;
+!!!2593026.java!!!	getBaseline(inout c : JComponent, in width : int, in height : int) : int
+        super.getBaseline(c, width, height);
+        if (progressBar.isStringPainted() &&
+                progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            FontMetrics metrics = progressBar.
+                    getFontMetrics(progressBar.getFont());
+            Insets insets = progressBar.getInsets();
+            int y = insets.top;
+            height = height - insets.top - insets.bottom;
+            return y + (height + metrics.getAscent() -
+                        metrics.getLeading() -
+                        metrics.getDescent()) / 2;
+        }
+        return -1;
+!!!2593154.java!!!	getBaselineResizeBehavior(inout c : JComponent) : Component::BaselineResizeBehavior
+        super.getBaselineResizeBehavior(c);
+        if (progressBar.isStringPainted() &&
+                progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            return Component.BaselineResizeBehavior.CENTER_OFFSET;
+        }
+        return Component.BaselineResizeBehavior.OTHER;
+!!!2593282.java!!!	getPreferredInnerHorizontal() : Dimension
+        Dimension horizDim = (Dimension)DefaultLookup.get(progressBar, this,
+            "ProgressBar.horizontalSize");
+        if (horizDim == null) {
+            horizDim = new Dimension(146, 12);
+        }
+        return horizDim;
+!!!2593410.java!!!	getPreferredInnerVertical() : Dimension
+        Dimension vertDim = (Dimension)DefaultLookup.get(progressBar, this,
+            "ProgressBar.verticalSize");
+        if (vertDim == null) {
+            vertDim = new Dimension(12, 146);
+        }
+        return vertDim;
+!!!2593538.java!!!	getSelectionForeground() : Color
+        return selectionForeground;
+!!!2593666.java!!!	getSelectionBackground() : Color
+        return selectionBackground;
+!!!2593794.java!!!	getCachedPercent() : int
+        return cachedPercent;
+!!!2593922.java!!!	setCachedPercent(in cachedPercent : int) : void
+        this.cachedPercent = cachedPercent;
+!!!2594050.java!!!	getCellLength() : int
+        if (progressBar.isStringPainted()) {
+            return 1;
+        } else {
+            return cellLength;
+        }
+!!!2594178.java!!!	setCellLength(in cellLen : int) : void
+        this.cellLength = cellLen;
+!!!2594306.java!!!	getCellSpacing() : int
+        if (progressBar.isStringPainted()) {
+            return 0;
+        } else {
+            return cellSpacing;
+        }
+!!!2594434.java!!!	setCellSpacing(in cellSpace : int) : void
+        this.cellSpacing = cellSpace;
+!!!2594562.java!!!	getAmountFull(inout b : Insets, in width : int, in height : int) : int
+        int amountFull = 0;
+        BoundedRangeModel model = progressBar.getModel();
+
+        if ( (model.getMaximum() - model.getMinimum()) != 0) {
+            if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+                amountFull = (int)Math.round(width *
+                                             progressBar.getPercentComplete());
+            } else {
+                amountFull = (int)Math.round(height *
+                                             progressBar.getPercentComplete());
+            }
+        }
+        return amountFull;
+!!!2594690.java!!!	paint(inout g : Graphics, inout c : JComponent) : void
+        if (progressBar.isIndeterminate()) {
+            paintIndeterminate(g, c);
+        } else {
+            paintDeterminate(g, c);
+        }
+!!!2594818.java!!!	getBox(inout r : Rectangle) : Rectangle
+        int currentFrame = getAnimationIndex();
+        int middleFrame = numFrames/2;
+
+        if (sizeChanged() || delta == 0.0 || maxPosition == 0.0) {
+            updateSizes();
+        }
+
+        r = getGenericBox(r);
+
+        if (r == null) {
+            return null;
+        }
+        if (middleFrame <= 0) {
+            return null;
+        }
+
+        //assert currentFrame >= 0 && currentFrame < numFrames
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            if (currentFrame < middleFrame) {
+                r.x = componentInnards.x
+                      + (int)Math.round(delta * (double)currentFrame);
+            } else {
+                r.x = maxPosition
+                      - (int)Math.round(delta *
+                                        (currentFrame - middleFrame));
+            }
+        } else { //VERTICAL indeterminate progress bar
+            if (currentFrame < middleFrame) {
+                r.y = componentInnards.y
+                      + (int)Math.round(delta * currentFrame);
+            } else {
+                r.y = maxPosition
+                      - (int)Math.round(delta *
+                                        (currentFrame - middleFrame));
+            }
+        }
+        return r;
+!!!2594946.java!!!	updateSizes() : void
+        int length = 0;
+
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            length = getBoxLength(componentInnards.width,
+                                  componentInnards.height);
+            maxPosition = componentInnards.x + componentInnards.width
+                          - length;
+
+        } else { //VERTICAL progress bar
+            length = getBoxLength(componentInnards.height,
+                                  componentInnards.width);
+            maxPosition = componentInnards.y + componentInnards.height
+                          - length;
+        }
+
+        //If we're doing bouncing-box animation, update delta.
+        delta = 2.0 * (double)maxPosition/(double)numFrames;
+!!!2595074.java!!!	getGenericBox(inout r : Rectangle) : Rectangle
+        if (r == null) {
+            r = new Rectangle();
+        }
+
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            r.width = getBoxLength(componentInnards.width,
+                                   componentInnards.height);
+            if (r.width < 0) {
+                r = null;
+            } else {
+                r.height = componentInnards.height;
+                r.y = componentInnards.y;
+            }
+          // end of HORIZONTAL
+
+        } else { //VERTICAL progress bar
+            r.height = getBoxLength(componentInnards.height,
+                                    componentInnards.width);
+            if (r.height < 0) {
+                r = null;
+            } else {
+                r.width = componentInnards.width;
+                r.x = componentInnards.x;
+            }
+        } // end of VERTICAL
+
+        return r;
+!!!2595202.java!!!	getBoxLength(in availableLength : int, in otherDimension : int) : int
+        return (int)Math.round(availableLength/6.0);
+!!!2595330.java!!!	paintIndeterminate(inout g : Graphics, inout c : JComponent) : void
+        if (!(g instanceof Graphics2D)) {
+            return;
+        }
+
+        Insets b = progressBar.getInsets(); // area for border
+        int barRectWidth = progressBar.getWidth() - (b.right + b.left);
+        int barRectHeight = progressBar.getHeight() - (b.top + b.bottom);
+
+        if (barRectWidth <= 0 || barRectHeight <= 0) {
+            return;
+        }
+
+        Graphics2D g2 = (Graphics2D)g;
+
+        // Paint the bouncing box.
+        boxRect = getBox(boxRect);
+        if (boxRect != null) {
+            g2.setColor(progressBar.getForeground());
+            g2.fillRect(boxRect.x, boxRect.y,
+                       boxRect.width, boxRect.height);
+        }
+
+        // Deal with possible text painting
+        if (progressBar.isStringPainted()) {
+            if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+                paintString(g2, b.left, b.top,
+                            barRectWidth, barRectHeight,
+                            boxRect.x, boxRect.width, b);
+            }
+            else {
+                paintString(g2, b.left, b.top,
+                            barRectWidth, barRectHeight,
+                            boxRect.y, boxRect.height, b);
+            }
+        }
+!!!2595458.java!!!	paintDeterminate(inout g : Graphics, inout c : JComponent) : void
+        if (!(g instanceof Graphics2D)) {
+            return;
+        }
+
+        Insets b = progressBar.getInsets(); // area for border
+        int barRectWidth = progressBar.getWidth() - (b.right + b.left);
+        int barRectHeight = progressBar.getHeight() - (b.top + b.bottom);
+
+        if (barRectWidth <= 0 || barRectHeight <= 0) {
+            return;
+        }
+
+        int cellLength = getCellLength();
+        int cellSpacing = getCellSpacing();
+        // amount of progress to draw
+        int amountFull = getAmountFull(b, barRectWidth, barRectHeight);
+
+        Graphics2D g2 = (Graphics2D)g;
+        g2.setColor(progressBar.getForeground());
+
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            // draw the cells
+            if (cellSpacing == 0 && amountFull > 0) {
+                // draw one big Rect because there is no space between cells
+                g2.setStroke(new BasicStroke((float)barRectHeight,
+                        BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL));
+            } else {
+                // draw each individual cell
+                g2.setStroke(new BasicStroke((float)barRectHeight,
+                        BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+                        0.f, new float[] { cellLength, cellSpacing }, 0.f));
+            }
+
+            if (BasicGraphicsUtils.isLeftToRight(c)) {
+                g2.drawLine(b.left, (barRectHeight/2) + b.top,
+                        amountFull + b.left, (barRectHeight/2) + b.top);
+            } else {
+                g2.drawLine((barRectWidth + b.left),
+                        (barRectHeight/2) + b.top,
+                        barRectWidth + b.left - amountFull,
+                        (barRectHeight/2) + b.top);
+            }
+
+        } else { // VERTICAL
+            // draw the cells
+            if (cellSpacing == 0 && amountFull > 0) {
+                // draw one big Rect because there is no space between cells
+                g2.setStroke(new BasicStroke((float)barRectWidth,
+                        BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL));
+            } else {
+                // draw each individual cell
+                g2.setStroke(new BasicStroke((float)barRectWidth,
+                        BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+                        0f, new float[] { cellLength, cellSpacing }, 0f));
+            }
+
+            g2.drawLine(barRectWidth/2 + b.left,
+                    b.top + barRectHeight,
+                    barRectWidth/2 + b.left,
+                    b.top + barRectHeight - amountFull);
+        }
+
+        // Deal with possible text painting
+        if (progressBar.isStringPainted()) {
+            paintString(g, b.left, b.top,
+                        barRectWidth, barRectHeight,
+                        amountFull, b);
+        }
+!!!2595586.java!!!	paintString(inout g : Graphics, in x : int, in y : int, in width : int, in height : int, in amountFull : int, inout b : Insets) : void
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            if (BasicGraphicsUtils.isLeftToRight(progressBar)) {
+                if (progressBar.isIndeterminate()) {
+                    boxRect = getBox(boxRect);
+                    paintString(g, x, y, width, height,
+                            boxRect.x, boxRect.width, b);
+                } else {
+                    paintString(g, x, y, width, height, x, amountFull, b);
+                }
+            }
+            else {
+                paintString(g, x, y, width, height, x + width - amountFull,
+                            amountFull, b);
+            }
+        }
+        else {
+            if (progressBar.isIndeterminate()) {
+                boxRect = getBox(boxRect);
+                paintString(g, x, y, width, height,
+                        boxRect.y, boxRect.height, b);
+            } else {
+                paintString(g, x, y, width, height, y + height - amountFull,
+                        amountFull, b);
+            }
+        }
+!!!2595714.java!!!	paintString(inout g : Graphics, in x : int, in y : int, in width : int, in height : int, in fillStart : int, in amountFull : int, inout b : Insets) : void
+        if (!(g instanceof Graphics2D)) {
+            return;
+        }
+
+        Graphics2D g2 = (Graphics2D)g;
+        String progressString = progressBar.getString();
+        g2.setFont(progressBar.getFont());
+        Point renderLocation = getStringPlacement(g2, progressString,
+                                                  x, y, width, height);
+        Rectangle oldClip = g2.getClipBounds();
+
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            g2.setColor(getSelectionBackground());
+            SwingUtilities2.drawString(progressBar, g2, progressString,
+                                       renderLocation.x, renderLocation.y);
+            g2.setColor(getSelectionForeground());
+            g2.clipRect(fillStart, y, amountFull, height);
+            SwingUtilities2.drawString(progressBar, g2, progressString,
+                                       renderLocation.x, renderLocation.y);
+        } else { // VERTICAL
+            g2.setColor(getSelectionBackground());
+            AffineTransform rotate =
+                    AffineTransform.getRotateInstance(Math.PI/2);
+            g2.setFont(progressBar.getFont().deriveFont(rotate));
+            renderLocation = getStringPlacement(g2, progressString,
+                                                  x, y, width, height);
+            SwingUtilities2.drawString(progressBar, g2, progressString,
+                                       renderLocation.x, renderLocation.y);
+            g2.setColor(getSelectionForeground());
+            g2.clipRect(x, fillStart, width, amountFull);
+            SwingUtilities2.drawString(progressBar, g2, progressString,
+                                       renderLocation.x, renderLocation.y);
+        }
+        g2.setClip(oldClip);
+!!!2595842.java!!!	getStringPlacement(inout g : Graphics, inout progressString : String, in x : int, in y : int, in width : int, in height : int) : Point
+        FontMetrics fontSizer = SwingUtilities2.getFontMetrics(progressBar, g,
+                                            progressBar.getFont());
+        int stringWidth = SwingUtilities2.stringWidth(progressBar, fontSizer,
+                                                      progressString);
+
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            return new Point(x + Math.round(width/2 - stringWidth/2),
+                             y + ((height +
+                                 fontSizer.getAscent() -
+                                 fontSizer.getLeading() -
+                                 fontSizer.getDescent()) / 2));
+        } else { // VERTICAL
+            return new Point(x + ((width - fontSizer.getAscent() +
+                    fontSizer.getLeading() + fontSizer.getDescent()) / 2),
+                    y + Math.round(height/2 - stringWidth/2));
+        }
+!!!2595970.java!!!	getPreferredSize(inout c : JComponent) : Dimension
+        Dimension       size;
+        Insets          border = progressBar.getInsets();
+        FontMetrics     fontSizer = progressBar.getFontMetrics(
+                                                  progressBar.getFont());
+
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            size = new Dimension(getPreferredInnerHorizontal());
+            // Ensure that the progress string will fit
+            if (progressBar.isStringPainted()) {
+                // I'm doing this for completeness.
+                String progString = progressBar.getString();
+                int stringWidth = SwingUtilities2.stringWidth(
+                          progressBar, fontSizer, progString);
+                if (stringWidth > size.width) {
+                    size.width = stringWidth;
+                }
+                // This uses both Height and Descent to be sure that
+                // there is more than enough room in the progress bar
+                // for everything.
+                // This does have a strange dependency on
+                // getStringPlacememnt() in a funny way.
+                int stringHeight = fontSizer.getHeight() +
+                                   fontSizer.getDescent();
+                if (stringHeight > size.height) {
+                    size.height = stringHeight;
+                }
+            }
+        } else {
+            size = new Dimension(getPreferredInnerVertical());
+            // Ensure that the progress string will fit.
+            if (progressBar.isStringPainted()) {
+                String progString = progressBar.getString();
+                int stringHeight = fontSizer.getHeight() +
+                        fontSizer.getDescent();
+                if (stringHeight > size.width) {
+                    size.width = stringHeight;
+                }
+                // This is also for completeness.
+                int stringWidth = SwingUtilities2.stringWidth(
+                                       progressBar, fontSizer, progString);
+                if (stringWidth > size.height) {
+                    size.height = stringWidth;
+                }
+            }
+        }
+
+        size.width += border.left + border.right;
+        size.height += border.top + border.bottom;
+        return size;
+!!!2596098.java!!!	getMinimumSize(inout c : JComponent) : Dimension
+        Dimension pref = getPreferredSize(progressBar);
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            pref.width = 10;
+        } else {
+            pref.height = 10;
+        }
+        return pref;
+!!!2596226.java!!!	getMaximumSize(inout c : JComponent) : Dimension
+        Dimension pref = getPreferredSize(progressBar);
+        if (progressBar.getOrientation() == JProgressBar.HORIZONTAL) {
+            pref.width = Short.MAX_VALUE;
+        } else {
+            pref.height = Short.MAX_VALUE;
+        }
+        return pref;
+!!!2596354.java!!!	getAnimationIndex() : int
+        return animationIndex;
+!!!2596482.java!!!	getFrameCount() : int
+        return numFrames;
+!!!2596610.java!!!	setAnimationIndex(in newValue : int) : void
+        if (animationIndex != newValue) {
+            if (sizeChanged()) {
+                animationIndex = newValue;
+                maxPosition = 0;  //needs to be recalculated
+                delta = 0.0;      //needs to be recalculated
+                progressBar.repaint();
+                return;
+            }
+
+            //Get the previous box drawn.
+            nextPaintRect = getBox(nextPaintRect);
+
+            //Update the frame number.
+            animationIndex = newValue;
+
+            //Get the next box to draw.
+            if (nextPaintRect != null) {
+                boxRect = getBox(boxRect);
+                if (boxRect != null) {
+                    nextPaintRect.add(boxRect);
+                }
+            }
+        } else { //animationIndex == newValue
+            return;
+        }
+
+        if (nextPaintRect != null) {
+            progressBar.repaint(nextPaintRect);
+        } else {
+            progressBar.repaint();
+        }
+!!!2596738.java!!!	sizeChanged() : boolean
+        if ((oldComponentInnards == null) || (componentInnards == null)) {
+            return true;
+        }
+
+        oldComponentInnards.setRect(componentInnards);
+        componentInnards = SwingUtilities.calculateInnerArea(progressBar,
+                                                             componentInnards);
+        return !oldComponentInnards.equals(componentInnards);
+!!!2596866.java!!!	incrementAnimationIndex() : void
+        int newValue = getAnimationIndex() + 1;
+
+        if (newValue < numFrames) {
+            setAnimationIndex(newValue);
+        } else {
+            setAnimationIndex(0);
+        }
+!!!2596994.java!!!	getRepaintInterval() : int
+        return repaintInterval;
+!!!2597122.java!!!	initRepaintInterval() : int
+        repaintInterval = DefaultLookup.getInt(progressBar,
+                this, "ProgressBar.repaintInterval", 50);
+        return repaintInterval;
+!!!2597250.java!!!	getCycleTime() : int
+        return cycleTime;
+!!!2597378.java!!!	initCycleTime() : int
+        cycleTime = DefaultLookup.getInt(progressBar, this,
+                "ProgressBar.cycleTime", 3000);
+        return cycleTime;
+!!!2597506.java!!!	initIndeterminateDefaults() : void
+        initRepaintInterval(); //initialize repaint interval
+        initCycleTime();       //initialize cycle length
+
+        // Make sure repaintInterval is reasonable.
+        if (repaintInterval <= 0) {
+            repaintInterval = 100;
+        }
+
+        // Make sure cycleTime is reasonable.
+        if (repaintInterval > cycleTime) {
+            cycleTime = repaintInterval * 20;
+        } else {
+            // Force cycleTime to be a even multiple of repaintInterval.
+            int factor = (int)Math.ceil(
+                                 ((double)cycleTime)
+                               / ((double)repaintInterval*2));
+            cycleTime = repaintInterval*factor*2;
+        }
+!!!2597634.java!!!	initIndeterminateValues() : void
+        initIndeterminateDefaults();
+        //assert cycleTime/repaintInterval is a whole multiple of 2.
+        numFrames = cycleTime/repaintInterval;
+        initAnimationIndex();
+
+        boxRect = new Rectangle();
+        nextPaintRect = new Rectangle();
+        componentInnards = new Rectangle();
+        oldComponentInnards = new Rectangle();
+
+        // we only bother installing the HierarchyChangeListener if we
+        // are indeterminate
+        progressBar.addHierarchyListener(getHandler());
+
+        // start the animation thread if necessary
+        if (progressBar.isDisplayable()) {
+            startAnimationTimer();
+        }
+!!!2597762.java!!!	cleanUpIndeterminateValues() : void
+        // stop the animation thread if necessary
+        if (progressBar.isDisplayable()) {
+            stopAnimationTimer();
+        }
+
+        cycleTime = repaintInterval = 0;
+        numFrames = animationIndex = 0;
+        maxPosition = 0;
+        delta = 0.0;
+
+        boxRect = nextPaintRect = null;
+        componentInnards = oldComponentInnards = null;
+
+        progressBar.removeHierarchyListener(getHandler());
+!!!2597890.java!!!	initAnimationIndex() : void
+        if ((progressBar.getOrientation() == JProgressBar.HORIZONTAL) &&
+            (BasicGraphicsUtils.isLeftToRight(progressBar))) {
+            // If this is a left-to-right progress bar,
+            // start at the first frame.
+            setAnimationIndex(0);
+        } else {
+            // If we go right-to-left or vertically, start at the right/bottom.
+            setAnimationIndex(numFrames/2);
+        }

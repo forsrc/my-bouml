@@ -1,0 +1,356 @@
+class RTFReader
+!!!11856130.java!!!	RTFReader(inout destination : StyledDocument)
+    int i;
+
+    target = destination;
+    parserState = new Hashtable<Object, Object>();
+    fontTable = new Hashtable<Integer, String>();
+
+    rtfversion = -1;
+
+    mockery = new MockAttributeSet();
+    documentAttributes = new SimpleAttributeSet();
+!!!11856258.java!!!	handleBinaryBlob(inout data : byte [[]]) : void
+    if (skippingCharacters > 0) {
+        /* a blob only counts as one character for skipping purposes */
+        skippingCharacters --;
+        return;
+    }
+
+    /* someday, someone will want to do something with blobs */
+!!!11856386.java!!!	handleText(inout text : String) : void
+    if (skippingCharacters > 0) {
+        if (skippingCharacters >= text.length()) {
+            skippingCharacters -= text.length();
+            return;
+        } else {
+            text = text.substring(skippingCharacters);
+            skippingCharacters = 0;
+        }
+    }
+
+    if (rtfDestination != null) {
+        rtfDestination.handleText(text);
+        return;
+    }
+
+    warning("Text with no destination. oops.");
+!!!11856514.java!!!	defaultColor() : Color
+    return Color.black;
+!!!11856642.java!!!	begingroup() : void
+    if (skippingCharacters > 0) {
+        /* TODO this indicates an error in the RTF. Log it? */
+        skippingCharacters = 0;
+    }
+
+    /* we do this little dance to avoid cloning the entire state stack and
+       immediately throwing it away. */
+    Object oldSaveState = parserState.get("_savedState");
+    if (oldSaveState != null)
+        parserState.remove("_savedState");
+    Dictionary<String, Object> saveState = (Dictionary<String, Object>)((Hashtable)parserState).clone();
+    if (oldSaveState != null)
+        saveState.put("_savedState", oldSaveState);
+    parserState.put("_savedState", saveState);
+
+    if (rtfDestination != null)
+        rtfDestination.begingroup();
+!!!11856770.java!!!	endgroup() : void
+    if (skippingCharacters > 0) {
+        /* NB this indicates an error in the RTF. Log it? */
+        skippingCharacters = 0;
+    }
+
+    Dictionary<Object, Object> restoredState = (Dictionary<Object, Object>)parserState.get("_savedState");
+    Destination restoredDestination = (Destination)restoredState.get("dst");
+    if (restoredDestination != rtfDestination) {
+        rtfDestination.close(); /* allow the destination to clean up */
+        rtfDestination = restoredDestination;
+    }
+    Dictionary oldParserState = parserState;
+    parserState = restoredState;
+    if (rtfDestination != null)
+        rtfDestination.endgroup(oldParserState);
+!!!11856898.java!!!	setRTFDestination(inout newDestination : RTFReader::Destination) : void
+    /* Check that setting the destination won't close the
+       current destination (should never happen) */
+    Dictionary previousState = (Dictionary)parserState.get("_savedState");
+    if (previousState != null) {
+        if (rtfDestination != previousState.get("dst")) {
+            warning("Warning, RTF destination overridden, invalid RTF.");
+            rtfDestination.close();
+        }
+    }
+    rtfDestination = newDestination;
+    parserState.put("dst", rtfDestination);
+!!!11857026.java!!!	close() : void
+    Enumeration docProps = documentAttributes.getAttributeNames();
+    while(docProps.hasMoreElements()) {
+        Object propName = docProps.nextElement();
+        target.putProperty(propName,
+                           documentAttributes.getAttribute(propName));
+    }
+
+    /* RTFParser should have ensured that all our groups are closed */
+
+    warning("RTF filter done.");
+
+    super.close();
+!!!11857154.java!!!	handleKeyword(inout keyword : String) : boolean
+    String item;
+    boolean ignoreGroupIfUnknownKeywordSave = ignoreGroupIfUnknownKeyword;
+
+    if (skippingCharacters > 0) {
+        skippingCharacters --;
+        return true;
+    }
+
+    ignoreGroupIfUnknownKeyword = false;
+
+    if ((item = textKeywords.get(keyword)) != null) {
+        handleText(item);
+        return true;
+    }
+
+    if (keyword.equals("fonttbl")) {
+        setRTFDestination(new FonttblDestination());
+        return true;
+    }
+
+    if (keyword.equals("colortbl")) {
+        setRTFDestination(new ColortblDestination());
+        return true;
+    }
+
+    if (keyword.equals("stylesheet")) {
+        setRTFDestination(new StylesheetDestination());
+        return true;
+    }
+
+    if (keyword.equals("info")) {
+        setRTFDestination(new InfoDestination());
+        return false;
+    }
+
+    if (keyword.equals("mac")) {
+        setCharacterSet("mac");
+        return true;
+    }
+
+    if (keyword.equals("ansi")) {
+        if (useNeXTForAnsi)
+            setCharacterSet("NeXT");
+        else
+            setCharacterSet("ansi");
+        return true;
+    }
+
+    if (keyword.equals("next")) {
+        setCharacterSet("NeXT");
+        return true;
+    }
+
+    if (keyword.equals("pc")) {
+        setCharacterSet("cpg437"); /* IBM Code Page 437 */
+        return true;
+    }
+
+    if (keyword.equals("pca")) {
+        setCharacterSet("cpg850"); /* IBM Code Page 850 */
+        return true;
+    }
+
+    if (keyword.equals("*")) {
+        ignoreGroupIfUnknownKeyword = true;
+        return true;
+    }
+
+    if (rtfDestination != null) {
+        if(rtfDestination.handleKeyword(keyword))
+            return true;
+    }
+
+    /* this point is reached only if the keyword is unrecognized */
+
+    /* other destinations we don't understand and therefore ignore */
+    if (keyword.equals("aftncn") ||
+        keyword.equals("aftnsep") ||
+        keyword.equals("aftnsepc") ||
+        keyword.equals("annotation") ||
+        keyword.equals("atnauthor") ||
+        keyword.equals("atnicn") ||
+        keyword.equals("atnid") ||
+        keyword.equals("atnref") ||
+        keyword.equals("atntime") ||
+        keyword.equals("atrfend") ||
+        keyword.equals("atrfstart") ||
+        keyword.equals("bkmkend") ||
+        keyword.equals("bkmkstart") ||
+        keyword.equals("datafield") ||
+        keyword.equals("do") ||
+        keyword.equals("dptxbxtext") ||
+        keyword.equals("falt") ||
+        keyword.equals("field") ||
+        keyword.equals("file") ||
+        keyword.equals("filetbl") ||
+        keyword.equals("fname") ||
+        keyword.equals("fontemb") ||
+        keyword.equals("fontfile") ||
+        keyword.equals("footer") ||
+        keyword.equals("footerf") ||
+        keyword.equals("footerl") ||
+        keyword.equals("footerr") ||
+        keyword.equals("footnote") ||
+        keyword.equals("ftncn") ||
+        keyword.equals("ftnsep") ||
+        keyword.equals("ftnsepc") ||
+        keyword.equals("header") ||
+        keyword.equals("headerf") ||
+        keyword.equals("headerl") ||
+        keyword.equals("headerr") ||
+        keyword.equals("keycode") ||
+        keyword.equals("nextfile") ||
+        keyword.equals("object") ||
+        keyword.equals("pict") ||
+        keyword.equals("pn") ||
+        keyword.equals("pnseclvl") ||
+        keyword.equals("pntxtb") ||
+        keyword.equals("pntxta") ||
+        keyword.equals("revtbl") ||
+        keyword.equals("rxe") ||
+        keyword.equals("tc") ||
+        keyword.equals("template") ||
+        keyword.equals("txe") ||
+        keyword.equals("xe")) {
+        ignoreGroupIfUnknownKeywordSave = true;
+    }
+
+    if (ignoreGroupIfUnknownKeywordSave) {
+        setRTFDestination(new DiscardingDestination());
+    }
+
+    return false;
+!!!11857282.java!!!	handleKeyword(inout keyword : String, in parameter : int) : boolean
+    boolean ignoreGroupIfUnknownKeywordSave = ignoreGroupIfUnknownKeyword;
+
+    if (skippingCharacters > 0) {
+        skippingCharacters --;
+        return true;
+    }
+
+    ignoreGroupIfUnknownKeyword = false;
+
+    if (keyword.equals("uc")) {
+        /* count of characters to skip after a unicode character */
+        parserState.put("UnicodeSkip", Integer.valueOf(parameter));
+        return true;
+    }
+    if (keyword.equals("u")) {
+        if (parameter < 0)
+            parameter = parameter + 65536;
+        handleText((char)parameter);
+        Number skip = (Number)(parserState.get("UnicodeSkip"));
+        if (skip != null) {
+            skippingCharacters = skip.intValue();
+        } else {
+            skippingCharacters = 1;
+        }
+        return true;
+    }
+
+    if (keyword.equals("rtf")) {
+        rtfversion = parameter;
+        setRTFDestination(new DocumentDestination());
+        return true;
+    }
+
+    if (keyword.startsWith("NeXT") ||
+        keyword.equals("private"))
+        ignoreGroupIfUnknownKeywordSave = true;
+
+    if (rtfDestination != null) {
+        if(rtfDestination.handleKeyword(keyword, parameter))
+            return true;
+    }
+
+    /* this point is reached only if the keyword is unrecognized */
+
+    if (ignoreGroupIfUnknownKeywordSave) {
+        setRTFDestination(new DiscardingDestination());
+    }
+
+    return false;
+!!!11857410.java!!!	setTargetAttribute(inout name : String, inout value : Object) : void
+//    target.changeAttributes(new LFDictionary(LFArray.arrayWithObject(value), LFArray.arrayWithObject(name)));
+!!!11857538.java!!!	setCharacterSet(inout name : String) : void
+    Object set;
+
+    try {
+        set = getCharacterSet(name);
+    } catch (Exception e) {
+        warning("Exception loading RTF character set \"" + name + "\": " + e);
+        set = null;
+    }
+
+    if (set != null) {
+        translationTable = (char[])set;
+    } else {
+        warning("Unknown RTF character set \"" + name + "\"");
+        if (!name.equals("ansi")) {
+            try {
+                translationTable = (char[])getCharacterSet("ansi");
+            } catch (IOException e) {
+                throw new InternalError("RTFReader: Unable to find character set resources (" + e + ")", e);
+            }
+        }
+    }
+
+    setTargetAttribute(Constants.RTFCharacterSet, name);
+!!!11857666.java!!!	defineCharacterSet(inout name : String, inout table : char [[]]) : void
+    if (table.length < 256)
+        throw new IllegalArgumentException("Translation table must have 256 entries.");
+    characterSets.put(name, table);
+!!!11857794.java!!!	getCharacterSet(in name : String) : Object
+    char[] set = characterSets.get(name);
+    if (set == null) {
+        InputStream charsetStream = AccessController.doPrivileged(
+                new PrivilegedAction<InputStream>() {
+                    public InputStream run() {
+                        return RTFReader.class.getResourceAsStream("charsets/" + name + ".txt");
+                    }
+                });
+        set = readCharset(charsetStream);
+        defineCharacterSet(name, set);
+    }
+    return set;
+!!!11857922.java!!!	readCharset(inout strm : InputStream) : char
+    char[] values = new char[256];
+    int i;
+    StreamTokenizer in = new StreamTokenizer(new BufferedReader(
+            new InputStreamReader(strm, "ISO-8859-1")));
+
+    in.eolIsSignificant(false);
+    in.commentChar('#');
+    in.slashSlashComments(true);
+    in.slashStarComments(true);
+
+    i = 0;
+    while (i < 256) {
+        int ttype;
+        try {
+            ttype = in.nextToken();
+        } catch (Exception e) {
+            throw new IOException("Unable to read from character set file (" + e + ")");
+        }
+        if (ttype != in.TT_NUMBER) {
+//          System.out.println("Bad token: type=" + ttype + " tok=" + in.sval);
+            throw new IOException("Unexpected token in character set file");
+//          continue;
+        }
+        values[i] = (char)(in.nval);
+        i++;
+    }
+
+    return values;
+!!!11858050.java!!!	readCharset(inout href : URL) : char
+    return readCharset(href.openStream());

@@ -1,0 +1,102 @@
+class FractionPrinterParser
+!!!8526722.java!!!	FractionPrinterParser(inout field : TemporalField, in minWidth : int, in maxWidth : int, inout decimalPoint : boolean)
+            Objects.requireNonNull(field, "field");
+            if (field.range().isFixed() == false) {
+                throw new IllegalArgumentException("Field must have a fixed set of values: " + field);
+            }
+            if (minWidth < 0 || minWidth > 9) {
+                throw new IllegalArgumentException("Minimum width must be from 0 to 9 inclusive but was " + minWidth);
+            }
+            if (maxWidth < 1 || maxWidth > 9) {
+                throw new IllegalArgumentException("Maximum width must be from 1 to 9 inclusive but was " + maxWidth);
+            }
+            if (maxWidth < minWidth) {
+                throw new IllegalArgumentException("Maximum width must exceed or equal the minimum width but " +
+                        maxWidth + " < " + minWidth);
+            }
+            this.field = field;
+            this.minWidth = minWidth;
+            this.maxWidth = maxWidth;
+            this.decimalPoint = decimalPoint;
+!!!8526850.java!!!	format(inout context : DateTimePrintContext, inout buf : StringBuilder) : boolean
+            Long value = context.getValue(field);
+            if (value == null) {
+                return false;
+            }
+            DecimalStyle decimalStyle = context.getDecimalStyle();
+            BigDecimal fraction = convertToFraction(value);
+            if (fraction.scale() == 0) {  // scale is zero if value is zero
+                if (minWidth > 0) {
+                    if (decimalPoint) {
+                        buf.append(decimalStyle.getDecimalSeparator());
+                    }
+                    for (int i = 0; i < minWidth; i++) {
+                        buf.append(decimalStyle.getZeroDigit());
+                    }
+                }
+            } else {
+                int outputScale = Math.min(Math.max(fraction.scale(), minWidth), maxWidth);
+                fraction = fraction.setScale(outputScale, RoundingMode.FLOOR);
+                String str = fraction.toPlainString().substring(2);
+                str = decimalStyle.convertNumberToI18N(str);
+                if (decimalPoint) {
+                    buf.append(decimalStyle.getDecimalSeparator());
+                }
+                buf.append(str);
+            }
+            return true;
+!!!8526978.java!!!	parse(inout context : DateTimeParseContext, inout text : CharSequence, in position : int) : int
+            int effectiveMin = (context.isStrict() ? minWidth : 0);
+            int effectiveMax = (context.isStrict() ? maxWidth : 9);
+            int length = text.length();
+            if (position == length) {
+                // valid if whole field is optional, invalid if minimum width
+                return (effectiveMin > 0 ? ~position : position);
+            }
+            if (decimalPoint) {
+                if (text.charAt(position) != context.getDecimalStyle().getDecimalSeparator()) {
+                    // valid if whole field is optional, invalid if minimum width
+                    return (effectiveMin > 0 ? ~position : position);
+                }
+                position++;
+            }
+            int minEndPos = position + effectiveMin;
+            if (minEndPos > length) {
+                return ~position;  // need at least min width digits
+            }
+            int maxEndPos = Math.min(position + effectiveMax, length);
+            int total = 0;  // can use int because we are only parsing up to 9 digits
+            int pos = position;
+            while (pos < maxEndPos) {
+                char ch = text.charAt(pos++);
+                int digit = context.getDecimalStyle().convertToDigit(ch);
+                if (digit < 0) {
+                    if (pos < minEndPos) {
+                        return ~position;  // need at least min width digits
+                    }
+                    pos--;
+                    break;
+                }
+                total = total * 10 + digit;
+            }
+            BigDecimal fraction = new BigDecimal(total).movePointLeft(pos - position);
+            long value = convertFromFraction(fraction);
+            return context.setParsedField(field, value, position, pos);
+!!!8527106.java!!!	convertToFraction(in value : long) : BigDecimal
+            ValueRange range = field.range();
+            range.checkValidValue(value, field);
+            BigDecimal minBD = BigDecimal.valueOf(range.getMinimum());
+            BigDecimal rangeBD = BigDecimal.valueOf(range.getMaximum()).subtract(minBD).add(BigDecimal.ONE);
+            BigDecimal valueBD = BigDecimal.valueOf(value).subtract(minBD);
+            BigDecimal fraction = valueBD.divide(rangeBD, 9, RoundingMode.FLOOR);
+            // stripTrailingZeros bug
+            return fraction.compareTo(BigDecimal.ZERO) == 0 ? BigDecimal.ZERO : fraction.stripTrailingZeros();
+!!!8527234.java!!!	convertFromFraction(inout fraction : BigDecimal) : long
+            ValueRange range = field.range();
+            BigDecimal minBD = BigDecimal.valueOf(range.getMinimum());
+            BigDecimal rangeBD = BigDecimal.valueOf(range.getMaximum()).subtract(minBD).add(BigDecimal.ONE);
+            BigDecimal valueBD = fraction.multiply(rangeBD).setScale(0, RoundingMode.FLOOR).add(minBD);
+            return valueBD.longValueExact();
+!!!8527362.java!!!	toString() : String
+            String decimal = (decimalPoint ? ",DecimalPoint" : "");
+            return "Fraction(" + field + "," + minWidth + "," + maxWidth + decimal + ")";

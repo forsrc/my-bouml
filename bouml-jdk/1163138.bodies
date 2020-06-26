@@ -1,0 +1,37 @@
+class OfRef
+!!!9568258.java!!!	OfRef(inout upstream : AbstractPipeline)
+            super(upstream, StreamShape.REFERENCE,
+                  StreamOpFlag.IS_ORDERED | StreamOpFlag.IS_SORTED);
+            this.isNaturalSort = true;
+            // Will throw CCE when we try to sort if T is not Comparable
+            @SuppressWarnings("unchecked")
+            Comparator<? super T> comp = (Comparator<? super T>) Comparator.naturalOrder();
+            this.comparator = comp;
+!!!9568386.java!!!	OfRef(inout upstream : AbstractPipeline, inout comparator : Comparator)
+            super(upstream, StreamShape.REFERENCE,
+                  StreamOpFlag.IS_ORDERED | StreamOpFlag.NOT_SORTED);
+            this.isNaturalSort = false;
+            this.comparator = Objects.requireNonNull(comparator);
+!!!9568514.java!!!	opWrapSink(in flags : int, inout sink : Sink) : Sink
+            Objects.requireNonNull(sink);
+
+            // If the input is already naturally sorted and this operation
+            // also naturally sorted then this is a no-op
+            if (StreamOpFlag.SORTED.isKnown(flags) && isNaturalSort)
+                return sink;
+            else if (StreamOpFlag.SIZED.isKnown(flags))
+                return new SizedRefSortingSink<>(sink, comparator);
+            else
+                return new RefSortingSink<>(sink, comparator);
+!!!9568642.java!!!	opEvaluateParallel(inout helper : PipelineHelper, inout spliterator : Spliterator, inout generator : IntFunction) : Node
+            // If the input is already naturally sorted and this operation
+            // naturally sorts then collect the output
+            if (StreamOpFlag.SORTED.isKnown(helper.getStreamAndOpFlags()) && isNaturalSort) {
+                return helper.evaluate(spliterator, false, generator);
+            }
+            else {
+                // @@@ Weak two-pass parallel implementation; parallel collect, parallel sort
+                T[] flattenedData = helper.evaluate(spliterator, true, generator).asArray(generator);
+                Arrays.parallelSort(flattenedData, comparator);
+                return Nodes.node(flattenedData);
+            }

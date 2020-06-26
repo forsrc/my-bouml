@@ -1,0 +1,114 @@
+class WithParam
+!!!3812354.java!!!	display(in indent : int) : void
+        indent(indent);
+        Util.println("with-param " + _name);
+        if (_select != null) {
+            indent(indent + IndentIncrement);
+            Util.println("select " + _select.toString());
+        }
+        displayContents(indent + IndentIncrement);
+!!!3812482.java!!!	getEscapedName() : String
+        return _escapedName;
+!!!3812610.java!!!	getName() : QName
+        return _name;
+!!!3812738.java!!!	setName(inout name : QName) : void
+        _name = name;
+        _escapedName = Util.escape(name.getStringRep());
+!!!3812866.java!!!	setDoParameterOptimization(inout flag : boolean) : void
+        _doParameterOptimization = flag;
+!!!3812994.java!!!	parseContents(inout parser : Parser) : void
+        final String name = getAttribute("name");
+        if (name.length() > 0) {
+            if (!XML11Char.isXML11ValidQName(name)) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.INVALID_QNAME_ERR, name,
+                                            this);
+                parser.reportError(Constants.ERROR, err);
+            }
+            setName(parser.getQNameIgnoreDefaultNs(name));
+        }
+        else {
+            reportError(this, parser, ErrorMsg.REQUIRED_ATTR_ERR, "name");
+        }
+
+        final String select = getAttribute("select");
+        if (select.length() > 0) {
+            _select = parser.parseExpression(this, "select", null);
+        }
+
+        parseChildren(parser);
+!!!3813122.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        if (_select != null) {
+            final Type tselect = _select.typeCheck(stable);
+            if (tselect instanceof ReferenceType == false) {
+                _select = new CastExpr(_select, Type.Reference);
+            }
+        }
+        else {
+            typeCheckContents(stable);
+        }
+        return Type.Void;
+!!!3813250.java!!!	translateValue(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        // Compile expression is 'select' attribute if present
+        if (_select != null) {
+            _select.translate(classGen, methodGen);
+            _select.startIterator(classGen, methodGen);
+        }
+        // If not, compile result tree from parameter body if present.
+        // Store result tree into local variable for releasing it later
+        else if (hasContents()) {
+            final InstructionList il = methodGen.getInstructionList();
+            compileResultTree(classGen, methodGen);
+            _domAdapter = methodGen.addLocalVariable2("@" + _escapedName, Type.ResultTree.toJCType(), il.getEnd());
+            il.append(DUP);
+            il.append(new ASTORE(_domAdapter.getIndex()));
+        }
+        // If neither are present then store empty string in parameter slot
+        else {
+            final ConstantPoolGen cpg = classGen.getConstantPool();
+            final InstructionList il = methodGen.getInstructionList();
+            il.append(new PUSH(cpg, Constants.EMPTYSTRING));
+        }
+!!!3813378.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+
+        // Translate the value and put it on the stack
+        if (_doParameterOptimization) {
+            translateValue(classGen, methodGen);
+            return;
+        }
+
+        // Make name acceptable for use as field name in class
+        String name = Util.escape(getEscapedName());
+
+        // Load reference to the translet (method is in AbstractTranslet)
+        il.append(classGen.loadTranslet());
+
+        // Load the name of the parameter
+        il.append(new PUSH(cpg, name)); // TODO: namespace ?
+        // Generete the value of the parameter (use value in 'select' by def.)
+        translateValue(classGen, methodGen);
+        // Mark this parameter value is not being the default value
+        il.append(new PUSH(cpg, false));
+        // Pass the parameter to the template
+        il.append(new INVOKEVIRTUAL(cpg.addMethodref(TRANSLET_CLASS,
+                                                     ADD_PARAMETER,
+                                                     ADD_PARAMETER_SIG)));
+        il.append(POP); // cleanup stack
+!!!3813506.java!!!	releaseResultTree(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        if (_domAdapter != null) {
+            final ConstantPoolGen cpg = classGen.getConstantPool();
+            final InstructionList il = methodGen.getInstructionList();
+            if (classGen.getStylesheet().callsNodeset() && classGen.getDOMClass().equals(MULTI_DOM_CLASS)) {
+                final int removeDA = cpg.addMethodref(MULTI_DOM_CLASS, "removeDOMAdapter", "(" + DOM_ADAPTER_SIG + ")V");
+                il.append(methodGen.loadDOM());
+                il.append(new CHECKCAST(cpg.addClass(MULTI_DOM_CLASS)));
+                il.append(new ALOAD(_domAdapter.getIndex()));
+                il.append(new CHECKCAST(cpg.addClass(DOM_ADAPTER_CLASS)));
+                il.append(new INVOKEVIRTUAL(removeDA));
+            }
+            final int release = cpg.addInterfaceMethodref(DOM_IMPL_CLASS, "release", "()V");
+            il.append(new ALOAD(_domAdapter.getIndex()));
+            il.append(new INVOKEINTERFACE(release, 1));
+            _domAdapter = null;
+         }

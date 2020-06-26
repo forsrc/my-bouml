@@ -1,0 +1,168 @@
+class SoftReferenceGrammarPool
+!!!4958850.java!!!	SoftReferenceGrammarPool()
+        fGrammars = new Entry[TABLE_SIZE];
+        fPoolIsLocked = false;
+!!!4958978.java!!!	SoftReferenceGrammarPool(in initialCapacity : int)
+        fGrammars = new Entry[initialCapacity];
+        fPoolIsLocked = false;
+!!!4959106.java!!!	retrieveInitialGrammarSet(inout grammarType : String) : Grammar
+        synchronized (fGrammars) {
+            clean();
+            // Return no grammars. This allows the garbage collector to sift
+            // out grammars which are not in use when memory demand is high.
+            // It also allows the pool to return the "right" schema grammar
+            // based on schema locations.
+            return ZERO_LENGTH_GRAMMAR_ARRAY;
+        }
+!!!4959234.java!!!	cacheGrammars(inout grammarType : String, inout grammars : Grammar [[]]) : void
+        if (!fPoolIsLocked) {
+            for (int i = 0; i < grammars.length; ++i) {
+                putGrammar(grammars[i]);
+            }
+        }
+!!!4959362.java!!!	retrieveGrammar(inout desc : XMLGrammarDescription) : Grammar
+        return getGrammar(desc);
+!!!4959490.java!!!	putGrammar(inout grammar : Grammar) : void
+        if (!fPoolIsLocked) {
+            synchronized (fGrammars) {
+                clean();
+                XMLGrammarDescription desc = grammar.getGrammarDescription();
+                int hash = hashCode(desc);
+                int index = (hash & 0x7FFFFFFF) % fGrammars.length;
+                for (Entry entry = fGrammars[index]; entry != null; entry = entry.next) {
+                    if (entry.hash == hash && equals(entry.desc, desc)) {
+                        if (entry.grammar.get() != grammar) {
+                            entry.grammar = new SoftGrammarReference(entry, grammar, fReferenceQueue);
+                        }
+                        return;
+                    }
+                }
+                // create a new entry
+                Entry entry = new Entry(hash, index, desc, grammar, fGrammars[index], fReferenceQueue);
+                fGrammars[index] = entry;
+                fGrammarCount++;
+            }
+        }
+!!!4959618.java!!!	getGrammar(inout desc : XMLGrammarDescription) : Grammar
+        synchronized (fGrammars) {
+            clean();
+            int hash = hashCode(desc);
+            int index = (hash & 0x7FFFFFFF) % fGrammars.length;
+            for (Entry entry = fGrammars[index]; entry != null; entry = entry.next) {
+                Grammar tempGrammar = (Grammar) entry.grammar.get();
+                /** If the soft reference has been cleared, remove this entry from the pool. */
+                if (tempGrammar == null) {
+                    removeEntry(entry);
+                }
+                else if ((entry.hash == hash) && equals(entry.desc, desc)) {
+                    return tempGrammar;
+                }
+            }
+            return null;
+        }
+!!!4959746.java!!!	removeGrammar(inout desc : XMLGrammarDescription) : Grammar
+        synchronized (fGrammars) {
+            clean();
+            int hash = hashCode(desc);
+            int index = (hash & 0x7FFFFFFF) % fGrammars.length;
+            for (Entry entry = fGrammars[index]; entry != null; entry = entry.next) {
+                if ((entry.hash == hash) && equals(entry.desc, desc)) {
+                    return removeEntry(entry);
+                }
+            }
+            return null;
+        }
+!!!4959874.java!!!	containsGrammar(inout desc : XMLGrammarDescription) : boolean
+        synchronized (fGrammars) {
+            clean();
+            int hash = hashCode(desc);
+            int index = (hash & 0x7FFFFFFF) % fGrammars.length;
+            for (Entry entry = fGrammars[index]; entry != null ; entry = entry.next) {
+                Grammar tempGrammar = (Grammar) entry.grammar.get();
+                /** If the soft reference has been cleared, remove this entry from the pool. */
+                if (tempGrammar == null) {
+                    removeEntry(entry);
+                }
+                else if ((entry.hash == hash) && equals(entry.desc, desc)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+!!!4960002.java!!!	lockPool() : void
+        fPoolIsLocked = true;
+!!!4960130.java!!!	unlockPool() : void
+        fPoolIsLocked = false;
+!!!4960258.java!!!	clear() : void
+        for (int i=0; i<fGrammars.length; i++) {
+            if(fGrammars[i] != null) {
+                fGrammars[i].clear();
+                fGrammars[i] = null;
+            }
+        }
+        fGrammarCount = 0;
+!!!4960386.java!!!	equals(inout desc1 : XMLGrammarDescription, inout desc2 : XMLGrammarDescription) : boolean
+        if (desc1 instanceof XMLSchemaDescription) {
+            if (!(desc2 instanceof XMLSchemaDescription)) {
+                return false;
+            }
+            final XMLSchemaDescription sd1 = (XMLSchemaDescription) desc1;
+            final XMLSchemaDescription sd2 = (XMLSchemaDescription) desc2;
+            final String targetNamespace = sd1.getTargetNamespace();
+            if (targetNamespace != null) {
+                if (!targetNamespace.equals(sd2.getTargetNamespace())) {
+                    return false;
+                }
+            }
+            else if (sd2.getTargetNamespace() != null) {
+                return false;
+            }
+            // The JAXP 1.3 spec says that the implementation can assume that
+            // if two schema location hints are the same they always resolve
+            // to the same document. In the default grammar pool implementation
+            // we only look at the target namespaces. Here we also compare
+            // location hints.
+            final String expandedSystemId = sd1.getExpandedSystemId();
+            if (expandedSystemId != null) {
+                if (!expandedSystemId.equals(sd2.getExpandedSystemId())) {
+                    return false;
+                }
+            }
+            else if (sd2.getExpandedSystemId() != null) {
+                return false;
+            }
+            return true;
+        }
+        return desc1.equals(desc2);
+!!!4960514.java!!!	hashCode(inout desc : XMLGrammarDescription) : int
+        if (desc instanceof XMLSchemaDescription) {
+            final XMLSchemaDescription sd = (XMLSchemaDescription) desc;
+            final String targetNamespace = sd.getTargetNamespace();
+            final String expandedSystemId = sd.getExpandedSystemId();
+            int hash = (targetNamespace != null) ? targetNamespace.hashCode() : 0;
+            hash ^= (expandedSystemId != null) ? expandedSystemId.hashCode() : 0;
+            return hash;
+        }
+        return desc.hashCode();
+!!!4960642.java!!!	removeEntry(inout entry : SoftReferenceGrammarPool::Entry) : Grammar
+        if (entry.prev != null) {
+            entry.prev.next = entry.next;
+        }
+        else {
+            fGrammars[entry.bucket] = entry.next;
+        }
+        if (entry.next != null) {
+            entry.next.prev = entry.prev;
+        }
+        --fGrammarCount;
+        entry.grammar.entry = null;
+        return (Grammar) entry.grammar.get();
+!!!4960770.java!!!	clean() : void
+        Reference ref = fReferenceQueue.poll();
+        while (ref != null) {
+            Entry entry = ((SoftGrammarReference) ref).entry;
+            if (entry != null) {
+                removeEntry(entry);
+            }
+            ref = fReferenceQueue.poll();
+        }

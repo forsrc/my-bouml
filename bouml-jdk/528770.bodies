@@ -1,0 +1,125 @@
+class SnmpSendServer
+!!!3228674.java!!!	SnmpSendServer(inout grp : ThreadGroup, inout q : SnmpQManager)
+        super(grp, "SnmpSendServer");
+        snmpq = q;
+        start();
+!!!3228802.java!!!	stopSendServer() : void
+
+        if (isAlive()) {
+            interrupt();
+            try {
+                // Wait until the thread die.
+                //
+                join();
+            } catch (InterruptedException e) {
+                // Ignore...
+            }
+        }
+!!!3228930.java!!!	run() : void
+        Thread.currentThread().setPriority(Thread.NORM_PRIORITY);
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpSendServer.class.getName(),
+                    "run", "Thread Started");
+        }
+        while (true) {
+            try {
+                prepareAndSendRequest();
+                if (isBeingDestroyed == true) {
+                    break;
+                }
+            } catch (Exception anye) {
+                if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpSendServer.class.getName(),
+                            "run", "Exception in send server", anye);
+                }
+            } catch (ThreadDeath td) {
+                // This is not good but Netscape does kill all threads when
+                // the pagecontext changes.
+                if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpSendServer.class.getName(),
+                            "run", "Exiting... Fatal error");
+                }
+                throw td;
+            } catch (OutOfMemoryError ome) {
+                if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpSendServer.class.getName(),
+                            "run", "Out of memory");
+                }
+            } catch (Error err) {
+                if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                    SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpSendServer.class.getName(),
+                            "run", "Got unexpected error", err);
+                }
+                throw err;
+            }
+        }
+!!!3229058.java!!!	prepareAndSendRequest() : void
+
+        if (readyPool == null || readyPool.isEmpty()) {
+            // wait to be signaled by the an active request.
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpSendServer.class.getName(),
+                    "prepareAndSendRequest", "Blocking for inform requests");
+            }
+            readyPool = snmpq.getAllOutstandingRequest(intervalRange) ;
+            if (isBeingDestroyed == true)
+                return;
+        } else {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpSendServer.class.getName(),
+                    "prepareAndSendRequest", "Inform requests from a previous block left unprocessed. Will try again");
+            }
+        }
+
+        if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+            SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpSendServer.class.getName(),
+                "prepareAndSendRequest", "List of inform requests to send : " + reqListToString(readyPool));
+        }
+
+        synchronized(this) {
+            if (readyPool.size() < 2) {
+                // Fire all requests as independent requests.
+                fireRequestList(readyPool) ;
+                return ;
+            }
+
+            while (!readyPool.isEmpty()) {
+                SnmpInformRequest req = readyPool.lastElement() ;
+                if (req != null && req.inProgress()) {
+                    fireRequest(req) ;
+                }
+                readyPool.removeElementAt(readyPool.size() - 1) ;
+            }
+            readyPool.removeAllElements() ;
+        }
+!!!3229186.java!!!	fireRequest(inout req : SnmpInformRequest) : void
+        if (req != null && req.inProgress()) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINER)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINER, SnmpSendServer.class.getName(),
+                        "fireRequest", "Firing inform request directly. -> " + req.getRequestId());
+            }
+            req.action();
+        }
+!!!3229314.java!!!	fireRequestList(inout reqList : Vector) : void
+        // Fire all requests as independent requests.
+        while (!reqList.isEmpty()) {
+            SnmpInformRequest req = reqList.lastElement() ;
+            if (req != null && req.inProgress())
+                fireRequest(req) ;
+            reqList.removeElementAt(reqList.size() - 1) ;
+        }
+!!!3229442.java!!!	reqListToString(inout vec : Vector) : String
+        StringBuilder s = new StringBuilder(vec.size() * 100);
+
+        Enumeration<SnmpInformRequest> dbge = vec.elements();
+        while (dbge.hasMoreElements()) {
+            SnmpInformRequest reqc = dbge.nextElement();
+            s.append("InformRequestId -> ");
+            s.append(reqc.getRequestId());
+            s.append(" / Destination -> ");
+            s.append(reqc.getAddress());
+            s.append(". ");
+        }
+        String str = s.toString();
+        return str;

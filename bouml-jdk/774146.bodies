@@ -1,0 +1,169 @@
+class SignedInfo
+!!!5446274.java!!!	SignedInfo(inout doc : Document)
+        this(doc, XMLSignature.ALGO_ID_SIGNATURE_DSA,
+             Canonicalizer.ALGO_ID_C14N_OMIT_COMMENTS);
+!!!5446402.java!!!	SignedInfo(inout doc : Document, inout signatureMethodURI : String, inout canonicalizationMethodURI : String)
+        this(doc, signatureMethodURI, 0, canonicalizationMethodURI);
+!!!5446530.java!!!	SignedInfo(inout doc : Document, inout signatureMethodURI : String, in hMACOutputLength : int, inout canonicalizationMethodURI : String)
+        super(doc);
+
+        c14nMethod =
+            XMLUtils.createElementInSignatureSpace(this.doc, Constants._TAG_CANONICALIZATIONMETHOD);
+
+        c14nMethod.setAttributeNS(null, Constants._ATT_ALGORITHM, canonicalizationMethodURI);
+        this.constructionElement.appendChild(c14nMethod);
+        XMLUtils.addReturnToElement(this.constructionElement);
+
+        if (hMACOutputLength > 0) {
+            this.signatureAlgorithm =
+                new SignatureAlgorithm(this.doc, signatureMethodURI, hMACOutputLength);
+        } else {
+            this.signatureAlgorithm = new SignatureAlgorithm(this.doc, signatureMethodURI);
+        }
+
+        signatureMethod = this.signatureAlgorithm.getElement();
+        this.constructionElement.appendChild(signatureMethod);
+        XMLUtils.addReturnToElement(this.constructionElement);
+!!!5446658.java!!!	SignedInfo(inout doc : Document, inout signatureMethodElem : Element, inout canonicalizationMethodElem : Element)
+        super(doc);
+        // Check this?
+        this.c14nMethod = canonicalizationMethodElem;
+        this.constructionElement.appendChild(c14nMethod);
+        XMLUtils.addReturnToElement(this.constructionElement);
+
+        this.signatureAlgorithm =
+            new SignatureAlgorithm(signatureMethodElem, null);
+
+        signatureMethod = this.signatureAlgorithm.getElement();
+        this.constructionElement.appendChild(signatureMethod);
+
+        XMLUtils.addReturnToElement(this.constructionElement);
+!!!5446786.java!!!	SignedInfo(inout element : Element, inout baseURI : String)
+        this(element, baseURI, false);
+!!!5446914.java!!!	SignedInfo(inout element : Element, inout baseURI : String, inout secureValidation : boolean)
+        // Parse the Reference children and Id attribute in the Manifest
+        super(reparseSignedInfoElem(element), baseURI, secureValidation);
+
+        c14nMethod = XMLUtils.getNextElement(element.getFirstChild());
+        signatureMethod = XMLUtils.getNextElement(c14nMethod.getNextSibling());
+        this.signatureAlgorithm =
+            new SignatureAlgorithm(signatureMethod, this.getBaseURI(), secureValidation);
+!!!5447042.java!!!	reparseSignedInfoElem(inout element : Element) : Element
+        /*
+         * If a custom canonicalizationMethod is used, canonicalize
+         * ds:SignedInfo, reparse it into a new document
+         * and replace the original not-canonicalized ds:SignedInfo by
+         * the re-parsed canonicalized one.
+         */
+        Element c14nMethod = XMLUtils.getNextElement(element.getFirstChild());
+        String c14nMethodURI =
+            c14nMethod.getAttributeNS(null, Constants._ATT_ALGORITHM);
+        if (!(c14nMethodURI.equals(Canonicalizer.ALGO_ID_C14N_OMIT_COMMENTS) ||
+            c14nMethodURI.equals(Canonicalizer.ALGO_ID_C14N_WITH_COMMENTS) ||
+            c14nMethodURI.equals(Canonicalizer.ALGO_ID_C14N_EXCL_OMIT_COMMENTS) ||
+            c14nMethodURI.equals(Canonicalizer.ALGO_ID_C14N_EXCL_WITH_COMMENTS) ||
+            c14nMethodURI.equals(Canonicalizer.ALGO_ID_C14N11_OMIT_COMMENTS) ||
+            c14nMethodURI.equals(Canonicalizer.ALGO_ID_C14N11_WITH_COMMENTS))) {
+            // the c14n is not a secure one and can rewrite the URIs or like
+            // so reparse the SignedInfo to be sure
+            try {
+                Canonicalizer c14nizer =
+                    Canonicalizer.getInstance(c14nMethodURI);
+
+                byte[] c14nizedBytes = c14nizer.canonicalizeSubtree(element);
+                javax.xml.parsers.DocumentBuilderFactory dbf =
+                    javax.xml.parsers.DocumentBuilderFactory.newInstance();
+                dbf.setNamespaceAware(true);
+                dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, Boolean.TRUE);
+                javax.xml.parsers.DocumentBuilder db = dbf.newDocumentBuilder();
+                Document newdoc =
+                    db.parse(new ByteArrayInputStream(c14nizedBytes));
+                Node imported =
+                    element.getOwnerDocument().importNode(newdoc.getDocumentElement(), true);
+
+                element.getParentNode().replaceChild(imported, element);
+
+                return (Element) imported;
+            } catch (ParserConfigurationException ex) {
+                throw new XMLSecurityException("empty", ex);
+            } catch (IOException ex) {
+                throw new XMLSecurityException("empty", ex);
+            } catch (SAXException ex) {
+                throw new XMLSecurityException("empty", ex);
+            }
+        }
+        return element;
+!!!5447170.java!!!	verify() : boolean
+        return super.verifyReferences(false);
+!!!5447298.java!!!	verify(inout followManifests : boolean) : boolean
+        return super.verifyReferences(followManifests);
+!!!5447426.java!!!	getCanonicalizedOctetStream() : byte
+        if (this.c14nizedBytes == null) {
+            Canonicalizer c14nizer =
+                Canonicalizer.getInstance(this.getCanonicalizationMethodURI());
+
+            this.c14nizedBytes =
+                c14nizer.canonicalizeSubtree(this.constructionElement);
+        }
+
+        // make defensive copy
+        return this.c14nizedBytes.clone();
+!!!5447554.java!!!	signInOctetStream(inout os : OutputStream) : void
+        if (this.c14nizedBytes == null) {
+            Canonicalizer c14nizer =
+                Canonicalizer.getInstance(this.getCanonicalizationMethodURI());
+            c14nizer.setWriter(os);
+            String inclusiveNamespaces = this.getInclusiveNamespaces();
+
+            if (inclusiveNamespaces == null) {
+                c14nizer.canonicalizeSubtree(this.constructionElement);
+            } else {
+                c14nizer.canonicalizeSubtree(this.constructionElement, inclusiveNamespaces);
+            }
+        } else {
+            try {
+                os.write(this.c14nizedBytes);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+!!!5447682.java!!!	getCanonicalizationMethodURI() : String
+        return c14nMethod.getAttributeNS(null, Constants._ATT_ALGORITHM);
+!!!5447810.java!!!	getSignatureMethodURI() : String
+        Element signatureElement = this.getSignatureMethodElement();
+
+        if (signatureElement != null) {
+            return signatureElement.getAttributeNS(null, Constants._ATT_ALGORITHM);
+        }
+
+        return null;
+!!!5447938.java!!!	getSignatureMethodElement() : Element
+        return signatureMethod;
+!!!5448066.java!!!	createSecretKey(inout secretKeyBytes : byte [[]]) : SecretKey
+        return new SecretKeySpec(secretKeyBytes, this.signatureAlgorithm.getJCEAlgorithmString());
+!!!5448194.java!!!	getSignatureAlgorithm() : SignatureAlgorithm
+        return signatureAlgorithm;
+!!!5448322.java!!!	getBaseLocalName() : String
+        return Constants._TAG_SIGNEDINFO;
+!!!5448450.java!!!	getInclusiveNamespaces() : String
+        String c14nMethodURI = c14nMethod.getAttributeNS(null, Constants._ATT_ALGORITHM);
+        if (!(c14nMethodURI.equals("http://www.w3.org/2001/10/xml-exc-c14n#") ||
+            c14nMethodURI.equals("http://www.w3.org/2001/10/xml-exc-c14n#WithComments"))) {
+            return null;
+        }
+
+        Element inclusiveElement = XMLUtils.getNextElement(c14nMethod.getFirstChild());
+
+        if (inclusiveElement != null) {
+            try {
+                String inclusiveNamespaces =
+                    new InclusiveNamespaces(
+                        inclusiveElement,
+                        InclusiveNamespaces.ExclusiveCanonicalizationNamespace
+                    ).getInclusiveNamespaces();
+                return inclusiveNamespaces;
+            } catch (XMLSecurityException e) {
+                return null;
+            }
+        }
+        return null;

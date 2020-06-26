@@ -1,0 +1,105 @@
+class ByteBufferPoolImpl
+!!!1431938.java!!!	ByteBufferPoolImpl(inout theORB : ORB)
+        itsByteBufferSize = theORB.getORBData().getGIOPFragmentSize();
+        itsPool = new ArrayList();
+        itsOrb = theORB;
+        debug = theORB.transportDebugFlag;
+!!!1432066.java!!!	getByteBuffer(in theAskSize : int) : ByteBuffer
+        ByteBuffer abb = null;
+
+        if ((theAskSize <= itsByteBufferSize) &&
+            !itsOrb.getORBData().disableDirectByteBufferUse())
+        {
+            // check if there's one in the pool, if not allocate one.
+            int poolSize;
+            synchronized (itsPool)
+            {
+                poolSize = itsPool.size();
+                if (poolSize > 0)
+                {
+                    abb = (ByteBuffer)itsPool.remove(poolSize - 1);
+
+                    // clear ByteBuffer before returning it
+                    abb.clear();
+                }
+            }
+
+            // NOTE: Moved the 'else' part of the above if statement
+            //       outside the synchronized block since it is likely
+            //       less expensive to check poolSize than to allocate a
+            //       DirectByteBuffer in the synchronized block.
+            if (poolSize <= 0)
+            {
+                abb = ByteBuffer.allocateDirect(itsByteBufferSize);
+            }
+
+            // increment the number of ByteBuffers gotten from pool
+            // IMPORTANT: Since this counter is used only for information
+            //            purposes, it does not use synchronized access.
+            itsObjectCounter++;
+        }
+        else
+        {
+            // Requested ByteBuffer size larger than the pool manages.
+            // Just allocate a non-direct ByteBuffer
+            abb = ByteBuffer.allocate(theAskSize);
+        }
+
+        return abb;
+!!!1432194.java!!!	releaseByteBuffer(inout thebb : ByteBuffer) : void
+        if (thebb.isDirect())
+        {
+            synchronized (itsPool)
+            {
+                // use with debug to determine if byteBuffer is already
+                // in the pool.
+                boolean refInPool = false;
+                int bbAddr = 0;
+
+                if (debug)
+                {
+                    // Check to make sure we don't have 'thebb' reference
+                    // already in the pool before adding it.
+
+                    for (int i = 0; i < itsPool.size() && refInPool == false; i++)
+                    {
+                         ByteBuffer tmpbb = (ByteBuffer)itsPool.get(i);
+                         if (thebb == tmpbb)
+                         {
+                             refInPool = true;
+                             bbAddr = System.identityHashCode(thebb);
+                         }
+                    }
+
+                }
+
+                // NOTE: The else part of this if will only get called
+                //       if debug = true and refInPool = true, see logic above.
+                if (refInPool == false || debug == false)
+                {
+                    // add ByteBuffer back to the pool
+                    itsPool.add(thebb);
+                }
+                else // otherwise, log a stack trace with duplicate message
+                {
+                    String threadName = Thread.currentThread().getName();
+                    Throwable t =
+                            new Throwable(threadName +
+                                         ": Duplicate ByteBuffer reference (" +
+                                         bbAddr + ")");
+                    t.printStackTrace(System.out);
+                }
+            }
+
+            // decrement the count of ByteBuffers released
+            // IMPORTANT: Since this counter is used only for information
+            //            purposes, it does not use synchronized access.
+            itsObjectCounter--;
+        }
+        else
+        {
+            // ByteBuffer not pooled nor needed
+            thebb = null;
+        }
+!!!1432322.java!!!	activeCount() : int
+         return itsObjectCounter;

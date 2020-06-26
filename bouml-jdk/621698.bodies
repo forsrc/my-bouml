@@ -1,0 +1,147 @@
+class DocumentCache
+!!!3968002.java!!!	DocumentCache(in size : int)
+        this(size, null);
+        try {
+            _dtmManager = XSLTCDTMManager.createNewDTMManagerInstance();
+        } catch (Exception e) {
+            throw new SAXException(e);
+        }
+!!!3968130.java!!!	DocumentCache(in size : int, inout dtmManager : XSLTCDTMManager)
+        _dtmManager = dtmManager;
+        _count = 0;
+        _current = 0;
+        _size  = size;
+        _references = new HashMap<>(_size+2);
+        _URIs = new String[_size];
+
+        try {
+            // Create a SAX parser and get the XMLReader object it uses
+            final SAXParserFactory factory = SAXParserFactory.newInstance();
+            try {
+                factory.setFeature(Constants.NAMESPACE_FEATURE,true);
+            }
+            catch (Exception e) {
+                factory.setNamespaceAware(true);
+            }
+            _parser = factory.newSAXParser();
+            _reader = _parser.getXMLReader();
+        }
+        catch (ParserConfigurationException e) {
+            BasisLibrary.runTimeError(BasisLibrary.NAMESPACES_SUPPORT_ERR);
+        }
+!!!3968258.java!!!	getLastModified(inout uri : String) : long
+        try {
+            URL url = new URL(uri);
+            URLConnection connection = url.openConnection();
+            long timestamp = connection.getLastModified();
+            // Check for a "file:" URI (courtesy of Brian Ewins)
+            if (timestamp == 0){ // get 0 for local URI
+                if ("file".equals(url.getProtocol())){
+                    File localfile = new File(URLDecoder.decode(url.getFile()));
+                    timestamp = localfile.lastModified();
+                }
+            }
+            return(timestamp);
+        }
+        // Brutal handling of all exceptions
+        catch (Exception e) {
+            return(System.currentTimeMillis());
+        }
+!!!3968386.java!!!	lookupDocument(inout uri : String) : DocumentCache::CachedDocument
+        return(_references.get(uri));
+!!!3968514.java!!!	insertDocument(inout uri : String, inout doc : DocumentCache::CachedDocument) : void
+        if (_count < _size) {
+            // Insert out URI in circular buffer
+            _URIs[_count++] = uri;
+            _current = 0;
+        }
+        else {
+            // Remove oldest URI from reference map
+            _references.remove(_URIs[_current]);
+            // Insert our URI in circular buffer
+            _URIs[_current] = uri;
+            if (++_current >= _size) _current = 0;
+        }
+        _references.put(uri, doc);
+!!!3968642.java!!!	replaceDocument(inout uri : String, inout doc : DocumentCache::CachedDocument) : void
+        if (doc == null)
+            insertDocument(uri, doc);
+        else
+            _references.put(uri, doc);
+!!!3968770.java!!!	retrieveDocument(inout baseURI : String, inout href : String, inout trs : Translet) : DOM
+        CachedDocument doc;
+
+    String uri = href;
+    if (baseURI != null && !baseURI.equals("")) {
+        try {
+            uri = SystemIDResolver.getAbsoluteURI(uri, baseURI);
+        } catch (TransformerException te) {
+            // ignore
+        }
+    }
+
+        // Try to get the document from the cache first
+        if ((doc = lookupDocument(uri)) == null) {
+            doc = new CachedDocument(uri);
+            if (doc == null) return null; // better error handling needed!!!
+            doc.setLastModified(getLastModified(uri));
+            insertDocument(uri, doc);
+        }
+        // If the document is in the cache we must check if it is still valid
+        else {
+            long now = System.currentTimeMillis();
+            long chk = doc.getLastChecked();
+            doc.setLastChecked(now);
+            // Has the modification time for this file been checked lately?
+            if (now > (chk + REFRESH_INTERVAL)) {
+                doc.setLastChecked(now);
+                long last = getLastModified(uri);
+                // Reload document if it has been modified since last download
+                if (last > doc.getLastModified()) {
+                    doc = new CachedDocument(uri);
+                    if (doc == null) return null;
+                    doc.setLastModified(getLastModified(uri));
+                    replaceDocument(uri, doc);
+                }
+            }
+
+        }
+
+        // Get the references to the actual DOM and DTD handler
+        final DOM dom = doc.getDocument();
+
+        // The dom reference may be null if the URL pointed to a
+        // non-existing document
+        if (dom == null) return null;
+
+        doc.incAccessCount(); // For statistics
+
+        final AbstractTranslet translet = (AbstractTranslet)trs;
+
+        // Give the translet an early opportunity to extract any
+        // information from the DOM object that it would like.
+        translet.prepassDocument(dom);
+
+        return(doc.getDocument());
+!!!3968898.java!!!	getStatistics(inout out : PrintWriter) : void
+        out.println("<h2>DOM cache statistics</h2><center><table border=\"2\">"+
+                    "<tr><td><b>Document URI</b></td>"+
+                    "<td><center><b>Build time</b></center></td>"+
+                    "<td><center><b>Access count</b></center></td>"+
+                    "<td><center><b>Last accessed</b></center></td>"+
+                    "<td><center><b>Last modified</b></center></td></tr>");
+
+        for (int i=0; i<_count; i++) {
+            CachedDocument doc = _references.get(_URIs[i]);
+            out.print("<tr><td><a href=\""+_URIs[i]+"\">"+
+                      "<font size=-1>"+_URIs[i]+"</font></a></td>");
+            out.print("<td><center>"+doc.getLatency()+"ms</center></td>");
+            out.print("<td><center>"+doc.getAccessCount()+"</center></td>");
+            out.print("<td><center>"+(new Date(doc.getLastReferenced()))+
+                      "</center></td>");
+            out.print("<td><center>"+(new Date(doc.getLastModified()))+
+                      "</center></td>");
+            out.println("</tr>");
+        }
+
+        out.println("</table></center>");

@@ -1,0 +1,370 @@
+class AbstractTranslet
+!!!4061186.java!!!	printInternalState() : void
+        System.out.println("-------------------------------------");
+        System.out.println("AbstractTranslet this = " + this);
+        System.out.println("pbase = " + pbase);
+        System.out.println("vframe = " + pframe);
+        System.out.println("paramsStack.size() = " + paramsStack.size());
+        System.out.println("namesArray.size = " + namesArray.length);
+        System.out.println("namespaceArray.size = " + namespaceArray.length);
+        System.out.println("");
+        System.out.println("Total memory = " + Runtime.getRuntime().totalMemory());
+!!!4061314.java!!!	makeDOMAdapter(inout dom : DOM) : DOMAdapter
+        setRootForKeys(dom.getDocument());
+        return new DOMAdapter(dom, namesArray, urisArray, typesArray, namespaceArray);
+!!!4061442.java!!!	pushParamFrame() : void
+        paramsStack.add(pframe, new Integer(pbase));
+        pbase = ++pframe;
+!!!4061570.java!!!	popParamFrame() : void
+        if (pbase > 0) {
+            final int oldpbase = ((Integer)paramsStack.get(--pbase)).intValue();
+            for (int i = pframe - 1; i >= pbase; i--) {
+                paramsStack.remove(i);
+            }
+            pframe = pbase; pbase = oldpbase;
+        }
+!!!4061698.java!!!	addParameter(inout name : String, inout value : Object) : Object
+        name = BasisLibrary.mapQNameToJavaName (name);
+        return addParameter(name, value, false);
+!!!4061826.java!!!	addParameter(inout name : String, inout value : Object, inout isDefault : boolean) : Object
+        // Local parameters need to be re-evaluated for each iteration
+        for (int i = pframe - 1; i >= pbase; i--) {
+            final Parameter param = (Parameter) paramsStack.get(i);
+
+            if (param._name.equals(name)) {
+                // Only overwrite if current value is the default value and
+                // the new value is _NOT_ the default value.
+                if (param._isDefault || !isDefault) {
+                    param._value = value;
+                    param._isDefault = isDefault;
+                    return value;
+                }
+                return param._value;
+            }
+        }
+
+        // Add new parameter to parameter stack
+        paramsStack.add(pframe++, new Parameter(name, value, isDefault));
+        return value;
+!!!4061954.java!!!	clearParameters() : void
+        pbase = pframe = 0;
+        paramsStack.clear();
+!!!4062082.java!!!	getParameter(inout name : String) : Object
+
+        name = BasisLibrary.mapQNameToJavaName (name);
+
+        for (int i = pframe - 1; i >= pbase; i--) {
+            final Parameter param = (Parameter)paramsStack.get(i);
+            if (param._name.equals(name)) return param._value;
+        }
+        return null;
+!!!4062210.java!!!	setMessageHandler(inout handler : MessageHandler) : void
+        _msgHandler = handler;
+!!!4062338.java!!!	displayMessage(inout msg : String) : void
+        if (_msgHandler == null) {
+            System.err.println(msg);
+        }
+        else {
+            _msgHandler.displayMessage(msg);
+        }
+!!!4062466.java!!!	addDecimalFormat(inout name : String, inout symbols : DecimalFormatSymbols) : void
+        // Instanciate map for formatting symbols if needed
+        if (_formatSymbols == null) _formatSymbols = new HashMap<>();
+
+        // The name cannot be null - use empty string instead
+        if (name == null) name = EMPTYSTRING;
+
+        // Construct a DecimalFormat object containing the symbols we got
+        final DecimalFormat df = new DecimalFormat();
+        if (symbols != null) {
+            df.setDecimalFormatSymbols(symbols);
+        }
+        _formatSymbols.put(name, df);
+!!!4062594.java!!!	getDecimalFormat(inout name : String) : DecimalFormat
+
+        if (_formatSymbols != null) {
+            // The name cannot be null - use empty string instead
+            if (name == null) name = EMPTYSTRING;
+
+            DecimalFormat df = _formatSymbols.get(name);
+            if (df == null) df = _formatSymbols.get(EMPTYSTRING);
+            return df;
+        }
+        return(null);
+!!!4062722.java!!!	prepassDocument(inout document : DOM) : void
+        setIndexSize(document.getSize());
+        buildIDIndex(document);
+!!!4062850.java!!!	buildIDIndex(inout document : DOM) : void
+        setRootForKeys(document.getDocument());
+
+        if (document instanceof DOMEnhancedForDTM) {
+            DOMEnhancedForDTM enhancedDOM = (DOMEnhancedForDTM)document;
+
+            // If the input source is DOMSource, the KeyIndex table is not
+            // built at this time. It will be built later by the lookupId()
+            // and containsId() methods of the KeyIndex class.
+            if (enhancedDOM.hasDOMSource()) {
+                buildKeyIndex(ID_INDEX_NAME, document);
+                return;
+            }
+            else {
+                final Map<String, Integer> elementsByID = enhancedDOM.getElementsWithIDs();
+
+                if (elementsByID == null) {
+                    return;
+                }
+
+                // Given a Map of DTM nodes indexed by ID attribute values,
+                // loop through the table copying information to a KeyIndex
+                // for the mapping from ID attribute value to DTM node
+                boolean hasIDValues = false;
+                for (Map.Entry<String, Integer> entry : elementsByID.entrySet()) {
+                    final int element = document.getNodeHandle(entry.getValue());
+                    buildKeyIndex(ID_INDEX_NAME, element, entry.getKey());
+                    hasIDValues = true;
+                }
+
+                if (hasIDValues) {
+                    setKeyIndexDom(ID_INDEX_NAME, document);
+                }
+            }
+        }
+!!!4062978.java!!!	postInitialization() : void
+        // If the version of the translet had just one namesArray, split
+        // it into multiple fields.
+        if (transletVersion < VER_SPLIT_NAMES_ARRAY) {
+            int arraySize = namesArray.length;
+            String[] newURIsArray = new String[arraySize];
+            String[] newNamesArray = new String[arraySize];
+            int[] newTypesArray = new int[arraySize];
+
+            for (int i = 0; i < arraySize; i++) {
+                String name = namesArray[i];
+                int colonIndex = name.lastIndexOf(':');
+                int lNameStartIdx = colonIndex+1;
+
+                if (colonIndex > -1) {
+                    newURIsArray[i] = name.substring(0, colonIndex);
+                }
+
+               // Distinguish attribute and element names.  Attribute has
+               // @ before local part of name.
+               if (name.charAt(lNameStartIdx) == '@') {
+                   lNameStartIdx++;
+                   newTypesArray[i] = DTM.ATTRIBUTE_NODE;
+               } else if (name.charAt(lNameStartIdx) == '?') {
+                   lNameStartIdx++;
+                   newTypesArray[i] = DTM.NAMESPACE_NODE;
+               } else {
+                   newTypesArray[i] = DTM.ELEMENT_NODE;
+               }
+               newNamesArray[i] =
+                          (lNameStartIdx == 0) ? name
+                                               : name.substring(lNameStartIdx);
+            }
+
+            namesArray = newNamesArray;
+            urisArray  = newURIsArray;
+            typesArray = newTypesArray;
+        }
+
+        // Was translet compiled using a more recent version of the XSLTC
+        // compiler than is known by the AbstractTranslet class?  If, so
+        // and we've made it this far (which is doubtful), we should give up.
+        if (transletVersion > CURRENT_TRANSLET_VERSION) {
+            BasisLibrary.runTimeError(BasisLibrary.UNKNOWN_TRANSLET_VERSION_ERR,
+                                      this.getClass().getName());
+        }
+!!!4063106.java!!!	setIndexSize(in size : int) : void
+        if (size > _indexSize) _indexSize = size;
+!!!4063234.java!!!	createKeyIndex() : KeyIndex
+        return(new KeyIndex(_indexSize));
+!!!4063362.java!!!	buildKeyIndex(inout name : String, in node : int, inout value : String) : void
+        KeyIndex index = buildKeyIndexHelper(name);
+        index.add(value, node, _currentRootForKeys);
+!!!4063490.java!!!	buildKeyIndex(inout name : String, inout dom : DOM) : void
+        KeyIndex index = buildKeyIndexHelper(name);
+        index.setDom(dom, dom.getDocument());
+!!!4063618.java!!!	buildKeyIndexHelper(inout name : String) : KeyIndex
+        if (_keyIndexes == null) _keyIndexes = new HashMap<>();
+
+        KeyIndex index = _keyIndexes.get(name);
+        if (index == null) {
+            _keyIndexes.put(name, index = new KeyIndex(_indexSize));
+        }
+        return index;
+!!!4063746.java!!!	getKeyIndex(inout name : String) : KeyIndex
+        // Return an empty key index iterator if none are defined
+        if (_keyIndexes == null) {
+            return (_emptyKeyIndex != null)
+                ? _emptyKeyIndex
+                : (_emptyKeyIndex = new KeyIndex(1));
+        }
+
+        // Look up the requested key index
+        final KeyIndex index = _keyIndexes.get(name);
+
+        // Return an empty key index iterator if the requested index not found
+        if (index == null) {
+            return (_emptyKeyIndex != null)
+                ? _emptyKeyIndex
+                : (_emptyKeyIndex = new KeyIndex(1));
+        }
+
+        return(index);
+!!!4063874.java!!!	setRootForKeys(in root : int) : void
+        _currentRootForKeys = root;
+!!!4064002.java!!!	buildKeys(inout document : DOM, inout iterator : DTMAxisIterator, inout handler : SerializationHandler, in root : int) : void
+
+!!!4064130.java!!!	setKeyIndexDom(inout name : String, inout document : DOM) : void
+        getKeyIndex(name).setDom(document, document.getDocument());
+!!!4064258.java!!!	setDOMCache(inout cache : DOMCache) : void
+        _domCache = cache;
+!!!4064386.java!!!	getDOMCache() : DOMCache
+        return(_domCache);
+!!!4064514.java!!!	openOutputHandler(inout filename : String, inout append : boolean) : SerializationHandler
+        try {
+            final TransletOutputHandlerFactory factory
+                = TransletOutputHandlerFactory.newInstance();
+
+            String dirStr = new File(filename).getParent();
+            if ((null != dirStr) && (dirStr.length() > 0)) {
+               File dir = new File(dirStr);
+               dir.mkdirs();
+            }
+
+            factory.setEncoding(_encoding);
+            factory.setOutputMethod(_method);
+            factory.setOutputStream(new BufferedOutputStream(new FileOutputStream(filename, append)));
+            factory.setOutputType(TransletOutputHandlerFactory.STREAM);
+
+            final SerializationHandler handler
+                = factory.getSerializationHandler();
+
+            transferOutputSettings(handler);
+            handler.startDocument();
+            return handler;
+        }
+        catch (Exception e) {
+            throw new TransletException(e);
+        }
+!!!4064642.java!!!	openOutputHandler(inout filename : String) : SerializationHandler
+       return openOutputHandler(filename, false);
+!!!4064770.java!!!	closeOutputHandler(inout handler : SerializationHandler) : void
+        try {
+            handler.endDocument();
+            handler.close();
+        }
+        catch (Exception e) {
+            // what can you do?
+        }
+!!!4065026.java!!!	transform(inout document : DOM, inout handler : SerializationHandler) : void
+        try {
+            transform(document, document.getIterator(), handler);
+        } finally {
+            _keyIndexes = null;
+        }
+!!!4065154.java!!!	characters(in string : String, inout handler : SerializationHandler) : void
+        if (string != null) {
+           //final int length = string.length();
+           try {
+               handler.characters(string);
+           } catch (Exception e) {
+               throw new TransletException(e);
+           }
+        }
+!!!4065282.java!!!	addCdataElement(inout name : String) : void
+        if (_cdata == null) {
+            _cdata = new Vector();
+        }
+
+        int lastColon = name.lastIndexOf(':');
+
+        if (lastColon > 0) {
+            String uri = name.substring(0, lastColon);
+            String localName = name.substring(lastColon+1);
+            _cdata.addElement(uri);
+            _cdata.addElement(localName);
+        } else {
+            _cdata.addElement(null);
+            _cdata.addElement(name);
+        }
+!!!4065410.java!!!	transferOutputSettings(inout handler : SerializationHandler) : void
+        if (_method != null) {
+            if (_method.equals("xml")) {
+                if (_standalone != null) {
+                    handler.setStandalone(_standalone);
+                }
+                if (_omitHeader) {
+                    handler.setOmitXMLDeclaration(true);
+                }
+                handler.setCdataSectionElements(_cdata);
+                if (_version != null) {
+                    handler.setVersion(_version);
+                }
+                handler.setIndent(_indent);
+                handler.setIndentAmount(_indentamount);
+                if (_doctypeSystem != null) {
+                    handler.setDoctype(_doctypeSystem, _doctypePublic);
+                }
+                handler.setIsStandalone(_isStandalone);
+            }
+            else if (_method.equals("html")) {
+                handler.setIndent(_indent);
+                handler.setDoctype(_doctypeSystem, _doctypePublic);
+                if (_mediaType != null) {
+                    handler.setMediaType(_mediaType);
+                }
+            }
+        }
+        else {
+            handler.setCdataSectionElements(_cdata);
+            if (_version != null) {
+                handler.setVersion(_version);
+            }
+            if (_standalone != null) {
+                handler.setStandalone(_standalone);
+            }
+            if (_omitHeader) {
+                handler.setOmitXMLDeclaration(true);
+            }
+            handler.setIndent(_indent);
+            handler.setDoctype(_doctypeSystem, _doctypePublic);
+            handler.setIsStandalone(_isStandalone);
+        }
+!!!4065538.java!!!	addAuxiliaryClass(inout auxClass : Class) : void
+        if (_auxClasses == null) _auxClasses = new HashMap<>();
+        _auxClasses.put(auxClass.getName(), auxClass);
+!!!4065666.java!!!	setAuxiliaryClasses(inout auxClasses : Map) : void
+        _auxClasses = auxClasses;
+!!!4065794.java!!!	getAuxiliaryClass(inout className : String) : Class
+        if (_auxClasses == null) return null;
+        return((Class)_auxClasses.get(className));
+!!!4065922.java!!!	getNamesArray() : String
+        return namesArray;
+!!!4066050.java!!!	getUrisArray() : String
+        return urisArray;
+!!!4066178.java!!!	getTypesArray() : int
+        return typesArray;
+!!!4066306.java!!!	getNamespaceArray() : String
+        return namespaceArray;
+!!!4066434.java!!!	hasIdCall() : boolean
+        return _hasIdCall;
+!!!4066562.java!!!	getTemplates() : Templates
+        return _templates;
+!!!4066690.java!!!	setTemplates(inout templates : Templates) : void
+        _templates = templates;
+!!!4066818.java!!!	useServicesMechnism() : boolean
+        return _useServicesMechanism;
+!!!4066946.java!!!	setServicesMechnism(inout flag : boolean) : void
+        _useServicesMechanism = flag;
+!!!4067074.java!!!	getAllowedProtocols() : String
+        return _accessExternalStylesheet;
+!!!4067202.java!!!	setAllowedProtocols(inout protocols : String) : void
+        _accessExternalStylesheet = protocols;
+!!!4067330.java!!!	newDocument(inout uri : String, inout qname : String) : Document
+        if (_domImplementation == null) {
+            DocumentBuilderFactory dbf = FactoryImpl.getDOMFactory(_useServicesMechanism);
+            _domImplementation = dbf.newDocumentBuilder().getDOMImplementation();
+        }
+        return _domImplementation.createDocument(uri, qname, null);

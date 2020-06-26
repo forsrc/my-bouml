@@ -1,0 +1,255 @@
+class DOMBuilder
+!!!5664770.java!!!	DOMBuilder(inout doc : Document, inout node : Node)
+    m_doc = doc;
+    m_currentNode = m_root = node;
+
+    if (node instanceof Element)
+      m_elemStack.push(node);
+!!!5664898.java!!!	DOMBuilder(inout doc : Document, inout docFrag : DocumentFragment)
+    m_doc = doc;
+    m_docFrag = docFrag;
+!!!5665026.java!!!	DOMBuilder(inout doc : Document)
+    m_doc = doc;
+!!!5665154.java!!!	getRootDocument() : Node
+    return (null != m_docFrag) ? (Node) m_docFrag : (Node) m_doc;
+!!!5665282.java!!!	getRootNode() : Node
+    return m_root;
+!!!5665410.java!!!	getCurrentNode() : Node
+    return m_currentNode;
+!!!5665538.java!!!	setNextSibling(inout nextSibling : Node) : void
+    m_nextSibling = nextSibling;
+!!!5665666.java!!!	getNextSibling() : Node
+    return m_nextSibling;
+!!!5665794.java!!!	getWriter() : Writer
+    return null;
+!!!5665922.java!!!	append(inout newNode : Node) : void
+
+    Node currentNode = m_currentNode;
+
+    if (null != currentNode)
+    {
+      if (currentNode == m_root && m_nextSibling != null)
+        currentNode.insertBefore(newNode, m_nextSibling);
+      else
+        currentNode.appendChild(newNode);
+
+      // System.out.println(newNode.getNodeName());
+    }
+    else if (null != m_docFrag)
+    {
+      if (m_nextSibling != null)
+        m_docFrag.insertBefore(newNode, m_nextSibling);
+      else
+        m_docFrag.appendChild(newNode);
+    }
+    else
+    {
+      boolean ok = true;
+      short type = newNode.getNodeType();
+
+      if (type == Node.TEXT_NODE)
+      {
+        String data = newNode.getNodeValue();
+
+        if ((null != data) && (data.trim().length() > 0))
+        {
+          throw new org.xml.sax.SAXException(
+            XMLMessages.createXMLMessage(
+              XMLErrorResources.ER_CANT_OUTPUT_TEXT_BEFORE_DOC, null));  //"Warning: can't output text before document element!  Ignoring...");
+        }
+
+        ok = false;
+      }
+      else if (type == Node.ELEMENT_NODE)
+      {
+        if (m_doc.getDocumentElement() != null)
+        {
+          ok = false;
+
+          throw new org.xml.sax.SAXException(
+            XMLMessages.createXMLMessage(
+              XMLErrorResources.ER_CANT_HAVE_MORE_THAN_ONE_ROOT, null));  //"Can't have more than one root on a DOM!");
+        }
+      }
+
+      if (ok)
+      {
+        if (m_nextSibling != null)
+          m_doc.insertBefore(newNode, m_nextSibling);
+        else
+          m_doc.appendChild(newNode);
+      }
+    }
+!!!5666050.java!!!	setDocumentLocator(inout locator : Locator) : void
+
+    // No action for the moment.
+!!!5666178.java!!!	startDocument() : void
+
+    // No action for the moment.
+!!!5666306.java!!!	endDocument() : void
+
+    // No action for the moment.
+!!!5666434.java!!!	startElement(inout ns : String, inout localName : String, inout name : String, inout atts : Attributes) : void
+
+    Element elem;
+
+        // Note that the namespace-aware call must be used to correctly
+        // construct a Level 2 DOM, even for non-namespaced nodes.
+    if ((null == ns) || (ns.length() == 0))
+      elem = m_doc.createElementNS(null,name);
+    else
+      elem = m_doc.createElementNS(ns, name);
+
+    append(elem);
+
+    try
+    {
+      int nAtts = atts.getLength();
+
+      if (0 != nAtts)
+      {
+        for (int i = 0; i < nAtts; i++)
+        {
+
+          //System.out.println("type " + atts.getType(i) + " name " + atts.getLocalName(i) );
+          // First handle a possible ID attribute
+          if (atts.getType(i).equalsIgnoreCase("ID"))
+            setIDAttribute(atts.getValue(i), elem);
+
+          String attrNS = atts.getURI(i);
+
+          if("".equals(attrNS))
+            attrNS = null; // DOM represents no-namespace as null
+
+          // System.out.println("attrNS: "+attrNS+", localName: "+atts.getQName(i)
+          //                   +", qname: "+atts.getQName(i)+", value: "+atts.getValue(i));
+          // Crimson won't let us set an xmlns: attribute on the DOM.
+          String attrQName = atts.getQName(i);
+
+          // In SAX, xmlns[:] attributes have an empty namespace, while in DOM they
+          // should have the xmlns namespace
+          if (attrQName.startsWith("xmlns:") || attrQName.equals("xmlns")) {
+            attrNS = "http://www.w3.org/2000/xmlns/";
+          }
+
+          // ALWAYS use the DOM Level 2 call!
+          elem.setAttributeNS(attrNS,attrQName, atts.getValue(i));
+        }
+      }
+
+      // append(elem);
+
+      m_elemStack.push(elem);
+
+      m_currentNode = elem;
+
+      // append(elem);
+    }
+    catch(java.lang.Exception de)
+    {
+      // de.printStackTrace();
+      throw new org.xml.sax.SAXException(de);
+    }
+
+!!!5666562.java!!!	endElement(inout ns : String, inout localName : String, inout name : String) : void
+    m_elemStack.pop();
+    m_currentNode = m_elemStack.isEmpty() ? null : (Node)m_elemStack.peek();
+!!!5666690.java!!!	setIDAttribute(inout id : String, inout elem : Element) : void
+
+    // Do nothing. This method is meant to be overiden.
+!!!5666818.java!!!	characters(inout ch : char [[]], in start : int, in length : int) : void
+    if(isOutsideDocElem()
+       && com.sun.org.apache.xml.internal.utils.XMLCharacterRecognizer.isWhiteSpace(ch, start, length))
+      return;  // avoid DOM006 Hierarchy request error
+
+    if (m_inCData)
+    {
+      cdata(ch, start, length);
+
+      return;
+    }
+
+    String s = new String(ch, start, length);
+    Node childNode;
+    childNode =  m_currentNode != null ? m_currentNode.getLastChild(): null;
+    if( childNode != null && childNode.getNodeType() == Node.TEXT_NODE ){
+       ((Text)childNode).appendData(s);
+    }
+    else{
+       Text text = m_doc.createTextNode(s);
+       append(text);
+    }
+!!!5666946.java!!!	charactersRaw(inout ch : char [[]], in start : int, in length : int) : void
+    if(isOutsideDocElem()
+       && com.sun.org.apache.xml.internal.utils.XMLCharacterRecognizer.isWhiteSpace(ch, start, length))
+      return;  // avoid DOM006 Hierarchy request error
+
+
+    String s = new String(ch, start, length);
+
+    append(m_doc.createProcessingInstruction("xslt-next-is-raw",
+                                             "formatter-to-dom"));
+    append(m_doc.createTextNode(s));
+!!!5667074.java!!!	startEntity(inout name : String) : void
+
+    // Almost certainly the wrong behavior...
+    // entityReference(name);
+!!!5667330.java!!!	entityReference(inout name : String) : void
+    append(m_doc.createEntityReference(name));
+!!!5667458.java!!!	ignorableWhitespace(inout ch : char [[]], in start : int, in length : int) : void
+    if(isOutsideDocElem())
+      return;  // avoid DOM006 Hierarchy request error
+
+    String s = new String(ch, start, length);
+
+    append(m_doc.createTextNode(s));
+!!!5667586.java!!!	isOutsideDocElem() : boolean
+      return (null == m_docFrag) && m_elemStack.size() == 0 && (null == m_currentNode || m_currentNode.getNodeType() == Node.DOCUMENT_NODE);
+!!!5667714.java!!!	processingInstruction(inout target : String, inout data : String) : void
+    append(m_doc.createProcessingInstruction(target, data));
+!!!5667842.java!!!	comment(inout ch : char [[]], in start : int, in length : int) : void
+    append(m_doc.createComment(new String(ch, start, length)));
+!!!5667970.java!!!	startCDATA() : void
+    m_inCData = true;
+    append(m_doc.createCDATASection(""));
+!!!5668098.java!!!	endCDATA() : void
+    m_inCData = false;
+!!!5668226.java!!!	cdata(inout ch : char [[]], in start : int, in length : int) : void
+    if(isOutsideDocElem()
+       && com.sun.org.apache.xml.internal.utils.XMLCharacterRecognizer.isWhiteSpace(ch, start, length))
+      return;  // avoid DOM006 Hierarchy request error
+
+    String s = new String(ch, start, length);
+
+    CDATASection section  =(CDATASection) m_currentNode.getLastChild();
+    section.appendData(s);
+!!!5668354.java!!!	startDTD(inout name : String, inout publicId : String, inout systemId : String) : void
+
+    // Do nothing for now.
+!!!5668482.java!!!	endDTD() : void
+
+    // Do nothing for now.
+!!!5668610.java!!!	startPrefixMapping(inout prefix : String, inout uri : String) : void
+
+    /*
+    // Not sure if this is needed or wanted
+    // Also, it fails in the stree.
+    if((null != m_currentNode)
+       && (m_currentNode.getNodeType() == Node.ELEMENT_NODE))
+    {
+      String qname;
+      if(((null != prefix) && (prefix.length() == 0))
+         || (null == prefix))
+        qname = "xmlns";
+      else
+        qname = "xmlns:"+prefix;
+
+      Element elem = (Element)m_currentNode;
+      String val = elem.getAttribute(qname); // Obsolete, should be DOM2...?
+      if(val == null)
+      {
+        elem.setAttributeNS("http://www.w3.org/XML/1998/namespace",
+                            qname, uri);
+      }
+    }
+    */

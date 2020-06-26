@@ -1,0 +1,119 @@
+class CSSBorder
+!!!11765890.java!!!	CSSBorder(inout attrs : AttributeSet)
+        this.attrs = attrs;
+!!!11766018.java!!!	getBorderColor(in side : int) : Color
+        Object o = attrs.getAttribute(ATTRIBUTES[COLOR][side]);
+        ColorValue cv;
+        if (o instanceof ColorValue) {
+            cv = (ColorValue) o;
+        } else {
+            // Marker for the default value.  Use 'color' property value as the
+            // computed value of the 'border-color' property (CSS2 8.5.2)
+            cv = (ColorValue) attrs.getAttribute(Attribute.COLOR);
+            if (cv == null) {
+                cv = (ColorValue) PARSERS[COLOR].parseCssValue(
+                                            Attribute.COLOR.getDefaultValue());
+            }
+        }
+        return cv.getValue();
+!!!11766146.java!!!	getBorderWidth(in side : int) : int
+        int width = 0;
+        BorderStyle bs = (BorderStyle) attrs.getAttribute(
+                                                    ATTRIBUTES[STYLE][side]);
+        if ((bs != null) && (bs.getValue() != Value.NONE)) {
+            // The 'border-style' value of "none" forces the computed value
+            // of 'border-width' to be 0 (CSS2 8.5.3)
+            LengthValue bw = (LengthValue) attrs.getAttribute(
+                                                    ATTRIBUTES[WIDTH][side]);
+            if (bw == null) {
+                bw = (LengthValue) DEFAULTS[WIDTH];
+            }
+            width = (int) bw.getValue(true);
+        }
+        return width;
+!!!11766274.java!!!	getWidths() : int
+        int[] widths = new int[4];
+        for (int i = 0; i < widths.length; i++) {
+            widths[i] = getBorderWidth(i);
+        }
+        return widths;
+!!!11766402.java!!!	getBorderStyle(in side : int) : CSS::Value
+        BorderStyle style =
+                    (BorderStyle) attrs.getAttribute(ATTRIBUTES[STYLE][side]);
+        if (style == null) {
+            style = (BorderStyle) DEFAULTS[STYLE];
+        }
+        return style.getValue();
+!!!11766530.java!!!	getBorderShape(in side : int) : Polygon
+        Polygon shape = null;
+        int[] widths = getWidths();
+        if (widths[side] != 0) {
+            shape = new Polygon(new int[4], new int[4], 0);
+            shape.addPoint(0, 0);
+            shape.addPoint(-widths[(side + 3) % 4], -widths[side]);
+            shape.addPoint(widths[(side + 1) % 4], -widths[side]);
+            shape.addPoint(0, 0);
+        }
+        return shape;
+!!!11766658.java!!!	getBorderPainter(in side : int) : CSSBorder::BorderPainter
+        Value style = getBorderStyle(side);
+        return borderPainters.get(style);
+!!!11766786.java!!!	getAdjustedColor(inout c : Color, in factor : double) : Color
+        double f = 1 - Math.min(Math.abs(factor), 1);
+        double inc = (factor > 0 ? 255 * (1 - f) : 0);
+        return new Color((int) (c.getRed() * f + inc),
+                         (int) (c.getGreen() * f + inc),
+                         (int) (c.getBlue() * f + inc));
+!!!11766914.java!!!	getBorderInsets(inout c : Component, inout insets : Insets) : Insets
+        int[] widths = getWidths();
+        insets.set(widths[TOP], widths[LEFT], widths[BOTTOM], widths[RIGHT]);
+        return insets;
+!!!11767042.java!!!	paintBorder(inout c : Component, inout g : Graphics, in x : int, in y : int, in width : int, in height : int) : void
+        if (!(g instanceof Graphics2D)) {
+            return;
+        }
+
+        Graphics2D g2 = (Graphics2D) g.create();
+
+        int[] widths = getWidths();
+
+        // Position and size of the border interior.
+        int intX = x + widths[LEFT];
+        int intY = y + widths[TOP];
+        int intWidth = width - (widths[RIGHT] + widths[LEFT]);
+        int intHeight = height - (widths[TOP] + widths[BOTTOM]);
+
+        // Coordinates of the interior corners, from NW clockwise.
+        int[][] intCorners = {
+            { intX, intY },
+            { intX + intWidth, intY },
+            { intX + intWidth, intY + intHeight },
+            { intX, intY + intHeight, },
+        };
+
+        // Draw the borders for all sides.
+        for (int i = 0; i < 4; i++) {
+            Value style = getBorderStyle(i);
+            Polygon shape = getBorderShape(i);
+            if ((style != Value.NONE) && (shape != null)) {
+                int sideLength = (i % 2 == 0 ? intWidth : intHeight);
+
+                // "stretch" the border shape by the interior area dimension
+                shape.xpoints[2] += sideLength;
+                shape.xpoints[3] += sideLength;
+                Color color = getBorderColor(i);
+                BorderPainter painter = getBorderPainter(i);
+
+                double angle = i * Math.PI / 2;
+                g2.setClip(g.getClip()); // Restore initial clip
+                g2.translate(intCorners[i][0], intCorners[i][1]);
+                g2.rotate(angle);
+                g2.clip(shape);
+                painter.paint(shape, g2, color, i);
+                g2.rotate(-angle);
+                g2.translate(-intCorners[i][0], -intCorners[i][1]);
+            }
+        }
+        g2.dispose();
+!!!11768834.java!!!	registerBorderPainter(inout style : CSS::Value, inout painter : CSSBorder::BorderPainter) : void
+        borderPainters.put(style, painter);

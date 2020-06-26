@@ -1,0 +1,411 @@
+class Handler
+!!!11016962.java!!!	repaintLeadCell() : void
+            int lr = getAdjustedLead(table, true);
+            int lc = getAdjustedLead(table, false);
+
+            if (lr < 0 || lc < 0) {
+                return;
+            }
+
+            Rectangle dirtyRect = table.getCellRect(lr, lc, false);
+            table.repaint(dirtyRect);
+!!!11017090.java!!!	focusGained(inout e : FocusEvent) : void
+            repaintLeadCell();
+!!!11017218.java!!!	focusLost(inout e : FocusEvent) : void
+            repaintLeadCell();
+!!!11017602.java!!!	keyTyped(inout e : KeyEvent) : void
+            KeyStroke keyStroke = KeyStroke.getKeyStroke(e.getKeyChar(),
+                    e.getModifiers());
+
+            // We register all actions using ANCESTOR_OF_FOCUSED_COMPONENT
+            // which means that we might perform the appropriate action
+            // in the table and then forward it to the editor if the editor
+            // had focus. Make sure this doesn't happen by checking our
+            // InputMaps.
+            InputMap map = table.getInputMap(JComponent.WHEN_FOCUSED);
+            if (map != null && map.get(keyStroke) != null) {
+                return;
+            }
+            map = table.getInputMap(JComponent.
+                                  WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+            if (map != null && map.get(keyStroke) != null) {
+                return;
+            }
+
+            keyStroke = KeyStroke.getKeyStrokeForEvent(e);
+
+            // The AWT seems to generate an unconsumed \r event when
+            // ENTER (\n) is pressed.
+            if (e.getKeyChar() == '\r') {
+                return;
+            }
+
+            int leadRow = getAdjustedLead(table, true);
+            int leadColumn = getAdjustedLead(table, false);
+            if (leadRow != -1 && leadColumn != -1 && !table.isEditing()) {
+                if (!table.editCellAt(leadRow, leadColumn)) {
+                    return;
+                }
+            }
+
+            // Forwarding events this way seems to put the component
+            // in a state where it believes it has focus. In reality
+            // the table retains focus - though it is difficult for
+            // a user to tell, since the caret is visible and flashing.
+
+            // Calling table.requestFocus() here, to get the focus back to
+            // the table, seems to have no effect.
+
+            Component editorComp = table.getEditorComponent();
+            if (table.isEditing() && editorComp != null) {
+                if (editorComp instanceof JComponent) {
+                    JComponent component = (JComponent)editorComp;
+                    map = component.getInputMap(JComponent.WHEN_FOCUSED);
+                    Object binding = (map != null) ? map.get(keyStroke) : null;
+                    if (binding == null) {
+                        map = component.getInputMap(JComponent.
+                                         WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+                        binding = (map != null) ? map.get(keyStroke) : null;
+                    }
+                    if (binding != null) {
+                        ActionMap am = component.getActionMap();
+                        Action action = (am != null) ? am.get(binding) : null;
+                        if (action != null && SwingUtilities.
+                            notifyAction(action, keyStroke, e, component,
+                                         e.getModifiers())) {
+                            e.consume();
+                        }
+                    }
+                }
+            }
+!!!11017858.java!!!	setDispatchComponent(inout e : MouseEvent) : void
+            Component editorComponent = table.getEditorComponent();
+            Point p = e.getPoint();
+            Point p2 = SwingUtilities.convertPoint(table, p, editorComponent);
+            dispatchComponent =
+                    SwingUtilities.getDeepestComponentAt(editorComponent,
+                            p2.x, p2.y);
+            SwingUtilities2.setSkipClickCount(dispatchComponent,
+                                              e.getClickCount() - 1);
+!!!11017986.java!!!	repostEvent(inout e : MouseEvent) : boolean
+            // Check for isEditing() in case another event has
+            // caused the editor to be removed. See bug #4306499.
+            if (dispatchComponent == null || !table.isEditing()) {
+                return false;
+            }
+            MouseEvent e2 = SwingUtilities.convertMouseEvent(table, e,
+                    dispatchComponent);
+            dispatchComponent.dispatchEvent(e2);
+            return true;
+!!!11018114.java!!!	setValueIsAdjusting(inout flag : boolean) : void
+            table.getSelectionModel().setValueIsAdjusting(flag);
+            table.getColumnModel().getSelectionModel().
+                    setValueIsAdjusting(flag);
+!!!11018242.java!!!	canStartDrag() : boolean
+            if (pressedRow == -1 || pressedCol == -1) {
+                return false;
+            }
+
+            if (isFileList) {
+                return !outsidePrefSize;
+            }
+
+            // if this is a single selection table
+            if ((table.getSelectionModel().getSelectionMode() ==
+                     ListSelectionModel.SINGLE_SELECTION) &&
+                (table.getColumnModel().getSelectionModel().getSelectionMode() ==
+                     ListSelectionModel.SINGLE_SELECTION)) {
+
+                return true;
+            }
+
+            return table.isCellSelected(pressedRow, pressedCol);
+!!!11018370.java!!!	mousePressed(inout e : MouseEvent) : void
+            if (SwingUtilities2.shouldIgnore(e, table)) {
+                return;
+            }
+
+            if (table.isEditing() && !table.getCellEditor().stopCellEditing()) {
+                Component editorComponent = table.getEditorComponent();
+                if (editorComponent != null && !editorComponent.hasFocus()) {
+                    SwingUtilities2.compositeRequestFocus(editorComponent);
+                }
+                return;
+            }
+
+            Point p = e.getPoint();
+            pressedRow = table.rowAtPoint(p);
+            pressedCol = table.columnAtPoint(p);
+            outsidePrefSize = pointOutsidePrefSize(pressedRow, pressedCol, p);
+
+            if (isFileList) {
+                shouldStartTimer =
+                    table.isCellSelected(pressedRow, pressedCol) &&
+                    !e.isShiftDown() &&
+                    !BasicGraphicsUtils.isMenuShortcutKeyDown(e) &&
+                    !outsidePrefSize;
+            }
+
+            if (table.getDragEnabled()) {
+                mousePressedDND(e);
+            } else {
+                SwingUtilities2.adjustFocus(table);
+                if (!isFileList) {
+                    setValueIsAdjusting(true);
+                }
+                adjustSelection(e);
+            }
+!!!11018498.java!!!	mousePressedDND(inout e : MouseEvent) : void
+            pressedEvent = e;
+            boolean grabFocus = true;
+            dragStarted = false;
+
+            if (canStartDrag() && DragRecognitionSupport.mousePressed(e)) {
+
+                dragPressDidSelection = false;
+
+                if (BasicGraphicsUtils.isMenuShortcutKeyDown(e) && isFileList) {
+                    // do nothing for control - will be handled on release
+                    // or when drag starts
+                    return;
+                } else if (!e.isShiftDown() && table.isCellSelected(pressedRow, pressedCol)) {
+                    // clicking on something that's already selected
+                    // and need to make it the lead now
+                    table.getSelectionModel().addSelectionInterval(pressedRow,
+                                                                   pressedRow);
+                    table.getColumnModel().getSelectionModel().
+                        addSelectionInterval(pressedCol, pressedCol);
+
+                    return;
+                }
+
+                dragPressDidSelection = true;
+
+                // could be a drag initiating event - don't grab focus
+                grabFocus = false;
+            } else if (!isFileList) {
+                // When drag can't happen, mouse drags might change the selection in the table
+                // so we want the isAdjusting flag to be set
+                setValueIsAdjusting(true);
+            }
+
+            if (grabFocus) {
+                SwingUtilities2.adjustFocus(table);
+            }
+
+            adjustSelection(e);
+!!!11018626.java!!!	adjustSelection(inout e : MouseEvent) : void
+            // Fix for 4835633
+            if (outsidePrefSize) {
+                // If shift is down in multi-select, we should just return.
+                // For single select or non-shift-click, clear the selection
+                if (e.getID() ==  MouseEvent.MOUSE_PRESSED &&
+                    (!e.isShiftDown() ||
+                     table.getSelectionModel().getSelectionMode() ==
+                     ListSelectionModel.SINGLE_SELECTION)) {
+                    table.clearSelection();
+                    TableCellEditor tce = table.getCellEditor();
+                    if (tce != null) {
+                        tce.stopCellEditing();
+                    }
+                }
+                return;
+            }
+            // The autoscroller can generate drag events outside the
+            // table's range.
+            if ((pressedCol == -1) || (pressedRow == -1)) {
+                return;
+            }
+
+            boolean dragEnabled = table.getDragEnabled();
+
+            if (!dragEnabled && !isFileList && table.editCellAt(pressedRow, pressedCol, e)) {
+                setDispatchComponent(e);
+                repostEvent(e);
+            }
+
+            CellEditor editor = table.getCellEditor();
+            if (dragEnabled || editor == null || editor.shouldSelectCell(e)) {
+                table.changeSelection(pressedRow, pressedCol,
+                        BasicGraphicsUtils.isMenuShortcutKeyDown(e),
+                        e.isShiftDown());
+            }
+!!!11018754.java!!!	valueChanged(inout e : ListSelectionEvent) : void
+            if (timer != null) {
+                timer.stop();
+                timer = null;
+            }
+!!!11018882.java!!!	actionPerformed(inout ae : ActionEvent) : void
+            table.editCellAt(pressedRow, pressedCol, null);
+            Component editorComponent = table.getEditorComponent();
+            if (editorComponent != null && !editorComponent.hasFocus()) {
+                SwingUtilities2.compositeRequestFocus(editorComponent);
+            }
+            return;
+!!!11019010.java!!!	maybeStartTimer() : void
+            if (!shouldStartTimer) {
+                return;
+            }
+
+            if (timer == null) {
+                timer = new Timer(1200, this);
+                timer.setRepeats(false);
+            }
+
+            timer.start();
+!!!11019138.java!!!	mouseReleased(inout e : MouseEvent) : void
+            if (SwingUtilities2.shouldIgnore(e, table)) {
+                return;
+            }
+
+            if (table.getDragEnabled()) {
+                mouseReleasedDND(e);
+            } else {
+                if (isFileList) {
+                    maybeStartTimer();
+                }
+            }
+
+            pressedEvent = null;
+            repostEvent(e);
+            dispatchComponent = null;
+            setValueIsAdjusting(false);
+!!!11019266.java!!!	mouseReleasedDND(inout e : MouseEvent) : void
+            MouseEvent me = DragRecognitionSupport.mouseReleased(e);
+            if (me != null) {
+                SwingUtilities2.adjustFocus(table);
+                if (!dragPressDidSelection) {
+                    adjustSelection(me);
+                }
+            }
+
+            if (!dragStarted) {
+                if (isFileList) {
+                    maybeStartTimer();
+                    return;
+                }
+
+                Point p = e.getPoint();
+
+                if (pressedEvent != null &&
+                        table.rowAtPoint(p) == pressedRow &&
+                        table.columnAtPoint(p) == pressedCol &&
+                        table.editCellAt(pressedRow, pressedCol, pressedEvent)) {
+
+                    setDispatchComponent(pressedEvent);
+                    repostEvent(pressedEvent);
+
+                    // This may appear completely odd, but must be done for backward
+                    // compatibility reasons. Developers have been known to rely on
+                    // a call to shouldSelectCell after editing has begun.
+                    CellEditor ce = table.getCellEditor();
+                    if (ce != null) {
+                        ce.shouldSelectCell(pressedEvent);
+                    }
+                }
+            }
+!!!11019778.java!!!	dragStarting(inout me : MouseEvent) : void
+            dragStarted = true;
+
+            if (BasicGraphicsUtils.isMenuShortcutKeyDown(me) && isFileList) {
+                table.getSelectionModel().addSelectionInterval(pressedRow,
+                                                               pressedRow);
+                table.getColumnModel().getSelectionModel().
+                    addSelectionInterval(pressedCol, pressedCol);
+            }
+
+            pressedEvent = null;
+!!!11019906.java!!!	mouseDragged(inout e : MouseEvent) : void
+            if (SwingUtilities2.shouldIgnore(e, table)) {
+                return;
+            }
+
+            if (table.getDragEnabled() &&
+                    (DragRecognitionSupport.mouseDragged(e, this) || dragStarted)) {
+
+                return;
+            }
+
+            repostEvent(e);
+
+            // Check isFileList:
+            // Until we support drag-selection, dragging should not change
+            // the selection (act like single-select).
+            if (isFileList || table.isEditing()) {
+                return;
+            }
+
+            Point p = e.getPoint();
+            int row = table.rowAtPoint(p);
+            int column = table.columnAtPoint(p);
+            // The autoscroller can generate drag events outside the
+            // table's range.
+            if ((column == -1) || (row == -1)) {
+                return;
+            }
+
+            table.changeSelection(row, column,
+                    BasicGraphicsUtils.isMenuShortcutKeyDown(e), true);
+!!!11020034.java!!!	propertyChange(inout event : PropertyChangeEvent) : void
+            String changeName = event.getPropertyName();
+
+            if ("componentOrientation" == changeName) {
+                InputMap inputMap = getInputMap(
+                    JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+
+                SwingUtilities.replaceUIInputMap(table,
+                    JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT,
+                    inputMap);
+
+                JTableHeader header = table.getTableHeader();
+                if (header != null) {
+                    header.setComponentOrientation(
+                            (ComponentOrientation)event.getNewValue());
+                }
+            } else if ("dropLocation" == changeName) {
+                JTable.DropLocation oldValue = (JTable.DropLocation)event.getOldValue();
+                repaintDropLocation(oldValue);
+                repaintDropLocation(table.getDropLocation());
+            } else if ("Table.isFileList" == changeName) {
+                isFileList = Boolean.TRUE.equals(table.getClientProperty("Table.isFileList"));
+                table.revalidate();
+                table.repaint();
+                if (isFileList) {
+                    table.getSelectionModel().addListSelectionListener(getHandler());
+                } else {
+                    table.getSelectionModel().removeListSelectionListener(getHandler());
+                    timer = null;
+                }
+            } else if ("selectionModel" == changeName) {
+                if (isFileList) {
+                    ListSelectionModel old = (ListSelectionModel)event.getOldValue();
+                    old.removeListSelectionListener(getHandler());
+                    table.getSelectionModel().addListSelectionListener(getHandler());
+                }
+            }
+!!!11020162.java!!!	repaintDropLocation(inout loc : JTable::DropLocation) : void
+            if (loc == null) {
+                return;
+            }
+
+            if (!loc.isInsertRow() && !loc.isInsertColumn()) {
+                Rectangle rect = table.getCellRect(loc.getRow(), loc.getColumn(), false);
+                if (rect != null) {
+                    table.repaint(rect);
+                }
+                return;
+            }
+
+            if (loc.isInsertRow()) {
+                Rectangle rect = extendRect(getHDropLineRect(loc), true);
+                if (rect != null) {
+                    table.repaint(rect);
+                }
+            }
+
+            if (loc.isInsertColumn()) {
+                Rectangle rect = extendRect(getVDropLineRect(loc), false);
+                if (rect != null) {
+                    table.repaint(rect);
+                }
+            }

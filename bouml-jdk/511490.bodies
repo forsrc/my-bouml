@@ -1,0 +1,55 @@
+class SubjectDelegator
+!!!3048706.java!!!	delegatedContext(inout authenticatedACC : AccessControlContext, inout delegatedSubject : Subject, inout removeCallerContext : boolean) : AccessControlContext
+
+        if (System.getSecurityManager() != null && authenticatedACC == null) {
+            throw new SecurityException("Illegal AccessControlContext: null");
+        }
+
+        // Check if the subject delegation permission allows the
+        // authenticated subject to assume the identity of each
+        // principal in the delegated subject
+        //
+        Collection<Principal> ps = getSubjectPrincipals(delegatedSubject);
+        final Collection<Permission> permissions = new ArrayList<>(ps.size());
+        for(Principal p : ps) {
+            final String pname = p.getClass().getName() + "." + p.getName();
+            permissions.add(new SubjectDelegationPermission(pname));
+        }
+        PrivilegedAction<Void> action =
+            new PrivilegedAction<Void>() {
+                public Void run() {
+                    for (Permission sdp : permissions) {
+                        AccessController.checkPermission(sdp);
+                    }
+                    return null;
+                }
+            };
+        AccessController.doPrivileged(action, authenticatedACC);
+
+        return getDelegatedAcc(delegatedSubject, removeCallerContext);
+!!!3048834.java!!!	getDelegatedAcc(inout delegatedSubject : Subject, inout removeCallerContext : boolean) : AccessControlContext
+        if (removeCallerContext) {
+            return JMXSubjectDomainCombiner.getDomainCombinerContext(delegatedSubject);
+        } else {
+            return JMXSubjectDomainCombiner.getContext(delegatedSubject);
+        }
+!!!3048962.java!!!	checkRemoveCallerContext(inout subject : Subject) : boolean
+        try {
+            for (Principal p : getSubjectPrincipals(subject)) {
+                final String pname =
+                    p.getClass().getName() + "." + p.getName();
+                final Permission sdp =
+                    new SubjectDelegationPermission(pname);
+                AccessController.checkPermission(sdp);
+            }
+        } catch (SecurityException e) {
+            return false;
+        }
+        return true;
+!!!3049090.java!!!	getSubjectPrincipals(inout subject : Subject) : Collection
+        if (subject.isReadOnly()) {
+            return subject.getPrincipals();
+        }
+
+        List<Principal> principals = Arrays.asList(subject.getPrincipals().toArray(new Principal[0]));
+        return Collections.unmodifiableList(principals);

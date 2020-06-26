@@ -1,0 +1,90 @@
+class RMIJRMPServerImpl
+!!!9985282.java!!!	RMIJRMPServerImpl(in port : int, inout csf : RMIClientSocketFactory, inout ssf : RMIServerSocketFactory, inout env : Map)
+
+        super(env);
+
+        if (port < 0)
+            throw new IllegalArgumentException("Negative port: " + port);
+
+        this.port = port;
+        this.csf = csf;
+        this.ssf = ssf;
+        this.env = (env == null) ? Collections.<String, Object>emptyMap() : env;
+
+        String[] credentialsTypes
+                = (String[]) this.env.get(EnvHelp.CREDENTIAL_TYPES);
+        List<String> types = null;
+        if (credentialsTypes != null) {
+            types = new ArrayList<>();
+            for (String type : credentialsTypes) {
+                if (type == null) {
+                    throw new IllegalArgumentException("A credential type is null.");
+                }
+                ReflectUtil.checkPackageAccess(type);
+                types.add(type);
+            }
+        }
+        exportedWrapper = types != null ?
+                new ExportedWrapper(this, types) :
+                null;
+!!!9985410.java!!!	export() : void
+        if (exportedWrapper != null) {
+            export(exportedWrapper);
+        } else {
+            export(this);
+        }
+!!!9985538.java!!!	export(inout obj : Remote) : void
+        final RMIExporter exporter =
+            (RMIExporter) env.get(RMIExporter.EXPORTER_ATTRIBUTE);
+        final boolean daemon = EnvHelp.isServerDaemon(env);
+
+        if (daemon && exporter != null) {
+            throw new IllegalArgumentException("If "+EnvHelp.JMX_SERVER_DAEMON+
+                    " is specified as true, "+RMIExporter.EXPORTER_ATTRIBUTE+
+                    " cannot be used to specify an exporter!");
+        }
+
+        if (daemon) {
+            if (csf == null && ssf == null) {
+                new UnicastServerRef(port).exportObject(obj, null, true);
+            } else {
+                new UnicastServerRef2(port, csf, ssf).exportObject(obj, null, true);
+            }
+        } else if (exporter != null) {
+            exporter.exportObject(obj, port, csf, ssf);
+        } else {
+            UnicastRemoteObject.exportObject(obj, port, csf, ssf);
+        }
+!!!9985666.java!!!	unexport(inout obj : Remote, inout force : boolean) : void
+        RMIExporter exporter =
+            (RMIExporter) env.get(RMIExporter.EXPORTER_ATTRIBUTE);
+        if (exporter == null)
+            UnicastRemoteObject.unexportObject(obj, force);
+        else
+            exporter.unexportObject(obj, force);
+!!!9985794.java!!!	getProtocol() : String
+        return "rmi";
+!!!9985922.java!!!	toStub() : Remote
+        if (exportedWrapper != null) {
+            return RemoteObject.toStub(exportedWrapper);
+        } else {
+            return RemoteObject.toStub(this);
+        }
+!!!9986050.java!!!	makeClient(inout connectionId : String, inout subject : Subject) : RMIConnection
+
+        if (connectionId == null)
+            throw new NullPointerException("Null connectionId");
+
+        RMIConnection client =
+            new RMIConnectionImpl(this, connectionId, getDefaultClassLoader(),
+                                  subject, env);
+        export(client);
+        return client;
+!!!9986178.java!!!	closeClient(inout client : RMIConnection) : void
+        unexport(client, true);
+!!!9986306.java!!!	closeServer() : void
+        if (exportedWrapper != null) {
+            unexport(exportedWrapper, true);
+        } else {
+            unexport(this, true);
+        }

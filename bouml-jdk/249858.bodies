@@ -1,0 +1,480 @@
+class ResourceBundle
+!!!1719426.java!!!	getBaseBundleName() : String
+        return name;
+!!!1719682.java!!!	getString(inout key : String) : String
+        return (String) getObject(key);
+!!!1719810.java!!!	getStringArray(inout key : String) : String
+        return (String[]) getObject(key);
+!!!1719938.java!!!	getObject(inout key : String) : Object
+        Object obj = handleGetObject(key);
+        if (obj == null) {
+            if (parent != null) {
+                obj = parent.getObject(key);
+            }
+            if (obj == null) {
+                throw new MissingResourceException("Can't find resource for bundle "
+                                                   +this.getClass().getName()
+                                                   +", key "+key,
+                                                   this.getClass().getName(),
+                                                   key);
+            }
+        }
+        return obj;
+!!!1720066.java!!!	getLocale() : Locale
+        return locale;
+!!!1720194.java!!!	getLoader(inout caller : Class) : ClassLoader
+        ClassLoader cl = caller == null ? null : caller.getClassLoader();
+        if (cl == null) {
+            // When the caller's loader is the boot class loader, cl is null
+            // here. In that case, ClassLoader.getSystemClassLoader() may
+            // return the same class loader that the application is
+            // using. We therefore use a wrapper ClassLoader to create a
+            // separate scope for bundles loaded on behalf of the Java
+            // runtime so that these bundles cannot be returned from the
+            // cache to the application (5048280).
+            cl = RBClassLoader.INSTANCE;
+        }
+        return cl;
+!!!1731074.java!!!	setParent(inout parent : ResourceBundle) : void
+        assert parent != NONEXISTENT_BUNDLE;
+        this.parent = parent;
+!!!1734146.java!!!	getBundle(inout baseName : String) : ResourceBundle
+        return getBundleImpl(baseName, Locale.getDefault(),
+                             getLoader(Reflection.getCallerClass()),
+                             getDefaultControl(baseName));
+!!!1734274.java!!!	getBundle(inout baseName : String, inout control : ResourceBundle::Control) : ResourceBundle
+        return getBundleImpl(baseName, Locale.getDefault(),
+                             getLoader(Reflection.getCallerClass()),
+                             control);
+!!!1734402.java!!!	getBundle(inout baseName : String, inout locale : Locale) : ResourceBundle
+        return getBundleImpl(baseName, locale,
+                             getLoader(Reflection.getCallerClass()),
+                             getDefaultControl(baseName));
+!!!1734530.java!!!	getBundle(inout baseName : String, inout targetLocale : Locale, inout control : ResourceBundle::Control) : ResourceBundle
+        return getBundleImpl(baseName, targetLocale,
+                             getLoader(Reflection.getCallerClass()),
+                             control);
+!!!1734658.java!!!	getBundle(inout baseName : String, inout locale : Locale, inout loader : ClassLoader) : ResourceBundle
+        if (loader == null) {
+            throw new NullPointerException();
+        }
+        return getBundleImpl(baseName, locale, loader, getDefaultControl(baseName));
+!!!1734786.java!!!	getBundle(inout baseName : String, inout targetLocale : Locale, inout loader : ClassLoader, inout control : ResourceBundle::Control) : ResourceBundle
+        if (loader == null || control == null) {
+            throw new NullPointerException();
+        }
+        return getBundleImpl(baseName, targetLocale, loader, control);
+!!!1734914.java!!!	getDefaultControl(inout baseName : String) : ResourceBundle::Control
+        if (providers != null) {
+            for (ResourceBundleControlProvider provider : providers) {
+                Control control = provider.getControl(baseName);
+                if (control != null) {
+                    return control;
+                }
+            }
+        }
+        return Control.INSTANCE;
+!!!1735042.java!!!	getBundleImpl(inout baseName : String, inout locale : Locale, inout loader : ClassLoader, inout control : ResourceBundle::Control) : ResourceBundle
+        if (locale == null || control == null) {
+            throw new NullPointerException();
+        }
+
+        // We create a CacheKey here for use by this call. The base
+        // name and loader will never change during the bundle loading
+        // process. We have to make sure that the locale is set before
+        // using it as a cache key.
+        CacheKey cacheKey = new CacheKey(baseName, locale, loader);
+        ResourceBundle bundle = null;
+
+        // Quick lookup of the cache.
+        BundleReference bundleRef = cacheList.get(cacheKey);
+        if (bundleRef != null) {
+            bundle = bundleRef.get();
+            bundleRef = null;
+        }
+
+        // If this bundle and all of its parents are valid (not expired),
+        // then return this bundle. If any of the bundles is expired, we
+        // don't call control.needsReload here but instead drop into the
+        // complete loading process below.
+        if (isValidBundle(bundle) && hasValidParentChain(bundle)) {
+            return bundle;
+        }
+
+        // No valid bundle was found in the cache, so we need to load the
+        // resource bundle and its parents.
+
+        boolean isKnownControl = (control == Control.INSTANCE) ||
+                                   (control instanceof SingleFormatControl);
+        List<String> formats = control.getFormats(baseName);
+        if (!isKnownControl && !checkList(formats)) {
+            throw new IllegalArgumentException("Invalid Control: getFormats");
+        }
+
+        ResourceBundle baseBundle = null;
+        for (Locale targetLocale = locale;
+             targetLocale != null;
+             targetLocale = control.getFallbackLocale(baseName, targetLocale)) {
+            List<Locale> candidateLocales = control.getCandidateLocales(baseName, targetLocale);
+            if (!isKnownControl && !checkList(candidateLocales)) {
+                throw new IllegalArgumentException("Invalid Control: getCandidateLocales");
+            }
+
+            bundle = findBundle(cacheKey, candidateLocales, formats, 0, control, baseBundle);
+
+            // If the loaded bundle is the base bundle and exactly for the
+            // requested locale or the only candidate locale, then take the
+            // bundle as the resulting one. If the loaded bundle is the base
+            // bundle, it's put on hold until we finish processing all
+            // fallback locales.
+            if (isValidBundle(bundle)) {
+                boolean isBaseBundle = Locale.ROOT.equals(bundle.locale);
+                if (!isBaseBundle || bundle.locale.equals(locale)
+                    || (candidateLocales.size() == 1
+                        && bundle.locale.equals(candidateLocales.get(0)))) {
+                    break;
+                }
+
+                // If the base bundle has been loaded, keep the reference in
+                // baseBundle so that we can avoid any redundant loading in case
+                // the control specify not to cache bundles.
+                if (isBaseBundle && baseBundle == null) {
+                    baseBundle = bundle;
+                }
+            }
+        }
+
+        if (bundle == null) {
+            if (baseBundle == null) {
+                throwMissingResourceException(baseName, locale, cacheKey.getCause());
+            }
+            bundle = baseBundle;
+        }
+
+        return bundle;
+!!!1735170.java!!!	checkList(inout a : List) : boolean
+        boolean valid = (a != null && !a.isEmpty());
+        if (valid) {
+            int size = a.size();
+            for (int i = 0; valid && i < size; i++) {
+                valid = (a.get(i) != null);
+            }
+        }
+        return valid;
+!!!1735298.java!!!	findBundle(inout cacheKey : ResourceBundle::CacheKey, inout candidateLocales : List, inout formats : List, in index : int, inout control : ResourceBundle::Control, inout baseBundle : ResourceBundle) : ResourceBundle
+        Locale targetLocale = candidateLocales.get(index);
+        ResourceBundle parent = null;
+        if (index != candidateLocales.size() - 1) {
+            parent = findBundle(cacheKey, candidateLocales, formats, index + 1,
+                                control, baseBundle);
+        } else if (baseBundle != null && Locale.ROOT.equals(targetLocale)) {
+            return baseBundle;
+        }
+
+        // Before we do the real loading work, see whether we need to
+        // do some housekeeping: If references to class loaders or
+        // resource bundles have been nulled out, remove all related
+        // information from the cache.
+        Object ref;
+        while ((ref = referenceQueue.poll()) != null) {
+            cacheList.remove(((CacheKeyReference)ref).getCacheKey());
+        }
+
+        // flag indicating the resource bundle has expired in the cache
+        boolean expiredBundle = false;
+
+        // First, look up the cache to see if it's in the cache, without
+        // attempting to load bundle.
+        cacheKey.setLocale(targetLocale);
+        ResourceBundle bundle = findBundleInCache(cacheKey, control);
+        if (isValidBundle(bundle)) {
+            expiredBundle = bundle.expired;
+            if (!expiredBundle) {
+                // If its parent is the one asked for by the candidate
+                // locales (the runtime lookup path), we can take the cached
+                // one. (If it's not identical, then we'd have to check the
+                // parent's parents to be consistent with what's been
+                // requested.)
+                if (bundle.parent == parent) {
+                    return bundle;
+                }
+                // Otherwise, remove the cached one since we can't keep
+                // the same bundles having different parents.
+                BundleReference bundleRef = cacheList.get(cacheKey);
+                if (bundleRef != null && bundleRef.get() == bundle) {
+                    cacheList.remove(cacheKey, bundleRef);
+                }
+            }
+        }
+
+        if (bundle != NONEXISTENT_BUNDLE) {
+            CacheKey constKey = (CacheKey) cacheKey.clone();
+
+            try {
+                bundle = loadBundle(cacheKey, formats, control, expiredBundle);
+                if (bundle != null) {
+                    if (bundle.parent == null) {
+                        bundle.setParent(parent);
+                    }
+                    bundle.locale = targetLocale;
+                    bundle = putBundleInCache(cacheKey, bundle, control);
+                    return bundle;
+                }
+
+                // Put NONEXISTENT_BUNDLE in the cache as a mark that there's no bundle
+                // instance for the locale.
+                putBundleInCache(cacheKey, NONEXISTENT_BUNDLE, control);
+            } finally {
+                if (constKey.getCause() instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+        return parent;
+!!!1735426.java!!!	loadBundle(inout cacheKey : ResourceBundle::CacheKey, inout formats : List, inout control : ResourceBundle::Control, inout reload : boolean) : ResourceBundle
+
+        // Here we actually load the bundle in the order of formats
+        // specified by the getFormats() value.
+        Locale targetLocale = cacheKey.getLocale();
+
+        ResourceBundle bundle = null;
+        int size = formats.size();
+        for (int i = 0; i < size; i++) {
+            String format = formats.get(i);
+            try {
+                bundle = control.newBundle(cacheKey.getName(), targetLocale, format,
+                                           cacheKey.getLoader(), reload);
+            } catch (LinkageError error) {
+                // We need to handle the LinkageError case due to
+                // inconsistent case-sensitivity in ClassLoader.
+                // See 6572242 for details.
+                cacheKey.setCause(error);
+            } catch (Exception cause) {
+                cacheKey.setCause(cause);
+            }
+            if (bundle != null) {
+                // Set the format in the cache key so that it can be
+                // used when calling needsReload later.
+                cacheKey.setFormat(format);
+                bundle.name = cacheKey.getName();
+                bundle.locale = targetLocale;
+                // Bundle provider might reuse instances. So we should make
+                // sure to clear the expired flag here.
+                bundle.expired = false;
+                break;
+            }
+        }
+
+        return bundle;
+!!!1735554.java!!!	isValidBundle(inout bundle : ResourceBundle) : boolean
+        return bundle != null && bundle != NONEXISTENT_BUNDLE;
+!!!1735682.java!!!	hasValidParentChain(inout bundle : ResourceBundle) : boolean
+        long now = System.currentTimeMillis();
+        while (bundle != null) {
+            if (bundle.expired) {
+                return false;
+            }
+            CacheKey key = bundle.cacheKey;
+            if (key != null) {
+                long expirationTime = key.expirationTime;
+                if (expirationTime >= 0 && expirationTime <= now) {
+                    return false;
+                }
+            }
+            bundle = bundle.parent;
+        }
+        return true;
+!!!1735810.java!!!	throwMissingResourceException(inout baseName : String, inout locale : Locale, inout cause : Throwable) : void
+        // If the cause is a MissingResourceException, avoid creating
+        // a long chain. (6355009)
+        if (cause instanceof MissingResourceException) {
+            cause = null;
+        }
+        throw new MissingResourceException("Can't find bundle for base name "
+                                           + baseName + ", locale " + locale,
+                                           baseName + "_" + locale, // className
+                                           "",                      // key
+                                           cause);
+!!!1735938.java!!!	findBundleInCache(inout cacheKey : ResourceBundle::CacheKey, inout control : ResourceBundle::Control) : ResourceBundle
+        BundleReference bundleRef = cacheList.get(cacheKey);
+        if (bundleRef == null) {
+            return null;
+        }
+        ResourceBundle bundle = bundleRef.get();
+        if (bundle == null) {
+            return null;
+        }
+        ResourceBundle p = bundle.parent;
+        assert p != NONEXISTENT_BUNDLE;
+        // If the parent has expired, then this one must also expire. We
+        // check only the immediate parent because the actual loading is
+        // done from the root (base) to leaf (child) and the purpose of
+        // checking is to propagate expiration towards the leaf. For
+        // example, if the requested locale is ja_JP_JP and there are
+        // bundles for all of the candidates in the cache, we have a list,
+        //
+        // base <- ja <- ja_JP <- ja_JP_JP
+        //
+        // If ja has expired, then it will reload ja and the list becomes a
+        // tree.
+        //
+        // base <- ja (new)
+        //  "   <- ja (expired) <- ja_JP <- ja_JP_JP
+        //
+        // When looking up ja_JP in the cache, it finds ja_JP in the cache
+        // which references to the expired ja. Then, ja_JP is marked as
+        // expired and removed from the cache. This will be propagated to
+        // ja_JP_JP.
+        //
+        // Now, it's possible, for example, that while loading new ja_JP,
+        // someone else has started loading the same bundle and finds the
+        // base bundle has expired. Then, what we get from the first
+        // getBundle call includes the expired base bundle. However, if
+        // someone else didn't start its loading, we wouldn't know if the
+        // base bundle has expired at the end of the loading process. The
+        // expiration control doesn't guarantee that the returned bundle and
+        // its parents haven't expired.
+        //
+        // We could check the entire parent chain to see if there's any in
+        // the chain that has expired. But this process may never end. An
+        // extreme case would be that getTimeToLive returns 0 and
+        // needsReload always returns true.
+        if (p != null && p.expired) {
+            assert bundle != NONEXISTENT_BUNDLE;
+            bundle.expired = true;
+            bundle.cacheKey = null;
+            cacheList.remove(cacheKey, bundleRef);
+            bundle = null;
+        } else {
+            CacheKey key = bundleRef.getCacheKey();
+            long expirationTime = key.expirationTime;
+            if (!bundle.expired && expirationTime >= 0 &&
+                expirationTime <= System.currentTimeMillis()) {
+                // its TTL period has expired.
+                if (bundle != NONEXISTENT_BUNDLE) {
+                    // Synchronize here to call needsReload to avoid
+                    // redundant concurrent calls for the same bundle.
+                    synchronized (bundle) {
+                        expirationTime = key.expirationTime;
+                        if (!bundle.expired && expirationTime >= 0 &&
+                            expirationTime <= System.currentTimeMillis()) {
+                            try {
+                                bundle.expired = control.needsReload(key.getName(),
+                                                                     key.getLocale(),
+                                                                     key.getFormat(),
+                                                                     key.getLoader(),
+                                                                     bundle,
+                                                                     key.loadTime);
+                            } catch (Exception e) {
+                                cacheKey.setCause(e);
+                            }
+                            if (bundle.expired) {
+                                // If the bundle needs to be reloaded, then
+                                // remove the bundle from the cache, but
+                                // return the bundle with the expired flag
+                                // on.
+                                bundle.cacheKey = null;
+                                cacheList.remove(cacheKey, bundleRef);
+                            } else {
+                                // Update the expiration control info. and reuse
+                                // the same bundle instance
+                                setExpirationTime(key, control);
+                            }
+                        }
+                    }
+                } else {
+                    // We just remove NONEXISTENT_BUNDLE from the cache.
+                    cacheList.remove(cacheKey, bundleRef);
+                    bundle = null;
+                }
+            }
+        }
+        return bundle;
+!!!1736066.java!!!	putBundleInCache(inout cacheKey : ResourceBundle::CacheKey, inout bundle : ResourceBundle, inout control : ResourceBundle::Control) : ResourceBundle
+        setExpirationTime(cacheKey, control);
+        if (cacheKey.expirationTime != Control.TTL_DONT_CACHE) {
+            CacheKey key = (CacheKey) cacheKey.clone();
+            BundleReference bundleRef = new BundleReference(bundle, referenceQueue, key);
+            bundle.cacheKey = key;
+
+            // Put the bundle in the cache if it's not been in the cache.
+            BundleReference result = cacheList.putIfAbsent(key, bundleRef);
+
+            // If someone else has put the same bundle in the cache before
+            // us and it has not expired, we should use the one in the cache.
+            if (result != null) {
+                ResourceBundle rb = result.get();
+                if (rb != null && !rb.expired) {
+                    // Clear the back link to the cache key
+                    bundle.cacheKey = null;
+                    bundle = rb;
+                    // Clear the reference in the BundleReference so that
+                    // it won't be enqueued.
+                    bundleRef.clear();
+                } else {
+                    // Replace the invalid (garbage collected or expired)
+                    // instance with the valid one.
+                    cacheList.put(key, bundleRef);
+                }
+            }
+        }
+        return bundle;
+!!!1736194.java!!!	setExpirationTime(inout cacheKey : ResourceBundle::CacheKey, inout control : ResourceBundle::Control) : void
+        long ttl = control.getTimeToLive(cacheKey.getName(),
+                                         cacheKey.getLocale());
+        if (ttl >= 0) {
+            // If any expiration time is specified, set the time to be
+            // expired in the cache.
+            long now = System.currentTimeMillis();
+            cacheKey.loadTime = now;
+            cacheKey.expirationTime = now + ttl;
+        } else if (ttl >= Control.TTL_NO_EXPIRATION_CONTROL) {
+            cacheKey.expirationTime = ttl;
+        } else {
+            throw new IllegalArgumentException("Invalid Control: TTL=" + ttl);
+        }
+!!!1736322.java!!!	clearCache() : void
+        clearCache(getLoader(Reflection.getCallerClass()));
+!!!1736450.java!!!	clearCache(inout loader : ClassLoader) : void
+        if (loader == null) {
+            throw new NullPointerException();
+        }
+        Set<CacheKey> set = cacheList.keySet();
+        for (CacheKey key : set) {
+            if (key.getLoader() == loader) {
+                set.remove(key);
+            }
+        }
+!!!1736834.java!!!	containsKey(inout key : String) : boolean
+        if (key == null) {
+            throw new NullPointerException();
+        }
+        for (ResourceBundle rb = this; rb != null; rb = rb.parent) {
+            if (rb.handleKeySet().contains(key)) {
+                return true;
+            }
+        }
+        return false;
+!!!1736962.java!!!	keySet() : Set
+        Set<String> keys = new HashSet<>();
+        for (ResourceBundle rb = this; rb != null; rb = rb.parent) {
+            keys.addAll(rb.handleKeySet());
+        }
+        return keys;
+!!!1737090.java!!!	handleKeySet() : Set
+        if (keySet == null) {
+            synchronized (this) {
+                if (keySet == null) {
+                    Set<String> keys = new HashSet<>();
+                    Enumeration<String> enumKeys = getKeys();
+                    while (enumKeys.hasMoreElements()) {
+                        String key = enumKeys.nextElement();
+                        if (handleGetObject(key) != null) {
+                            keys.add(key);
+                        }
+                    }
+                    keySet = keys;
+                }
+            }
+        }
+        return keySet;

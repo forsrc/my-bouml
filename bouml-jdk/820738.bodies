@@ -1,0 +1,150 @@
+class XPathExpressionImpl
+!!!5908226.java!!!	XPathExpressionImpl()
+        this(null, null, null, null,
+             false, true, new FeatureManager());
+!!!5908354.java!!!	XPathExpressionImpl(inout xpath : XPath, inout prefixResolver : JAXPPrefixResolver, inout functionResolver : XPathFunctionResolver, inout variableResolver : XPathVariableResolver)
+        this(xpath, prefixResolver, functionResolver, variableResolver,
+             false, true, new FeatureManager());
+!!!5908482.java!!!	XPathExpressionImpl(inout xpath : XPath, inout prefixResolver : JAXPPrefixResolver, inout functionResolver : XPathFunctionResolver, inout variableResolver : XPathVariableResolver, inout featureSecureProcessing : boolean, inout useServicesMechanism : boolean, inout featureManager : FeatureManager)
+        this.xpath = xpath;
+        this.prefixResolver = prefixResolver;
+        this.functionResolver = functionResolver;
+        this.variableResolver = variableResolver;
+        this.featureSecureProcessing = featureSecureProcessing;
+        this.useServicesMechanism = useServicesMechanism;
+        this.featureManager = featureManager;
+!!!5908610.java!!!	setXPath(inout xpath : XPath) : void
+        this.xpath = xpath;
+!!!5908738.java!!!	eval(inout item : Object, inout returnType : QName) : Object
+        XObject resultObject = eval ( item );
+        return getResultAsType( resultObject, returnType );
+!!!5908866.java!!!	eval(inout contextItem : Object) : XObject
+        com.sun.org.apache.xpath.internal.XPathContext xpathSupport = null;
+        if ( functionResolver != null ) {
+            JAXPExtensionsProvider jep = new JAXPExtensionsProvider(
+                    functionResolver, featureSecureProcessing, featureManager );
+            xpathSupport = new com.sun.org.apache.xpath.internal.XPathContext( jep );
+        } else {
+            xpathSupport = new com.sun.org.apache.xpath.internal.XPathContext();
+        }
+
+        xpathSupport.setVarStack(new JAXPVariableStack(variableResolver));
+        XObject xobj = null;
+
+        Node contextNode = (Node)contextItem;
+        // We always need to have a ContextNode with Xalan XPath implementation
+        // To allow simple expression evaluation like 1+1 we are setting
+        // dummy Document as Context Node
+
+        if ( contextNode == null )
+            xobj = xpath.execute(xpathSupport, DTM.NULL, prefixResolver);
+        else
+            xobj = xpath.execute(xpathSupport, contextNode, prefixResolver);
+
+        return xobj;
+!!!5908994.java!!!	evaluate(inout item : Object, inout returnType : QName) : Object
+        //Validating parameters to enforce constraints defined by JAXP spec
+        if ( returnType == null ) {
+           //Throwing NullPointerException as defined in spec
+            String fmsg = XSLMessages.createXPATHMessage(
+                    XPATHErrorResources.ER_ARG_CANNOT_BE_NULL,
+                    new Object[] {"returnType"} );
+            throw new NullPointerException( fmsg );
+        }
+        // Checking if requested returnType is supported. returnType need to be
+        // defined in XPathConstants
+        if ( !isSupported ( returnType ) ) {
+            String fmsg = XSLMessages.createXPATHMessage(
+                    XPATHErrorResources.ER_UNSUPPORTED_RETURN_TYPE,
+                    new Object[] { returnType.toString() } );
+            throw new IllegalArgumentException ( fmsg );
+        }
+        try {
+            return eval( item, returnType);
+        } catch ( java.lang.NullPointerException npe ) {
+            // If VariableResolver returns null Or if we get
+            // NullPointerException at this stage for some other reason
+            // then we have to reurn XPathException
+            throw new XPathExpressionException ( npe );
+        } catch ( javax.xml.transform.TransformerException te ) {
+            Throwable nestedException = te.getException();
+            if ( nestedException instanceof javax.xml.xpath.XPathFunctionException ) {
+                throw (javax.xml.xpath.XPathFunctionException)nestedException;
+            } else {
+                // For any other exceptions we need to throw
+                // XPathExpressionException ( as per spec )
+                throw new XPathExpressionException( te);
+            }
+        }
+
+!!!5909122.java!!!	evaluate(inout item : Object) : String
+        return (String)this.evaluate( item, XPathConstants.STRING );
+!!!5909250.java!!!	evaluate(inout source : InputSource, inout returnType : QName) : Object
+        if ( ( source == null ) || ( returnType == null ) ) {
+            String fmsg = XSLMessages.createXPATHMessage(
+                    XPATHErrorResources.ER_SOURCE_RETURN_TYPE_CANNOT_BE_NULL,
+                    null );
+            throw new NullPointerException ( fmsg );
+        }
+        // Checking if requested returnType is supported. returnType need to be
+        // defined in XPathConstants
+        if ( !isSupported ( returnType ) ) {
+            String fmsg = XSLMessages.createXPATHMessage(
+                    XPATHErrorResources.ER_UNSUPPORTED_RETURN_TYPE,
+                    new Object[] { returnType.toString() } );
+            throw new IllegalArgumentException ( fmsg );
+        }
+        try {
+            if ( dbf == null ) {
+                dbf = FactoryImpl.getDOMFactory(useServicesMechanism);
+                dbf.setNamespaceAware( true );
+                dbf.setValidating( false );
+            }
+            db = dbf.newDocumentBuilder();
+            Document document = db.parse( source );
+            return eval(  document, returnType );
+        } catch ( Exception e ) {
+            throw new XPathExpressionException ( e );
+        }
+!!!5909378.java!!!	evaluate(inout source : InputSource) : String
+        return (String)this.evaluate( source, XPathConstants.STRING );
+!!!5909506.java!!!	isSupported(inout returnType : QName) : boolean
+        // XPathConstants.STRING
+        if ( ( returnType.equals( XPathConstants.STRING ) ) ||
+             ( returnType.equals( XPathConstants.NUMBER ) ) ||
+             ( returnType.equals( XPathConstants.BOOLEAN ) ) ||
+             ( returnType.equals( XPathConstants.NODE ) ) ||
+             ( returnType.equals( XPathConstants.NODESET ) )  ) {
+
+            return true;
+        }
+        return false;
+!!!5909634.java!!!	getResultAsType(inout resultObject : XObject, inout returnType : QName) : Object
+        // XPathConstants.STRING
+        if ( returnType.equals( XPathConstants.STRING ) ) {
+            return resultObject.str();
+        }
+        // XPathConstants.NUMBER
+        if ( returnType.equals( XPathConstants.NUMBER ) ) {
+            return new Double ( resultObject.num());
+        }
+        // XPathConstants.BOOLEAN
+        if ( returnType.equals( XPathConstants.BOOLEAN ) ) {
+            return new Boolean( resultObject.bool());
+        }
+        // XPathConstants.NODESET ---ORdered, UNOrdered???
+        if ( returnType.equals( XPathConstants.NODESET ) ) {
+            return resultObject.nodelist();
+        }
+        // XPathConstants.NODE
+        if ( returnType.equals( XPathConstants.NODE ) ) {
+            NodeIterator ni = resultObject.nodeset();
+            //Return the first node, or null
+            return ni.nextNode();
+        }
+        // If isSupported check is already done then the execution path
+        // shouldn't come here. Being defensive
+        String fmsg = XSLMessages.createXPATHMessage(
+                XPATHErrorResources.ER_UNSUPPORTED_RETURN_TYPE,
+                new Object[] { returnType.toString()});
+        throw new IllegalArgumentException ( fmsg );

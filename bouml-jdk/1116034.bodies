@@ -1,0 +1,336 @@
+class SubMap
+!!!9123970.java!!!	SubMap(inout map : ConcurrentSkipListMap, inout fromKey : K, inout fromInclusive : boolean, inout toKey : K, inout toInclusive : boolean, inout isDescending : boolean)
+            Comparator<? super K> cmp = map.comparator;
+            if (fromKey != null && toKey != null &&
+                cpr(cmp, fromKey, toKey) > 0)
+                throw new IllegalArgumentException("inconsistent range");
+            this.m = map;
+            this.lo = fromKey;
+            this.hi = toKey;
+            this.loInclusive = fromInclusive;
+            this.hiInclusive = toInclusive;
+            this.isDescending = isDescending;
+!!!9124098.java!!!	tooLow(inout key : Object, inout cmp : Comparator) : boolean
+            int c;
+            return (lo != null && ((c = cpr(cmp, key, lo)) < 0 ||
+                                   (c == 0 && !loInclusive)));
+!!!9124226.java!!!	tooHigh(inout key : Object, inout cmp : Comparator) : boolean
+            int c;
+            return (hi != null && ((c = cpr(cmp, key, hi)) > 0 ||
+                                   (c == 0 && !hiInclusive)));
+!!!9124354.java!!!	inBounds(inout key : Object, inout cmp : Comparator) : boolean
+            return !tooLow(key, cmp) && !tooHigh(key, cmp);
+!!!9124482.java!!!	checkKeyBounds(inout key : K, inout cmp : Comparator) : void
+            if (key == null)
+                throw new NullPointerException();
+            if (!inBounds(key, cmp))
+                throw new IllegalArgumentException("key out of range");
+!!!9124610.java!!!	isBeforeEnd(inout n : ConcurrentSkipListMap::Node, inout cmp : Comparator) : boolean
+            if (n == null)
+                return false;
+            if (hi == null)
+                return true;
+            K k = n.key;
+            if (k == null) // pass by markers and headers
+                return true;
+            int c = cpr(cmp, k, hi);
+            if (c > 0 || (c == 0 && !hiInclusive))
+                return false;
+            return true;
+!!!9124738.java!!!	loNode(inout cmp : Comparator) : ConcurrentSkipListMap::Node
+            if (lo == null)
+                return m.findFirst();
+            else if (loInclusive)
+                return m.findNear(lo, GT|EQ, cmp);
+            else
+                return m.findNear(lo, GT, cmp);
+!!!9124866.java!!!	hiNode(inout cmp : Comparator) : ConcurrentSkipListMap::Node
+            if (hi == null)
+                return m.findLast();
+            else if (hiInclusive)
+                return m.findNear(hi, LT|EQ, cmp);
+            else
+                return m.findNear(hi, LT, cmp);
+!!!9124994.java!!!	lowestKey() : K
+            Comparator<? super K> cmp = m.comparator;
+            ConcurrentSkipListMap.Node<K,V> n = loNode(cmp);
+            if (isBeforeEnd(n, cmp))
+                return n.key;
+            else
+                throw new NoSuchElementException();
+!!!9125122.java!!!	highestKey() : K
+            Comparator<? super K> cmp = m.comparator;
+            ConcurrentSkipListMap.Node<K,V> n = hiNode(cmp);
+            if (n != null) {
+                K last = n.key;
+                if (inBounds(last, cmp))
+                    return last;
+            }
+            throw new NoSuchElementException();
+!!!9125250.java!!!	lowestEntry() : Map::Entry
+            Comparator<? super K> cmp = m.comparator;
+            for (;;) {
+                ConcurrentSkipListMap.Node<K,V> n = loNode(cmp);
+                if (!isBeforeEnd(n, cmp))
+                    return null;
+                Map.Entry<K,V> e = n.createSnapshot();
+                if (e != null)
+                    return e;
+            }
+!!!9125378.java!!!	highestEntry() : Map::Entry
+            Comparator<? super K> cmp = m.comparator;
+            for (;;) {
+                ConcurrentSkipListMap.Node<K,V> n = hiNode(cmp);
+                if (n == null || !inBounds(n.key, cmp))
+                    return null;
+                Map.Entry<K,V> e = n.createSnapshot();
+                if (e != null)
+                    return e;
+            }
+!!!9125506.java!!!	removeLowest() : Map::Entry
+            Comparator<? super K> cmp = m.comparator;
+            for (;;) {
+                Node<K,V> n = loNode(cmp);
+                if (n == null)
+                    return null;
+                K k = n.key;
+                if (!inBounds(k, cmp))
+                    return null;
+                V v = m.doRemove(k, null);
+                if (v != null)
+                    return new AbstractMap.SimpleImmutableEntry<K,V>(k, v);
+            }
+!!!9125634.java!!!	removeHighest() : Map::Entry
+            Comparator<? super K> cmp = m.comparator;
+            for (;;) {
+                Node<K,V> n = hiNode(cmp);
+                if (n == null)
+                    return null;
+                K k = n.key;
+                if (!inBounds(k, cmp))
+                    return null;
+                V v = m.doRemove(k, null);
+                if (v != null)
+                    return new AbstractMap.SimpleImmutableEntry<K,V>(k, v);
+            }
+!!!9125762.java!!!	getNearEntry(inout key : K, in rel : int) : Map::Entry
+            Comparator<? super K> cmp = m.comparator;
+            if (isDescending) { // adjust relation for direction
+                if ((rel & LT) == 0)
+                    rel |= LT;
+                else
+                    rel &= ~LT;
+            }
+            if (tooLow(key, cmp))
+                return ((rel & LT) != 0) ? null : lowestEntry();
+            if (tooHigh(key, cmp))
+                return ((rel & LT) != 0) ? highestEntry() : null;
+            for (;;) {
+                Node<K,V> n = m.findNear(key, rel, cmp);
+                if (n == null || !inBounds(n.key, cmp))
+                    return null;
+                K k = n.key;
+                V v = n.getValidValue();
+                if (v != null)
+                    return new AbstractMap.SimpleImmutableEntry<K,V>(k, v);
+            }
+!!!9125890.java!!!	getNearKey(inout key : K, in rel : int) : K
+            Comparator<? super K> cmp = m.comparator;
+            if (isDescending) { // adjust relation for direction
+                if ((rel & LT) == 0)
+                    rel |= LT;
+                else
+                    rel &= ~LT;
+            }
+            if (tooLow(key, cmp)) {
+                if ((rel & LT) == 0) {
+                    ConcurrentSkipListMap.Node<K,V> n = loNode(cmp);
+                    if (isBeforeEnd(n, cmp))
+                        return n.key;
+                }
+                return null;
+            }
+            if (tooHigh(key, cmp)) {
+                if ((rel & LT) != 0) {
+                    ConcurrentSkipListMap.Node<K,V> n = hiNode(cmp);
+                    if (n != null) {
+                        K last = n.key;
+                        if (inBounds(last, cmp))
+                            return last;
+                    }
+                }
+                return null;
+            }
+            for (;;) {
+                Node<K,V> n = m.findNear(key, rel, cmp);
+                if (n == null || !inBounds(n.key, cmp))
+                    return null;
+                K k = n.key;
+                V v = n.getValidValue();
+                if (v != null)
+                    return k;
+            }
+!!!9126018.java!!!	containsKey(inout key : Object) : boolean
+            if (key == null) throw new NullPointerException();
+            return inBounds(key, m.comparator) && m.containsKey(key);
+!!!9126146.java!!!	get(inout key : Object) : V
+            if (key == null) throw new NullPointerException();
+            return (!inBounds(key, m.comparator)) ? null : m.get(key);
+!!!9126274.java!!!	put(inout key : K, inout value : V) : V
+            checkKeyBounds(key, m.comparator);
+            return m.put(key, value);
+!!!9126402.java!!!	remove(inout key : Object) : V
+            return (!inBounds(key, m.comparator)) ? null : m.remove(key);
+!!!9126530.java!!!	size() : int
+            Comparator<? super K> cmp = m.comparator;
+            long count = 0;
+            for (ConcurrentSkipListMap.Node<K,V> n = loNode(cmp);
+                 isBeforeEnd(n, cmp);
+                 n = n.next) {
+                if (n.getValidValue() != null)
+                    ++count;
+            }
+            return count >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int)count;
+!!!9126658.java!!!	isEmpty() : boolean
+            Comparator<? super K> cmp = m.comparator;
+            return !isBeforeEnd(loNode(cmp), cmp);
+!!!9126786.java!!!	containsValue(inout value : Object) : boolean
+            if (value == null)
+                throw new NullPointerException();
+            Comparator<? super K> cmp = m.comparator;
+            for (ConcurrentSkipListMap.Node<K,V> n = loNode(cmp);
+                 isBeforeEnd(n, cmp);
+                 n = n.next) {
+                V v = n.getValidValue();
+                if (v != null && value.equals(v))
+                    return true;
+            }
+            return false;
+!!!9126914.java!!!	clear() : void
+            Comparator<? super K> cmp = m.comparator;
+            for (ConcurrentSkipListMap.Node<K,V> n = loNode(cmp);
+                 isBeforeEnd(n, cmp);
+                 n = n.next) {
+                if (n.getValidValue() != null)
+                    m.remove(n.key);
+            }
+!!!9127042.java!!!	putIfAbsent(inout key : K, inout value : V) : V
+            checkKeyBounds(key, m.comparator);
+            return m.putIfAbsent(key, value);
+!!!9127170.java!!!	remove(inout key : Object, inout value : Object) : boolean
+            return inBounds(key, m.comparator) && m.remove(key, value);
+!!!9127298.java!!!	replace(inout key : K, inout oldValue : V, inout newValue : V) : boolean
+            checkKeyBounds(key, m.comparator);
+            return m.replace(key, oldValue, newValue);
+!!!9127426.java!!!	replace(inout key : K, inout value : V) : V
+            checkKeyBounds(key, m.comparator);
+            return m.replace(key, value);
+!!!9127554.java!!!	comparator() : Comparator
+            Comparator<? super K> cmp = m.comparator();
+            if (isDescending)
+                return Collections.reverseOrder(cmp);
+            else
+                return cmp;
+!!!9127682.java!!!	newSubMap(inout fromKey : K, inout fromInclusive : boolean, inout toKey : K, inout toInclusive : boolean) : ConcurrentSkipListMap::SubMap
+            Comparator<? super K> cmp = m.comparator;
+            if (isDescending) { // flip senses
+                K tk = fromKey;
+                fromKey = toKey;
+                toKey = tk;
+                boolean ti = fromInclusive;
+                fromInclusive = toInclusive;
+                toInclusive = ti;
+            }
+            if (lo != null) {
+                if (fromKey == null) {
+                    fromKey = lo;
+                    fromInclusive = loInclusive;
+                }
+                else {
+                    int c = cpr(cmp, fromKey, lo);
+                    if (c < 0 || (c == 0 && !loInclusive && fromInclusive))
+                        throw new IllegalArgumentException("key out of range");
+                }
+            }
+            if (hi != null) {
+                if (toKey == null) {
+                    toKey = hi;
+                    toInclusive = hiInclusive;
+                }
+                else {
+                    int c = cpr(cmp, toKey, hi);
+                    if (c > 0 || (c == 0 && !hiInclusive && toInclusive))
+                        throw new IllegalArgumentException("key out of range");
+                }
+            }
+            return new SubMap<K,V>(m, fromKey, fromInclusive,
+                                   toKey, toInclusive, isDescending);
+!!!9127810.java!!!	subMap(inout fromKey : K, inout fromInclusive : boolean, inout toKey : K, inout toInclusive : boolean) : ConcurrentSkipListMap::SubMap
+            if (fromKey == null || toKey == null)
+                throw new NullPointerException();
+            return newSubMap(fromKey, fromInclusive, toKey, toInclusive);
+!!!9127938.java!!!	headMap(inout toKey : K, inout inclusive : boolean) : ConcurrentSkipListMap::SubMap
+            if (toKey == null)
+                throw new NullPointerException();
+            return newSubMap(null, false, toKey, inclusive);
+!!!9128066.java!!!	tailMap(inout fromKey : K, inout inclusive : boolean) : ConcurrentSkipListMap::SubMap
+            if (fromKey == null)
+                throw new NullPointerException();
+            return newSubMap(fromKey, inclusive, null, false);
+!!!9128194.java!!!	subMap(inout fromKey : K, inout toKey : K) : ConcurrentSkipListMap::SubMap
+            return subMap(fromKey, true, toKey, false);
+!!!9128322.java!!!	headMap(inout toKey : K) : ConcurrentSkipListMap::SubMap
+            return headMap(toKey, false);
+!!!9128450.java!!!	tailMap(inout fromKey : K) : ConcurrentSkipListMap::SubMap
+            return tailMap(fromKey, true);
+!!!9128578.java!!!	descendingMap() : ConcurrentSkipListMap::SubMap
+            return new SubMap<K,V>(m, lo, loInclusive,
+                                   hi, hiInclusive, !isDescending);
+!!!9128706.java!!!	ceilingEntry(inout key : K) : Map::Entry
+            return getNearEntry(key, GT|EQ);
+!!!9128834.java!!!	ceilingKey(inout key : K) : K
+            return getNearKey(key, GT|EQ);
+!!!9128962.java!!!	lowerEntry(inout key : K) : Map::Entry
+            return getNearEntry(key, LT);
+!!!9129090.java!!!	lowerKey(inout key : K) : K
+            return getNearKey(key, LT);
+!!!9129218.java!!!	floorEntry(inout key : K) : Map::Entry
+            return getNearEntry(key, LT|EQ);
+!!!9129346.java!!!	floorKey(inout key : K) : K
+            return getNearKey(key, LT|EQ);
+!!!9129474.java!!!	higherEntry(inout key : K) : Map::Entry
+            return getNearEntry(key, GT);
+!!!9129602.java!!!	higherKey(inout key : K) : K
+            return getNearKey(key, GT);
+!!!9129730.java!!!	firstKey() : K
+            return isDescending ? highestKey() : lowestKey();
+!!!9129858.java!!!	lastKey() : K
+            return isDescending ? lowestKey() : highestKey();
+!!!9129986.java!!!	firstEntry() : Map::Entry
+            return isDescending ? highestEntry() : lowestEntry();
+!!!9130114.java!!!	lastEntry() : Map::Entry
+            return isDescending ? lowestEntry() : highestEntry();
+!!!9130242.java!!!	pollFirstEntry() : Map::Entry
+            return isDescending ? removeHighest() : removeLowest();
+!!!9130370.java!!!	pollLastEntry() : Map::Entry
+            return isDescending ? removeLowest() : removeHighest();
+!!!9130498.java!!!	keySet() : NavigableSet
+            KeySet<K> ks = keySetView;
+            return (ks != null) ? ks : (keySetView = new KeySet<K>(this));
+!!!9130626.java!!!	navigableKeySet() : NavigableSet
+            KeySet<K> ks = keySetView;
+            return (ks != null) ? ks : (keySetView = new KeySet<K>(this));
+!!!9130754.java!!!	values() : Collection
+            Collection<V> vs = valuesView;
+            return (vs != null) ? vs : (valuesView = new Values<V>(this));
+!!!9130882.java!!!	entrySet() : Set
+            Set<Map.Entry<K,V>> es = entrySetView;
+            return (es != null) ? es : (entrySetView = new EntrySet<K,V>(this));
+!!!9131010.java!!!	descendingKeySet() : NavigableSet
+            return descendingMap().navigableKeySet();
+!!!9131138.java!!!	keyIterator() : Iterator
+            return new SubMapKeyIterator();
+!!!9131266.java!!!	valueIterator() : Iterator
+            return new SubMapValueIterator();
+!!!9131394.java!!!	entryIterator() : Iterator
+            return new SubMapEntryIterator();

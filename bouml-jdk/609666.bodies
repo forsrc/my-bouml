@@ -1,0 +1,63 @@
+class UnsupportedElement
+!!!3806210.java!!!	UnsupportedElement(inout uri : String, inout prefix : String, inout local : String, inout isExtension : boolean)
+        super(uri, prefix, local);
+        _isExtension = isExtension;
+!!!3806338.java!!!	setErrorMessage(inout message : ErrorMsg) : void
+        _message = message;
+!!!3806466.java!!!	display(in indent : int) : void
+        indent(indent);
+        Util.println("Unsupported element = " + _qname.getNamespace() +
+                     ":" + _qname.getLocalPart());
+        displayContents(indent + IndentIncrement);
+!!!3806594.java!!!	processFallbacks(inout parser : Parser) : void
+
+        List<SyntaxTreeNode> children = getContents();
+        if (children != null) {
+            final int count = children.size();
+            for (int i = 0; i < count; i++) {
+                SyntaxTreeNode child = children.get(i);
+                if (child instanceof Fallback) {
+                    Fallback fallback = (Fallback)child;
+                    fallback.activate();
+                    fallback.parseContents(parser);
+                    if (_fallbacks == null) {
+                        _fallbacks = new Vector();
+                    }
+                    _fallbacks.addElement(child);
+                }
+            }
+        }
+!!!3806722.java!!!	parseContents(inout parser : Parser) : void
+        processFallbacks(parser);
+!!!3806850.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        if (_fallbacks != null) {
+            int count = _fallbacks.size();
+            for (int i = 0; i < count; i++) {
+                Fallback fallback = (Fallback)_fallbacks.elementAt(i);
+                fallback.typeCheck(stable);
+            }
+        }
+        return Type.Void;
+!!!3806978.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        if (_fallbacks != null) {
+            int count = _fallbacks.size();
+            for (int i = 0; i < count; i++) {
+                Fallback fallback = (Fallback)_fallbacks.elementAt(i);
+                fallback.translate(classGen, methodGen);
+            }
+        }
+        // We only go into the else block in forward-compatibility mode, when
+        // the unsupported element has no fallback.
+        else {
+            // If the unsupported element does not have any fallback child, then
+            // at runtime, a runtime error should be raised when the unsupported
+            // element is instantiated. Otherwise, no error is thrown.
+            ConstantPoolGen cpg = classGen.getConstantPool();
+            InstructionList il = methodGen.getInstructionList();
+
+            final int unsupportedElem = cpg.addMethodref(BASIS_LIBRARY_CLASS, "unsupported_ElementF",
+                                                         "(" + STRING_SIG + "Z)V");
+            il.append(new PUSH(cpg, getQName().toString()));
+            il.append(new PUSH(cpg, _isExtension));
+            il.append(new INVOKESTATIC(unsupportedElem));
+        }

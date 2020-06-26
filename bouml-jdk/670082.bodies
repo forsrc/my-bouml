@@ -1,0 +1,155 @@
+class DTDDriver
+!!!4364034.java!!!	next() : int
+            // throw new XNIException("DTD Parsing is currently not supported");
+            if(DEBUG_NEXT){
+                System.out.println("Now in DTD Driver");
+            }
+
+            dispatch(true);
+
+            if(DEBUG_NEXT){
+                System.out.println("After calling dispatch(true) -- At this point whole DTD is read.");
+            }
+
+            //xxx: remove this hack and align this with reusing DTD components
+            //currently this routine will only be executed from Stax
+            if(fPropertyManager != null){
+                dtdGrammarUtil =  new DTDGrammarUtil(((XMLDTDScannerImpl)fDTDScanner).getGrammar(),fSymbolTable, fNamespaceContext);
+            }
+
+            return XMLEvent.DTD ;
+!!!4364162.java!!!	dispatch(inout complete : boolean) : boolean
+            fEntityManager.setEntityHandler(null);
+            try {
+                boolean again;
+                XMLResourceIdentifierImpl resourceIdentifier = new XMLResourceIdentifierImpl();
+                if( fDTDScanner == null){
+
+                    if (fEntityManager.getEntityScanner() instanceof XML11EntityScanner){
+                        fDTDScanner = new XML11DTDScannerImpl();
+                    } else
+
+                    fDTDScanner = new XMLDTDScannerImpl();
+
+                    ((XMLDTDScannerImpl)fDTDScanner).reset(fPropertyManager);
+                }
+
+                fDTDScanner.setLimitAnalyzer(fLimitAnalyzer);
+                do {
+                    again = false;
+                    switch (fScannerState) {
+                        case SCANNER_STATE_DTD_INTERNAL_DECLS: {
+                            boolean moreToScan = false;
+                            if (!fDTDScanner.skipDTD(fSupportDTD)) {
+                            // REVISIT: Should there be a feature for
+                            //          the "complete" parameter?
+                            boolean completeDTD = true;
+
+                                moreToScan = fDTDScanner.scanDTDInternalSubset(completeDTD, fStandalone, fHasExternalDTD && fLoadExternalDTD);
+                            }
+                            Entity entity = fEntityScanner.getCurrentEntity();
+                            if(entity instanceof Entity.ScannedEntity){
+                                fEndPos=((Entity.ScannedEntity)entity).position;
+                            }
+                            fReadingDTD=false;
+                            if (!moreToScan) {
+                                // end doctype declaration
+                                if (!fEntityScanner.skipChar(']', null)) {
+                                    reportFatalError("DoctypedeclNotClosed", new Object[]{fDoctypeName});
+                                }
+                                fEntityScanner.skipSpaces();
+                                if (!fEntityScanner.skipChar('>', null)) {
+                                    reportFatalError("DoctypedeclUnterminated", new Object[]{fDoctypeName});
+                                }
+                                fMarkupDepth--;
+
+                                if (!fSupportDTD) {
+                                    //simply reset the entity store without having to mess around
+                                    //with the DTD Scanner code
+                                    fEntityStore = fEntityManager.getEntityStore();
+                                    fEntityStore.reset();
+                                } else {
+                                    // scan external subset next unless we are ignoring DTDs
+                                    if (fDoctypeSystemId != null && (fValidation || fLoadExternalDTD)) {
+                                        setScannerState(SCANNER_STATE_DTD_EXTERNAL);
+                                        break;
+                                    }
+                                }
+
+                                setEndDTDScanState();
+                                return true;
+
+                            }
+                            break;
+                        }
+                        case SCANNER_STATE_DTD_EXTERNAL: {
+                            /**
+                            fDTDDescription.setValues(fDoctypePublicId, fDoctypeSystemId, null, null);
+                            fDTDDescription.setRootName(fDoctypeName);
+                            XMLInputSource xmlInputSource =
+                                fEntityManager.resolveEntity(fDTDDescription);
+                            fDTDScanner.setInputSource(xmlInputSource);
+                            setScannerState(SCANNER_STATE_DTD_EXTERNAL_DECLS);
+                            again = true;
+                            break;
+                             */
+
+                            resourceIdentifier.setValues(fDoctypePublicId, fDoctypeSystemId, null, null);
+                            XMLInputSource xmlInputSource = null ;
+                            StaxXMLInputSource staxInputSource =  fEntityManager.resolveEntityAsPerStax(resourceIdentifier);
+
+                            // Check access permission. If the source is resolved by a resolver, the check is skipped.
+                            if (!staxInputSource.hasResolver()) {
+                                String accessError = checkAccess(fDoctypeSystemId, fAccessExternalDTD);
+                                if (accessError != null) {
+                                    reportFatalError("AccessExternalDTD", new Object[]{ SecuritySupport.sanitizePath(fDoctypeSystemId), accessError });
+                                }
+                            }
+                            xmlInputSource = staxInputSource.getXMLInputSource();
+                            fDTDScanner.setInputSource(xmlInputSource);
+                            if (fEntityScanner.fCurrentEntity != null) {
+                                setScannerState(SCANNER_STATE_DTD_EXTERNAL_DECLS);
+                            } else {
+                                setScannerState(SCANNER_STATE_PROLOG);
+                            }
+                            again = true;
+                            break;
+                        }
+                        case SCANNER_STATE_DTD_EXTERNAL_DECLS: {
+                            // REVISIT: Should there be a feature for
+                            //          the "complete" parameter?
+                            boolean completeDTD = true;
+                            boolean moreToScan = fDTDScanner.scanDTDExternalSubset(completeDTD);
+                            if (!moreToScan) {
+                                setEndDTDScanState();
+                                return true;
+                            }
+                            break;
+                        }
+                        case SCANNER_STATE_PROLOG : {
+                            // skip entity decls
+                            setEndDTDScanState();
+                            return true;
+                        }
+                        default: {
+                            throw new XNIException("DTDDriver#dispatch: scanner state="+fScannerState+" ("+getScannerStateName(fScannerState)+')');
+                        }
+                    }
+                } while (complete || again);
+            }
+
+            // premature end of file
+            catch (EOFException e) {
+                e.printStackTrace();
+                reportFatalError("PrematureEOF", null);
+                return false;
+                //throw e;
+            }
+
+            // cleanup
+            finally {
+                fEntityManager.setEntityHandler(XMLDocumentScannerImpl.this);
+            }
+
+            return true;
+

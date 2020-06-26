@@ -1,0 +1,79 @@
+class POALocalCRDImpl
+!!!1383682.java!!!	POALocalCRDImpl(inout orb : ORB, in scid : int, inout ior : IOR)
+        super( (com.sun.corba.se.spi.orb.ORB)orb, scid, ior );
+        wrapper = ORBUtilSystemException.get( orb,
+            CORBALogDomains.RPC_PROTOCOL ) ;
+        poaWrapper = POASystemException.get( orb,
+            CORBALogDomains.RPC_PROTOCOL ) ;
+!!!1383810.java!!!	servantEnter(inout oa : ObjectAdapter) : OAInvocationInfo
+        oa.enter() ;
+
+        OAInvocationInfo info = oa.makeInvocationInfo( objectId ) ;
+        orb.pushInvocationInfo( info ) ;
+
+        return info ;
+!!!1383938.java!!!	servantExit(inout oa : ObjectAdapter) : void
+        try {
+            oa.returnServant();
+        } finally {
+            oa.exit() ;
+            orb.popInvocationInfo() ;
+        }
+!!!1384066.java!!!	servant_preinvoke(inout self : Object, inout operation : String, inout expectedType : Class) : ServantObject
+        ObjectAdapter oa = oaf.find( oaid ) ;
+        OAInvocationInfo info = null ;
+
+        try {
+            info = servantEnter( oa ) ;
+            info.setOperation( operation ) ;
+        } catch ( OADestroyed ex ) {
+            // Destroyed POAs can be recreated by normal adapter activation.
+            // So just reinvoke this method.
+            return servant_preinvoke(self, operation, expectedType);
+        }
+
+        try {
+            try {
+                oa.getInvocationServant( info );
+                if (!checkForCompatibleServant( info, expectedType ))
+                    return null ;
+            } catch (Throwable thr) {
+                // Cleanup after this call, then throw to allow
+                // outer try to handle the exception appropriately.
+                servantExit( oa ) ;
+                throw thr ;
+            }
+        } catch ( ForwardException ex ) {
+            /* REVISIT
+            ClientRequestDispatcher csub = (ClientRequestDispatcher)
+                StubAdapter.getDelegate( ex.forward_reference ) ;
+            IOR ior = csub.getIOR() ;
+            setLocatedIOR( ior ) ;
+            */
+            RuntimeException runexc = new RuntimeException("deal with this.");
+            runexc.initCause( ex ) ;
+            throw runexc ;
+        } catch ( ThreadDeath ex ) {
+            // ThreadDeath on the server side should not cause a client
+            // side thread death in the local case.  We want to preserve
+            // this behavior for location transparency, so that a ThreadDeath
+            // has the same affect in either the local or remote case.
+            // The non-colocated case is handled in iiop.ORB.process, which
+            // throws the same exception.
+            throw wrapper.runtimeexception( ex ) ;
+        } catch ( Throwable t ) {
+            if (t instanceof SystemException)
+                throw (SystemException)t ;
+
+            throw poaWrapper.localServantLookup( t ) ;
+        }
+
+        if (!checkForCompatibleServant( info, expectedType )) {
+            servantExit( oa ) ;
+            return null ;
+        }
+
+        return info;
+!!!1384194.java!!!	servant_postinvoke(inout self : Object, inout servantobj : ServantObject) : void
+        ObjectAdapter oa = orb.peekInvocationInfo().oa() ;
+        servantExit( oa ) ;

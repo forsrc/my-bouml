@@ -1,0 +1,109 @@
+class Preferences
+!!!9410562.java!!!	factory() : PreferencesFactory
+        // 1. Try user-specified system property
+        String factoryName = AccessController.doPrivileged(
+            new PrivilegedAction<String>() {
+                public String run() {
+                    return System.getProperty(
+                        "java.util.prefs.PreferencesFactory");}});
+        if (factoryName != null) {
+            // FIXME: This code should be run in a doPrivileged and
+            // not use the context classloader, to avoid being
+            // dependent on the invoking thread.
+            // Checking AllPermission also seems wrong.
+            try {
+                return (PreferencesFactory)
+                    Class.forName(factoryName, false,
+                                  ClassLoader.getSystemClassLoader())
+                    .newInstance();
+            } catch (Exception ex) {
+                try {
+                    // workaround for javaws, plugin,
+                    // load factory class using non-system classloader
+                    SecurityManager sm = System.getSecurityManager();
+                    if (sm != null) {
+                        sm.checkPermission(new java.security.AllPermission());
+                    }
+                    return (PreferencesFactory)
+                        Class.forName(factoryName, false,
+                                      Thread.currentThread()
+                                      .getContextClassLoader())
+                        .newInstance();
+                } catch (Exception e) {
+                    throw new InternalError(
+                        "Can't instantiate Preferences factory "
+                        + factoryName, e);
+                }
+            }
+        }
+
+        return AccessController.doPrivileged(
+            new PrivilegedAction<PreferencesFactory>() {
+                public PreferencesFactory run() {
+                    return factory1();}});
+!!!9410690.java!!!	factory1() : PreferencesFactory
+        // 2. Try service provider interface
+        Iterator<PreferencesFactory> itr = ServiceLoader
+            .load(PreferencesFactory.class, ClassLoader.getSystemClassLoader())
+            .iterator();
+
+        // choose first provider instance
+        while (itr.hasNext()) {
+            try {
+                return itr.next();
+            } catch (ServiceConfigurationError sce) {
+                if (sce.getCause() instanceof SecurityException) {
+                    // Ignore the security exception, try the next provider
+                    continue;
+                }
+                throw sce;
+            }
+        }
+
+        // 3. Use platform-specific system-wide default
+        String osName = System.getProperty("os.name");
+        String platformFactory;
+        if (osName.startsWith("Windows")) {
+            platformFactory = "java.util.prefs.WindowsPreferencesFactory";
+        } else if (osName.contains("OS X")) {
+            platformFactory = "java.util.prefs.MacOSXPreferencesFactory";
+        } else {
+            platformFactory = "java.util.prefs.FileSystemPreferencesFactory";
+        }
+        try {
+            return (PreferencesFactory)
+                Class.forName(platformFactory, false,
+                              Preferences.class.getClassLoader()).newInstance();
+        } catch (Exception e) {
+            throw new InternalError(
+                "Can't instantiate platform default Preferences factory "
+                + platformFactory, e);
+        }
+!!!9410818.java!!!	userNodeForPackage(inout c : Class) : Preferences
+        return userRoot().node(nodeName(c));
+!!!9410946.java!!!	systemNodeForPackage(inout c : Class) : Preferences
+        return systemRoot().node(nodeName(c));
+!!!9411074.java!!!	nodeName(inout c : Class) : String
+        if (c.isArray())
+            throw new IllegalArgumentException(
+                "Arrays have no associated preferences node.");
+        String className = c.getName();
+        int pkgEndIndex = className.lastIndexOf('.');
+        if (pkgEndIndex < 0)
+            return "/<unnamed>";
+        String packageName = className.substring(0, pkgEndIndex);
+        return "/" + packageName.replace('.', '/');
+!!!9411202.java!!!	userRoot() : Preferences
+        SecurityManager security = System.getSecurityManager();
+        if (security != null)
+            security.checkPermission(prefsPerm);
+
+        return factory.userRoot();
+!!!9411330.java!!!	systemRoot() : Preferences
+        SecurityManager security = System.getSecurityManager();
+        if (security != null)
+            security.checkPermission(prefsPerm);
+
+        return factory.systemRoot();
+!!!9415938.java!!!	importPreferences(inout is : InputStream) : void
+        XmlSupport.importPreferences(is);

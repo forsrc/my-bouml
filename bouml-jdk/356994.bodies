@@ -1,0 +1,164 @@
+class VetoableChangeSupport
+!!!6806274.java!!!	VetoableChangeSupport(inout sourceBean : Object)
+        if (sourceBean == null) {
+            throw new NullPointerException();
+        }
+        source = sourceBean;
+!!!6806402.java!!!	addVetoableChangeListener(inout listener : VetoableChangeListener) : void
+        if (listener == null) {
+            return;
+        }
+        if (listener instanceof VetoableChangeListenerProxy) {
+            VetoableChangeListenerProxy proxy =
+                    (VetoableChangeListenerProxy)listener;
+            // Call two argument add method.
+            addVetoableChangeListener(proxy.getPropertyName(),
+                                      proxy.getListener());
+        } else {
+            this.map.add(null, listener);
+        }
+!!!6806530.java!!!	removeVetoableChangeListener(inout listener : VetoableChangeListener) : void
+        if (listener == null) {
+            return;
+        }
+        if (listener instanceof VetoableChangeListenerProxy) {
+            VetoableChangeListenerProxy proxy =
+                    (VetoableChangeListenerProxy)listener;
+            // Call two argument remove method.
+            removeVetoableChangeListener(proxy.getPropertyName(),
+                                         proxy.getListener());
+        } else {
+            this.map.remove(null, listener);
+        }
+!!!6806658.java!!!	getVetoableChangeListeners() : VetoableChangeListener
+        return this.map.getListeners();
+!!!6806786.java!!!	addVetoableChangeListener(inout propertyName : String, inout listener : VetoableChangeListener) : void
+        if (listener == null || propertyName == null) {
+            return;
+        }
+        listener = this.map.extract(listener);
+        if (listener != null) {
+            this.map.add(propertyName, listener);
+        }
+!!!6806914.java!!!	removeVetoableChangeListener(inout propertyName : String, inout listener : VetoableChangeListener) : void
+        if (listener == null || propertyName == null) {
+            return;
+        }
+        listener = this.map.extract(listener);
+        if (listener != null) {
+            this.map.remove(propertyName, listener);
+        }
+!!!6807042.java!!!	getVetoableChangeListeners(inout propertyName : String) : VetoableChangeListener
+        return this.map.getListeners(propertyName);
+!!!6807170.java!!!	fireVetoableChange(inout propertyName : String, inout oldValue : Object, inout newValue : Object) : void
+        if (oldValue == null || newValue == null || !oldValue.equals(newValue)) {
+            fireVetoableChange(new PropertyChangeEvent(this.source, propertyName, oldValue, newValue));
+        }
+!!!6807298.java!!!	fireVetoableChange(inout propertyName : String, in oldValue : int, in newValue : int) : void
+        if (oldValue != newValue) {
+            fireVetoableChange(propertyName, Integer.valueOf(oldValue), Integer.valueOf(newValue));
+        }
+!!!6807426.java!!!	fireVetoableChange(inout propertyName : String, inout oldValue : boolean, inout newValue : boolean) : void
+        if (oldValue != newValue) {
+            fireVetoableChange(propertyName, Boolean.valueOf(oldValue), Boolean.valueOf(newValue));
+        }
+!!!6807554.java!!!	fireVetoableChange(inout event : PropertyChangeEvent) : void
+        Object oldValue = event.getOldValue();
+        Object newValue = event.getNewValue();
+        if (oldValue == null || newValue == null || !oldValue.equals(newValue)) {
+            String name = event.getPropertyName();
+
+            VetoableChangeListener[] common = this.map.get(null);
+            VetoableChangeListener[] named = (name != null)
+                        ? this.map.get(name)
+                        : null;
+
+            VetoableChangeListener[] listeners;
+            if (common == null) {
+                listeners = named;
+            }
+            else if (named == null) {
+                listeners = common;
+            }
+            else {
+                listeners = new VetoableChangeListener[common.length + named.length];
+                System.arraycopy(common, 0, listeners, 0, common.length);
+                System.arraycopy(named, 0, listeners, common.length, named.length);
+            }
+            if (listeners != null) {
+                int current = 0;
+                try {
+                    while (current < listeners.length) {
+                        listeners[current].vetoableChange(event);
+                        current++;
+                    }
+                }
+                catch (PropertyVetoException veto) {
+                    event = new PropertyChangeEvent(this.source, name, newValue, oldValue);
+                    for (int i = 0; i < current; i++) {
+                        try {
+                            listeners[i].vetoableChange(event);
+                        }
+                        catch (PropertyVetoException exception) {
+                            // ignore exceptions that occur during rolling back
+                        }
+                    }
+                    throw veto; // rethrow the veto exception
+                }
+            }
+        }
+!!!6807682.java!!!	hasListeners(inout propertyName : String) : boolean
+        return this.map.hasListeners(propertyName);
+!!!6807810.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        Hashtable<String, VetoableChangeSupport> children = null;
+        VetoableChangeListener[] listeners = null;
+        synchronized (this.map) {
+            for (Entry<String, VetoableChangeListener[]> entry : this.map.getEntries()) {
+                String property = entry.getKey();
+                if (property == null) {
+                    listeners = entry.getValue();
+                } else {
+                    if (children == null) {
+                        children = new Hashtable<>();
+                    }
+                    VetoableChangeSupport vcs = new VetoableChangeSupport(this.source);
+                    vcs.map.set(null, entry.getValue());
+                    children.put(property, vcs);
+                }
+            }
+        }
+        ObjectOutputStream.PutField fields = s.putFields();
+        fields.put("children", children);
+        fields.put("source", this.source);
+        fields.put("vetoableChangeSupportSerializedDataVersion", 2);
+        s.writeFields();
+
+        if (listeners != null) {
+            for (VetoableChangeListener l : listeners) {
+                if (l instanceof Serializable) {
+                    s.writeObject(l);
+                }
+            }
+        }
+        s.writeObject(null);
+!!!6807938.java!!!	readObject(inout s : ObjectInputStream) : void
+        this.map = new VetoableChangeListenerMap();
+
+        ObjectInputStream.GetField fields = s.readFields();
+
+        @SuppressWarnings("unchecked")
+        Hashtable<String, VetoableChangeSupport> children = (Hashtable<String, VetoableChangeSupport>)fields.get("children", null);
+        this.source = fields.get("source", null);
+        fields.get("vetoableChangeSupportSerializedDataVersion", 2);
+
+        Object listenerOrNull;
+        while (null != (listenerOrNull = s.readObject())) {
+            this.map.add(null, (VetoableChangeListener)listenerOrNull);
+        }
+        if (children != null) {
+            for (Entry<String, VetoableChangeSupport> entry : children.entrySet()) {
+                for (VetoableChangeListener listener : entry.getValue().getVetoableChangeListeners()) {
+                    this.map.add(entry.getKey(), listener);
+                }
+            }
+        }

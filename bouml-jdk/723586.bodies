@@ -1,0 +1,880 @@
+class Calendar
+!!!8659970.java!!!	Calendar()
+        this(TimeZone.getDefaultRef(), Locale.getDefault(Locale.Category.FORMAT));
+        sharedZone = true;
+!!!8660098.java!!!	Calendar(inout zone : TimeZone, inout aLocale : Locale)
+        fields = new int[FIELD_COUNT];
+        isSet = new boolean[FIELD_COUNT];
+        stamp = new int[FIELD_COUNT];
+
+        this.zone = zone;
+        setWeekCountData(aLocale);
+!!!8660226.java!!!	getInstance() : Calendar
+        return createCalendar(TimeZone.getDefault(), Locale.getDefault(Locale.Category.FORMAT));
+!!!8660354.java!!!	getInstance(inout zone : TimeZone) : Calendar
+        return createCalendar(zone, Locale.getDefault(Locale.Category.FORMAT));
+!!!8660482.java!!!	getInstance(inout aLocale : Locale) : Calendar
+        return createCalendar(TimeZone.getDefault(), aLocale);
+!!!8660610.java!!!	getInstance(inout zone : TimeZone, inout aLocale : Locale) : Calendar
+        return createCalendar(zone, aLocale);
+!!!8660738.java!!!	createCalendar(inout zone : TimeZone, inout aLocale : Locale) : Calendar
+        CalendarProvider provider =
+            LocaleProviderAdapter.getAdapter(CalendarProvider.class, aLocale)
+                                 .getCalendarProvider();
+        if (provider != null) {
+            try {
+                return provider.getInstance(zone, aLocale);
+            } catch (IllegalArgumentException iae) {
+                // fall back to the default instantiation
+            }
+        }
+
+        Calendar cal = null;
+
+        if (aLocale.hasExtensions()) {
+            String caltype = aLocale.getUnicodeLocaleType("ca");
+            if (caltype != null) {
+                switch (caltype) {
+                case "buddhist":
+                cal = new BuddhistCalendar(zone, aLocale);
+                    break;
+                case "japanese":
+                    cal = new JapaneseImperialCalendar(zone, aLocale);
+                    break;
+                case "gregory":
+                    cal = new GregorianCalendar(zone, aLocale);
+                    break;
+                }
+            }
+        }
+        if (cal == null) {
+            // If no known calendar type is explicitly specified,
+            // perform the traditional way to create a Calendar:
+            // create a BuddhistCalendar for th_TH locale,
+            // a JapaneseImperialCalendar for ja_JP_JP locale, or
+            // a GregorianCalendar for any other locales.
+            // NOTE: The language, country and variant strings are interned.
+            if (aLocale.getLanguage() == "th" && aLocale.getCountry() == "TH") {
+                cal = new BuddhistCalendar(zone, aLocale);
+            } else if (aLocale.getVariant() == "JP" && aLocale.getLanguage() == "ja"
+                       && aLocale.getCountry() == "JP") {
+                cal = new JapaneseImperialCalendar(zone, aLocale);
+            } else {
+                cal = new GregorianCalendar(zone, aLocale);
+            }
+        }
+        return cal;
+!!!8660866.java!!!	getAvailableLocales() : Locale
+        return DateFormat.getAvailableLocales();
+!!!8661250.java!!!	getTime() : Date
+        return new Date(getTimeInMillis());
+!!!8661378.java!!!	setTime(inout date : Date) : void
+        setTimeInMillis(date.getTime());
+!!!8661506.java!!!	getTimeInMillis() : long
+        if (!isTimeSet) {
+            updateTime();
+        }
+        return time;
+!!!8661634.java!!!	setTimeInMillis(in millis : long) : void
+        // If we don't need to recalculate the calendar field values,
+        // do nothing.
+        if (time == millis && isTimeSet && areFieldsSet && areAllFieldsSet
+            && (zone instanceof ZoneInfo) && !((ZoneInfo)zone).isDirty()) {
+            return;
+        }
+        time = millis;
+        isTimeSet = true;
+        areFieldsSet = false;
+        computeFields();
+        areAllFieldsSet = areFieldsSet = true;
+!!!8661762.java!!!	get(in field : int) : int
+        complete();
+        return internalGet(field);
+!!!8661890.java!!!	internalGet(in field : int) : int
+        return fields[field];
+!!!8662018.java!!!	internalSet(in field : int, in value : int) : void
+        fields[field] = value;
+!!!8662146.java!!!	set(in field : int, in value : int) : void
+        // If the fields are partially normalized, calculate all the
+        // fields before changing any fields.
+        if (areFieldsSet && !areAllFieldsSet) {
+            computeFields();
+        }
+        internalSet(field, value);
+        isTimeSet = false;
+        areFieldsSet = false;
+        isSet[field] = true;
+        stamp[field] = nextStamp++;
+        if (nextStamp == Integer.MAX_VALUE) {
+            adjustStamp();
+        }
+!!!8662274.java!!!	set(in year : int, in month : int, in date : int) : void
+        set(YEAR, year);
+        set(MONTH, month);
+        set(DATE, date);
+!!!8662402.java!!!	set(in year : int, in month : int, in date : int, in hourOfDay : int, in minute : int) : void
+        set(YEAR, year);
+        set(MONTH, month);
+        set(DATE, date);
+        set(HOUR_OF_DAY, hourOfDay);
+        set(MINUTE, minute);
+!!!8662530.java!!!	set(in year : int, in month : int, in date : int, in hourOfDay : int, in minute : int, in second : int) : void
+        set(YEAR, year);
+        set(MONTH, month);
+        set(DATE, date);
+        set(HOUR_OF_DAY, hourOfDay);
+        set(MINUTE, minute);
+        set(SECOND, second);
+!!!8662658.java!!!	clear() : void
+        for (int i = 0; i < fields.length; ) {
+            stamp[i] = fields[i] = 0; // UNSET == 0
+            isSet[i++] = false;
+        }
+        areAllFieldsSet = areFieldsSet = false;
+        isTimeSet = false;
+!!!8662786.java!!!	clear(in field : int) : void
+        fields[field] = 0;
+        stamp[field] = UNSET;
+        isSet[field] = false;
+
+        areAllFieldsSet = areFieldsSet = false;
+        isTimeSet = false;
+!!!8662914.java!!!	isSet(in field : int) : boolean
+        return stamp[field] != UNSET;
+!!!8663042.java!!!	getDisplayName(in field : int, in style : int, inout locale : Locale) : String
+        if (!checkDisplayNameParams(field, style, SHORT, NARROW_FORMAT, locale,
+                            ERA_MASK|MONTH_MASK|DAY_OF_WEEK_MASK|AM_PM_MASK)) {
+            return null;
+        }
+
+        String calendarType = getCalendarType();
+        int fieldValue = get(field);
+        // the standalone and narrow styles are supported only through CalendarDataProviders.
+        if (isStandaloneStyle(style) || isNarrowFormatStyle(style)) {
+            String val = CalendarDataUtility.retrieveFieldValueName(calendarType,
+                                                                    field, fieldValue,
+                                                                    style, locale);
+            // Perform fallback here to follow the CLDR rules
+            if (val == null) {
+                if (isNarrowFormatStyle(style)) {
+                    val = CalendarDataUtility.retrieveFieldValueName(calendarType,
+                                                                     field, fieldValue,
+                                                                     toStandaloneStyle(style),
+                                                                     locale);
+                } else if (isStandaloneStyle(style)) {
+                    val = CalendarDataUtility.retrieveFieldValueName(calendarType,
+                                                                     field, fieldValue,
+                                                                     getBaseStyle(style),
+                                                                     locale);
+                }
+            }
+            return val;
+        }
+
+        DateFormatSymbols symbols = DateFormatSymbols.getInstance(locale);
+        String[] strings = getFieldStrings(field, style, symbols);
+        if (strings != null) {
+            if (fieldValue < strings.length) {
+                return strings[fieldValue];
+            }
+        }
+        return null;
+!!!8663170.java!!!	getDisplayNames(in field : int, in style : int, inout locale : Locale) : Map
+        if (!checkDisplayNameParams(field, style, ALL_STYLES, NARROW_FORMAT, locale,
+                                    ERA_MASK|MONTH_MASK|DAY_OF_WEEK_MASK|AM_PM_MASK)) {
+            return null;
+        }
+
+        String calendarType = getCalendarType();
+        if (style == ALL_STYLES || isStandaloneStyle(style) || isNarrowFormatStyle(style)) {
+            Map<String, Integer> map;
+            map = CalendarDataUtility.retrieveFieldValueNames(calendarType, field, style, locale);
+
+            // Perform fallback here to follow the CLDR rules
+            if (map == null) {
+                if (isNarrowFormatStyle(style)) {
+                    map = CalendarDataUtility.retrieveFieldValueNames(calendarType, field,
+                                                                      toStandaloneStyle(style), locale);
+                } else if (style != ALL_STYLES) {
+                    map = CalendarDataUtility.retrieveFieldValueNames(calendarType, field,
+                                                                      getBaseStyle(style), locale);
+                }
+            }
+            return map;
+        }
+
+        // SHORT or LONG
+        return getDisplayNamesImpl(field, style, locale);
+!!!8663298.java!!!	getDisplayNamesImpl(in field : int, in style : int, inout locale : Locale) : Map
+        DateFormatSymbols symbols = DateFormatSymbols.getInstance(locale);
+        String[] strings = getFieldStrings(field, style, symbols);
+        if (strings != null) {
+            Map<String,Integer> names = new HashMap<>();
+            for (int i = 0; i < strings.length; i++) {
+                if (strings[i].length() == 0) {
+                    continue;
+                }
+                names.put(strings[i], i);
+            }
+            return names;
+        }
+        return null;
+!!!8663426.java!!!	checkDisplayNameParams(in field : int, in style : int, in minStyle : int, in maxStyle : int, inout locale : Locale, in fieldMask : int) : boolean
+        int baseStyle = getBaseStyle(style); // Ignore the standalone mask
+        if (field < 0 || field >= fields.length ||
+            baseStyle < minStyle || baseStyle > maxStyle) {
+            throw new IllegalArgumentException();
+        }
+        if (locale == null) {
+            throw new NullPointerException();
+        }
+        return isFieldSet(fieldMask, field);
+!!!8663554.java!!!	getFieldStrings(in field : int, in style : int, inout symbols : DateFormatSymbols) : String
+        int baseStyle = getBaseStyle(style); // ignore the standalone mask
+
+        // DateFormatSymbols doesn't support any narrow names.
+        if (baseStyle == NARROW_FORMAT) {
+            return null;
+        }
+
+        String[] strings = null;
+        switch (field) {
+        case ERA:
+            strings = symbols.getEras();
+            break;
+
+        case MONTH:
+            strings = (baseStyle == LONG) ? symbols.getMonths() : symbols.getShortMonths();
+            break;
+
+        case DAY_OF_WEEK:
+            strings = (baseStyle == LONG) ? symbols.getWeekdays() : symbols.getShortWeekdays();
+            break;
+
+        case AM_PM:
+            strings = symbols.getAmPmStrings();
+            break;
+        }
+        return strings;
+!!!8663682.java!!!	complete() : void
+        if (!isTimeSet) {
+            updateTime();
+        }
+        if (!areFieldsSet || !areAllFieldsSet) {
+            computeFields(); // fills in unset fields
+            areAllFieldsSet = areFieldsSet = true;
+        }
+!!!8663810.java!!!	isExternallySet(in field : int) : boolean
+        return stamp[field] >= MINIMUM_USER_STAMP;
+!!!8663938.java!!!	getSetStateFields() : int
+        int mask = 0;
+        for (int i = 0; i < fields.length; i++) {
+            if (stamp[i] != UNSET) {
+                mask |= 1 << i;
+            }
+        }
+        return mask;
+!!!8664066.java!!!	setFieldsComputed(in fieldMask : int) : void
+        if (fieldMask == ALL_FIELDS) {
+            for (int i = 0; i < fields.length; i++) {
+                stamp[i] = COMPUTED;
+                isSet[i] = true;
+            }
+            areFieldsSet = areAllFieldsSet = true;
+        } else {
+            for (int i = 0; i < fields.length; i++) {
+                if ((fieldMask & 1) == 1) {
+                    stamp[i] = COMPUTED;
+                    isSet[i] = true;
+                } else {
+                    if (areAllFieldsSet && !isSet[i]) {
+                        areAllFieldsSet = false;
+                    }
+                }
+                fieldMask >>>= 1;
+            }
+        }
+!!!8664194.java!!!	setFieldsNormalized(in fieldMask : int) : void
+        if (fieldMask != ALL_FIELDS) {
+            for (int i = 0; i < fields.length; i++) {
+                if ((fieldMask & 1) == 0) {
+                    stamp[i] = fields[i] = 0; // UNSET == 0
+                    isSet[i] = false;
+                }
+                fieldMask >>= 1;
+            }
+        }
+
+        // Some or all of the fields are in sync with the
+        // milliseconds, but the stamp values are not normalized yet.
+        areFieldsSet = true;
+        areAllFieldsSet = false;
+!!!8664322.java!!!	isPartiallyNormalized() : boolean
+        return areFieldsSet && !areAllFieldsSet;
+!!!8664450.java!!!	isFullyNormalized() : boolean
+        return areFieldsSet && areAllFieldsSet;
+!!!8664578.java!!!	setUnnormalized() : void
+        areFieldsSet = areAllFieldsSet = false;
+!!!8664706.java!!!	isFieldSet(in fieldMask : int, in field : int) : boolean
+        return (fieldMask & (1 << field)) != 0;
+!!!8664834.java!!!	selectFields() : int
+        // This implementation has been taken from the GregorianCalendar class.
+
+        // The YEAR field must always be used regardless of its SET
+        // state because YEAR is a mandatory field to determine the date
+        // and the default value (EPOCH_YEAR) may change through the
+        // normalization process.
+        int fieldMask = YEAR_MASK;
+
+        if (stamp[ERA] != UNSET) {
+            fieldMask |= ERA_MASK;
+        }
+        // Find the most recent group of fields specifying the day within
+        // the year.  These may be any of the following combinations:
+        //   MONTH + DAY_OF_MONTH
+        //   MONTH + WEEK_OF_MONTH + DAY_OF_WEEK
+        //   MONTH + DAY_OF_WEEK_IN_MONTH + DAY_OF_WEEK
+        //   DAY_OF_YEAR
+        //   WEEK_OF_YEAR + DAY_OF_WEEK
+        // We look for the most recent of the fields in each group to determine
+        // the age of the group.  For groups involving a week-related field such
+        // as WEEK_OF_MONTH, DAY_OF_WEEK_IN_MONTH, or WEEK_OF_YEAR, both the
+        // week-related field and the DAY_OF_WEEK must be set for the group as a
+        // whole to be considered.  (See bug 4153860 - liu 7/24/98.)
+        int dowStamp = stamp[DAY_OF_WEEK];
+        int monthStamp = stamp[MONTH];
+        int domStamp = stamp[DAY_OF_MONTH];
+        int womStamp = aggregateStamp(stamp[WEEK_OF_MONTH], dowStamp);
+        int dowimStamp = aggregateStamp(stamp[DAY_OF_WEEK_IN_MONTH], dowStamp);
+        int doyStamp = stamp[DAY_OF_YEAR];
+        int woyStamp = aggregateStamp(stamp[WEEK_OF_YEAR], dowStamp);
+
+        int bestStamp = domStamp;
+        if (womStamp > bestStamp) {
+            bestStamp = womStamp;
+        }
+        if (dowimStamp > bestStamp) {
+            bestStamp = dowimStamp;
+        }
+        if (doyStamp > bestStamp) {
+            bestStamp = doyStamp;
+        }
+        if (woyStamp > bestStamp) {
+            bestStamp = woyStamp;
+        }
+
+        /* No complete combination exists.  Look for WEEK_OF_MONTH,
+         * DAY_OF_WEEK_IN_MONTH, or WEEK_OF_YEAR alone.  Treat DAY_OF_WEEK alone
+         * as DAY_OF_WEEK_IN_MONTH.
+         */
+        if (bestStamp == UNSET) {
+            womStamp = stamp[WEEK_OF_MONTH];
+            dowimStamp = Math.max(stamp[DAY_OF_WEEK_IN_MONTH], dowStamp);
+            woyStamp = stamp[WEEK_OF_YEAR];
+            bestStamp = Math.max(Math.max(womStamp, dowimStamp), woyStamp);
+
+            /* Treat MONTH alone or no fields at all as DAY_OF_MONTH.  This may
+             * result in bestStamp = domStamp = UNSET if no fields are set,
+             * which indicates DAY_OF_MONTH.
+             */
+            if (bestStamp == UNSET) {
+                bestStamp = domStamp = monthStamp;
+            }
+        }
+
+        if (bestStamp == domStamp ||
+           (bestStamp == womStamp && stamp[WEEK_OF_MONTH] >= stamp[WEEK_OF_YEAR]) ||
+           (bestStamp == dowimStamp && stamp[DAY_OF_WEEK_IN_MONTH] >= stamp[WEEK_OF_YEAR])) {
+            fieldMask |= MONTH_MASK;
+            if (bestStamp == domStamp) {
+                fieldMask |= DAY_OF_MONTH_MASK;
+            } else {
+                assert (bestStamp == womStamp || bestStamp == dowimStamp);
+                if (dowStamp != UNSET) {
+                    fieldMask |= DAY_OF_WEEK_MASK;
+                }
+                if (womStamp == dowimStamp) {
+                    // When they are equal, give the priority to
+                    // WEEK_OF_MONTH for compatibility.
+                    if (stamp[WEEK_OF_MONTH] >= stamp[DAY_OF_WEEK_IN_MONTH]) {
+                        fieldMask |= WEEK_OF_MONTH_MASK;
+                    } else {
+                        fieldMask |= DAY_OF_WEEK_IN_MONTH_MASK;
+                    }
+                } else {
+                    if (bestStamp == womStamp) {
+                        fieldMask |= WEEK_OF_MONTH_MASK;
+                    } else {
+                        assert (bestStamp == dowimStamp);
+                        if (stamp[DAY_OF_WEEK_IN_MONTH] != UNSET) {
+                            fieldMask |= DAY_OF_WEEK_IN_MONTH_MASK;
+                        }
+                    }
+                }
+            }
+        } else {
+            assert (bestStamp == doyStamp || bestStamp == woyStamp ||
+                    bestStamp == UNSET);
+            if (bestStamp == doyStamp) {
+                fieldMask |= DAY_OF_YEAR_MASK;
+            } else {
+                assert (bestStamp == woyStamp);
+                if (dowStamp != UNSET) {
+                    fieldMask |= DAY_OF_WEEK_MASK;
+                }
+                fieldMask |= WEEK_OF_YEAR_MASK;
+            }
+        }
+
+        // Find the best set of fields specifying the time of day.  There
+        // are only two possibilities here; the HOUR_OF_DAY or the
+        // AM_PM and the HOUR.
+        int hourOfDayStamp = stamp[HOUR_OF_DAY];
+        int hourStamp = aggregateStamp(stamp[HOUR], stamp[AM_PM]);
+        bestStamp = (hourStamp > hourOfDayStamp) ? hourStamp : hourOfDayStamp;
+
+        // if bestStamp is still UNSET, then take HOUR or AM_PM. (See 4846659)
+        if (bestStamp == UNSET) {
+            bestStamp = Math.max(stamp[HOUR], stamp[AM_PM]);
+        }
+
+        // Hours
+        if (bestStamp != UNSET) {
+            if (bestStamp == hourOfDayStamp) {
+                fieldMask |= HOUR_OF_DAY_MASK;
+            } else {
+                fieldMask |= HOUR_MASK;
+                if (stamp[AM_PM] != UNSET) {
+                    fieldMask |= AM_PM_MASK;
+                }
+            }
+        }
+        if (stamp[MINUTE] != UNSET) {
+            fieldMask |= MINUTE_MASK;
+        }
+        if (stamp[SECOND] != UNSET) {
+            fieldMask |= SECOND_MASK;
+        }
+        if (stamp[MILLISECOND] != UNSET) {
+            fieldMask |= MILLISECOND_MASK;
+        }
+        if (stamp[ZONE_OFFSET] >= MINIMUM_USER_STAMP) {
+                fieldMask |= ZONE_OFFSET_MASK;
+        }
+        if (stamp[DST_OFFSET] >= MINIMUM_USER_STAMP) {
+            fieldMask |= DST_OFFSET_MASK;
+        }
+
+        return fieldMask;
+!!!8664962.java!!!	getBaseStyle(in style : int) : int
+        return style & ~STANDALONE_MASK;
+!!!8665090.java!!!	toStandaloneStyle(in style : int) : int
+        return style | STANDALONE_MASK;
+!!!8665218.java!!!	isStandaloneStyle(in style : int) : boolean
+        return (style & STANDALONE_MASK) != 0;
+!!!8665346.java!!!	isNarrowStyle(in style : int) : boolean
+        return style == NARROW_FORMAT || style == NARROW_STANDALONE;
+!!!8665474.java!!!	isNarrowFormatStyle(in style : int) : boolean
+        return style == NARROW_FORMAT;
+!!!8665602.java!!!	aggregateStamp(in stamp_a : int, in stamp_b : int) : int
+        if (stamp_a == UNSET || stamp_b == UNSET) {
+            return UNSET;
+        }
+        return (stamp_a > stamp_b) ? stamp_a : stamp_b;
+!!!8665730.java!!!	getAvailableCalendarTypes() : Set
+        return AvailableCalendarTypes.SET;
+!!!8665986.java!!!	getCalendarType() : String
+        return this.getClass().getName();
+!!!8666114.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        try {
+            Calendar that = (Calendar)obj;
+            return compareTo(getMillisOf(that)) == 0 &&
+                lenient == that.lenient &&
+                firstDayOfWeek == that.firstDayOfWeek &&
+                minimalDaysInFirstWeek == that.minimalDaysInFirstWeek &&
+                zone.equals(that.zone);
+        } catch (Exception e) {
+            // Note: GregorianCalendar.computeTime throws
+            // IllegalArgumentException if the ERA value is invalid
+            // even it's in lenient mode.
+        }
+        return false;
+!!!8666242.java!!!	hashCode() : int
+        // 'otheritems' represents the hash code for the previous versions.
+        int otheritems = (lenient ? 1 : 0)
+            | (firstDayOfWeek << 1)
+            | (minimalDaysInFirstWeek << 4)
+            | (zone.hashCode() << 7);
+        long t = getMillisOf(this);
+        return (int) t ^ (int)(t >> 32) ^ otheritems;
+!!!8666370.java!!!	before(inout when : Object) : boolean
+        return when instanceof Calendar
+            && compareTo((Calendar)when) < 0;
+!!!8666498.java!!!	after(inout when : Object) : boolean
+        return when instanceof Calendar
+            && compareTo((Calendar)when) > 0;
+!!!8666626.java!!!	compareTo(inout anotherCalendar : Calendar) : int
+        return compareTo(getMillisOf(anotherCalendar));
+!!!8667010.java!!!	roll(in field : int, in amount : int) : void
+        while (amount > 0) {
+            roll(field, true);
+            amount--;
+        }
+        while (amount < 0) {
+            roll(field, false);
+            amount++;
+        }
+!!!8667138.java!!!	setTimeZone(inout value : TimeZone) : void
+        zone = value;
+        sharedZone = false;
+        /* Recompute the fields from the time using the new zone.  This also
+         * works if isTimeSet is false (after a call to set()).  In that case
+         * the time will be computed from the fields using the new zone, then
+         * the fields will get recomputed from that.  Consider the sequence of
+         * calls: cal.setTimeZone(EST); cal.set(HOUR, 1); cal.setTimeZone(PST).
+         * Is cal set to 1 o'clock EST or 1 o'clock PST?  Answer: PST.  More
+         * generally, a call to setTimeZone() affects calls to set() BEFORE AND
+         * AFTER it up to the next call to complete().
+         */
+        areAllFieldsSet = areFieldsSet = false;
+!!!8667266.java!!!	getTimeZone() : TimeZone
+        // If the TimeZone object is shared by other Calendar instances, then
+        // create a clone.
+        if (sharedZone) {
+            zone = (TimeZone) zone.clone();
+            sharedZone = false;
+        }
+        return zone;
+!!!8667394.java!!!	getZone() : TimeZone
+        return zone;
+!!!8667522.java!!!	setZoneShared(inout shared : boolean) : void
+        sharedZone = shared;
+!!!8667650.java!!!	setLenient(inout lenient : boolean) : void
+        this.lenient = lenient;
+!!!8667778.java!!!	isLenient() : boolean
+        return lenient;
+!!!8667906.java!!!	setFirstDayOfWeek(in value : int) : void
+        if (firstDayOfWeek == value) {
+            return;
+        }
+        firstDayOfWeek = value;
+        invalidateWeekFields();
+!!!8668034.java!!!	getFirstDayOfWeek() : int
+        return firstDayOfWeek;
+!!!8668162.java!!!	setMinimalDaysInFirstWeek(in value : int) : void
+        if (minimalDaysInFirstWeek == value) {
+            return;
+        }
+        minimalDaysInFirstWeek = value;
+        invalidateWeekFields();
+!!!8668290.java!!!	getMinimalDaysInFirstWeek() : int
+        return minimalDaysInFirstWeek;
+!!!8668418.java!!!	isWeekDateSupported() : boolean
+        return false;
+!!!8668546.java!!!	getWeekYear() : int
+        throw new UnsupportedOperationException();
+!!!8668674.java!!!	setWeekDate(in weekYear : int, in weekOfYear : int, in dayOfWeek : int) : void
+        throw new UnsupportedOperationException();
+!!!8668802.java!!!	getWeeksInWeekYear() : int
+        throw new UnsupportedOperationException();
+!!!8669442.java!!!	getActualMinimum(in field : int) : int
+        int fieldValue = getGreatestMinimum(field);
+        int endValue = getMinimum(field);
+
+        // if we know that the minimum value is always the same, just return it
+        if (fieldValue == endValue) {
+            return fieldValue;
+        }
+
+        // clone the calendar so we don't mess with the real one, and set it to
+        // accept anything for the field values
+        Calendar work = (Calendar)this.clone();
+        work.setLenient(true);
+
+        // now try each value from getLeastMaximum() to getMaximum() one by one until
+        // we get a value that normalizes to another value.  The last value that
+        // normalizes to itself is the actual minimum for the current date
+        int result = fieldValue;
+
+        do {
+            work.set(field, fieldValue);
+            if (work.get(field) != fieldValue) {
+                break;
+            } else {
+                result = fieldValue;
+                fieldValue--;
+            }
+        } while (fieldValue >= endValue);
+
+        return result;
+!!!8669570.java!!!	getActualMaximum(in field : int) : int
+        int fieldValue = getLeastMaximum(field);
+        int endValue = getMaximum(field);
+
+        // if we know that the maximum value is always the same, just return it.
+        if (fieldValue == endValue) {
+            return fieldValue;
+        }
+
+        // clone the calendar so we don't mess with the real one, and set it to
+        // accept anything for the field values.
+        Calendar work = (Calendar)this.clone();
+        work.setLenient(true);
+
+        // if we're counting weeks, set the day of the week to Sunday.  We know the
+        // last week of a month or year will contain the first day of the week.
+        if (field == WEEK_OF_YEAR || field == WEEK_OF_MONTH) {
+            work.set(DAY_OF_WEEK, firstDayOfWeek);
+        }
+
+        // now try each value from getLeastMaximum() to getMaximum() one by one until
+        // we get a value that normalizes to another value.  The last value that
+        // normalizes to itself is the actual maximum for the current date
+        int result = fieldValue;
+
+        do {
+            work.set(field, fieldValue);
+            if (work.get(field) != fieldValue) {
+                break;
+            } else {
+                result = fieldValue;
+                fieldValue++;
+            }
+        } while (fieldValue <= endValue);
+
+        return result;
+!!!8669698.java!!!	clone() : Object
+        try {
+            Calendar other = (Calendar) super.clone();
+
+            other.fields = new int[FIELD_COUNT];
+            other.isSet = new boolean[FIELD_COUNT];
+            other.stamp = new int[FIELD_COUNT];
+            for (int i = 0; i < FIELD_COUNT; i++) {
+                other.fields[i] = fields[i];
+                other.stamp[i] = stamp[i];
+                other.isSet[i] = isSet[i];
+            }
+            other.zone = (TimeZone) zone.clone();
+            return other;
+        }
+        catch (CloneNotSupportedException e) {
+            // this shouldn't happen, since we are Cloneable
+            throw new InternalError(e);
+        }
+!!!8669826.java!!!	getFieldName(in field : int) : String
+        return FIELD_NAME[field];
+!!!8669954.java!!!	toString() : String
+        // NOTE: BuddhistCalendar.toString() interprets the string
+        // produced by this method so that the Gregorian year number
+        // is substituted by its B.E. year value. It relies on
+        // "...,YEAR=<year>,..." or "...,YEAR=?,...".
+        StringBuilder buffer = new StringBuilder(800);
+        buffer.append(getClass().getName()).append('[');
+        appendValue(buffer, "time", isTimeSet, time);
+        buffer.append(",areFieldsSet=").append(areFieldsSet);
+        buffer.append(",areAllFieldsSet=").append(areAllFieldsSet);
+        buffer.append(",lenient=").append(lenient);
+        buffer.append(",zone=").append(zone);
+        appendValue(buffer, ",firstDayOfWeek", true, (long) firstDayOfWeek);
+        appendValue(buffer, ",minimalDaysInFirstWeek", true, (long) minimalDaysInFirstWeek);
+        for (int i = 0; i < FIELD_COUNT; ++i) {
+            buffer.append(',');
+            appendValue(buffer, FIELD_NAME[i], isSet(i), (long) fields[i]);
+        }
+        buffer.append(']');
+        return buffer.toString();
+!!!8670082.java!!!	appendValue(inout sb : StringBuilder, inout item : String, inout valid : boolean, in value : long) : void
+        sb.append(item).append('=');
+        if (valid) {
+            sb.append(value);
+        } else {
+            sb.append('?');
+        }
+!!!8670210.java!!!	setWeekCountData(inout desiredLocale : Locale) : void
+        /* try to get the Locale data from the cache */
+        int[] data = cachedLocaleData.get(desiredLocale);
+        if (data == null) {  /* cache miss */
+            data = new int[2];
+            data[0] = CalendarDataUtility.retrieveFirstDayOfWeek(desiredLocale);
+            data[1] = CalendarDataUtility.retrieveMinimalDaysInFirstWeek(desiredLocale);
+            cachedLocaleData.putIfAbsent(desiredLocale, data);
+        }
+        firstDayOfWeek = data[0];
+        minimalDaysInFirstWeek = data[1];
+!!!8670338.java!!!	updateTime() : void
+        computeTime();
+        // The areFieldsSet and areAllFieldsSet values are no longer
+        // controlled here (as of 1.5).
+        isTimeSet = true;
+!!!8670466.java!!!	compareTo(in t : long) : int
+        long thisTime = getMillisOf(this);
+        return (thisTime > t) ? 1 : (thisTime == t) ? 0 : -1;
+!!!8670594.java!!!	getMillisOf(inout calendar : Calendar) : long
+        if (calendar.isTimeSet) {
+            return calendar.time;
+        }
+        Calendar cal = (Calendar) calendar.clone();
+        cal.setLenient(true);
+        return cal.getTimeInMillis();
+!!!8670722.java!!!	adjustStamp() : void
+        int max = MINIMUM_USER_STAMP;
+        int newStamp = MINIMUM_USER_STAMP;
+
+        for (;;) {
+            int min = Integer.MAX_VALUE;
+            for (int i = 0; i < stamp.length; i++) {
+                int v = stamp[i];
+                if (v >= newStamp && min > v) {
+                    min = v;
+                }
+                if (max < v) {
+                    max = v;
+                }
+            }
+            if (max != min && min == Integer.MAX_VALUE) {
+                break;
+            }
+            for (int i = 0; i < stamp.length; i++) {
+                if (stamp[i] == min) {
+                    stamp[i] = newStamp;
+                }
+            }
+            newStamp++;
+            if (min == max) {
+                break;
+            }
+        }
+        nextStamp = newStamp;
+!!!8670850.java!!!	invalidateWeekFields() : void
+        if (stamp[WEEK_OF_MONTH] != COMPUTED &&
+            stamp[WEEK_OF_YEAR] != COMPUTED) {
+            return;
+        }
+
+        // We have to check the new values of these fields after changing
+        // firstDayOfWeek and/or minimalDaysInFirstWeek. If the field values
+        // have been changed, then set the new values. (4822110)
+        Calendar cal = (Calendar) clone();
+        cal.setLenient(true);
+        cal.clear(WEEK_OF_MONTH);
+        cal.clear(WEEK_OF_YEAR);
+
+        if (stamp[WEEK_OF_MONTH] == COMPUTED) {
+            int weekOfMonth = cal.get(WEEK_OF_MONTH);
+            if (fields[WEEK_OF_MONTH] != weekOfMonth) {
+                fields[WEEK_OF_MONTH] = weekOfMonth;
+            }
+        }
+
+        if (stamp[WEEK_OF_YEAR] == COMPUTED) {
+            int weekOfYear = cal.get(WEEK_OF_YEAR);
+            if (fields[WEEK_OF_YEAR] != weekOfYear) {
+                fields[WEEK_OF_YEAR] = weekOfYear;
+            }
+        }
+!!!8670978.java!!!	writeObject(inout stream : ObjectOutputStream) : void
+        // Try to compute the time correctly, for the future (stream
+        // version 2) in which we don't write out fields[] or isSet[].
+        if (!isTimeSet) {
+            try {
+                updateTime();
+            }
+            catch (IllegalArgumentException e) {}
+        }
+
+        // If this Calendar has a ZoneInfo, save it and set a
+        // SimpleTimeZone equivalent (as a single DST schedule) for
+        // backward compatibility.
+        TimeZone savedZone = null;
+        if (zone instanceof ZoneInfo) {
+            SimpleTimeZone stz = ((ZoneInfo)zone).getLastRuleInstance();
+            if (stz == null) {
+                stz = new SimpleTimeZone(zone.getRawOffset(), zone.getID());
+            }
+            savedZone = zone;
+            zone = stz;
+        }
+
+        // Write out the 1.1 FCS object.
+        stream.defaultWriteObject();
+
+        // Write out the ZoneInfo object
+        // 4802409: we write out even if it is null, a temporary workaround
+        // the real fix for bug 4844924 in corba-iiop
+        stream.writeObject(savedZone);
+        if (savedZone != null) {
+            zone = savedZone;
+        }
+!!!8671234.java!!!	readObject(inout stream : ObjectInputStream) : void
+        final ObjectInputStream input = stream;
+        input.defaultReadObject();
+
+        stamp = new int[FIELD_COUNT];
+
+        // Starting with version 2 (not implemented yet), we expect that
+        // fields[], isSet[], isTimeSet, and areFieldsSet may not be
+        // streamed out anymore.  We expect 'time' to be correct.
+        if (serialVersionOnStream >= 2)
+        {
+            isTimeSet = true;
+            if (fields == null) {
+                fields = new int[FIELD_COUNT];
+            }
+            if (isSet == null) {
+                isSet = new boolean[FIELD_COUNT];
+            }
+        }
+        else if (serialVersionOnStream >= 0)
+        {
+            for (int i=0; i<FIELD_COUNT; ++i) {
+                stamp[i] = isSet[i] ? COMPUTED : UNSET;
+            }
+        }
+
+        serialVersionOnStream = currentSerialVersion;
+
+        // If there's a ZoneInfo object, use it for zone.
+        ZoneInfo zi = null;
+        try {
+            zi = AccessController.doPrivileged(
+                    new PrivilegedExceptionAction<ZoneInfo>() {
+                        @Override
+                        public ZoneInfo run() throws Exception {
+                            return (ZoneInfo) input.readObject();
+                        }
+                    },
+                    CalendarAccessControlContext.INSTANCE);
+        } catch (PrivilegedActionException pae) {
+            Exception e = pae.getException();
+            if (!(e instanceof OptionalDataException)) {
+                if (e instanceof RuntimeException) {
+                    throw (RuntimeException) e;
+                } else if (e instanceof IOException) {
+                    throw (IOException) e;
+                } else if (e instanceof ClassNotFoundException) {
+                    throw (ClassNotFoundException) e;
+                }
+                throw new RuntimeException(e);
+            }
+        }
+        if (zi != null) {
+            zone = zi;
+        }
+
+        // If the deserialized object has a SimpleTimeZone, try to
+        // replace it with a ZoneInfo equivalent (as of 1.4) in order
+        // to be compatible with the SimpleTimeZone-based
+        // implementation as much as possible.
+        if (zone instanceof SimpleTimeZone) {
+            String id = zone.getID();
+            TimeZone tz = TimeZone.getTimeZone(id);
+            if (tz != null && tz.hasSameRules(zone) && tz.getID().equals(id)) {
+                zone = tz;
+            }
+        }
+!!!8671362.java!!!	toInstant() : Instant
+        return Instant.ofEpochMilli(getTimeInMillis());

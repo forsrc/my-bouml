@@ -1,0 +1,94 @@
+class ExceptionHandlerImpl
+!!!1314818.java!!!	ExceptionHandlerImpl(inout exceptions : Class [[]])
+        wrapper = ORBUtilSystemException.get(
+            CORBALogDomains.RPC_PRESENTATION ) ;
+
+        int count = 0 ;
+        for (int ctr=0; ctr<exceptions.length; ctr++) {
+            Class cls = exceptions[ctr] ;
+            if (!RemoteException.class.isAssignableFrom(cls))
+                count++ ;
+        }
+
+        rws = new ExceptionRW[count] ;
+
+        int index = 0 ;
+        for (int ctr=0; ctr<exceptions.length; ctr++) {
+            Class cls = exceptions[ctr] ;
+            if (!RemoteException.class.isAssignableFrom(cls)) {
+                ExceptionRW erw = null ;
+                if (UserException.class.isAssignableFrom(cls))
+                    erw = new ExceptionRWIDLImpl( cls ) ;
+                else
+                    erw = new ExceptionRWRMIImpl( cls ) ;
+
+                /* The following check is not performed
+                 * in order to maintain compatibility with
+                 * rmic.  See bug 4989312.
+
+                // Check for duplicate repository ID
+                String repositoryId = erw.getId() ;
+                int duplicateIndex = findDeclaredException( repositoryId ) ;
+                if (duplicateIndex > 0) {
+                    ExceptionRW duprw = rws[duplicateIndex] ;
+                    String firstClassName =
+                        erw.getExceptionClass().getName() ;
+                    String secondClassName =
+                        duprw.getExceptionClass().getName() ;
+                    throw wrapper.duplicateExceptionRepositoryId(
+                        firstClassName, secondClassName, repositoryId ) ;
+                }
+
+                */
+
+                rws[index++] = erw ;
+            }
+        }
+!!!1314946.java!!!	findDeclaredException(inout cls : Class) : int
+        for (int ctr = 0; ctr < rws.length; ctr++) {
+            Class next = rws[ctr].getExceptionClass() ;
+            if (next.isAssignableFrom(cls))
+                return ctr ;
+        }
+
+        return -1 ;
+!!!1315074.java!!!	findDeclaredException(inout repositoryId : String) : int
+        for (int ctr=0; ctr<rws.length; ctr++) {
+            // This may occur when rws has not been fully
+            // populated, in which case the search should just fail.
+            if (rws[ctr]==null)
+                return -1 ;
+
+            String rid = rws[ctr].getId() ;
+            if (repositoryId.equals( rid ))
+                return ctr ;
+        }
+
+        return -1 ;
+!!!1315202.java!!!	isDeclaredException(inout cls : Class) : boolean
+        return findDeclaredException( cls ) >= 0 ;
+!!!1315330.java!!!	writeException(inout os : OutputStream, inout ex : Exception) : void
+        int index = findDeclaredException( ex.getClass() ) ;
+        if (index < 0)
+            throw wrapper.writeUndeclaredException( ex,
+                ex.getClass().getName() ) ;
+
+        rws[index].write( os, ex ) ;
+!!!1315458.java!!!	readException(inout ae : ApplicationException) : Exception
+        // Note that the exception ID is present in both ae
+        // and in the input stream from ae.  The exception
+        // reader must actually read the exception ID from
+        // the stream.
+        InputStream is = (InputStream)ae.getInputStream() ;
+        String excName = ae.getId() ;
+        int index = findDeclaredException( excName ) ;
+        if (index < 0) {
+            excName = is.read_string() ;
+            Exception res = new UnexpectedException( excName ) ;
+            res.initCause( ae ) ;
+            return res ;
+        }
+
+        return rws[index].read( is ) ;
+!!!1315586.java!!!	getRMIExceptionRW(inout cls : Class) : ExceptionHandlerImpl::ExceptionRW
+        return new ExceptionRWRMIImpl( cls ) ;

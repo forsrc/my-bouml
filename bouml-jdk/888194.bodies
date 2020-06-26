@@ -1,0 +1,450 @@
+class TextMeasurer
+!!!6496130.java!!!	TextMeasurer(inout text : AttributedCharacterIterator, inout frc : FontRenderContext)
+
+        fFrc = frc;
+        initAll(text);
+!!!6496258.java!!!	clone() : Object
+        TextMeasurer other;
+        try {
+            other = (TextMeasurer) super.clone();
+        }
+        catch(CloneNotSupportedException e) {
+            throw new Error();
+        }
+        if (fComponents != null) {
+            other.fComponents = fComponents.clone();
+        }
+        return other;
+!!!6496386.java!!!	invalidateComponents() : void
+        fComponentStart = fComponentLimit = fChars.length;
+        fComponents = null;
+        haveLayoutWindow = false;
+!!!6496514.java!!!	initAll(inout text : AttributedCharacterIterator) : void
+
+        fStart = text.getBeginIndex();
+
+        // extract chars
+        fChars = new char[text.getEndIndex() - fStart];
+
+        int n = 0;
+        for (char c = text.first();
+             c != CharacterIterator.DONE;
+             c = text.next())
+        {
+            fChars[n++] = c;
+        }
+
+        text.first();
+
+        fBidi = new Bidi(text);
+        if (fBidi.isLeftToRight()) {
+            fBidi = null;
+        }
+
+        text.first();
+        Map<? extends Attribute, ?> paragraphAttrs = text.getAttributes();
+        NumericShaper shaper = AttributeValues.getNumericShaping(paragraphAttrs);
+        if (shaper != null) {
+            shaper.shape(fChars, 0, fChars.length);
+        }
+
+        fParagraph = new StyledParagraph(text, fChars);
+
+        // set paragraph attributes
+        {
+            // If there's an embedded graphic at the start of the
+            // paragraph, look for the first non-graphic character
+            // and use it and its font to initialize the paragraph.
+            // If not, use the first graphic to initialize.
+            fJustifyRatio = AttributeValues.getJustification(paragraphAttrs);
+
+            boolean haveFont = TextLine.advanceToFirstFont(text);
+
+            if (haveFont) {
+                Font defaultFont = TextLine.getFontAtCurrentPos(text);
+                int charsStart = text.getIndex() - text.getBeginIndex();
+                LineMetrics lm = defaultFont.getLineMetrics(fChars, charsStart, charsStart+1, fFrc);
+                fBaseline = (byte) lm.getBaselineIndex();
+                fBaselineOffsets = lm.getBaselineOffsets();
+            }
+            else {
+                // hmmm what to do here?  Just try to supply reasonable
+                // values I guess.
+
+                GraphicAttribute graphic = (GraphicAttribute)
+                                paragraphAttrs.get(TextAttribute.CHAR_REPLACEMENT);
+                fBaseline = TextLayout.getBaselineFromGraphic(graphic);
+                Hashtable<Attribute, ?> fmap = new Hashtable<>(5, (float)0.9);
+                Font dummyFont = new Font(fmap);
+                LineMetrics lm = dummyFont.getLineMetrics(" ", 0, 1, fFrc);
+                fBaselineOffsets = lm.getBaselineOffsets();
+            }
+            fBaselineOffsets = TextLine.getNormalizedOffsets(fBaselineOffsets, fBaseline);
+        }
+
+        invalidateComponents();
+!!!6496642.java!!!	generateComponents(in startingAt : int, in endingAt : int) : void
+
+        if (collectStats) {
+            formattedChars += (endingAt-startingAt);
+        }
+        int layoutFlags = 0; // no extra info yet, bidi determines run and line direction
+        TextLabelFactory factory = new TextLabelFactory(fFrc, fChars, fBidi, layoutFlags);
+
+        int[] charsLtoV = null;
+
+        if (fBidi != null) {
+            fLevels = BidiUtils.getLevels(fBidi);
+            int[] charsVtoL = BidiUtils.createVisualToLogicalMap(fLevels);
+            charsLtoV = BidiUtils.createInverseMap(charsVtoL);
+            fIsDirectionLTR = fBidi.baseIsLeftToRight();
+        }
+        else {
+            fLevels = null;
+            fIsDirectionLTR = true;
+        }
+
+        try {
+            fComponents = TextLine.getComponents(
+                fParagraph, fChars, startingAt, endingAt, charsLtoV, fLevels, factory);
+        }
+        catch(IllegalArgumentException e) {
+            System.out.println("startingAt="+startingAt+"; endingAt="+endingAt);
+            System.out.println("fComponentLimit="+fComponentLimit);
+            throw e;
+        }
+
+        fComponentStart = startingAt;
+        fComponentLimit = endingAt;
+        //debugFormatCount += (endingAt-startingAt);
+!!!6496770.java!!!	calcLineBreak(in pos : int, in maxAdvance : float) : int
+
+        // either of these statements removes the bug:
+        //generateComponents(0, fChars.length);
+        //generateComponents(pos, fChars.length);
+
+        int startPos = pos;
+        float width = maxAdvance;
+
+        int tlcIndex;
+        int tlcStart = fComponentStart;
+
+        for (tlcIndex = 0; tlcIndex < fComponents.length; tlcIndex++) {
+            int gaLimit = tlcStart + fComponents[tlcIndex].getNumCharacters();
+            if (gaLimit > startPos) {
+                break;
+            }
+            else {
+                tlcStart = gaLimit;
+            }
+        }
+
+        // tlcStart is now the start of the tlc at tlcIndex
+
+        for (; tlcIndex < fComponents.length; tlcIndex++) {
+
+            TextLineComponent tlc = fComponents[tlcIndex];
+            int numCharsInGa = tlc.getNumCharacters();
+
+            int lineBreak = tlc.getLineBreakIndex(startPos - tlcStart, width);
+            if (lineBreak == numCharsInGa && tlcIndex < fComponents.length) {
+                width -= tlc.getAdvanceBetween(startPos - tlcStart, lineBreak);
+                tlcStart += numCharsInGa;
+                startPos = tlcStart;
+            }
+            else {
+                return tlcStart + lineBreak;
+            }
+        }
+
+        if (fComponentLimit < fChars.length) {
+            // format more text and try again
+            //if (haveLayoutWindow) {
+            //    outOfWindow++;
+            //}
+
+            generateComponents(pos, fChars.length);
+            return calcLineBreak(pos, maxAdvance);
+        }
+
+        return fChars.length;
+!!!6496898.java!!!	trailingCdWhitespaceStart(in startPos : int, in limitPos : int) : int
+
+        if (fLevels != null) {
+            // Back up over counterdirectional whitespace
+            final byte baseLevel = (byte) (fIsDirectionLTR? 0 : 1);
+            for (int cdWsStart = limitPos; --cdWsStart >= startPos;) {
+                if ((fLevels[cdWsStart] % 2) == baseLevel ||
+                        Character.getDirectionality(fChars[cdWsStart]) != Character.DIRECTIONALITY_WHITESPACE) {
+                    return ++cdWsStart;
+                }
+            }
+        }
+
+        return startPos;
+!!!6497026.java!!!	makeComponentsOnRange(in startPos : int, in limitPos : int) : TextLineComponent
+
+        // sigh I really hate to do this here since it's part of the
+        // bidi algorithm.
+        // cdWsStart is the start of the trailing counterdirectional
+        // whitespace
+        final int cdWsStart = trailingCdWhitespaceStart(startPos, limitPos);
+
+        int tlcIndex;
+        int tlcStart = fComponentStart;
+
+        for (tlcIndex = 0; tlcIndex < fComponents.length; tlcIndex++) {
+            int gaLimit = tlcStart + fComponents[tlcIndex].getNumCharacters();
+            if (gaLimit > startPos) {
+                break;
+            }
+            else {
+                tlcStart = gaLimit;
+            }
+        }
+
+        // tlcStart is now the start of the tlc at tlcIndex
+
+        int componentCount;
+        {
+            boolean split = false;
+            int compStart = tlcStart;
+            int lim=tlcIndex;
+            for (boolean cont=true; cont; lim++) {
+                int gaLimit = compStart + fComponents[lim].getNumCharacters();
+                if (cdWsStart > Math.max(compStart, startPos)
+                            && cdWsStart < Math.min(gaLimit, limitPos)) {
+                    split = true;
+                }
+                if (gaLimit >= limitPos) {
+                    cont=false;
+                }
+                else {
+                    compStart = gaLimit;
+                }
+            }
+            componentCount = lim-tlcIndex;
+            if (split) {
+                componentCount++;
+            }
+        }
+
+        TextLineComponent[] components = new TextLineComponent[componentCount];
+        int newCompIndex = 0;
+        int linePos = startPos;
+
+        int breakPt = cdWsStart;
+
+        int subsetFlag;
+        if (breakPt == startPos) {
+            subsetFlag = fIsDirectionLTR? TextLineComponent.LEFT_TO_RIGHT :
+                                          TextLineComponent.RIGHT_TO_LEFT;
+            breakPt = limitPos;
+        }
+        else {
+            subsetFlag = TextLineComponent.UNCHANGED;
+        }
+
+        while (linePos < limitPos) {
+
+            int compLength = fComponents[tlcIndex].getNumCharacters();
+            int tlcLimit = tlcStart + compLength;
+
+            int start = Math.max(linePos, tlcStart);
+            int limit = Math.min(breakPt, tlcLimit);
+
+            components[newCompIndex++] = fComponents[tlcIndex].getSubset(
+                                                                start-tlcStart,
+                                                                limit-tlcStart,
+                                                                subsetFlag);
+            linePos += (limit-start);
+            if (linePos == breakPt) {
+                breakPt = limitPos;
+                subsetFlag = fIsDirectionLTR? TextLineComponent.LEFT_TO_RIGHT :
+                                              TextLineComponent.RIGHT_TO_LEFT;
+            }
+            if (linePos == tlcLimit) {
+                tlcIndex++;
+                tlcStart = tlcLimit;
+            }
+        }
+
+        return components;
+!!!6497154.java!!!	makeTextLineOnRange(in startPos : int, in limitPos : int) : TextLine
+
+        int[] charsLtoV = null;
+        byte[] charLevels = null;
+
+        if (fBidi != null) {
+            Bidi lineBidi = fBidi.createLineBidi(startPos, limitPos);
+            charLevels = BidiUtils.getLevels(lineBidi);
+            int[] charsVtoL = BidiUtils.createVisualToLogicalMap(charLevels);
+            charsLtoV = BidiUtils.createInverseMap(charsVtoL);
+        }
+
+        TextLineComponent[] components = makeComponentsOnRange(startPos, limitPos);
+
+        return new TextLine(fFrc,
+                            components,
+                            fBaselineOffsets,
+                            fChars,
+                            startPos,
+                            limitPos,
+                            charsLtoV,
+                            charLevels,
+                            fIsDirectionLTR);
+
+!!!6497282.java!!!	ensureComponents(in start : int, in limit : int) : void
+
+        if (start < fComponentStart || limit > fComponentLimit) {
+            generateComponents(start, limit);
+        }
+!!!6497410.java!!!	makeLayoutWindow(in localStart : int) : void
+
+        int compStart = localStart;
+        int compLimit = fChars.length;
+
+        // If we've already gone past the layout window, format to end of paragraph
+        if (layoutCount > 0 && !haveLayoutWindow) {
+            float avgLineLength = Math.max(layoutCharCount / layoutCount, 1);
+            compLimit = Math.min(localStart + (int)(avgLineLength*EST_LINES), fChars.length);
+        }
+
+        if (localStart > 0 || compLimit < fChars.length) {
+            if (charIter == null) {
+                charIter = new CharArrayIterator(fChars);
+            }
+            else {
+                charIter.reset(fChars);
+            }
+            if (fLineBreak == null) {
+                fLineBreak = BreakIterator.getLineInstance();
+            }
+            fLineBreak.setText(charIter);
+            if (localStart > 0) {
+                if (!fLineBreak.isBoundary(localStart)) {
+                    compStart = fLineBreak.preceding(localStart);
+                }
+            }
+            if (compLimit < fChars.length) {
+                if (!fLineBreak.isBoundary(compLimit)) {
+                    compLimit = fLineBreak.following(compLimit);
+                }
+            }
+        }
+
+        ensureComponents(compStart, compLimit);
+        haveLayoutWindow = true;
+!!!6497538.java!!!	getLineBreakIndex(in start : int, in maxAdvance : float) : int
+
+        int localStart = start - fStart;
+
+        if (!haveLayoutWindow ||
+                localStart < fComponentStart ||
+                localStart >= fComponentLimit) {
+            makeLayoutWindow(localStart);
+        }
+
+        return calcLineBreak(localStart, maxAdvance) + fStart;
+!!!6497666.java!!!	getAdvanceBetween(in start : int, in limit : int) : float
+
+        int localStart = start - fStart;
+        int localLimit = limit - fStart;
+
+        ensureComponents(localStart, localLimit);
+        TextLine line = makeTextLineOnRange(localStart, localLimit);
+        return line.getMetrics().advance;
+        // could cache line in case getLayout is called with same start, limit
+!!!6497794.java!!!	getLayout(in start : int, in limit : int) : TextLayout
+
+        int localStart = start - fStart;
+        int localLimit = limit - fStart;
+
+        ensureComponents(localStart, localLimit);
+        TextLine textLine = makeTextLineOnRange(localStart, localLimit);
+
+        if (localLimit < fChars.length) {
+            layoutCharCount += limit-start;
+            layoutCount++;
+        }
+
+        return new TextLayout(textLine,
+                              fBaseline,
+                              fBaselineOffsets,
+                              fJustifyRatio);
+!!!6497922.java!!!	printStats() : void
+        System.out.println("formattedChars: " + formattedChars);
+        //formattedChars = 0;
+        collectStats = false;
+!!!6498050.java!!!	insertChar(inout newParagraph : AttributedCharacterIterator, in insertPos : int) : void
+
+        if (collectStats) {
+            printStats();
+        }
+        if (wantStats) {
+            collectStats = true;
+        }
+
+        fStart = newParagraph.getBeginIndex();
+        int end = newParagraph.getEndIndex();
+        if (end - fStart != fChars.length+1) {
+            initAll(newParagraph);
+        }
+
+        char[] newChars = new char[end-fStart];
+        int newCharIndex = insertPos - fStart;
+        System.arraycopy(fChars, 0, newChars, 0, newCharIndex);
+
+        char newChar = newParagraph.setIndex(insertPos);
+        newChars[newCharIndex] = newChar;
+        System.arraycopy(fChars,
+                         newCharIndex,
+                         newChars,
+                         newCharIndex+1,
+                         end-insertPos-1);
+        fChars = newChars;
+
+        if (fBidi != null || Bidi.requiresBidi(newChars, newCharIndex, newCharIndex + 1) ||
+                newParagraph.getAttribute(TextAttribute.BIDI_EMBEDDING) != null) {
+
+            fBidi = new Bidi(newParagraph);
+            if (fBidi.isLeftToRight()) {
+                fBidi = null;
+            }
+        }
+
+        fParagraph = StyledParagraph.insertChar(newParagraph,
+                                                fChars,
+                                                insertPos,
+                                                fParagraph);
+        invalidateComponents();
+!!!6498178.java!!!	deleteChar(inout newParagraph : AttributedCharacterIterator, in deletePos : int) : void
+
+        fStart = newParagraph.getBeginIndex();
+        int end = newParagraph.getEndIndex();
+        if (end - fStart != fChars.length-1) {
+            initAll(newParagraph);
+        }
+
+        char[] newChars = new char[end-fStart];
+        int changedIndex = deletePos-fStart;
+
+        System.arraycopy(fChars, 0, newChars, 0, deletePos-fStart);
+        System.arraycopy(fChars, changedIndex+1, newChars, changedIndex, end-deletePos);
+        fChars = newChars;
+
+        if (fBidi != null) {
+            fBidi = new Bidi(newParagraph);
+            if (fBidi.isLeftToRight()) {
+                fBidi = null;
+            }
+        }
+
+        fParagraph = StyledParagraph.deleteChar(newParagraph,
+                                                fChars,
+                                                deletePos,
+                                                fParagraph);
+        invalidateComponents();
+!!!6498306.java!!!	getChars() : char
+
+        return fChars;

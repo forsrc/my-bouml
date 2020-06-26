@@ -1,0 +1,139 @@
+class HeavyWeightPopup
+!!!10791938.java!!!	getHeavyWeightPopup(inout owner : Component, inout contents : Component, in ownerX : int, in ownerY : int) : Popup
+            Window window = (owner != null) ? SwingUtilities.
+                              getWindowAncestor(owner) : null;
+            HeavyWeightPopup popup = null;
+
+            if (window != null) {
+                popup = getRecycledHeavyWeightPopup(window);
+            }
+
+            boolean focusPopup = false;
+            if(contents != null && contents.isFocusable()) {
+                if(contents instanceof JPopupMenu) {
+                    JPopupMenu jpm = (JPopupMenu) contents;
+                    Component popComps[] = jpm.getComponents();
+                    for (Component popComp : popComps) {
+                        if (!(popComp instanceof MenuElement) &&
+                                !(popComp instanceof JSeparator)) {
+                            focusPopup = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (popup == null ||
+                ((JWindow) popup.getComponent())
+                 .getFocusableWindowState() != focusPopup) {
+
+                if(popup != null) {
+                    // The recycled popup can't serve us well
+                    // dispose it and create new one
+                    popup._dispose();
+                }
+
+                popup = new HeavyWeightPopup();
+            }
+
+            popup.reset(owner, contents, ownerX, ownerY);
+
+            if(focusPopup) {
+                JWindow wnd = (JWindow) popup.getComponent();
+                wnd.setFocusableWindowState(true);
+                // Set window name. We need this in BasicPopupMenuUI
+                // to identify focusable popup window.
+                wnd.setName("###focusableSwingPopup###");
+            }
+
+            return popup;
+!!!10792066.java!!!	getRecycledHeavyWeightPopup(inout w : Window) : PopupFactory::HeavyWeightPopup
+            synchronized (HeavyWeightPopup.class) {
+                List<HeavyWeightPopup> cache;
+                Map<Window, List<HeavyWeightPopup>> heavyPopupCache = getHeavyWeightPopupCache();
+
+                if (heavyPopupCache.containsKey(w)) {
+                    cache = heavyPopupCache.get(w);
+                } else {
+                    return null;
+                }
+                if (cache.size() > 0) {
+                    HeavyWeightPopup r = cache.get(0);
+                    cache.remove(0);
+                    return r;
+                }
+                return null;
+            }
+!!!10792194.java!!!	getHeavyWeightPopupCache() : Map
+            synchronized (HeavyWeightPopup.class) {
+                Map<Window, List<HeavyWeightPopup>> cache = (Map<Window, List<HeavyWeightPopup>>)SwingUtilities.appContextGet(
+                                  heavyWeightPopupCacheKey);
+
+                if (cache == null) {
+                    cache = new HashMap<Window, List<HeavyWeightPopup>>(2);
+                    SwingUtilities.appContextPut(heavyWeightPopupCacheKey,
+                                                 cache);
+                }
+                return cache;
+            }
+!!!10792322.java!!!	recycleHeavyWeightPopup(inout popup : PopupFactory::HeavyWeightPopup) : void
+            synchronized (HeavyWeightPopup.class) {
+                List<HeavyWeightPopup> cache;
+                Window window = SwingUtilities.getWindowAncestor(
+                                     popup.getComponent());
+                Map<Window, List<HeavyWeightPopup>> heavyPopupCache = getHeavyWeightPopupCache();
+
+                if (window instanceof Popup.DefaultFrame ||
+                                      !window.isVisible()) {
+                    // If the Window isn't visible, we don't cache it as we
+                    // likely won't ever get a windowClosed event to clean up.
+                    // We also don't cache DefaultFrames as this indicates
+                    // there wasn't a valid Window parent, and thus we don't
+                    // know when to clean up.
+                    popup._dispose();
+                    return;
+                } else if (heavyPopupCache.containsKey(window)) {
+                    cache = heavyPopupCache.get(window);
+                } else {
+                    cache = new ArrayList<HeavyWeightPopup>();
+                    heavyPopupCache.put(window, cache);
+                    // Clean up if the Window is closed
+                    final Window w = window;
+
+                    w.addWindowListener(new WindowAdapter() {
+                        public void windowClosed(WindowEvent e) {
+                            List<HeavyWeightPopup> popups;
+
+                            synchronized(HeavyWeightPopup.class) {
+                                Map<Window, List<HeavyWeightPopup>> heavyPopupCache2 =
+                                              getHeavyWeightPopupCache();
+
+                                popups = heavyPopupCache2.remove(w);
+                            }
+                            if (popups != null) {
+                                for (int counter = popups.size() - 1;
+                                                   counter >= 0; counter--) {
+                                    popups.get(counter)._dispose();
+                                }
+                            }
+                        }
+                    });
+                }
+
+                if(cache.size() < MAX_CACHE_SIZE) {
+                    cache.add(popup);
+                } else {
+                    popup._dispose();
+                }
+            }
+!!!10792450.java!!!	setCacheEnabled(inout enable : boolean) : void
+            isCacheEnabled = enable;
+!!!10792578.java!!!	hide() : void
+            super.hide();
+            if (isCacheEnabled) {
+                recycleHeavyWeightPopup(this);
+            } else {
+                this._dispose();
+            }
+!!!10792834.java!!!	_dispose() : void
+            super.dispose();

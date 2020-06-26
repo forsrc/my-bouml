@@ -1,0 +1,225 @@
+class Throwable
+!!!611970.java!!!	Throwable()
+        fillInStackTrace();
+!!!612098.java!!!	Throwable(inout message : String)
+        fillInStackTrace();
+        detailMessage = message;
+!!!612226.java!!!	Throwable(inout message : String, inout cause : Throwable)
+        fillInStackTrace();
+        detailMessage = message;
+        this.cause = cause;
+!!!612354.java!!!	Throwable(inout cause : Throwable)
+        fillInStackTrace();
+        detailMessage = (cause==null ? null : cause.toString());
+        this.cause = cause;
+!!!612482.java!!!	Throwable(inout message : String, inout cause : Throwable, inout enableSuppression : boolean, inout writableStackTrace : boolean)
+        if (writableStackTrace) {
+            fillInStackTrace();
+        } else {
+            stackTrace = null;
+        }
+        detailMessage = message;
+        this.cause = cause;
+        if (!enableSuppression)
+            suppressedExceptions = null;
+!!!612610.java!!!	getMessage() : String
+        return detailMessage;
+!!!612738.java!!!	getLocalizedMessage() : String
+        return getMessage();
+!!!612866.java!!!	getCause() : Throwable
+        return (cause==this ? null : cause);
+!!!612994.java!!!	initCause(inout cause : Throwable) : Throwable
+        if (this.cause != this)
+            throw new IllegalStateException("Can't overwrite cause with " +
+                                            Objects.toString(cause, "a null"), this);
+        if (cause == this)
+            throw new IllegalArgumentException("Self-causation not permitted", this);
+        this.cause = cause;
+        return this;
+!!!613122.java!!!	toString() : String
+        String s = getClass().getName();
+        String message = getLocalizedMessage();
+        return (message != null) ? (s + ": " + message) : s;
+!!!613250.java!!!	printStackTrace() : void
+        printStackTrace(System.err);
+!!!613378.java!!!	printStackTrace(inout s : PrintStream) : void
+        printStackTrace(new WrappedPrintStream(s));
+!!!613506.java!!!	printStackTrace(inout s : Throwable::PrintStreamOrWriter) : void
+        // Guard against malicious overrides of Throwable.equals by
+        // using a Set with identity equality semantics.
+        Set<Throwable> dejaVu =
+            Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        dejaVu.add(this);
+
+        synchronized (s.lock()) {
+            // Print our stack trace
+            s.println(this);
+            StackTraceElement[] trace = getOurStackTrace();
+            for (StackTraceElement traceElement : trace)
+                s.println("\tat " + traceElement);
+
+            // Print suppressed exceptions, if any
+            for (Throwable se : getSuppressed())
+                se.printEnclosedStackTrace(s, trace, SUPPRESSED_CAPTION, "\t", dejaVu);
+
+            // Print cause, if any
+            Throwable ourCause = getCause();
+            if (ourCause != null)
+                ourCause.printEnclosedStackTrace(s, trace, CAUSE_CAPTION, "", dejaVu);
+        }
+!!!613634.java!!!	printEnclosedStackTrace(inout s : Throwable::PrintStreamOrWriter, inout enclosingTrace : StackTraceElement [[]], inout caption : String, inout prefix : String, inout dejaVu : Set) : void
+        assert Thread.holdsLock(s.lock());
+        if (dejaVu.contains(this)) {
+            s.println("\t[CIRCULAR REFERENCE:" + this + "]");
+        } else {
+            dejaVu.add(this);
+            // Compute number of frames in common between this and enclosing trace
+            StackTraceElement[] trace = getOurStackTrace();
+            int m = trace.length - 1;
+            int n = enclosingTrace.length - 1;
+            while (m >= 0 && n >=0 && trace[m].equals(enclosingTrace[n])) {
+                m--; n--;
+            }
+            int framesInCommon = trace.length - 1 - m;
+
+            // Print our stack trace
+            s.println(prefix + caption + this);
+            for (int i = 0; i <= m; i++)
+                s.println(prefix + "\tat " + trace[i]);
+            if (framesInCommon != 0)
+                s.println(prefix + "\t... " + framesInCommon + " more");
+
+            // Print suppressed exceptions, if any
+            for (Throwable se : getSuppressed())
+                se.printEnclosedStackTrace(s, trace, SUPPRESSED_CAPTION,
+                                           prefix +"\t", dejaVu);
+
+            // Print cause, if any
+            Throwable ourCause = getCause();
+            if (ourCause != null)
+                ourCause.printEnclosedStackTrace(s, trace, CAUSE_CAPTION, prefix, dejaVu);
+        }
+!!!613762.java!!!	printStackTrace(inout s : PrintWriter) : void
+        printStackTrace(new WrappedPrintWriter(s));
+!!!614914.java!!!	fillInStackTrace() : Throwable
+        if (stackTrace != null ||
+            backtrace != null /* Out of protocol state */ ) {
+            fillInStackTrace(0);
+            stackTrace = UNASSIGNED_STACK;
+        }
+        return this;
+!!!615170.java!!!	getStackTrace() : StackTraceElement
+        return getOurStackTrace().clone();
+!!!615298.java!!!	getOurStackTrace() : StackTraceElement
+        // Initialize stack trace field with information from
+        // backtrace if this is the first call to this method
+        if (stackTrace == UNASSIGNED_STACK ||
+            (stackTrace == null && backtrace != null) /* Out of protocol state */) {
+            int depth = getStackTraceDepth();
+            stackTrace = new StackTraceElement[depth];
+            for (int i=0; i < depth; i++)
+                stackTrace[i] = getStackTraceElement(i);
+        } else if (stackTrace == null) {
+            return UNASSIGNED_STACK;
+        }
+        return stackTrace;
+!!!615426.java!!!	setStackTrace(inout stackTrace : StackTraceElement [[]]) : void
+        // Validate argument
+        StackTraceElement[] defensiveCopy = stackTrace.clone();
+        for (int i = 0; i < defensiveCopy.length; i++) {
+            if (defensiveCopy[i] == null)
+                throw new NullPointerException("stackTrace[" + i + "]");
+        }
+
+        synchronized (this) {
+            if (this.stackTrace == null && // Immutable stack
+                backtrace == null) // Test for out of protocol state
+                return;
+            this.stackTrace = defensiveCopy;
+        }
+!!!615810.java!!!	readObject(inout s : ObjectInputStream) : void
+        s.defaultReadObject();     // read in all fields
+        if (suppressedExceptions != null) {
+            List<Throwable> suppressed = null;
+            if (suppressedExceptions.isEmpty()) {
+                // Use the sentinel for a zero-length list
+                suppressed = SUPPRESSED_SENTINEL;
+            } else { // Copy Throwables to new list
+                suppressed = new ArrayList<>(1);
+                for (Throwable t : suppressedExceptions) {
+                    // Enforce constraints on suppressed exceptions in
+                    // case of corrupt or malicious stream.
+                    if (t == null)
+                        throw new NullPointerException(NULL_CAUSE_MESSAGE);
+                    if (t == this)
+                        throw new IllegalArgumentException(SELF_SUPPRESSION_MESSAGE);
+                    suppressed.add(t);
+                }
+            }
+            suppressedExceptions = suppressed;
+        } // else a null suppressedExceptions field remains null
+
+        /*
+         * For zero-length stack traces, use a clone of
+         * UNASSIGNED_STACK rather than UNASSIGNED_STACK itself to
+         * allow identity comparison against UNASSIGNED_STACK in
+         * getOurStackTrace.  The identity of UNASSIGNED_STACK in
+         * stackTrace indicates to the getOurStackTrace method that
+         * the stackTrace needs to be constructed from the information
+         * in backtrace.
+         */
+        if (stackTrace != null) {
+            if (stackTrace.length == 0) {
+                stackTrace = UNASSIGNED_STACK.clone();
+            }  else if (stackTrace.length == 1 &&
+                        // Check for the marker of an immutable stack trace
+                        SentinelHolder.STACK_TRACE_ELEMENT_SENTINEL.equals(stackTrace[0])) {
+                stackTrace = null;
+            } else { // Verify stack trace elements are non-null.
+                for(StackTraceElement ste : stackTrace) {
+                    if (ste == null)
+                        throw new NullPointerException("null StackTraceElement in serial stream. ");
+                }
+            }
+        } else {
+            // A null stackTrace field in the serial form can result
+            // from an exception serialized without that field in
+            // older JDK releases; treat such exceptions as having
+            // empty stack traces.
+            stackTrace = UNASSIGNED_STACK.clone();
+        }
+!!!615938.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        // Ensure that the stackTrace field is initialized to a
+        // non-null value, if appropriate.  As of JDK 7, a null stack
+        // trace field is a valid value indicating the stack trace
+        // should not be set.
+        getOurStackTrace();
+
+        StackTraceElement[] oldStackTrace = stackTrace;
+        try {
+            if (stackTrace == null)
+                stackTrace = SentinelHolder.STACK_TRACE_SENTINEL;
+            s.defaultWriteObject();
+        } finally {
+            stackTrace = oldStackTrace;
+        }
+!!!616066.java!!!	addSuppressed(inout exception : Throwable) : void
+        if (exception == this)
+            throw new IllegalArgumentException(SELF_SUPPRESSION_MESSAGE, exception);
+
+        if (exception == null)
+            throw new NullPointerException(NULL_CAUSE_MESSAGE);
+
+        if (suppressedExceptions == null) // Suppressed exceptions not recorded
+            return;
+
+        if (suppressedExceptions == SUPPRESSED_SENTINEL)
+            suppressedExceptions = new ArrayList<>(1);
+
+        suppressedExceptions.add(exception);
+!!!616194.java!!!	getSuppressed() : Throwable
+        if (suppressedExceptions == SUPPRESSED_SENTINEL ||
+            suppressedExceptions == null)
+            return EMPTY_THROWABLE_ARRAY;
+        else
+            return suppressedExceptions.toArray(EMPTY_THROWABLE_ARRAY);

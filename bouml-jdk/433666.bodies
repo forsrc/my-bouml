@@ -1,0 +1,195 @@
+class MouseGrabber
+!!!2587266.java!!!	MouseGrabber()
+            MenuSelectionManager msm = MenuSelectionManager.defaultManager();
+            msm.addChangeListener(this);
+            this.lastPathSelected = msm.getSelectedPath();
+            if(this.lastPathSelected.length != 0) {
+                grabWindow(this.lastPathSelected);
+            }
+!!!2587394.java!!!	uninstall() : void
+            synchronized (MOUSE_GRABBER_KEY) {
+                MenuSelectionManager.defaultManager().removeChangeListener(this);
+                ungrabWindow();
+                AppContext.getAppContext().remove(MOUSE_GRABBER_KEY);
+            }
+!!!2587522.java!!!	grabWindow(inout newPath : MenuElement [[]]) : void
+            // A grab needs to be added
+            final Toolkit tk = Toolkit.getDefaultToolkit();
+            java.security.AccessController.doPrivileged(
+                new java.security.PrivilegedAction<Object>() {
+                    public Object run() {
+                        tk.addAWTEventListener(MouseGrabber.this,
+                                AWTEvent.MOUSE_EVENT_MASK |
+                                AWTEvent.MOUSE_MOTION_EVENT_MASK |
+                                AWTEvent.MOUSE_WHEEL_EVENT_MASK |
+                                AWTEvent.WINDOW_EVENT_MASK | sun.awt.SunToolkit.GRAB_EVENT_MASK);
+                        return null;
+                    }
+                }
+            );
+
+            Component invoker = newPath[0].getComponent();
+            if (invoker instanceof JPopupMenu) {
+                invoker = ((JPopupMenu)invoker).getInvoker();
+            }
+            grabbedWindow = invoker instanceof Window?
+                    (Window)invoker :
+                    SwingUtilities.getWindowAncestor(invoker);
+            if(grabbedWindow != null) {
+                if(tk instanceof sun.awt.SunToolkit) {
+                    ((sun.awt.SunToolkit)tk).grab(grabbedWindow);
+                } else {
+                    grabbedWindow.addComponentListener(this);
+                    grabbedWindow.addWindowListener(this);
+                }
+            }
+!!!2587650.java!!!	ungrabWindow() : void
+            final Toolkit tk = Toolkit.getDefaultToolkit();
+            // The grab should be removed
+             java.security.AccessController.doPrivileged(
+                new java.security.PrivilegedAction<Object>() {
+                    public Object run() {
+                        tk.removeAWTEventListener(MouseGrabber.this);
+                        return null;
+                    }
+                }
+            );
+            realUngrabWindow();
+!!!2587778.java!!!	realUngrabWindow() : void
+            Toolkit tk = Toolkit.getDefaultToolkit();
+            if(grabbedWindow != null) {
+                if(tk instanceof sun.awt.SunToolkit) {
+                    ((sun.awt.SunToolkit)tk).ungrab(grabbedWindow);
+                } else {
+                    grabbedWindow.removeComponentListener(this);
+                    grabbedWindow.removeWindowListener(this);
+                }
+                grabbedWindow = null;
+            }
+!!!2587906.java!!!	stateChanged(inout e : ChangeEvent) : void
+            MenuSelectionManager msm = MenuSelectionManager.defaultManager();
+            MenuElement[] p = msm.getSelectedPath();
+
+            if (lastPathSelected.length == 0 && p.length != 0) {
+                grabWindow(p);
+            }
+
+            if (lastPathSelected.length != 0 && p.length == 0) {
+                ungrabWindow();
+            }
+
+            lastPathSelected = p;
+!!!2588034.java!!!	eventDispatched(inout ev : AWTEvent) : void
+            if(ev instanceof sun.awt.UngrabEvent) {
+                // Popup should be canceled in case of ungrab event
+                cancelPopupMenu( );
+                return;
+            }
+            if (!(ev instanceof MouseEvent)) {
+                // We are interested in MouseEvents only
+                return;
+            }
+            MouseEvent me = (MouseEvent) ev;
+            Component src = me.getComponent();
+            switch (me.getID()) {
+            case MouseEvent.MOUSE_PRESSED:
+                if (isInPopup(src) ||
+                    (src instanceof JMenu && ((JMenu)src).isSelected())) {
+                    return;
+                }
+                if (!(src instanceof JComponent) ||
+                   ! (((JComponent)src).getClientProperty("doNotCancelPopup")
+                         == BasicComboBoxUI.HIDE_POPUP_KEY)) {
+                    // Cancel popup only if this property was not set.
+                    // If this property is set to TRUE component wants
+                    // to deal with this event by himself.
+                    cancelPopupMenu();
+                    // Ask UIManager about should we consume event that closes
+                    // popup. This made to match native apps behaviour.
+                    boolean consumeEvent =
+                        UIManager.getBoolean("PopupMenu.consumeEventOnClose");
+                    // Consume the event so that normal processing stops.
+                    if(consumeEvent && !(src instanceof MenuElement)) {
+                        me.consume();
+                    }
+                }
+                break;
+
+            case MouseEvent.MOUSE_RELEASED:
+                if(!(src instanceof MenuElement)) {
+                    // Do not forward event to MSM, let component handle it
+                    if (isInPopup(src)) {
+                        break;
+                    }
+                }
+                if(src instanceof JMenu || !(src instanceof JMenuItem)) {
+                    MenuSelectionManager.defaultManager().
+                        processMouseEvent(me);
+                }
+                break;
+            case MouseEvent.MOUSE_DRAGGED:
+                if(!(src instanceof MenuElement)) {
+                    // For the MOUSE_DRAGGED event the src is
+                    // the Component in which mouse button was pressed.
+                    // If the src is in popupMenu,
+                    // do not forward event to MSM, let component handle it.
+                    if (isInPopup(src)) {
+                        break;
+                    }
+                }
+                MenuSelectionManager.defaultManager().
+                    processMouseEvent(me);
+                break;
+            case MouseEvent.MOUSE_WHEEL:
+                if (isInPopup(src)
+                    || ((src instanceof JComboBox) && ((JComboBox) src).isPopupVisible())) {
+
+                    return;
+                }
+                cancelPopupMenu();
+                break;
+            }
+!!!2588162.java!!!	isInPopup(inout src : Component) : boolean
+            for (Component c=src; c!=null; c=c.getParent()) {
+                if (c instanceof Applet || c instanceof Window) {
+                    break;
+                } else if (c instanceof JPopupMenu) {
+                    return true;
+                }
+            }
+            return false;
+!!!2588290.java!!!	cancelPopupMenu() : void
+            // We should ungrab window if a user code throws
+            // an unexpected runtime exception. See 6495920.
+            try {
+                // 4234793: This action should call firePopupMenuCanceled but it's
+                // a protected method. The real solution could be to make
+                // firePopupMenuCanceled public and call it directly.
+                List<JPopupMenu> popups = getPopups();
+                for (JPopupMenu popup : popups) {
+                    popup.putClientProperty("JPopupMenu.firePopupMenuCanceled", Boolean.TRUE);
+                }
+                MenuSelectionManager.defaultManager().clearSelectedPath();
+            } catch (RuntimeException ex) {
+                realUngrabWindow();
+                throw ex;
+            } catch (Error err) {
+                realUngrabWindow();
+                throw err;
+            }
+!!!2588418.java!!!	componentResized(inout e : ComponentEvent) : void
+            cancelPopupMenu();
+!!!2588546.java!!!	componentMoved(inout e : ComponentEvent) : void
+            cancelPopupMenu();
+!!!2588674.java!!!	componentShown(inout e : ComponentEvent) : void
+            cancelPopupMenu();
+!!!2588802.java!!!	componentHidden(inout e : ComponentEvent) : void
+            cancelPopupMenu();
+!!!2588930.java!!!	windowClosing(inout e : WindowEvent) : void
+            cancelPopupMenu();
+!!!2589058.java!!!	windowClosed(inout e : WindowEvent) : void
+            cancelPopupMenu();
+!!!2589186.java!!!	windowIconified(inout e : WindowEvent) : void
+            cancelPopupMenu();
+!!!2589314.java!!!	windowDeactivated(inout e : WindowEvent) : void
+            cancelPopupMenu();

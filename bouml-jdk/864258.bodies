@@ -1,0 +1,55 @@
+class HierarchyEventFilter
+!!!6182018.java!!!	HierarchyEventFilter(inout modalComponent : Component)
+            this.modalComponent = modalComponent;
+!!!6182146.java!!!	acceptEvent(inout event : AWTEvent) : EventFilter::FilterAction
+            if (modalComponent != null) {
+                int eventID = event.getID();
+                boolean mouseEvent = (eventID >= MouseEvent.MOUSE_FIRST) &&
+                                     (eventID <= MouseEvent.MOUSE_LAST);
+                boolean actionEvent = (eventID >= ActionEvent.ACTION_FIRST) &&
+                                      (eventID <= ActionEvent.ACTION_LAST);
+                boolean windowClosingEvent = (eventID == WindowEvent.WINDOW_CLOSING);
+                /*
+                 * filter out MouseEvent and ActionEvent that's outside
+                 * the modalComponent hierarchy.
+                 * KeyEvent is handled by using enqueueKeyEvent
+                 * in Dialog.show
+                 */
+                if (Component.isInstanceOf(modalComponent, "javax.swing.JInternalFrame")) {
+                    /*
+                     * Modal internal frames are handled separately. If event is
+                     * for some component from another heavyweight than modalComp,
+                     * it is accepted. If heavyweight is the same - we still accept
+                     * event and perform further filtering in LightweightDispatcher
+                     */
+                    return windowClosingEvent ? FilterAction.REJECT : FilterAction.ACCEPT;
+                }
+                if (mouseEvent || actionEvent || windowClosingEvent) {
+                    Object o = event.getSource();
+                    if (o instanceof sun.awt.ModalExclude) {
+                        // Exclude this object from modality and
+                        // continue to pump it's events.
+                        return FilterAction.ACCEPT;
+                    } else if (o instanceof Component) {
+                        Component c = (Component) o;
+                        // 5.0u3 modal exclusion
+                        boolean modalExcluded = false;
+                        if (modalComponent instanceof Container) {
+                            while (c != modalComponent && c != null) {
+                                if ((c instanceof Window) &&
+                                    (sun.awt.SunToolkit.isModalExcluded((Window)c))) {
+                                    // Exclude this window and all its children from
+                                    //  modality and continue to pump it's events.
+                                    modalExcluded = true;
+                                    break;
+                                }
+                                c = c.getParent();
+                            }
+                        }
+                        if (!modalExcluded && (c != modalComponent)) {
+                            return FilterAction.REJECT;
+                        }
+                    }
+                }
+            }
+            return FilterAction.ACCEPT;

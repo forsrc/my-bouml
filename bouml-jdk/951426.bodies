@@ -1,0 +1,71 @@
+class BindCaller
+!!!7251842.java!!!	bindCaller(inout mh : MethodHandle, inout hostClass : Class) : MethodHandle
+            // Do not use this function to inject calls into system classes.
+            if (hostClass == null
+                ||    (hostClass.isArray() ||
+                       hostClass.isPrimitive() ||
+                       hostClass.getName().startsWith("java.") ||
+                       hostClass.getName().startsWith("sun."))) {
+                throw new InternalError();  // does not happen, and should not anyway
+            }
+            // For simplicity, convert mh to a varargs-like method.
+            MethodHandle vamh = prepareForInvoker(mh);
+            // Cache the result of makeInjectedInvoker once per argument class.
+            MethodHandle bccInvoker = CV_makeInjectedInvoker.get(hostClass);
+            return restoreToType(bccInvoker.bindTo(vamh), mh, hostClass);
+!!!7251970.java!!!	makeInjectedInvoker(inout hostClass : Class) : MethodHandle
+            Class<?> bcc = UNSAFE.defineAnonymousClass(hostClass, T_BYTES, null);
+            if (hostClass.getClassLoader() != bcc.getClassLoader())
+                throw new InternalError(hostClass.getName()+" (CL)");
+            try {
+                if (hostClass.getProtectionDomain() != bcc.getProtectionDomain())
+                    throw new InternalError(hostClass.getName()+" (PD)");
+            } catch (SecurityException ex) {
+                // Self-check was blocked by security manager.  This is OK.
+                // In fact the whole try body could be turned into an assertion.
+            }
+            try {
+                MethodHandle init = IMPL_LOOKUP.findStatic(bcc, "init", MethodType.methodType(void.class));
+                init.invokeExact();  // force initialization of the class
+            } catch (Throwable ex) {
+                throw uncaughtException(ex);
+            }
+            MethodHandle bccInvoker;
+            try {
+                MethodType invokerMT = MethodType.methodType(Object.class, MethodHandle.class, Object[].class);
+                bccInvoker = IMPL_LOOKUP.findStatic(bcc, "invoke_V", invokerMT);
+            } catch (ReflectiveOperationException ex) {
+                throw uncaughtException(ex);
+            }
+            // Test the invoker, to ensure that it really injects into the right place.
+            try {
+                MethodHandle vamh = prepareForInvoker(MH_checkCallerClass);
+                Object ok = bccInvoker.invokeExact(vamh, new Object[]{hostClass, bcc});
+            } catch (Throwable ex) {
+                throw new InternalError(ex);
+            }
+            return bccInvoker;
+!!!7252098.java!!!	prepareForInvoker(inout mh : MethodHandle) : MethodHandle
+            mh = mh.asFixedArity();
+            MethodType mt = mh.type();
+            int arity = mt.parameterCount();
+            MethodHandle vamh = mh.asType(mt.generic());
+            vamh.internalForm().compileToBytecode();  // eliminate LFI stack frames
+            vamh = vamh.asSpreader(Object[].class, arity);
+            vamh.internalForm().compileToBytecode();  // eliminate LFI stack frames
+            return vamh;
+!!!7252226.java!!!	restoreToType(inout vamh : MethodHandle, inout original : MethodHandle, inout hostClass : Class) : MethodHandle
+            MethodType type = original.type();
+            MethodHandle mh = vamh.asCollector(Object[].class, type.parameterCount());
+            MemberName member = original.internalMemberName();
+            mh = mh.asType(type);
+            mh = new WrappedMember(mh, type, member, original.isInvokeSpecial(), hostClass);
+            return mh;
+!!!7252354.java!!!	checkCallerClass(inout expected : Class, inout expected2 : Class) : boolean
+            // This method is called via MH_checkCallerClass and so it's
+            // correct to ask for the immediate caller here.
+            Class<?> actual = Reflection.getCallerClass();
+            if (actual != expected && actual != expected2)
+                throw new InternalError("found "+actual.getName()+", expected "+expected.getName()
+                                        +(expected == expected2 ? "" : ", or else "+expected2.getName()));
+            return true;

@@ -1,0 +1,85 @@
+class MemoryCacheImageOutputStream
+!!!9694082.java!!!	MemoryCacheImageOutputStream(inout stream : OutputStream)
+        if (stream == null) {
+            throw new IllegalArgumentException("stream == null!");
+        }
+        this.stream = stream;
+!!!9694210.java!!!	read() : int
+        checkClosed();
+
+        bitOffset = 0;
+
+        int val = cache.read(streamPos);
+        if (val != -1) {
+            ++streamPos;
+        }
+        return val;
+!!!9694338.java!!!	read(inout b : byte [[]], in off : int, in len : int) : int
+        checkClosed();
+
+        if (b == null) {
+            throw new NullPointerException("b == null!");
+        }
+        // Fix 4467608: read([B,I,I) works incorrectly if len<=0
+        if (off < 0 || len < 0 || off + len > b.length || off + len < 0) {
+            throw new IndexOutOfBoundsException
+                ("off < 0 || len < 0 || off+len > b.length || off+len < 0!");
+        }
+
+        bitOffset = 0;
+
+        if (len == 0) {
+            return 0;
+        }
+
+        // check if we're already at/past EOF i.e.
+        // no more bytes left to read from cache
+        long bytesLeftInCache = cache.getLength() - streamPos;
+        if (bytesLeftInCache <= 0) {
+            return -1; // EOF
+        }
+
+        // guaranteed by now that bytesLeftInCache > 0 && len > 0
+        // and so the rest of the error checking is done by cache.read()
+        // NOTE that alot of error checking is duplicated
+        len = (int)Math.min(bytesLeftInCache, (long)len);
+        cache.read(b, off, len, streamPos);
+        streamPos += len;
+        return len;
+!!!9694466.java!!!	write(in b : int) : void
+        flushBits(); // this will call checkClosed() for us
+        cache.write(b, streamPos);
+        ++streamPos;
+!!!9694594.java!!!	write(inout b : byte [[]], in off : int, in len : int) : void
+        flushBits(); // this will call checkClosed() for us
+        cache.write(b, off, len, streamPos);
+        streamPos += len;
+!!!9694722.java!!!	length() : long
+        try {
+            checkClosed();
+            return cache.getLength();
+        } catch (IOException e) {
+            return -1L;
+        }
+!!!9694850.java!!!	isCached() : boolean
+        return true;
+!!!9694978.java!!!	isCachedFile() : boolean
+        return false;
+!!!9695106.java!!!	isCachedMemory() : boolean
+        return true;
+!!!9695234.java!!!	close() : void
+        long length = cache.getLength();
+        seek(length);
+        flushBefore(length);
+        super.close();
+        cache.reset();
+        cache = null;
+        stream = null;
+!!!9695362.java!!!	flushBefore(in pos : long) : void
+        long oFlushedPos = flushedPos;
+        super.flushBefore(pos); // this will call checkClosed() for us
+
+        long flushBytes = flushedPos - oFlushedPos;
+        cache.writeToStream(stream, oFlushedPos, flushBytes);
+        cache.disposeBefore(flushedPos);
+        stream.flush();

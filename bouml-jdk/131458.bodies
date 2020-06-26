@@ -1,0 +1,59 @@
+class Reference
+!!!137602.java!!!	tryHandlePending(inout waitForNotify : boolean) : boolean
+        Reference<Object> r;
+        Cleaner c;
+        try {
+            synchronized (lock) {
+                if (pending != null) {
+                    r = pending;
+                    // 'instanceof' might throw OutOfMemoryError sometimes
+                    // so do this before un-linking 'r' from the 'pending' chain...
+                    c = r instanceof Cleaner ? (Cleaner) r : null;
+                    // unlink 'r' from 'pending' chain
+                    pending = r.discovered;
+                    r.discovered = null;
+                } else {
+                    // The waiting on the lock may cause an OutOfMemoryError
+                    // because it may try to allocate exception objects.
+                    if (waitForNotify) {
+                        lock.wait();
+                    }
+                    // retry if waited
+                    return waitForNotify;
+                }
+            }
+        } catch (OutOfMemoryError x) {
+            // Give other threads CPU time so they hopefully drop some live references
+            // and GC reclaims some space.
+            // Also prevent CPU intensive spinning in case 'r instanceof Cleaner' above
+            // persistently throws OOME for some time...
+            Thread.yield();
+            // retry
+            return true;
+        } catch (InterruptedException x) {
+            // retry
+            return true;
+        }
+
+        // Fast path for cleaners
+        if (c != null) {
+            c.clean();
+            return true;
+        }
+
+        ReferenceQueue<? super Object> q = r.queue;
+        if (q != ReferenceQueue.NULL) q.enqueue(r);
+        return true;
+!!!137730.java!!!	get() : T
+        return this.referent;
+!!!137858.java!!!	clear() : void
+        this.referent = null;
+!!!137986.java!!!	isEnqueued() : boolean
+        return (this.queue == ReferenceQueue.ENQUEUED);
+!!!138114.java!!!	enqueue() : boolean
+        return this.queue.enqueue(this);
+!!!138242.java!!!	Reference(inout referent : T)
+        this(referent, null);
+!!!138370.java!!!	Reference(inout referent : T, inout queue : ReferenceQueue)
+        this.referent = referent;
+        this.queue = (queue == null) ? ReferenceQueue.NULL : queue;

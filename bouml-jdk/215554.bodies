@@ -1,0 +1,185 @@
+class LogRecord
+!!!9403650.java!!!	defaultThreadID() : int
+        long tid = Thread.currentThread().getId();
+        if (tid < MIN_SEQUENTIAL_THREAD_ID) {
+            return (int) tid;
+        } else {
+            Integer id = threadIds.get();
+            if (id == null) {
+                id = nextThreadId.getAndIncrement();
+                threadIds.set(id);
+            }
+            return id;
+        }
+!!!9403778.java!!!	LogRecord(inout level : Level, inout msg : String)
+        // Make sure level isn't null, by calling random method.
+        level.getClass();
+        this.level = level;
+        message = msg;
+        // Assign a thread ID and a unique sequence number.
+        sequenceNumber = globalSequenceNumber.getAndIncrement();
+        threadID = defaultThreadID();
+        millis = System.currentTimeMillis();
+        needToInferCaller = true;
+!!!9403906.java!!!	getLoggerName() : String
+        return loggerName;
+!!!9404034.java!!!	setLoggerName(inout name : String) : void
+        loggerName = name;
+!!!9404162.java!!!	getResourceBundle() : ResourceBundle
+        return resourceBundle;
+!!!9404290.java!!!	setResourceBundle(inout bundle : ResourceBundle) : void
+        resourceBundle = bundle;
+!!!9404418.java!!!	getResourceBundleName() : String
+        return resourceBundleName;
+!!!9404546.java!!!	setResourceBundleName(inout name : String) : void
+        resourceBundleName = name;
+!!!9404674.java!!!	getLevel() : Level
+        return level;
+!!!9404802.java!!!	setLevel(inout level : Level) : void
+        if (level == null) {
+            throw new NullPointerException();
+        }
+        this.level = level;
+!!!9404930.java!!!	getSequenceNumber() : long
+        return sequenceNumber;
+!!!9405058.java!!!	setSequenceNumber(in seq : long) : void
+        sequenceNumber = seq;
+!!!9405186.java!!!	getSourceClassName() : String
+        if (needToInferCaller) {
+            inferCaller();
+        }
+        return sourceClassName;
+!!!9405314.java!!!	setSourceClassName(inout sourceClassName : String) : void
+        this.sourceClassName = sourceClassName;
+        needToInferCaller = false;
+!!!9405442.java!!!	getSourceMethodName() : String
+        if (needToInferCaller) {
+            inferCaller();
+        }
+        return sourceMethodName;
+!!!9405570.java!!!	setSourceMethodName(inout sourceMethodName : String) : void
+        this.sourceMethodName = sourceMethodName;
+        needToInferCaller = false;
+!!!9405698.java!!!	getMessage() : String
+        return message;
+!!!9405826.java!!!	setMessage(inout message : String) : void
+        this.message = message;
+!!!9405954.java!!!	getParameters() : Object
+        return parameters;
+!!!9406082.java!!!	setParameters(inout parameters : Object [[]]) : void
+        this.parameters = parameters;
+!!!9406210.java!!!	getThreadID() : int
+        return threadID;
+!!!9406338.java!!!	setThreadID(in threadID : int) : void
+        this.threadID = threadID;
+!!!9406466.java!!!	getMillis() : long
+        return millis;
+!!!9406594.java!!!	setMillis(in millis : long) : void
+        this.millis = millis;
+!!!9406722.java!!!	getThrown() : Throwable
+        return thrown;
+!!!9406850.java!!!	setThrown(inout thrown : Throwable) : void
+        this.thrown = thrown;
+!!!9406978.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        // We have to call defaultWriteObject first.
+        out.defaultWriteObject();
+
+        // Write our version number.
+        out.writeByte(1);
+        out.writeByte(0);
+        if (parameters == null) {
+            out.writeInt(-1);
+            return;
+        }
+        out.writeInt(parameters.length);
+        // Write string values for the parameters.
+        for (int i = 0; i < parameters.length; i++) {
+            if (parameters[i] == null) {
+                out.writeObject(null);
+            } else {
+                out.writeObject(parameters[i].toString());
+            }
+        }
+!!!9407106.java!!!	readObject(inout in : ObjectInputStream) : void
+        // We have to call defaultReadObject first.
+        in.defaultReadObject();
+
+        // Read version number.
+        byte major = in.readByte();
+        byte minor = in.readByte();
+        if (major != 1) {
+            throw new IOException("LogRecord: bad version: " + major + "." + minor);
+        }
+        int len = in.readInt();
+        if (len < -1) {
+            throw new NegativeArraySizeException();
+        } else if (len == -1) {
+            parameters = null;
+        } else if (len < 255) {
+            parameters = new Object[len];
+            for (int i = 0; i < parameters.length; i++) {
+                parameters[i] = in.readObject();
+            }
+        } else {
+            List<Object> params = new ArrayList<>(Math.min(len, 1024));
+            for (int i = 0; i < len; i++) {
+                params.add(in.readObject());
+            }
+            parameters = params.toArray(new Object[params.size()]);
+        }
+        // If necessary, try to regenerate the resource bundle.
+        if (resourceBundleName != null) {
+            try {
+                // use system class loader to ensure the ResourceBundle
+                // instance is a different instance than null loader uses
+                final ResourceBundle bundle =
+                        ResourceBundle.getBundle(resourceBundleName,
+                                Locale.getDefault(),
+                                ClassLoader.getSystemClassLoader());
+                resourceBundle = bundle;
+            } catch (MissingResourceException ex) {
+                // This is not a good place to throw an exception,
+                // so we simply leave the resourceBundle null.
+                resourceBundle = null;
+            }
+        }
+
+        needToInferCaller = false;
+!!!9407234.java!!!	inferCaller() : void
+        needToInferCaller = false;
+        JavaLangAccess access = SharedSecrets.getJavaLangAccess();
+        Throwable throwable = new Throwable();
+        int depth = access.getStackTraceDepth(throwable);
+
+        boolean lookingForLogger = true;
+        for (int ix = 0; ix < depth; ix++) {
+            // Calling getStackTraceElement directly prevents the VM
+            // from paying the cost of building the entire stack frame.
+            StackTraceElement frame =
+                access.getStackTraceElement(throwable, ix);
+            String cname = frame.getClassName();
+            boolean isLoggerImpl = isLoggerImplFrame(cname);
+            if (lookingForLogger) {
+                // Skip all frames until we have found the first logger frame.
+                if (isLoggerImpl) {
+                    lookingForLogger = false;
+                }
+            } else {
+                if (!isLoggerImpl) {
+                    // skip reflection call
+                    if (!cname.startsWith("java.lang.reflect.") && !cname.startsWith("sun.reflect.")) {
+                       // We've found the relevant frame.
+                       setSourceClassName(cname);
+                       setSourceMethodName(frame.getMethodName());
+                       return;
+                    }
+                }
+            }
+        }
+        // We haven't found a suitable frame, so just punt.  This is
+        // OK as we are only committed to making a "best effort" here.
+!!!9407362.java!!!	isLoggerImplFrame(inout cname : String) : boolean
+        // the log record could be created for a platform logger
+        return (cname.equals("java.util.logging.Logger") ||
+                cname.startsWith("java.util.logging.LoggingProxyImpl") ||
+                cname.startsWith("sun.util.logging."));

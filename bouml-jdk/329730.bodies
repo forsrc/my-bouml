@@ -1,0 +1,154 @@
+class JFIFThumbJPEG
+!!!1805826.java!!!	JFIFThumbJPEG(inout buffer : JPEGBuffer, in length : int, inout reader : JPEGImageReader)
+            super(buffer);
+            // Compute the final stream position
+            long finalPos = streamPos + (length - PREAMBLE_SIZE);
+            // Set the stream back to the start of the thumbnail
+            // and read its metadata (but don't decode the image)
+            buffer.iis.seek(streamPos);
+            thumbMetadata = new JPEGMetadata(false, true, buffer.iis, reader);
+            // Set the stream to the computed final position
+            buffer.iis.seek(finalPos);
+            // Clear the now invalid buffer
+            buffer.bufAvail = 0;
+            buffer.bufPtr = 0;
+!!!1805954.java!!!	JFIFThumbJPEG(inout node : Node)
+            if (node.getChildNodes().getLength() > 1) {
+                throw new IIOInvalidTreeException
+                    ("JFIFThumbJPEG node must have 0 or 1 child", node);
+            }
+            Node child = node.getFirstChild();
+            if (child != null) {
+                String name = child.getNodeName();
+                if (!name.equals("markerSequence")) {
+                    throw new IIOInvalidTreeException
+                        ("JFIFThumbJPEG child must be a markerSequence node",
+                         node);
+                }
+                thumbMetadata = new JPEGMetadata(false, true);
+                thumbMetadata.setFromMarkerSequenceNode(child);
+            }
+!!!1806082.java!!!	JFIFThumbJPEG(inout thumb : BufferedImage)
+            int INITIAL_BUFSIZE = 4096;
+            int MAZ_BUFSIZE = 65535 - 2 - PREAMBLE_SIZE;
+            try {
+                ByteArrayOutputStream baos =
+                    new ByteArrayOutputStream(INITIAL_BUFSIZE);
+                MemoryCacheImageOutputStream mos =
+                    new MemoryCacheImageOutputStream(baos);
+
+                JPEGImageWriter thumbWriter = new JPEGImageWriter(null);
+
+                thumbWriter.setOutput(mos);
+
+                // get default metadata for the thumb
+                JPEGMetadata metadata =
+                    (JPEGMetadata) thumbWriter.getDefaultImageMetadata
+                    (new ImageTypeSpecifier(thumb), null);
+
+                // Remove the jfif segment, which should be there.
+                MarkerSegment jfif = metadata.findMarkerSegment
+                    (JFIFMarkerSegment.class, true);
+                if (jfif == null) {
+                    throw new IllegalThumbException();
+                }
+
+                metadata.markerSequence.remove(jfif);
+
+                /*  Use this if removing leaves a hole and causes trouble
+
+                // Get the tree
+                String format = metadata.getNativeMetadataFormatName();
+                IIOMetadataNode tree =
+                (IIOMetadataNode) metadata.getAsTree(format);
+
+                // If there is no app0jfif node, the image is bad
+                NodeList jfifs = tree.getElementsByTagName("app0JFIF");
+                if (jfifs.getLength() == 0) {
+                throw new IllegalThumbException();
+                }
+
+                // remove the app0jfif node
+                Node jfif = jfifs.item(0);
+                Node parent = jfif.getParentNode();
+                parent.removeChild(jfif);
+
+                metadata.setFromTree(format, tree);
+                */
+
+                thumbWriter.write(new IIOImage(thumb, null, metadata));
+
+                thumbWriter.dispose();
+                // Now check that the size is OK
+                if (baos.size() > MAZ_BUFSIZE) {
+                    throw new IllegalThumbException();
+                }
+                data = baos.toByteArray();
+            } catch (IOException e) {
+                throw new IllegalThumbException();
+            }
+!!!1806210.java!!!	getWidth() : int
+            int retval = 0;
+            SOFMarkerSegment sof =
+                (SOFMarkerSegment) thumbMetadata.findMarkerSegment
+                (SOFMarkerSegment.class, true);
+            if (sof != null) {
+                retval = sof.samplesPerLine;
+            }
+            return retval;
+!!!1806338.java!!!	getHeight() : int
+            int retval = 0;
+            SOFMarkerSegment sof =
+                (SOFMarkerSegment) thumbMetadata.findMarkerSegment
+                (SOFMarkerSegment.class, true);
+            if (sof != null) {
+                retval = sof.numLines;
+            }
+            return retval;
+!!!1807746.java!!!	getThumbnail(inout iis : ImageInputStream, inout reader : JPEGImageReader) : BufferedImage
+            iis.mark();
+            iis.seek(streamPos);
+            JPEGImageReader thumbReader = new JPEGImageReader(null);
+            thumbReader.setInput(iis);
+            thumbReader.addIIOReadProgressListener
+                (new ThumbnailReadListener(reader));
+            BufferedImage ret = thumbReader.read(0, null);
+            thumbReader.dispose();
+            iis.reset();
+            return ret;
+!!!1807874.java!!!	clone() : Object
+            JFIFThumbJPEG newGuy = (JFIFThumbJPEG) super.clone();
+            if (thumbMetadata != null) {
+                newGuy.thumbMetadata = (JPEGMetadata) thumbMetadata.clone();
+            }
+            return newGuy;
+!!!1808002.java!!!	getNativeNode() : IIOMetadataNode
+            IIOMetadataNode node = new IIOMetadataNode("JFIFthumbJPEG");
+            if (thumbMetadata != null) {
+                node.appendChild(thumbMetadata.getNativeTree());
+            }
+            return node;
+!!!1808130.java!!!	getLength() : int
+            if (data == null) {
+                return 0;
+            } else {
+                return data.length;
+            }
+!!!1808258.java!!!	write(inout ios : ImageOutputStream, inout writer : JPEGImageWriter) : void
+            int progInterval = data.length / 20;  // approx. every 5%
+            if (progInterval == 0) {
+                progInterval = 1;
+            }
+            for (int offset = 0;
+                 offset < data.length;) {
+                int len = Math.min(progInterval, data.length-offset);
+                ios.write(data, offset, len);
+                offset += progInterval;
+                float percentDone = ((float) offset * 100) / data.length;
+                if (percentDone > 100.0F) {
+                    percentDone = 100.0F;
+                }
+                writer.thumbnailProgress (percentDone);
+            }
+!!!1808386.java!!!	print() : void
+            System.out.println("JFIF thumbnail stored as JPEG");

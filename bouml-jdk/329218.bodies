@@ -1,0 +1,873 @@
+class ICC_Profile
+!!!6381186.java!!!	ICC_Profile(inout p : Profile)
+        this.cmmProfile = p;
+!!!6381314.java!!!	ICC_Profile(inout pdi : ProfileDeferralInfo)
+        this.deferralInfo = pdi;
+        this.profileActivator = new ProfileActivator() {
+            public void activate() throws ProfileDataException {
+                activateDeferredProfile();
+            }
+        };
+        ProfileDeferralMgr.registerDeferral(this.profileActivator);
+!!!6381442.java!!!	finalize() : void
+        if (cmmProfile != null) {
+            CMSManager.getModule().freeProfile(cmmProfile);
+        } else if (profileActivator != null) {
+            ProfileDeferralMgr.unregisterDeferral(profileActivator);
+        }
+!!!6381570.java!!!	getInstance(inout data : byte [[]]) : ICC_Profile
+    ICC_Profile thisProfile;
+
+        Profile p = null;
+
+        if (ProfileDeferralMgr.deferring) {
+            ProfileDeferralMgr.activateProfiles();
+        }
+
+        ProfileDataVerifier.verify(data);
+
+        try {
+            p = CMSManager.getModule().loadProfile(data);
+        } catch (CMMException c) {
+            throw new IllegalArgumentException("Invalid ICC Profile Data");
+        }
+
+        try {
+            if ((getColorSpaceType (p) == ColorSpace.TYPE_GRAY) &&
+                (getData (p, icSigMediaWhitePointTag) != null) &&
+                (getData (p, icSigGrayTRCTag) != null)) {
+                thisProfile = new ICC_ProfileGray (p);
+            }
+            else if ((getColorSpaceType (p) == ColorSpace.TYPE_RGB) &&
+                (getData (p, icSigMediaWhitePointTag) != null) &&
+                (getData (p, icSigRedColorantTag) != null) &&
+                (getData (p, icSigGreenColorantTag) != null) &&
+                (getData (p, icSigBlueColorantTag) != null) &&
+                (getData (p, icSigRedTRCTag) != null) &&
+                (getData (p, icSigGreenTRCTag) != null) &&
+                (getData (p, icSigBlueTRCTag) != null)) {
+                thisProfile = new ICC_ProfileRGB (p);
+            }
+            else {
+                thisProfile = new ICC_Profile (p);
+            }
+        } catch (CMMException c) {
+            thisProfile = new ICC_Profile (p);
+        }
+        return thisProfile;
+!!!6381698.java!!!	getInstance(in cspace : int) : ICC_Profile
+        ICC_Profile thisProfile = null;
+        String fileName;
+
+        switch (cspace) {
+        case ColorSpace.CS_sRGB:
+            synchronized(ICC_Profile.class) {
+                if (sRGBprofile == null) {
+                    /*
+                     * Deferral is only used for standard profiles.
+                     * Enabling the appropriate access privileges is handled
+                     * at a lower level.
+                     */
+                    ProfileDeferralInfo pInfo =
+                        new ProfileDeferralInfo("sRGB.pf",
+                                                ColorSpace.TYPE_RGB, 3,
+                                                CLASS_DISPLAY);
+                    sRGBprofile = getDeferredInstance(pInfo);
+                }
+                thisProfile = sRGBprofile;
+            }
+
+            break;
+
+        case ColorSpace.CS_CIEXYZ:
+            synchronized(ICC_Profile.class) {
+                if (XYZprofile == null) {
+                    ProfileDeferralInfo pInfo =
+                        new ProfileDeferralInfo("CIEXYZ.pf",
+                                                ColorSpace.TYPE_XYZ, 3,
+                                                CLASS_DISPLAY);
+                    XYZprofile = getDeferredInstance(pInfo);
+                }
+                thisProfile = XYZprofile;
+            }
+
+            break;
+
+        case ColorSpace.CS_PYCC:
+            synchronized(ICC_Profile.class) {
+                if (PYCCprofile == null) {
+                    if (standardProfileExists("PYCC.pf"))
+                    {
+                        ProfileDeferralInfo pInfo =
+                            new ProfileDeferralInfo("PYCC.pf",
+                                                    ColorSpace.TYPE_3CLR, 3,
+                                                    CLASS_DISPLAY);
+                        PYCCprofile = getDeferredInstance(pInfo);
+                    } else {
+                        throw new IllegalArgumentException(
+                                "Can't load standard profile: PYCC.pf");
+                    }
+                }
+                thisProfile = PYCCprofile;
+            }
+
+            break;
+
+        case ColorSpace.CS_GRAY:
+            synchronized(ICC_Profile.class) {
+                if (GRAYprofile == null) {
+                    ProfileDeferralInfo pInfo =
+                        new ProfileDeferralInfo("GRAY.pf",
+                                                ColorSpace.TYPE_GRAY, 1,
+                                                CLASS_DISPLAY);
+                    GRAYprofile = getDeferredInstance(pInfo);
+                }
+                thisProfile = GRAYprofile;
+            }
+
+            break;
+
+        case ColorSpace.CS_LINEAR_RGB:
+            synchronized(ICC_Profile.class) {
+                if (LINEAR_RGBprofile == null) {
+                    ProfileDeferralInfo pInfo =
+                        new ProfileDeferralInfo("LINEAR_RGB.pf",
+                                                ColorSpace.TYPE_RGB, 3,
+                                                CLASS_DISPLAY);
+                    LINEAR_RGBprofile = getDeferredInstance(pInfo);
+                }
+                thisProfile = LINEAR_RGBprofile;
+            }
+
+            break;
+
+        default:
+            throw new IllegalArgumentException("Unknown color space");
+        }
+
+        return thisProfile;
+!!!6381826.java!!!	getStandardProfile(in name : String) : ICC_Profile
+
+        return AccessController.doPrivileged(
+            new PrivilegedAction<ICC_Profile>() {
+                 public ICC_Profile run() {
+                     ICC_Profile p = null;
+                     try {
+                         p = getInstance (name);
+                     } catch (IOException ex) {
+                         throw new IllegalArgumentException(
+                               "Can't load standard profile: " + name);
+                     }
+                     return p;
+                 }
+             });
+!!!6381954.java!!!	getInstance(inout fileName : String) : ICC_Profile
+        ICC_Profile thisProfile;
+        FileInputStream fis = null;
+
+
+        File f = getProfileFile(fileName);
+        if (f != null) {
+            fis = new FileInputStream(f);
+        }
+        if (fis == null) {
+            throw new IOException("Cannot open file " + fileName);
+        }
+
+        thisProfile = getInstance(fis);
+
+        fis.close();    /* close the file */
+
+        return thisProfile;
+!!!6382082.java!!!	getInstance(inout s : InputStream) : ICC_Profile
+    byte profileData[];
+
+        if (s instanceof ProfileDeferralInfo) {
+            /* hack to detect profiles whose loading can be deferred */
+            return getDeferredInstance((ProfileDeferralInfo) s);
+        }
+
+        if ((profileData = getProfileDataFromStream(s)) == null) {
+            throw new IllegalArgumentException("Invalid ICC Profile Data");
+        }
+
+        return getInstance(profileData);
+!!!6382210.java!!!	getProfileDataFromStream(inout s : InputStream) : byte
+    byte profileData[];
+    int profileSize;
+
+        byte header[] = new byte[128];
+        int bytestoread = 128;
+        int bytesread = 0;
+        int n;
+
+        while (bytestoread != 0) {
+            if ((n = s.read(header, bytesread, bytestoread)) < 0) {
+                return null;
+            }
+            bytesread += n;
+            bytestoread -= n;
+        }
+        if (header[36] != 0x61 || header[37] != 0x63 ||
+            header[38] != 0x73 || header[39] != 0x70) {
+            return null;   /* not a valid profile */
+        }
+        profileSize = ((header[0] & 0xff) << 24) |
+                      ((header[1] & 0xff) << 16) |
+                      ((header[2] & 0xff) <<  8) |
+                       (header[3] & 0xff);
+        profileData = new byte[profileSize];
+        System.arraycopy(header, 0, profileData, 0, 128);
+        bytestoread = profileSize - 128;
+        bytesread = 128;
+        while (bytestoread != 0) {
+            if ((n = s.read(profileData, bytesread, bytestoread)) < 0) {
+                return null;
+            }
+            bytesread += n;
+            bytestoread -= n;
+        }
+
+        return profileData;
+!!!6382338.java!!!	getDeferredInstance(inout pdi : ProfileDeferralInfo) : ICC_Profile
+        if (!ProfileDeferralMgr.deferring) {
+            return getStandardProfile(pdi.filename);
+        }
+        if (pdi.colorSpaceType == ColorSpace.TYPE_RGB) {
+            return new ICC_ProfileRGB(pdi);
+        } else if (pdi.colorSpaceType == ColorSpace.TYPE_GRAY) {
+            return new ICC_ProfileGray(pdi);
+        } else {
+            return new ICC_Profile(pdi);
+        }
+!!!6382466.java!!!	activateDeferredProfile() : void
+        byte profileData[];
+        FileInputStream fis;
+        final String fileName = deferralInfo.filename;
+
+        profileActivator = null;
+        deferralInfo = null;
+        PrivilegedAction<FileInputStream> pa = new PrivilegedAction<FileInputStream>() {
+            public FileInputStream run() {
+                File f = getStandardProfileFile(fileName);
+                if (f != null) {
+                    try {
+                        return new FileInputStream(f);
+                    } catch (FileNotFoundException e) {}
+                }
+                return null;
+            }
+        };
+        if ((fis = AccessController.doPrivileged(pa)) == null) {
+            throw new ProfileDataException("Cannot open file " + fileName);
+        }
+        try {
+            profileData = getProfileDataFromStream(fis);
+            fis.close();    /* close the file */
+        }
+        catch (IOException e) {
+            ProfileDataException pde = new
+                ProfileDataException("Invalid ICC Profile Data" + fileName);
+            pde.initCause(e);
+            throw pde;
+        }
+        if (profileData == null) {
+            throw new ProfileDataException("Invalid ICC Profile Data" +
+                fileName);
+        }
+        try {
+            cmmProfile = CMSManager.getModule().loadProfile(profileData);
+        } catch (CMMException c) {
+            ProfileDataException pde = new
+                ProfileDataException("Invalid ICC Profile Data" + fileName);
+            pde.initCause(c);
+            throw pde;
+        }
+!!!6382594.java!!!	getMajorVersion() : int
+    byte[] theHeader;
+
+        theHeader = getData(icSigHead); /* getData will activate deferred
+                                           profiles if necessary */
+
+        return (int) theHeader[8];
+!!!6382722.java!!!	getMinorVersion() : int
+    byte[] theHeader;
+
+        theHeader = getData(icSigHead); /* getData will activate deferred
+                                           profiles if necessary */
+
+        return (int) theHeader[9];
+!!!6382850.java!!!	getProfileClass() : int
+    byte[] theHeader;
+    int theClassSig, theClass;
+
+        if (deferralInfo != null) {
+            return deferralInfo.profileClass; /* Need to have this info for
+                                                 ICC_ColorSpace without
+                                                 causing a deferred profile
+                                                 to be loaded */
+        }
+
+        theHeader = getData(icSigHead);
+
+        theClassSig = intFromBigEndian (theHeader, icHdrDeviceClass);
+
+        switch (theClassSig) {
+        case icSigInputClass:
+            theClass = CLASS_INPUT;
+            break;
+
+        case icSigDisplayClass:
+            theClass = CLASS_DISPLAY;
+            break;
+
+        case icSigOutputClass:
+            theClass = CLASS_OUTPUT;
+            break;
+
+        case icSigLinkClass:
+            theClass = CLASS_DEVICELINK;
+            break;
+
+        case icSigColorSpaceClass:
+            theClass = CLASS_COLORSPACECONVERSION;
+            break;
+
+        case icSigAbstractClass:
+            theClass = CLASS_ABSTRACT;
+            break;
+
+        case icSigNamedColorClass:
+            theClass = CLASS_NAMEDCOLOR;
+            break;
+
+        default:
+            throw new IllegalArgumentException("Unknown profile class");
+        }
+
+        return theClass;
+!!!6382978.java!!!	getColorSpaceType() : int
+        if (deferralInfo != null) {
+            return deferralInfo.colorSpaceType; /* Need to have this info for
+                                                   ICC_ColorSpace without
+                                                   causing a deferred profile
+                                                   to be loaded */
+        }
+        return    getColorSpaceType(cmmProfile);
+!!!6383106.java!!!	getColorSpaceType(inout p : Profile) : int
+    byte[] theHeader;
+    int theColorSpaceSig, theColorSpace;
+
+        theHeader = getData(p, icSigHead);
+        theColorSpaceSig = intFromBigEndian(theHeader, icHdrColorSpace);
+        theColorSpace = iccCStoJCS (theColorSpaceSig);
+        return theColorSpace;
+!!!6383234.java!!!	getPCSType() : int
+        if (ProfileDeferralMgr.deferring) {
+            ProfileDeferralMgr.activateProfiles();
+        }
+        return getPCSType(cmmProfile);
+!!!6383362.java!!!	getPCSType(inout p : Profile) : int
+    byte[] theHeader;
+    int thePCSSig, thePCS;
+
+        theHeader = getData(p, icSigHead);
+        thePCSSig = intFromBigEndian(theHeader, icHdrPcs);
+        thePCS = iccCStoJCS(thePCSSig);
+        return thePCS;
+!!!6383490.java!!!	write(inout fileName : String) : void
+    FileOutputStream outputFile;
+    byte profileData[];
+
+        profileData = getData(); /* this will activate deferred
+                                    profiles if necessary */
+        outputFile = new FileOutputStream(fileName);
+        outputFile.write(profileData);
+        outputFile.close ();
+!!!6383618.java!!!	write(inout s : OutputStream) : void
+    byte profileData[];
+
+        profileData = getData(); /* this will activate deferred
+                                    profiles if necessary */
+        s.write(profileData);
+!!!6383746.java!!!	getData() : byte
+    int profileSize;
+    byte[] profileData;
+
+        if (ProfileDeferralMgr.deferring) {
+            ProfileDeferralMgr.activateProfiles();
+        }
+
+        PCMM mdl = CMSManager.getModule();
+
+        /* get the number of bytes needed for this profile */
+        profileSize = mdl.getProfileSize(cmmProfile);
+
+        profileData = new byte [profileSize];
+
+        /* get the data for the profile */
+        mdl.getProfileData(cmmProfile, profileData);
+
+        return profileData;
+!!!6383874.java!!!	getData(in tagSignature : int) : byte
+
+        if (ProfileDeferralMgr.deferring) {
+            ProfileDeferralMgr.activateProfiles();
+        }
+
+        return getData(cmmProfile, tagSignature);
+!!!6384002.java!!!	getData(inout p : Profile, in tagSignature : int) : byte
+    int tagSize;
+    byte[] tagData;
+
+        try {
+            PCMM mdl = CMSManager.getModule();
+
+            /* get the number of bytes needed for this tag */
+            tagSize = mdl.getTagSize(p, tagSignature);
+
+            tagData = new byte[tagSize]; /* get an array for the tag */
+
+            /* get the tag's data */
+            mdl.getTagData(p, tagSignature, tagData);
+        } catch(CMMException c) {
+            tagData = null;
+        }
+
+        return tagData;
+!!!6384130.java!!!	setData(in tagSignature : int, inout tagData : byte [[]]) : void
+
+        if (ProfileDeferralMgr.deferring) {
+            ProfileDeferralMgr.activateProfiles();
+        }
+
+        CMSManager.getModule().setTagData(cmmProfile, tagSignature, tagData);
+!!!6384258.java!!!	setRenderingIntent(in renderingIntent : int) : void
+        byte[] theHeader = getData(icSigHead);/* getData will activate deferred
+                                                 profiles if necessary */
+        intToBigEndian (renderingIntent, theHeader, icHdrRenderingIntent);
+                                                 /* set the rendering intent */
+        setData (icSigHead, theHeader);
+!!!6384386.java!!!	getRenderingIntent() : int
+        byte[] theHeader = getData(icSigHead);/* getData will activate deferred
+                                                 profiles if necessary */
+
+        int renderingIntent = intFromBigEndian(theHeader, icHdrRenderingIntent);
+                                                 /* set the rendering intent */
+
+        /* According to ICC spec, only the least-significant 16 bits shall be
+         * used to encode the rendering intent. The most significant 16 bits
+         * shall be set to zero. Thus, we are ignoring two most significant
+         * bytes here.
+         *
+         *  See http://www.color.org/ICC1v42_2006-05.pdf, section 7.2.15.
+         */
+        return (0xffff & renderingIntent);
+!!!6384514.java!!!	getNumComponents() : int
+    byte[]    theHeader;
+    int    theColorSpaceSig, theNumComponents;
+
+        if (deferralInfo != null) {
+            return deferralInfo.numComponents; /* Need to have this info for
+                                                  ICC_ColorSpace without
+                                                  causing a deferred profile
+                                                  to be loaded */
+        }
+        theHeader = getData(icSigHead);
+
+        theColorSpaceSig = intFromBigEndian (theHeader, icHdrColorSpace);
+
+        switch (theColorSpaceSig) {
+        case icSigGrayData:
+            theNumComponents = 1;
+            break;
+
+        case icSigSpace2CLR:
+            theNumComponents = 2;
+            break;
+
+        case icSigXYZData:
+        case icSigLabData:
+        case icSigLuvData:
+        case icSigYCbCrData:
+        case icSigYxyData:
+        case icSigRgbData:
+        case icSigHsvData:
+        case icSigHlsData:
+        case icSigCmyData:
+        case icSigSpace3CLR:
+            theNumComponents = 3;
+            break;
+
+        case icSigCmykData:
+        case icSigSpace4CLR:
+            theNumComponents = 4;
+            break;
+
+        case icSigSpace5CLR:
+            theNumComponents = 5;
+            break;
+
+        case icSigSpace6CLR:
+            theNumComponents = 6;
+            break;
+
+        case icSigSpace7CLR:
+            theNumComponents = 7;
+            break;
+
+        case icSigSpace8CLR:
+            theNumComponents = 8;
+            break;
+
+        case icSigSpace9CLR:
+            theNumComponents = 9;
+            break;
+
+        case icSigSpaceACLR:
+            theNumComponents = 10;
+            break;
+
+        case icSigSpaceBCLR:
+            theNumComponents = 11;
+            break;
+
+        case icSigSpaceCCLR:
+            theNumComponents = 12;
+            break;
+
+        case icSigSpaceDCLR:
+            theNumComponents = 13;
+            break;
+
+        case icSigSpaceECLR:
+            theNumComponents = 14;
+            break;
+
+        case icSigSpaceFCLR:
+            theNumComponents = 15;
+            break;
+
+        default:
+            throw new ProfileDataException ("invalid ICC color space");
+        }
+
+        return theNumComponents;
+!!!6384642.java!!!	getMediaWhitePoint() : float
+        return getXYZTag(icSigMediaWhitePointTag);
+                                           /* get the media white point tag */
+!!!6384770.java!!!	getXYZTag(in theTagSignature : int) : float
+    byte[] theData;
+    float[] theXYZNumber;
+    int i1, i2, theS15Fixed16;
+
+        theData = getData(theTagSignature); /* get the tag data */
+                                            /* getData will activate deferred
+                                               profiles if necessary */
+
+        theXYZNumber = new float [3];        /* array to return */
+
+        /* convert s15Fixed16Number to float */
+        for (i1 = 0, i2 = icXYZNumberX; i1 < 3; i1++, i2 += 4) {
+            theS15Fixed16 = intFromBigEndian(theData, i2);
+            theXYZNumber [i1] = ((float) theS15Fixed16) / 65536.0f;
+        }
+        return theXYZNumber;
+!!!6384898.java!!!	getGamma(in theTagSignature : int) : float
+    byte[] theTRCData;
+    float theGamma;
+    int theU8Fixed8;
+
+        theTRCData = getData(theTagSignature); /* get the TRC */
+                                               /* getData will activate deferred
+                                                  profiles if necessary */
+
+        if (intFromBigEndian (theTRCData, icCurveCount) != 1) {
+            throw new ProfileDataException ("TRC is not a gamma");
+        }
+
+        /* convert u8Fixed8 to float */
+        theU8Fixed8 = (shortFromBigEndian(theTRCData, icCurveData)) & 0xffff;
+
+        theGamma = ((float) theU8Fixed8) / 256.0f;
+
+        return theGamma;
+!!!6385026.java!!!	getTRC(in theTagSignature : int) : short
+    byte[] theTRCData;
+    short[] theTRC;
+    int i1, i2, nElements, theU8Fixed8;
+
+        theTRCData = getData(theTagSignature); /* get the TRC */
+                                               /* getData will activate deferred
+                                                  profiles if necessary */
+
+        nElements = intFromBigEndian(theTRCData, icCurveCount);
+
+        if (nElements == 1) {
+            throw new ProfileDataException("TRC is not a table");
+        }
+
+        /* make the short array */
+        theTRC = new short [nElements];
+
+        for (i1 = 0, i2 = icCurveData; i1 < nElements; i1++, i2 += 2) {
+            theTRC[i1] = shortFromBigEndian(theTRCData, i2);
+        }
+
+        return theTRC;
+!!!6385154.java!!!	iccCStoJCS(in theColorSpaceSig : int) : int
+    int theColorSpace;
+
+        switch (theColorSpaceSig) {
+        case icSigXYZData:
+            theColorSpace = ColorSpace.TYPE_XYZ;
+            break;
+
+        case icSigLabData:
+            theColorSpace = ColorSpace.TYPE_Lab;
+            break;
+
+        case icSigLuvData:
+            theColorSpace = ColorSpace.TYPE_Luv;
+            break;
+
+        case icSigYCbCrData:
+            theColorSpace = ColorSpace.TYPE_YCbCr;
+            break;
+
+        case icSigYxyData:
+            theColorSpace = ColorSpace.TYPE_Yxy;
+            break;
+
+        case icSigRgbData:
+            theColorSpace = ColorSpace.TYPE_RGB;
+            break;
+
+        case icSigGrayData:
+            theColorSpace = ColorSpace.TYPE_GRAY;
+            break;
+
+        case icSigHsvData:
+            theColorSpace = ColorSpace.TYPE_HSV;
+            break;
+
+        case icSigHlsData:
+            theColorSpace = ColorSpace.TYPE_HLS;
+            break;
+
+        case icSigCmykData:
+            theColorSpace = ColorSpace.TYPE_CMYK;
+            break;
+
+        case icSigCmyData:
+            theColorSpace = ColorSpace.TYPE_CMY;
+            break;
+
+        case icSigSpace2CLR:
+            theColorSpace = ColorSpace.TYPE_2CLR;
+            break;
+
+        case icSigSpace3CLR:
+            theColorSpace = ColorSpace.TYPE_3CLR;
+            break;
+
+        case icSigSpace4CLR:
+            theColorSpace = ColorSpace.TYPE_4CLR;
+            break;
+
+        case icSigSpace5CLR:
+            theColorSpace = ColorSpace.TYPE_5CLR;
+            break;
+
+        case icSigSpace6CLR:
+            theColorSpace = ColorSpace.TYPE_6CLR;
+            break;
+
+        case icSigSpace7CLR:
+            theColorSpace = ColorSpace.TYPE_7CLR;
+            break;
+
+        case icSigSpace8CLR:
+            theColorSpace = ColorSpace.TYPE_8CLR;
+            break;
+
+        case icSigSpace9CLR:
+            theColorSpace = ColorSpace.TYPE_9CLR;
+            break;
+
+        case icSigSpaceACLR:
+            theColorSpace = ColorSpace.TYPE_ACLR;
+            break;
+
+        case icSigSpaceBCLR:
+            theColorSpace = ColorSpace.TYPE_BCLR;
+            break;
+
+        case icSigSpaceCCLR:
+            theColorSpace = ColorSpace.TYPE_CCLR;
+            break;
+
+        case icSigSpaceDCLR:
+            theColorSpace = ColorSpace.TYPE_DCLR;
+            break;
+
+        case icSigSpaceECLR:
+            theColorSpace = ColorSpace.TYPE_ECLR;
+            break;
+
+        case icSigSpaceFCLR:
+            theColorSpace = ColorSpace.TYPE_FCLR;
+            break;
+
+        default:
+            throw new IllegalArgumentException ("Unknown color space");
+        }
+
+        return theColorSpace;
+!!!6385282.java!!!	intFromBigEndian(inout array : byte [[]], in index : int) : int
+        return (((array[index]   & 0xff) << 24) |
+                ((array[index+1] & 0xff) << 16) |
+                ((array[index+2] & 0xff) <<  8) |
+                 (array[index+3] & 0xff));
+!!!6385410.java!!!	intToBigEndian(in value : int, inout array : byte [[]], in index : int) : void
+            array[index]   = (byte) (value >> 24);
+            array[index+1] = (byte) (value >> 16);
+            array[index+2] = (byte) (value >>  8);
+            array[index+3] = (byte) (value);
+!!!6385538.java!!!	shortFromBigEndian(inout array : byte [[]], in index : int) : short
+        return (short) (((array[index]   & 0xff) << 8) |
+                         (array[index+1] & 0xff));
+!!!6385666.java!!!	shortToBigEndian(in value : short, inout array : byte [[]], in index : int) : void
+            array[index]   = (byte) (value >> 8);
+            array[index+1] = (byte) (value);
+!!!6385794.java!!!	getProfileFile(inout fileName : String) : File
+        String path, dir, fullPath;
+
+        File f = new File(fileName); /* try absolute file name */
+        if (f.isAbsolute()) {
+            /* Rest of code has little sense for an absolute pathname,
+               so return here. */
+            return f.isFile() ? f : null;
+        }
+        if ((!f.isFile()) &&
+                ((path = System.getProperty("java.iccprofile.path")) != null)){
+                                    /* try relative to java.iccprofile.path */
+                StringTokenizer st =
+                    new StringTokenizer(path, File.pathSeparator);
+                while (st.hasMoreTokens() && ((f == null) || (!f.isFile()))) {
+                    dir = st.nextToken();
+                        fullPath = dir + File.separatorChar + fileName;
+                    f = new File(fullPath);
+                    if (!isChildOf(f, dir)) {
+                        f = null;
+                    }
+                }
+            }
+
+        if (((f == null) || (!f.isFile())) &&
+                ((path = System.getProperty("java.class.path")) != null)) {
+                                    /* try relative to java.class.path */
+                StringTokenizer st =
+                    new StringTokenizer(path, File.pathSeparator);
+                while (st.hasMoreTokens() && ((f == null) || (!f.isFile()))) {
+                    dir = st.nextToken();
+                        fullPath = dir + File.separatorChar + fileName;
+                    f = new File(fullPath);
+                }
+            }
+
+        if ((f == null) || (!f.isFile())) {
+            /* try the directory of built-in profiles */
+            f = getStandardProfileFile(fileName);
+        }
+        if (f != null && f.isFile()) {
+            return f;
+        }
+        return null;
+!!!6385922.java!!!	getStandardProfileFile(inout fileName : String) : File
+        String dir = System.getProperty("java.home") +
+            File.separatorChar + "lib" + File.separatorChar + "cmm";
+        String fullPath = dir + File.separatorChar + fileName;
+        File f = new File(fullPath);
+        return (f.isFile() && isChildOf(f, dir)) ? f : null;
+!!!6386050.java!!!	isChildOf(inout f : File, inout dirName : String) : boolean
+        try {
+            File dir = new File(dirName);
+            String canonicalDirName = dir.getCanonicalPath();
+            if (!canonicalDirName.endsWith(File.separator)) {
+                canonicalDirName += File.separator;
+            }
+            String canonicalFileName = f.getCanonicalPath();
+            return canonicalFileName.startsWith(canonicalDirName);
+        } catch (IOException e) {
+            /* we do not expect the IOException here, because invocation
+             * of this function is always preceeded by isFile() call.
+             */
+            return false;
+        }
+!!!6386178.java!!!	standardProfileExists(in fileName : String) : boolean
+        return AccessController.doPrivileged(new PrivilegedAction<Boolean>() {
+                public Boolean run() {
+                    return getStandardProfileFile(fileName) != null;
+                }
+            });
+!!!6386306.java!!!	writeObject(inout s : ObjectOutputStream) : void
+        s.defaultWriteObject();
+
+        String csName = null;
+        if (this == sRGBprofile) {
+            csName = "CS_sRGB";
+        } else if (this == XYZprofile) {
+            csName = "CS_CIEXYZ";
+        } else if (this == PYCCprofile) {
+            csName = "CS_PYCC";
+        } else if (this == GRAYprofile) {
+            csName = "CS_GRAY";
+        } else if (this == LINEAR_RGBprofile) {
+            csName = "CS_LINEAR_RGB";
+        }
+
+        // Future versions may choose to write profile data for new
+        // predefined color spaces as well, if any will be introduced,
+        // so that old versions that don't recognize the new CS name
+        // may fall back to constructing profile from the data.
+        byte[] data = null;
+        if (csName == null) {
+            // getData will activate deferred profile if necessary
+            data = getData();
+        }
+
+        s.writeObject(csName);
+        s.writeObject(data);
+!!!6386434.java!!!	readObject(inout s : ObjectInputStream) : void
+        s.defaultReadObject();
+
+        String csName = (String)s.readObject();
+        byte[] data = (byte[])s.readObject();
+
+        int cspace = 0;         // ColorSpace.CS_* constant if known
+        boolean isKnownPredefinedCS = false;
+        if (csName != null) {
+            isKnownPredefinedCS = true;
+            if (csName.equals("CS_sRGB")) {
+                cspace = ColorSpace.CS_sRGB;
+            } else if (csName.equals("CS_CIEXYZ")) {
+                cspace = ColorSpace.CS_CIEXYZ;
+            } else if (csName.equals("CS_PYCC")) {
+                cspace = ColorSpace.CS_PYCC;
+            } else if (csName.equals("CS_GRAY")) {
+                cspace = ColorSpace.CS_GRAY;
+            } else if (csName.equals("CS_LINEAR_RGB")) {
+                cspace = ColorSpace.CS_LINEAR_RGB;
+            } else {
+                isKnownPredefinedCS = false;
+            }
+        }
+
+        if (isKnownPredefinedCS) {
+            resolvedDeserializedProfile = getInstance(cspace);
+        } else {
+            resolvedDeserializedProfile = getInstance(data);
+        }
+!!!6386562.java!!!	readResolve() : Object
+        return resolvedDeserializedProfile;

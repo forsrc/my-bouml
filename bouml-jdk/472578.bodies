@@ -1,0 +1,185 @@
+class Handler
+!!!2853122.java!!!	addLayoutComponent(inout name : String, inout c : Component) : void
+            if ("Next".equals(name)) {
+                nextButton = c;
+            }
+            else if ("Previous".equals(name)) {
+                previousButton = c;
+            }
+            else if ("Editor".equals(name)) {
+                editor = c;
+            }
+!!!2853250.java!!!	removeLayoutComponent(inout c : Component) : void
+            if (c == nextButton) {
+                nextButton = null;
+            }
+            else if (c == previousButton) {
+                previousButton = null;
+            }
+            else if (c == editor) {
+                editor = null;
+            }
+!!!2853378.java!!!	preferredSize(inout c : Component) : Dimension
+            return (c == null) ? zeroSize : c.getPreferredSize();
+!!!2853506.java!!!	preferredLayoutSize(inout parent : Container) : Dimension
+            Dimension nextD = preferredSize(nextButton);
+            Dimension previousD = preferredSize(previousButton);
+            Dimension editorD = preferredSize(editor);
+
+            /* Force the editors height to be a multiple of 2
+             */
+            editorD.height = ((editorD.height + 1) / 2) * 2;
+
+            Dimension size = new Dimension(editorD.width, editorD.height);
+            size.width += Math.max(nextD.width, previousD.width);
+            Insets insets = parent.getInsets();
+            size.width += insets.left + insets.right;
+            size.height += insets.top + insets.bottom;
+            return size;
+!!!2853634.java!!!	minimumLayoutSize(inout parent : Container) : Dimension
+            return preferredLayoutSize(parent);
+!!!2853762.java!!!	setBounds(inout c : Component, in x : int, in y : int, in width : int, in height : int) : void
+            if (c != null) {
+                c.setBounds(x, y, width, height);
+            }
+!!!2853890.java!!!	layoutContainer(inout parent : Container) : void
+            int width  = parent.getWidth();
+            int height = parent.getHeight();
+
+            Insets insets = parent.getInsets();
+
+            if (nextButton == null && previousButton == null) {
+                setBounds(editor, insets.left,  insets.top, width - insets.left - insets.right,
+                        height - insets.top - insets.bottom);
+
+                return;
+            }
+
+            Dimension nextD = preferredSize(nextButton);
+            Dimension previousD = preferredSize(previousButton);
+            int buttonsWidth = Math.max(nextD.width, previousD.width);
+            int editorHeight = height - (insets.top + insets.bottom);
+
+            // The arrowButtonInsets value is used instead of the JSpinner's
+            // insets if not null. Defining this to be (0, 0, 0, 0) causes the
+            // buttons to be aligned with the outer edge of the spinner's
+            // border, and leaving it as "null" places the buttons completely
+            // inside the spinner's border.
+            Insets buttonInsets = UIManager.getInsets("Spinner.arrowButtonInsets");
+            if (buttonInsets == null) {
+                buttonInsets = insets;
+            }
+
+            /* Deal with the spinner's componentOrientation property.
+             */
+            int editorX, editorWidth, buttonsX;
+            if (parent.getComponentOrientation().isLeftToRight()) {
+                editorX = insets.left;
+                editorWidth = width - insets.left - buttonsWidth - buttonInsets.right;
+                buttonsX = width - buttonsWidth - buttonInsets.right;
+            } else {
+                buttonsX = buttonInsets.left;
+                editorX = buttonsX + buttonsWidth;
+                editorWidth = width - buttonInsets.left - buttonsWidth - insets.right;
+            }
+
+            int nextY = buttonInsets.top;
+            int nextHeight = (height / 2) + (height % 2) - nextY;
+            int previousY = buttonInsets.top + nextHeight;
+            int previousHeight = height - previousY - buttonInsets.bottom;
+
+            setBounds(editor,         editorX,  insets.top, editorWidth, editorHeight);
+            setBounds(nextButton,     buttonsX, nextY,      buttonsWidth, nextHeight);
+            setBounds(previousButton, buttonsX, previousY,  buttonsWidth, previousHeight);
+!!!2854018.java!!!	propertyChange(inout e : PropertyChangeEvent) : void
+            String propertyName = e.getPropertyName();
+            if (e.getSource() instanceof JSpinner) {
+                JSpinner spinner = (JSpinner)(e.getSource());
+                SpinnerUI spinnerUI = spinner.getUI();
+
+                if (spinnerUI instanceof BasicSpinnerUI) {
+                    BasicSpinnerUI ui = (BasicSpinnerUI)spinnerUI;
+
+                    if ("editor".equals(propertyName)) {
+                        JComponent oldEditor = (JComponent)e.getOldValue();
+                        JComponent newEditor = (JComponent)e.getNewValue();
+                        ui.replaceEditor(oldEditor, newEditor);
+                        ui.updateEnabledState();
+                        if (oldEditor instanceof JSpinner.DefaultEditor) {
+                            JTextField tf =
+                                ((JSpinner.DefaultEditor)oldEditor).getTextField();
+                            if (tf != null) {
+                                tf.removeFocusListener(nextButtonHandler);
+                                tf.removeFocusListener(previousButtonHandler);
+                            }
+                        }
+                        if (newEditor instanceof JSpinner.DefaultEditor) {
+                            JTextField tf =
+                                ((JSpinner.DefaultEditor)newEditor).getTextField();
+                            if (tf != null) {
+                                if (tf.getFont() instanceof UIResource) {
+                                    tf.setFont(spinner.getFont());
+                                }
+                                tf.addFocusListener(nextButtonHandler);
+                                tf.addFocusListener(previousButtonHandler);
+                            }
+                        }
+                    }
+                    else if ("enabled".equals(propertyName) ||
+                             "model".equals(propertyName)) {
+                        ui.updateEnabledState();
+                    }
+                else if ("font".equals(propertyName)) {
+                    JComponent editor = spinner.getEditor();
+                    if (editor!=null && editor instanceof JSpinner.DefaultEditor) {
+                        JTextField tf =
+                            ((JSpinner.DefaultEditor)editor).getTextField();
+                        if (tf != null) {
+                            if (tf.getFont() instanceof UIResource) {
+                                tf.setFont(spinner.getFont());
+                            }
+                        }
+                    }
+                }
+                else if (JComponent.TOOL_TIP_TEXT_KEY.equals(propertyName)) {
+                    updateToolTipTextForChildren(spinner);
+                }
+                }
+            } else if (e.getSource() instanceof JComponent) {
+                JComponent c = (JComponent)e.getSource();
+                if ((c.getParent() instanceof JPanel) &&
+                    (c.getParent().getParent() instanceof JSpinner) &&
+                    "border".equals(propertyName)) {
+
+                    JSpinner spinner = (JSpinner)c.getParent().getParent();
+                    SpinnerUI spinnerUI = spinner.getUI();
+                    if (spinnerUI instanceof BasicSpinnerUI) {
+                        BasicSpinnerUI ui = (BasicSpinnerUI)spinnerUI;
+                        ui.maybeRemoveEditorBorder(c);
+                    }
+                }
+            }
+!!!2854146.java!!!	updateToolTipTextForChildren(inout spinner : JComponent) : void
+            String toolTipText = spinner.getToolTipText();
+            Component[] children = spinner.getComponents();
+            for (int i = 0; i < children.length; i++) {
+                if (children[i] instanceof JSpinner.DefaultEditor) {
+                    JTextField tf = ((JSpinner.DefaultEditor)children[i]).getTextField();
+                    if (tf != null) {
+                        tf.setToolTipText(toolTipText);
+                    }
+                } else if (children[i] instanceof JComponent) {
+                    ((JComponent)children[i]).setToolTipText( spinner.getToolTipText() );
+                }
+            }
+!!!2854274.java!!!	stateChanged(inout e : ChangeEvent) : void
+            if (e.getSource() instanceof JSpinner) {
+                JSpinner spinner = (JSpinner)e.getSource();
+                SpinnerUI spinnerUI = spinner.getUI();
+                if (DefaultLookup.getBoolean(spinner, spinnerUI,
+                    "Spinner.disableOnBoundaryValues", false) &&
+                    spinnerUI instanceof BasicSpinnerUI) {
+                    BasicSpinnerUI ui = (BasicSpinnerUI)spinnerUI;
+                    ui.updateEnabledState();
+                }
+            }

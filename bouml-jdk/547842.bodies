@@ -1,0 +1,795 @@
+class Utility
+!!!3401602.java!!!	accessToString(in access_flags : int) : String
+    return accessToString(access_flags, false);
+!!!3401730.java!!!	accessToString(in access_flags : int, inout for_class : boolean) : String
+    StringBuffer buf = new StringBuffer();
+
+    int p = 0;
+    for(int i=0; p < Constants.MAX_ACC_FLAG; i++) { // Loop through known flags
+      p = pow2(i);
+
+      if((access_flags & p) != 0) {
+        /* Special case: Classes compiled with new compilers and with the
+         * `ACC_SUPER' flag would be said to be "synchronized". This is
+         * because SUN used the same value for the flags `ACC_SUPER' and
+         * `ACC_SYNCHRONIZED'.
+         */
+        if(for_class && ((p == Constants.ACC_SUPER) || (p == Constants.ACC_INTERFACE)))
+          continue;
+
+        buf.append(Constants.ACCESS_NAMES[i] + " ");
+      }
+    }
+
+    return buf.toString().trim();
+!!!3401858.java!!!	classOrInterface(in access_flags : int) : String
+    return ((access_flags & Constants.ACC_INTERFACE) != 0)? "interface" : "class";
+!!!3401986.java!!!	codeToString(inout code : byte [[]], inout constant_pool : ConstantPool, in index : int, in length : int, inout verbose : boolean) : String
+    StringBuffer buf    = new StringBuffer(code.length * 20); // Should be sufficient
+    ByteSequence stream = new ByteSequence(code);
+
+    try {
+      for(int i=0; i < index; i++) // Skip `index' lines of code
+        codeToString(stream, constant_pool, verbose);
+
+      for(int i=0; stream.available() > 0; i++) {
+        if((length < 0) || (i < length)) {
+          String indices = fillup(stream.getIndex() + ":", 6, true, ' ');
+          buf.append(indices + codeToString(stream, constant_pool, verbose) + '\n');
+        }
+      }
+    } catch(IOException e) {
+      System.out.println(buf.toString());
+      e.printStackTrace();
+      throw new ClassFormatException("Byte code error: " + e);
+    }
+
+    return buf.toString();
+!!!3402114.java!!!	codeToString(inout code : byte [[]], inout constant_pool : ConstantPool, in index : int, in length : int) : String
+    return codeToString(code, constant_pool, index, length, true);
+!!!3402242.java!!!	codeToString(inout bytes : ByteSequence, inout constant_pool : ConstantPool, inout verbose : boolean) : String
+    short        opcode = (short)bytes.readUnsignedByte();
+    int          default_offset=0, low, high, npairs;
+    int          index, vindex, constant;
+    int[]        match, jump_table;
+    int          no_pad_bytes=0, offset;
+    StringBuffer buf = new StringBuffer(Constants.OPCODE_NAMES[opcode]);
+
+    /* Special case: Skip (0-3) padding bytes, i.e., the
+     * following bytes are 4-byte-aligned
+     */
+    if((opcode == Constants.TABLESWITCH) || (opcode == Constants.LOOKUPSWITCH)) {
+      int remainder = bytes.getIndex() % 4;
+      no_pad_bytes  = (remainder == 0)? 0 : 4 - remainder;
+
+      for(int i=0; i < no_pad_bytes; i++) {
+        byte b;
+
+        if((b=bytes.readByte()) != 0)
+          System.err.println("Warning: Padding byte != 0 in " +
+                             Constants.OPCODE_NAMES[opcode] + ":" + b);
+      }
+
+      // Both cases have a field default_offset in common
+      default_offset = bytes.readInt();
+    }
+
+    switch(opcode) {
+      /* Table switch has variable length arguments.
+       */
+    case Constants.TABLESWITCH:
+      low  = bytes.readInt();
+      high = bytes.readInt();
+
+      offset = bytes.getIndex() - 12 - no_pad_bytes - 1;
+      default_offset += offset;
+
+      buf.append("\tdefault = " + default_offset + ", low = " + low +
+                 ", high = " + high + "(");
+
+      jump_table = new int[high - low + 1];
+      for(int i=0; i < jump_table.length; i++) {
+        jump_table[i] = offset + bytes.readInt();
+        buf.append(jump_table[i]);
+
+        if(i < jump_table.length - 1)
+          buf.append(", ");
+      }
+      buf.append(")");
+
+      break;
+
+      /* Lookup switch has variable length arguments.
+       */
+    case Constants.LOOKUPSWITCH: {
+
+      npairs = bytes.readInt();
+      offset = bytes.getIndex() - 8 - no_pad_bytes - 1;
+
+      match      = new int[npairs];
+      jump_table = new int[npairs];
+      default_offset += offset;
+
+      buf.append("\tdefault = " + default_offset + ", npairs = " + npairs +
+                 " (");
+
+      for(int i=0; i < npairs; i++) {
+        match[i]      = bytes.readInt();
+
+        jump_table[i] = offset + bytes.readInt();
+
+        buf.append("(" + match[i] + ", " + jump_table[i] + ")");
+
+        if(i < npairs - 1)
+          buf.append(", ");
+      }
+      buf.append(")");
+    }
+    break;
+
+    /* Two address bytes + offset from start of byte stream form the
+     * jump target
+     */
+    case Constants.GOTO:      case Constants.IFEQ:      case Constants.IFGE:      case Constants.IFGT:
+    case Constants.IFLE:      case Constants.IFLT:      case Constants.JSR: case Constants.IFNE:
+    case Constants.IFNONNULL: case Constants.IFNULL:    case Constants.IF_ACMPEQ:
+    case Constants.IF_ACMPNE: case Constants.IF_ICMPEQ: case Constants.IF_ICMPGE: case Constants.IF_ICMPGT:
+    case Constants.IF_ICMPLE: case Constants.IF_ICMPLT: case Constants.IF_ICMPNE:
+      buf.append("\t\t#" + ((bytes.getIndex() - 1) + bytes.readShort()));
+      break;
+
+      /* 32-bit wide jumps
+       */
+    case Constants.GOTO_W: case Constants.JSR_W:
+      buf.append("\t\t#" + ((bytes.getIndex() - 1) + bytes.readInt()));
+      break;
+
+      /* Index byte references local variable (register)
+       */
+    case Constants.ALOAD:  case Constants.ASTORE: case Constants.DLOAD:  case Constants.DSTORE: case Constants.FLOAD:
+    case Constants.FSTORE: case Constants.ILOAD:  case Constants.ISTORE: case Constants.LLOAD:  case Constants.LSTORE:
+    case Constants.RET:
+      if(wide) {
+        vindex = bytes.readUnsignedShort();
+        wide=false; // Clear flag
+      }
+      else
+        vindex = bytes.readUnsignedByte();
+
+      buf.append("\t\t%" + vindex);
+      break;
+
+      /*
+       * Remember wide byte which is used to form a 16-bit address in the
+       * following instruction. Relies on that the method is called again with
+       * the following opcode.
+       */
+    case Constants.WIDE:
+      wide      = true;
+      buf.append("\t(wide)");
+      break;
+
+      /* Array of basic type.
+       */
+    case Constants.NEWARRAY:
+      buf.append("\t\t<" + Constants.TYPE_NAMES[bytes.readByte()] + ">");
+      break;
+
+      /* Access object/class fields.
+       */
+    case Constants.GETFIELD: case Constants.GETSTATIC: case Constants.PUTFIELD: case Constants.PUTSTATIC:
+      index = bytes.readUnsignedShort();
+      buf.append("\t\t" +
+                 constant_pool.constantToString(index, Constants.CONSTANT_Fieldref) +
+                 (verbose? " (" + index + ")" : ""));
+      break;
+
+      /* Operands are references to classes in constant pool
+       */
+    case Constants.NEW:
+    case Constants.CHECKCAST:
+      buf.append("\t");
+    case Constants.INSTANCEOF:
+      index = bytes.readUnsignedShort();
+      buf.append("\t<" + constant_pool.constantToString(index,
+                                                        Constants.CONSTANT_Class) +
+                 ">" + (verbose? " (" + index + ")" : ""));
+      break;
+
+      /* Operands are references to methods in constant pool
+       */
+    case Constants.INVOKESPECIAL: case Constants.INVOKESTATIC: case Constants.INVOKEVIRTUAL:
+      index = bytes.readUnsignedShort();
+      buf.append("\t" + constant_pool.constantToString(index,
+                                                       Constants.CONSTANT_Methodref) +
+                 (verbose? " (" + index + ")" : ""));
+      break;
+
+    case Constants.INVOKEINTERFACE:
+      index = bytes.readUnsignedShort();
+      int nargs = bytes.readUnsignedByte(); // historical, redundant
+      buf.append("\t" +
+                 constant_pool.constantToString(index,
+                                                Constants.CONSTANT_InterfaceMethodref) +
+                 (verbose? " (" + index + ")\t" : "") + nargs + "\t" +
+                 bytes.readUnsignedByte()); // Last byte is a reserved space
+      break;
+
+      /* Operands are references to items in constant pool
+       */
+    case Constants.LDC_W: case Constants.LDC2_W:
+      index = bytes.readUnsignedShort();
+
+      buf.append("\t\t" + constant_pool.constantToString
+                 (index, constant_pool.getConstant(index).getTag()) +
+                 (verbose? " (" + index + ")" : ""));
+      break;
+
+    case Constants.LDC:
+      index = bytes.readUnsignedByte();
+
+      buf.append("\t\t" +
+                 constant_pool.constantToString
+                 (index, constant_pool.getConstant(index).getTag()) +
+                 (verbose? " (" + index + ")" : ""));
+      break;
+
+      /* Array of references.
+       */
+    case Constants.ANEWARRAY:
+      index = bytes.readUnsignedShort();
+
+      buf.append("\t\t<" + compactClassName(constant_pool.getConstantString
+                                          (index, Constants.CONSTANT_Class), false) +
+                 ">" + (verbose? " (" + index + ")": ""));
+      break;
+
+      /* Multidimensional array of references.
+       */
+    case Constants.MULTIANEWARRAY: {
+      index          = bytes.readUnsignedShort();
+      int dimensions = bytes.readUnsignedByte();
+
+      buf.append("\t<" + compactClassName(constant_pool.getConstantString
+                                          (index, Constants.CONSTANT_Class), false) +
+                 ">\t" + dimensions + (verbose? " (" + index + ")" : ""));
+    }
+    break;
+
+    /* Increment local variable.
+     */
+    case Constants.IINC:
+      if(wide) {
+        vindex   = bytes.readUnsignedShort();
+        constant = bytes.readShort();
+        wide     = false;
+      }
+      else {
+        vindex   = bytes.readUnsignedByte();
+        constant = bytes.readByte();
+      }
+      buf.append("\t\t%" + vindex + "\t" + constant);
+      break;
+
+    default:
+      if(Constants.NO_OF_OPERANDS[opcode] > 0) {
+        for(int i=0; i < Constants.TYPE_OF_OPERANDS[opcode].length; i++) {
+          buf.append("\t\t");
+          switch(Constants.TYPE_OF_OPERANDS[opcode][i]) {
+          case Constants.T_BYTE:  buf.append(bytes.readByte()); break;
+          case Constants.T_SHORT: buf.append(bytes.readShort());       break;
+          case Constants.T_INT:   buf.append(bytes.readInt());         break;
+
+          default: // Never reached
+            System.err.println("Unreachable default case reached!");
+            buf.setLength(0);
+          }
+        }
+      }
+    }
+
+    return buf.toString();
+!!!3402370.java!!!	codeToString(inout bytes : ByteSequence, inout constant_pool : ConstantPool) : String
+    return codeToString(bytes, constant_pool, true);
+!!!3402498.java!!!	compactClassName(inout str : String) : String
+    return compactClassName(str, true);
+!!!3402626.java!!!	compactClassName(inout str : String, inout prefix : String, inout chopit : boolean) : String
+    int len = prefix.length();
+
+    str = str.replace('/', '.'); // Is `/' on all systems, even DOS
+
+    if(chopit) {
+      // If string starts with `prefix' and contains no further dots
+      if(str.startsWith(prefix) &&
+         (str.substring(len).indexOf('.') == -1))
+        str = str.substring(len);
+    }
+
+    return str;
+!!!3402754.java!!!	compactClassName(inout str : String, inout chopit : boolean) : String
+    return compactClassName(str, "java.lang.", chopit);
+!!!3402882.java!!!	is_digit(in ch : char) : boolean
+    return (ch >= '0') && (ch <= '9');
+!!!3403010.java!!!	is_space(in ch : char) : boolean
+    return (ch == ' ') || (ch == '\t') || (ch == '\r') || (ch == '\n');
+!!!3403138.java!!!	setBit(in flag : int, in i : int) : int
+    return flag | pow2(i);
+!!!3403266.java!!!	clearBit(in flag : int, in i : int) : int
+    int bit = pow2(i);
+    return (flag & bit) == 0? flag : flag ^ bit;
+!!!3403394.java!!!	isSet(in flag : int, in i : int) : boolean
+    return (flag & pow2(i)) != 0;
+!!!3403522.java!!!	methodTypeToSignature(inout ret : String, inout argv : String [[]]) : String
+    StringBuffer buf = new StringBuffer("(");
+    String       str;
+
+    if(argv != null)
+      for(int i=0; i < argv.length; i++) {
+        str = getSignature(argv[i]);
+
+        if(str.endsWith("V")) // void can't be a method argument
+          throw new ClassFormatException("Invalid type: " + argv[i]);
+
+        buf.append(str);
+      }
+
+    str = getSignature(ret);
+
+    buf.append(")" + str);
+
+    return buf.toString();
+!!!3403650.java!!!	methodSignatureArgumentTypes(inout signature : String) : String
+    return methodSignatureArgumentTypes(signature, true);
+!!!3403778.java!!!	methodSignatureArgumentTypes(inout signature : String, inout chopit : boolean) : String
+    ArrayList vec = new ArrayList();
+    int       index;
+    String[]  types;
+
+    try { // Read all declarations between for `(' and `)'
+      if(signature.charAt(0) != '(')
+        throw new ClassFormatException("Invalid method signature: " + signature);
+
+      index = 1; // current string position
+
+      while(signature.charAt(index) != ')') {
+        vec.add(signatureToString(signature.substring(index), chopit));
+        index += consumed_chars; // update position
+      }
+    } catch(StringIndexOutOfBoundsException e) { // Should never occur
+      throw new ClassFormatException("Invalid method signature: " + signature);
+    }
+
+    types = new String[vec.size()];
+    vec.toArray(types);
+    return types;
+!!!3403906.java!!!	methodSignatureReturnType(inout signature : String) : String
+    return methodSignatureReturnType(signature, true);
+!!!3404034.java!!!	methodSignatureReturnType(inout signature : String, inout chopit : boolean) : String
+    int    index;
+    String type;
+
+    try {
+      // Read return type after `)'
+      index = signature.lastIndexOf(')') + 1;
+      type = signatureToString(signature.substring(index), chopit);
+    } catch(StringIndexOutOfBoundsException e) { // Should never occur
+      throw new ClassFormatException("Invalid method signature: " + signature);
+    }
+
+    return type;
+!!!3404162.java!!!	methodSignatureToString(inout signature : String, inout name : String, inout access : String) : String
+    return methodSignatureToString(signature, name, access, true);
+!!!3404290.java!!!	methodSignatureToString(inout signature : String, inout name : String, inout access : String, inout chopit : boolean) : String
+    return methodSignatureToString(signature, name, access, chopit, null);
+!!!3404418.java!!!	methodSignatureToString(inout signature : String, inout name : String, inout access : String, inout chopit : boolean, inout vars : LocalVariableTable) : String
+    StringBuffer buf = new StringBuffer("(");
+    String       type;
+    int          index;
+    int          var_index = (access.indexOf("static") >= 0)? 0 : 1;
+
+    try { // Read all declarations between for `(' and `)'
+      if(signature.charAt(0) != '(')
+        throw new ClassFormatException("Invalid method signature: " + signature);
+
+      index = 1; // current string position
+
+      while(signature.charAt(index) != ')') {
+        String param_type = signatureToString(signature.substring(index), chopit);
+        buf.append(param_type);
+
+        if(vars != null) {
+          LocalVariable l = vars.getLocalVariable(var_index);
+
+          if(l != null)
+            buf.append(" " + l.getName());
+        } else
+          buf.append(" arg" + var_index);
+
+        if("double".equals(param_type) || "long".equals(param_type))
+          var_index += 2;
+        else
+          var_index++;
+
+        buf.append(", ");
+        index += consumed_chars; // update position
+      }
+
+      index++; // update position
+
+      // Read return type after `)'
+      type = signatureToString(signature.substring(index), chopit);
+
+    } catch(StringIndexOutOfBoundsException e) { // Should never occur
+      throw new ClassFormatException("Invalid method signature: " + signature);
+    }
+
+    if(buf.length() > 1) // Tack off the extra ", "
+      buf.setLength(buf.length() - 2);
+
+    buf.append(")");
+
+    return access + ((access.length() > 0)? " " : "") + // May be an empty string
+      type + " " + name + buf.toString();
+!!!3404546.java!!!	pow2(in n : int) : int
+    return 1 << n;
+!!!3404674.java!!!	replace(inout str : String, inout old : String, inout new_ : String) : String
+    int          index, old_index;
+    StringBuffer buf = new StringBuffer();
+
+    try {
+      if((index = str.indexOf(old)) != -1) { // `old' found in str
+        old_index = 0;                       // String start offset
+
+        // While we have something to replace
+        while((index = str.indexOf(old, old_index)) != -1) {
+          buf.append(str.substring(old_index, index)); // append prefix
+          buf.append(new_);                            // append replacement
+
+          old_index = index + old.length(); // Skip `old'.length chars
+        }
+
+        buf.append(str.substring(old_index)); // append rest of string
+        str = buf.toString();
+      }
+    } catch(StringIndexOutOfBoundsException e) { // Should not occur
+      System.err.println(e);
+    }
+
+    return str;
+!!!3404802.java!!!	signatureToString(inout signature : String) : String
+    return signatureToString(signature, true);
+!!!3404930.java!!!	signatureToString(inout signature : String, inout chopit : boolean) : String
+    consumed_chars = 1; // This is the default, read just one char like `B'
+
+    try {
+      switch(signature.charAt(0)) {
+      case 'B' : return "byte";
+      case 'C' : return "char";
+      case 'D' : return "double";
+      case 'F' : return "float";
+      case 'I' : return "int";
+      case 'J' : return "long";
+
+      case 'L' : { // Full class name
+        int    index = signature.indexOf(';'); // Look for closing `;'
+
+        if(index < 0)
+          throw new ClassFormatException("Invalid signature: " + signature);
+
+        consumed_chars = index + 1; // "Lblabla;" `L' and `;' are removed
+
+        return compactClassName(signature.substring(1, index), chopit);
+      }
+
+      case 'S' : return "short";
+      case 'Z' : return "boolean";
+
+      case '[' : { // Array declaration
+        int          n;
+        StringBuffer buf, brackets;
+        String       type;
+        char         ch;
+        int          consumed_chars; // Shadows global var
+
+        brackets = new StringBuffer(); // Accumulate []'s
+
+        // Count opening brackets and look for optional size argument
+        for(n=0; signature.charAt(n) == '['; n++)
+          brackets.append("[]");
+
+        consumed_chars = n; // Remember value
+
+        // The rest of the string denotes a `<field_type>'
+        type = signatureToString(signature.substring(n), chopit);
+
+        Utility.consumed_chars += consumed_chars;
+        return type + brackets.toString();
+      }
+
+      case 'V' : return "void";
+
+      default  : throw new ClassFormatException("Invalid signature: `" +
+                                            signature + "'");
+      }
+    } catch(StringIndexOutOfBoundsException e) { // Should never occur
+      throw new ClassFormatException("Invalid signature: " + e + ":" + signature);
+    }
+!!!3405058.java!!!	getSignature(inout type : String) : String
+    StringBuffer buf        = new StringBuffer();
+    char[]       chars      = type.toCharArray();
+    boolean      char_found = false, delim = false;
+    int          index      = -1;
+
+  loop:
+    for(int i=0; i < chars.length; i++) {
+      switch(chars[i]) {
+      case ' ': case '\t': case '\n': case '\r': case '\f':
+        if(char_found)
+          delim = true;
+        break;
+
+      case '[':
+        if(!char_found)
+          throw new RuntimeException("Illegal type: " + type);
+
+        index = i;
+        break loop;
+
+      default:
+        char_found = true;
+        if(!delim)
+          buf.append(chars[i]);
+      }
+    }
+
+    int brackets = 0;
+
+    if(index > 0)
+      brackets = countBrackets(type.substring(index));
+
+    type = buf.toString();
+    buf.setLength(0);
+
+    for(int i=0; i < brackets; i++)
+      buf.append('[');
+
+    boolean found = false;
+
+    for(int i=Constants.T_BOOLEAN; (i <= Constants.T_VOID) && !found; i++) {
+      if(Constants.TYPE_NAMES[i].equals(type)) {
+        found = true;
+        buf.append(Constants.SHORT_TYPE_NAMES[i]);
+      }
+    }
+
+    if(!found) // Class name
+      buf.append('L' + type.replace('.', '/') + ';');
+
+    return buf.toString();
+!!!3405186.java!!!	countBrackets(inout brackets : String) : int
+    char[]  chars = brackets.toCharArray();
+    int     count = 0;
+    boolean open  = false;
+
+    for(int i=0; i<chars.length; i++) {
+      switch(chars[i]) {
+      case '[':
+        if(open)
+          throw new RuntimeException("Illegally nested brackets:" + brackets);
+        open = true;
+        break;
+
+      case ']':
+        if(!open)
+          throw new RuntimeException("Illegally nested brackets:" + brackets);
+        open = false;
+        count++;
+        break;
+
+      default:
+        // Don't care
+      }
+    }
+
+    if(open)
+      throw new RuntimeException("Illegally nested brackets:" + brackets);
+
+    return count;
+!!!3405314.java!!!	typeOfMethodSignature(inout signature : String) : byte
+    int index;
+
+    try {
+      if(signature.charAt(0) != '(')
+        throw new ClassFormatException("Invalid method signature: " + signature);
+
+      index = signature.lastIndexOf(')') + 1;
+      return typeOfSignature(signature.substring(index));
+    } catch(StringIndexOutOfBoundsException e) {
+      throw new ClassFormatException("Invalid method signature: " + signature);
+    }
+!!!3405442.java!!!	typeOfSignature(inout signature : String) : byte
+    try {
+      switch(signature.charAt(0)) {
+      case 'B' : return Constants.T_BYTE;
+      case 'C' : return Constants.T_CHAR;
+      case 'D' : return Constants.T_DOUBLE;
+      case 'F' : return Constants.T_FLOAT;
+      case 'I' : return Constants.T_INT;
+      case 'J' : return Constants.T_LONG;
+      case 'L' : return Constants.T_REFERENCE;
+      case '[' : return Constants.T_ARRAY;
+      case 'V' : return Constants.T_VOID;
+      case 'Z' : return Constants.T_BOOLEAN;
+      case 'S' : return Constants.T_SHORT;
+      default:
+        throw new ClassFormatException("Invalid method signature: " + signature);
+      }
+    } catch(StringIndexOutOfBoundsException e) {
+      throw new ClassFormatException("Invalid method signature: " + signature);
+    }
+!!!3405570.java!!!	searchOpcode(inout name : String) : short
+    name = name.toLowerCase();
+
+    for(short i=0; i < Constants.OPCODE_NAMES.length; i++)
+      if(Constants.OPCODE_NAMES[i].equals(name))
+        return i;
+
+    return -1;
+!!!3405698.java!!!	byteToShort(in b : byte) : short
+    return (b < 0)? (short)(256 + b) : (short)b;
+!!!3405826.java!!!	toHexString(inout bytes : byte [[]]) : String
+    StringBuffer buf = new StringBuffer();
+
+    for(int i=0; i < bytes.length; i++) {
+      short  b   = byteToShort(bytes[i]);
+      String hex = Integer.toString(b, 0x10);
+
+      if(b < 0x10) // just one digit, prepend '0'
+        buf.append('0');
+
+      buf.append(hex);
+
+      if(i < bytes.length - 1)
+        buf.append(' ');
+    }
+
+    return buf.toString();
+!!!3405954.java!!!	format(in i : int, in length : int, inout left_justify : boolean, in fill : char) : String
+    return fillup(Integer.toString(i), length, left_justify, fill);
+!!!3406082.java!!!	fillup(inout str : String, in length : int, inout left_justify : boolean, in fill : char) : String
+    int    len = length - str.length();
+    char[] buf = new char[(len < 0)? 0 : len];
+
+    for(int j=0; j < buf.length; j++)
+      buf[j] = fill;
+
+    if(left_justify)
+      return str + new String(buf);
+    else
+      return new String(buf) + str;
+!!!3406210.java!!!	equals(inout a : byte [[]], inout b : byte [[]]) : boolean
+    int size;
+
+    if((size=a.length) != b.length)
+      return false;
+
+    for(int i=0; i < size; i++)
+      if(a[i] != b[i])
+        return false;
+
+    return true;
+!!!3406338.java!!!	printArray(inout out : PrintStream, inout obj : Object [[]]) : void
+    out.println(printArray(obj, true));
+!!!3406466.java!!!	printArray(inout out : PrintWriter, inout obj : Object [[]]) : void
+    out.println(printArray(obj, true));
+!!!3406594.java!!!	printArray(inout obj : Object [[]]) : String
+    return printArray(obj, true);
+!!!3406722.java!!!	printArray(inout obj : Object [[]], inout braces : boolean) : String
+    return printArray(obj, braces, false);
+!!!3406850.java!!!	printArray(inout obj : Object [[]], inout braces : boolean, inout quote : boolean) : String
+    if(obj == null)
+      return null;
+
+    StringBuffer buf = new StringBuffer();
+    if(braces)
+      buf.append('{');
+
+    for(int i=0; i < obj.length; i++) {
+      if(obj[i] != null) {
+        buf.append((quote? "\"" : "") + obj[i].toString() + (quote? "\"" : ""));
+      } else {
+        buf.append("null");
+      }
+
+      if(i < obj.length - 1) {
+        buf.append(", ");
+      }
+    }
+
+    if(braces)
+      buf.append('}');
+
+    return buf.toString();
+!!!3406978.java!!!	isJavaIdentifierPart(in ch : char) : boolean
+    return ((ch >= 'a') && (ch <= 'z')) ||
+      ((ch >= 'A') && (ch <= 'Z')) ||
+      ((ch >= '0') && (ch <= '9')) ||
+      (ch == '_');
+!!!3407106.java!!!	encode(inout bytes : byte [[]], inout compress : boolean) : String
+    if(compress) {
+      ByteArrayOutputStream baos = new ByteArrayOutputStream();
+      GZIPOutputStream      gos  = new GZIPOutputStream(baos);
+
+      gos.write(bytes, 0, bytes.length);
+      gos.close();
+      baos.close();
+
+      bytes = baos.toByteArray();
+    }
+
+    CharArrayWriter caw = new CharArrayWriter();
+    JavaWriter      jw  = new JavaWriter(caw);
+
+    for(int i=0; i < bytes.length; i++) {
+      int in = bytes[i] & 0x000000ff; // Normalize to unsigned
+      jw.write(in);
+    }
+
+    return caw.toString();
+!!!3407234.java!!!	decode(inout s : String, inout uncompress : boolean) : byte
+    char[] chars = s.toCharArray();
+
+    CharArrayReader car = new CharArrayReader(chars);
+    JavaReader      jr  = new JavaReader(car);
+
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+
+    int ch;
+
+    while((ch = jr.read()) >= 0) {
+      bos.write(ch);
+    }
+
+    bos.close();
+    car.close();
+    jr.close();
+
+    byte[] bytes = bos.toByteArray();
+
+    if(uncompress) {
+      GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(bytes));
+
+      byte[] tmp   = new byte[bytes.length * 3]; // Rough estimate
+      int    count = 0;
+      int    b;
+
+      while((b = gis.read()) >= 0)
+        tmp[count++] = (byte)b;
+
+      bytes = new byte[count];
+      System.arraycopy(tmp, 0, bytes, 0, count);
+    }
+
+    return bytes;
+!!!3413762.java!!!	convertString(inout label : String) : String
+    char[]       ch  = label.toCharArray();
+    StringBuffer buf = new StringBuffer();
+
+    for(int i=0; i < ch.length; i++) {
+      switch(ch[i]) {
+      case '\n':
+        buf.append("\\n"); break;
+      case '\r':
+        buf.append("\\r"); break;
+      case '\"':
+        buf.append("\\\""); break;
+      case '\'':
+        buf.append("\\'"); break;
+      case '\\':
+        buf.append("\\\\"); break;
+      default:
+        buf.append(ch[i]); break;
+      }
+    }
+
+    return buf.toString();

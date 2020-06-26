@@ -1,0 +1,134 @@
+class FactoryFinder
+!!!12153218.java!!!	newInstance(inout className : String, inout classLoader : ClassLoader) : Object
+        try {
+            Class spiClass = safeLoadClass(className, classLoader);
+            return spiClass.newInstance();
+        } catch (ClassNotFoundException x) {
+            throw new WebServiceException(
+                "Provider " + className + " not found", x);
+        } catch (Exception x) {
+            throw new WebServiceException(
+                "Provider " + className + " could not be instantiated: " + x,
+                x);
+        }
+!!!12153346.java!!!	find(inout factoryId : String, inout fallbackClassName : String) : Object
+        if (isOsgi()) {
+            return lookupUsingOSGiServiceLoader(factoryId);
+        }
+        ClassLoader classLoader;
+        try {
+            classLoader = Thread.currentThread().getContextClassLoader();
+        } catch (Exception x) {
+            throw new WebServiceException(x.toString(), x);
+        }
+
+        String serviceId = "META-INF/services/" + factoryId;
+        // try to find services in CLASSPATH
+        BufferedReader rd = null;
+        try {
+            InputStream is;
+            if (classLoader == null) {
+                is=ClassLoader.getSystemResourceAsStream(serviceId);
+            } else {
+                is=classLoader.getResourceAsStream(serviceId);
+            }
+
+            if( is!=null ) {
+                rd = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+
+                String factoryClassName = rd.readLine();
+
+                if (factoryClassName != null &&
+                    ! "".equals(factoryClassName)) {
+                    return newInstance(factoryClassName, classLoader);
+                }
+            }
+        } catch( Exception ignored) {
+        } finally {
+            close(rd);
+        }
+
+
+        // try to read from $java.home/lib/jaxws.properties
+        FileInputStream inStream = null;
+        try {
+            String javah=System.getProperty( "java.home" );
+            String configFile = javah + File.separator +
+                "lib" + File.separator + "jaxws.properties";
+            File f=new File( configFile );
+            if( f.exists()) {
+                Properties props=new Properties();
+                inStream = new FileInputStream(f);
+                props.load(inStream);
+                String factoryClassName = props.getProperty(factoryId);
+                return newInstance(factoryClassName, classLoader);
+            }
+        } catch(Exception ignored) {
+        } finally {
+            close(inStream);
+        }
+
+        // Use the system property
+        try {
+            String systemProp =
+                System.getProperty( factoryId );
+            if( systemProp!=null) {
+                return newInstance(systemProp, classLoader);
+            }
+        } catch (SecurityException ignored) {
+        }
+
+        if (fallbackClassName == null) {
+            throw new WebServiceException(
+                "Provider for " + factoryId + " cannot be found", null);
+        }
+
+        return newInstance(fallbackClassName, classLoader);
+!!!12153474.java!!!	close(inout closeable : Closeable) : void
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (IOException ignored) {
+            }
+        }
+!!!12153602.java!!!	safeLoadClass(inout className : String, inout classLoader : ClassLoader) : Class
+        try {
+            // make sure that the current thread has an access to the package of the given name.
+            SecurityManager s = System.getSecurityManager();
+            if (s != null) {
+                int i = className.lastIndexOf('.');
+                if (i != -1) {
+                    s.checkPackageAccess(className.substring(0, i));
+                }
+            }
+
+            if (classLoader == null)
+                return Class.forName(className);
+            else
+                return classLoader.loadClass(className);
+        } catch (SecurityException se) {
+            // anyone can access the platform default factory class without permission
+            if (Provider.DEFAULT_JAXWSPROVIDER.equals(className))
+                return Class.forName(className);
+            throw se;
+        }
+!!!12153730.java!!!	isOsgi() : boolean
+        try {
+            Class.forName(OSGI_SERVICE_LOADER_CLASS_NAME);
+            return true;
+        } catch (ClassNotFoundException ignored) {
+        }
+        return false;
+!!!12153858.java!!!	lookupUsingOSGiServiceLoader(inout factoryId : String) : Object
+        try {
+            // Use reflection to avoid having any dependendcy on ServiceLoader class
+            Class serviceClass = Class.forName(factoryId);
+            Class[] args = new Class[]{serviceClass};
+            Class target = Class.forName(OSGI_SERVICE_LOADER_CLASS_NAME);
+            java.lang.reflect.Method m = target.getMethod("lookupProviderInstances", Class.class);
+            java.util.Iterator iter = ((Iterable) m.invoke(null, (Object[]) args)).iterator();
+            return iter.hasNext() ? iter.next() : null;
+        } catch (Exception ignored) {
+            // log and continue
+            return null;
+        }

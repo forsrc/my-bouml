@@ -1,0 +1,127 @@
+class LogicalExpr
+!!!3738882.java!!!	LogicalExpr(in op : int, inout left : Expression, inout right : Expression)
+        _op = op;
+        (_left = left).setParent(this);
+        (_right = right).setParent(this);
+!!!3739010.java!!!	hasPositionCall() : boolean
+        return (_left.hasPositionCall() || _right.hasPositionCall());
+!!!3739138.java!!!	hasLastCall() : boolean
+            return (_left.hasLastCall() || _right.hasLastCall());
+!!!3739266.java!!!	evaluateAtCompileTime() : Object
+        final Object leftb = _left.evaluateAtCompileTime();
+        final Object rightb = _right.evaluateAtCompileTime();
+
+        // Return null if we can't evaluate at compile time
+        if (leftb == null || rightb == null) {
+            return null;
+        }
+
+        if (_op == AND) {
+            return (leftb == Boolean.TRUE && rightb == Boolean.TRUE) ?
+                Boolean.TRUE : Boolean.FALSE;
+        }
+        else {
+            return (leftb == Boolean.TRUE || rightb == Boolean.TRUE) ?
+                Boolean.TRUE : Boolean.FALSE;
+        }
+!!!3739394.java!!!	getOp() : int
+        return(_op);
+!!!3739522.java!!!	setParser(inout parser : Parser) : void
+        super.setParser(parser);
+        _left.setParser(parser);
+        _right.setParser(parser);
+!!!3739650.java!!!	toString() : String
+        return Ops[_op] + '(' + _left + ", " + _right + ')';
+!!!3739778.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        // Get the left and right operand types
+        Type tleft = _left.typeCheck(stable);
+        Type tright = _right.typeCheck(stable);
+
+        // Check if the operator supports the two operand types
+        MethodType wantType = new MethodType(Type.Void, tleft, tright);
+        MethodType haveType = lookupPrimop(stable, Ops[_op], wantType);
+
+        // Yes, the operation is supported
+        if (haveType != null) {
+            // Check if left-hand side operand must be type casted
+            Type arg1 = (Type)haveType.argsType().elementAt(0);
+            if (!arg1.identicalTo(tleft))
+                _left = new CastExpr(_left, arg1);
+            // Check if right-hand side operand must be type casted
+            Type arg2 = (Type) haveType.argsType().elementAt(1);
+            if (!arg2.identicalTo(tright))
+                _right = new CastExpr(_right, arg1);
+            // Return the result type for the operator we will use
+            return _type = haveType.resultType();
+        }
+        throw new TypeCheckError(this);
+!!!3739906.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        translateDesynthesized(classGen, methodGen);
+        synthesize(classGen, methodGen);
+!!!3740034.java!!!	translateDesynthesized(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+
+        final InstructionList il = methodGen.getInstructionList();
+        final SyntaxTreeNode parent = getParent();
+
+        // Compile AND-expression
+        if (_op == AND) {
+
+            // Translate left hand side - must be true
+            _left.translateDesynthesized(classGen, methodGen);
+
+            // Need this for chaining any OR-expression children
+            InstructionHandle middle = il.append(NOP);
+
+            // Translate left right side - must be true
+            _right.translateDesynthesized(classGen, methodGen);
+
+            // Need this for chaining any OR-expression children
+            InstructionHandle after = il.append(NOP);
+
+            // Append child expression false-lists to our false-list
+            _falseList.append(_right._falseList.append(_left._falseList));
+
+            // Special case for OR-expression as a left child of AND.
+            // The true-list of OR must point to second clause of AND.
+            if ((_left instanceof LogicalExpr) &&
+                (((LogicalExpr)_left).getOp() == OR)) {
+                _left.backPatchTrueList(middle);
+            }
+            else if (_left instanceof NotCall) {
+                _left.backPatchTrueList(middle);
+            }
+            else {
+                _trueList.append(_left._trueList);
+            }
+
+            // Special case for OR-expression as a right child of AND
+            // The true-list of OR must point to true-list of AND.
+            if ((_right instanceof LogicalExpr) &&
+                (((LogicalExpr)_right).getOp() == OR)) {
+                _right.backPatchTrueList(after);
+            }
+            else if (_right instanceof NotCall) {
+                _right.backPatchTrueList(after);
+            }
+            else {
+                _trueList.append(_right._trueList);
+            }
+        }
+        // Compile OR-expression
+        else {
+            // Translate left-hand side expression and produce true/false list
+            _left.translateDesynthesized(classGen, methodGen);
+
+            // This GOTO is used to skip over the code for the last test
+            // in the case where the the first test succeeds
+            InstructionHandle ih = il.append(new GOTO(null));
+
+            // Translate right-hand side expression and produce true/false list
+            _right.translateDesynthesized(classGen, methodGen);
+
+            _left._trueList.backPatch(ih);
+            _left._falseList.backPatch(ih.getNext());
+
+            _falseList.append(_right._falseList);
+            _trueList.add(ih).append(_right._trueList);
+        }

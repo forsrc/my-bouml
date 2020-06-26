@@ -1,0 +1,617 @@
+class Dialog
+!!!6167682.java!!!	Dialog(inout owner : Frame)
+         this(owner, "", false);
+!!!6167810.java!!!	Dialog(inout owner : Frame, inout modal : boolean)
+         this(owner, "", modal);
+!!!6167938.java!!!	Dialog(inout owner : Frame, inout title : String)
+         this(owner, title, false);
+!!!6168066.java!!!	Dialog(inout owner : Frame, inout title : String, inout modal : boolean)
+         this(owner, title, modal ? DEFAULT_MODALITY_TYPE : ModalityType.MODELESS);
+!!!6168194.java!!!	Dialog(inout owner : Frame, inout title : String, inout modal : boolean, inout gc : GraphicsConfiguration)
+         this(owner, title, modal ? DEFAULT_MODALITY_TYPE : ModalityType.MODELESS, gc);
+!!!6168322.java!!!	Dialog(inout owner : Dialog)
+         this(owner, "", false);
+!!!6168450.java!!!	Dialog(inout owner : Dialog, inout title : String)
+         this(owner, title, false);
+!!!6168578.java!!!	Dialog(inout owner : Dialog, inout title : String, inout modal : boolean)
+         this(owner, title, modal ? DEFAULT_MODALITY_TYPE : ModalityType.MODELESS);
+!!!6168706.java!!!	Dialog(inout owner : Dialog, inout title : String, inout modal : boolean, inout gc : GraphicsConfiguration)
+         this(owner, title, modal ? DEFAULT_MODALITY_TYPE : ModalityType.MODELESS, gc);
+!!!6168834.java!!!	Dialog(inout owner : Window)
+        this(owner, "", ModalityType.MODELESS);
+!!!6168962.java!!!	Dialog(inout owner : Window, inout title : String)
+        this(owner, title, ModalityType.MODELESS);
+!!!6169090.java!!!	Dialog(inout owner : Window, inout modalityType : Dialog::ModalityType)
+        this(owner, "", modalityType);
+!!!6169218.java!!!	Dialog(inout owner : Window, inout title : String, inout modalityType : Dialog::ModalityType)
+        super(owner);
+
+        if ((owner != null) &&
+            !(owner instanceof Frame) &&
+            !(owner instanceof Dialog))
+        {
+            throw new IllegalArgumentException("Wrong parent window");
+        }
+
+        this.title = title;
+        setModalityType(modalityType);
+        SunToolkit.checkAndSetPolicy(this);
+        initialized = true;
+!!!6169346.java!!!	Dialog(inout owner : Window, inout title : String, inout modalityType : Dialog::ModalityType, inout gc : GraphicsConfiguration)
+        super(owner, gc);
+
+        if ((owner != null) &&
+            !(owner instanceof Frame) &&
+            !(owner instanceof Dialog))
+        {
+            throw new IllegalArgumentException("wrong owner window");
+        }
+
+        this.title = title;
+        setModalityType(modalityType);
+        SunToolkit.checkAndSetPolicy(this);
+        initialized = true;
+!!!6169474.java!!!	constructComponentName() : String
+        synchronized (Dialog.class) {
+            return base + nameCounter++;
+        }
+!!!6169602.java!!!	addNotify() : void
+        synchronized (getTreeLock()) {
+            if (parent != null && parent.getPeer() == null) {
+                parent.addNotify();
+            }
+
+            if (peer == null) {
+                peer = getToolkit().createDialog(this);
+            }
+            super.addNotify();
+        }
+!!!6169730.java!!!	isModal() : boolean
+        return isModal_NoClientCode();
+!!!6169858.java!!!	isModal_NoClientCode() : boolean
+        return modalityType != ModalityType.MODELESS;
+!!!6169986.java!!!	setModal(inout modal : boolean) : void
+        this.modal = modal;
+        setModalityType(modal ? DEFAULT_MODALITY_TYPE : ModalityType.MODELESS);
+!!!6170114.java!!!	getModalityType() : Dialog::ModalityType
+        return modalityType;
+!!!6170242.java!!!	setModalityType(inout type : Dialog::ModalityType) : void
+        if (type == null) {
+            type = Dialog.ModalityType.MODELESS;
+        }
+        if (!Toolkit.getDefaultToolkit().isModalityTypeSupported(type)) {
+            type = Dialog.ModalityType.MODELESS;
+        }
+        if (modalityType == type) {
+            return;
+        }
+
+        checkModalityPermission(type);
+
+        modalityType = type;
+        modal = (modalityType != ModalityType.MODELESS);
+!!!6170370.java!!!	getTitle() : String
+        return title;
+!!!6170498.java!!!	setTitle(inout title : String) : void
+        String oldTitle = this.title;
+
+        synchronized(this) {
+            this.title = title;
+            DialogPeer peer = (DialogPeer)this.peer;
+            if (peer != null) {
+                peer.setTitle(title);
+            }
+        }
+        firePropertyChange("title", oldTitle, title);
+!!!6170626.java!!!	conditionalShow(inout toFocus : Component, inout time : AtomicLong) : boolean
+        boolean retval;
+
+        closeSplashScreen();
+
+        synchronized (getTreeLock()) {
+            if (peer == null) {
+                addNotify();
+            }
+            validateUnconditionally();
+            if (visible) {
+                toFront();
+                retval = false;
+            } else {
+                visible = retval = true;
+
+                // check if this dialog should be modal blocked BEFORE calling peer.show(),
+                // otherwise, a pair of FOCUS_GAINED and FOCUS_LOST may be mistakenly
+                // generated for the dialog
+                if (!isModal()) {
+                    checkShouldBeBlocked(this);
+                } else {
+                    modalDialogs.add(this);
+                    modalShow();
+                }
+
+                if (toFocus != null && time != null && isFocusable() &&
+                    isEnabled() && !isModalBlocked()) {
+                    // keep the KeyEvents from being dispatched
+                    // until the focus has been transfered
+                    time.set(Toolkit.getEventQueue().getMostRecentKeyEventTime());
+                    KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                        enqueueKeyEvents(time.get(), toFocus);
+                }
+
+                // This call is required as the show() method of the Dialog class
+                // does not invoke the super.show(). So wried... :(
+                mixOnShowing();
+
+                peer.setVisible(true); // now guaranteed never to block
+                if (isModalBlocked()) {
+                    modalBlocker.toFront();
+                }
+
+                setLocationByPlatform(false);
+                for (int i = 0; i < ownedWindowList.size(); i++) {
+                    Window child = ownedWindowList.elementAt(i).get();
+                    if ((child != null) && child.showWithParent) {
+                        child.show();
+                        child.showWithParent = false;
+                    }       // endif
+                }   // endfor
+                Window.updateChildFocusableWindowState(this);
+
+                createHierarchyEvents(HierarchyEvent.HIERARCHY_CHANGED,
+                                      this, parent,
+                                      HierarchyEvent.SHOWING_CHANGED,
+                                      Toolkit.enabledOnToolkit(AWTEvent.HIERARCHY_EVENT_MASK));
+                if (componentListener != null ||
+                        (eventMask & AWTEvent.COMPONENT_EVENT_MASK) != 0 ||
+                        Toolkit.enabledOnToolkit(AWTEvent.COMPONENT_EVENT_MASK)) {
+                    ComponentEvent e =
+                        new ComponentEvent(this, ComponentEvent.COMPONENT_SHOWN);
+                    Toolkit.getEventQueue().postEvent(e);
+                }
+            }
+        }
+
+        if (retval && (state & OPENED) == 0) {
+            postWindowEvent(WindowEvent.WINDOW_OPENED);
+            state |= OPENED;
+        }
+
+        return retval;
+!!!6170754.java!!!	setVisible(inout b : boolean) : void
+        super.setVisible(b);
+!!!6170882.java!!!	show() : void
+        if (!initialized) {
+            throw new IllegalStateException("The dialog component " +
+                "has not been initialized properly");
+        }
+
+        beforeFirstShow = false;
+        if (!isModal()) {
+            conditionalShow(null, null);
+        } else {
+            AppContext showAppContext = AppContext.getAppContext();
+
+            AtomicLong time = new AtomicLong();
+            Component predictedFocusOwner = null;
+            try {
+                predictedFocusOwner = getMostRecentFocusOwner();
+                if (conditionalShow(predictedFocusOwner, time)) {
+                    modalFilter = ModalEventFilter.createFilterForDialog(this);
+                    final Conditional cond = new Conditional() {
+                        @Override
+                        public boolean evaluate() {
+                            return windowClosingException == null;
+                        }
+                    };
+
+                    // if this dialog is toolkit-modal, the filter should be added
+                    // to all EDTs (for all AppContexts)
+                    if (modalityType == ModalityType.TOOLKIT_MODAL) {
+                        Iterator<AppContext> it = AppContext.getAppContexts().iterator();
+                        while (it.hasNext()) {
+                            AppContext appContext = it.next();
+                            if (appContext == showAppContext) {
+                                continue;
+                            }
+                            EventQueue eventQueue = (EventQueue)appContext.get(AppContext.EVENT_QUEUE_KEY);
+                            // it may occur that EDT for appContext hasn't been started yet, so
+                            // we post an empty invocation event to trigger EDT initialization
+                            Runnable createEDT = new Runnable() {
+                                public void run() {};
+                            };
+                            eventQueue.postEvent(new InvocationEvent(this, createEDT));
+                            EventDispatchThread edt = eventQueue.getDispatchThread();
+                            edt.addEventFilter(modalFilter);
+                        }
+                    }
+
+                    modalityPushed();
+                    try {
+                        final EventQueue eventQueue = AccessController.doPrivileged(
+                            new PrivilegedAction<EventQueue>() {
+                                public EventQueue run() {
+                                    return Toolkit.getDefaultToolkit().getSystemEventQueue();
+                                }
+                        });
+                        secondaryLoop = eventQueue.createSecondaryLoop(cond, modalFilter, 0);
+                        if (!secondaryLoop.enter()) {
+                            secondaryLoop = null;
+                        }
+                    } finally {
+                        modalityPopped();
+                    }
+
+                    // if this dialog is toolkit-modal, its filter must be removed
+                    // from all EDTs (for all AppContexts)
+                    if (modalityType == ModalityType.TOOLKIT_MODAL) {
+                        Iterator<AppContext> it = AppContext.getAppContexts().iterator();
+                        while (it.hasNext()) {
+                            AppContext appContext = it.next();
+                            if (appContext == showAppContext) {
+                                continue;
+                            }
+                            EventQueue eventQueue = (EventQueue)appContext.get(AppContext.EVENT_QUEUE_KEY);
+                            EventDispatchThread edt = eventQueue.getDispatchThread();
+                            edt.removeEventFilter(modalFilter);
+                        }
+                    }
+
+                    if (windowClosingException != null) {
+                        windowClosingException.fillInStackTrace();
+                        throw windowClosingException;
+                    }
+                }
+            } finally {
+                if (predictedFocusOwner != null) {
+                    // Restore normal key event dispatching
+                    KeyboardFocusManager.getCurrentKeyboardFocusManager().
+                        dequeueKeyEvents(time.get(), predictedFocusOwner);
+                }
+            }
+        }
+!!!6171010.java!!!	modalityPushed() : void
+        Toolkit tk = Toolkit.getDefaultToolkit();
+        if (tk instanceof SunToolkit) {
+            SunToolkit stk = (SunToolkit)tk;
+            stk.notifyModalityPushed(this);
+        }
+!!!6171138.java!!!	modalityPopped() : void
+        Toolkit tk = Toolkit.getDefaultToolkit();
+        if (tk instanceof SunToolkit) {
+            SunToolkit stk = (SunToolkit)tk;
+            stk.notifyModalityPopped(this);
+        }
+!!!6171266.java!!!	interruptBlocking() : void
+        if (isModal()) {
+            disposeImpl();
+        } else if (windowClosingException != null) {
+            windowClosingException.fillInStackTrace();
+            windowClosingException.printStackTrace();
+            windowClosingException = null;
+        }
+!!!6171394.java!!!	hideAndDisposePreHandler() : void
+        isInHide = true;
+        synchronized (getTreeLock()) {
+            if (secondaryLoop != null) {
+                modalHide();
+                // dialog can be shown and then disposed before its
+                // modal filter is created
+                if (modalFilter != null) {
+                    modalFilter.disable();
+                }
+                modalDialogs.remove(this);
+            }
+        }
+!!!6171522.java!!!	hideAndDisposeHandler() : void
+        if (secondaryLoop != null) {
+            secondaryLoop.exit();
+            secondaryLoop = null;
+        }
+        isInHide = false;
+!!!6171650.java!!!	hide() : void
+        hideAndDisposePreHandler();
+        super.hide();
+        // fix for 5048370: if hide() is called from super.doDispose(), then
+        // hideAndDisposeHandler() should not be called here as it will be called
+        // at the end of doDispose()
+        if (!isInDispose) {
+            hideAndDisposeHandler();
+        }
+!!!6171778.java!!!	doDispose() : void
+        // fix for 5048370: set isInDispose flag to true to prevent calling
+        // to hideAndDisposeHandler() from hide()
+        isInDispose = true;
+        super.doDispose();
+        hideAndDisposeHandler();
+        isInDispose = false;
+!!!6171906.java!!!	toBack() : void
+        super.toBack();
+        if (visible) {
+            synchronized (getTreeLock()) {
+                for (Window w : blockedWindows) {
+                    w.toBack_NoClientCode();
+                }
+            }
+        }
+!!!6172034.java!!!	isResizable() : boolean
+        return resizable;
+!!!6172162.java!!!	setResizable(inout resizable : boolean) : void
+        boolean testvalid = false;
+
+        synchronized (this) {
+            this.resizable = resizable;
+            DialogPeer peer = (DialogPeer)this.peer;
+            if (peer != null) {
+                peer.setResizable(resizable);
+                testvalid = true;
+            }
+        }
+
+        // On some platforms, changing the resizable state affects
+        // the insets of the Dialog. If we could, we'd call invalidate()
+        // from the peer, but we need to guarantee that we're not holding
+        // the Dialog lock when we call invalidate().
+        if (testvalid) {
+            invalidateIfValid();
+        }
+!!!6172290.java!!!	setUndecorated(inout undecorated : boolean) : void
+        /* Make sure we don't run in the middle of peer creation.*/
+        synchronized (getTreeLock()) {
+            if (isDisplayable()) {
+                throw new IllegalComponentStateException("The dialog is displayable.");
+            }
+            if (!undecorated) {
+                if (getOpacity() < 1.0f) {
+                    throw new IllegalComponentStateException("The dialog is not opaque");
+                }
+                if (getShape() != null) {
+                    throw new IllegalComponentStateException("The dialog does not have a default shape");
+                }
+                Color bg = getBackground();
+                if ((bg != null) && (bg.getAlpha() < 255)) {
+                    throw new IllegalComponentStateException("The dialog background color is not opaque");
+                }
+            }
+            this.undecorated = undecorated;
+        }
+!!!6172418.java!!!	isUndecorated() : boolean
+        return undecorated;
+!!!6172546.java!!!	setOpacity(in opacity : float) : void
+        synchronized (getTreeLock()) {
+            if ((opacity < 1.0f) && !isUndecorated()) {
+                throw new IllegalComponentStateException("The dialog is decorated");
+            }
+            super.setOpacity(opacity);
+        }
+!!!6172674.java!!!	setShape(inout shape : Shape) : void
+        synchronized (getTreeLock()) {
+            if ((shape != null) && !isUndecorated()) {
+                throw new IllegalComponentStateException("The dialog is decorated");
+            }
+            super.setShape(shape);
+        }
+!!!6172802.java!!!	setBackground(inout bgColor : Color) : void
+        synchronized (getTreeLock()) {
+            if ((bgColor != null) && (bgColor.getAlpha() < 255) && !isUndecorated()) {
+                throw new IllegalComponentStateException("The dialog is decorated");
+            }
+            super.setBackground(bgColor);
+        }
+!!!6172930.java!!!	paramString() : String
+        String str = super.paramString() + "," + modalityType;
+        if (title != null) {
+            str += ",title=" + title;
+        }
+        return str;
+!!!6173186.java!!!	modalShow() : void
+        // find all the dialogs that block this one
+        IdentityArrayList<Dialog> blockers = new IdentityArrayList<Dialog>();
+        for (Dialog d : modalDialogs) {
+            if (d.shouldBlock(this)) {
+                Window w = d;
+                while ((w != null) && (w != this)) {
+                    w = w.getOwner_NoClientCode();
+                }
+                if ((w == this) || !shouldBlock(d) || (modalityType.compareTo(d.getModalityType()) < 0)) {
+                    blockers.add(d);
+                }
+            }
+        }
+
+        // add all blockers' blockers to blockers :)
+        for (int i = 0; i < blockers.size(); i++) {
+            Dialog blocker = blockers.get(i);
+            if (blocker.isModalBlocked()) {
+                Dialog blockerBlocker = blocker.getModalBlocker();
+                if (!blockers.contains(blockerBlocker)) {
+                    blockers.add(i + 1, blockerBlocker);
+                }
+            }
+        }
+
+        if (blockers.size() > 0) {
+            blockers.get(0).blockWindow(this);
+        }
+
+        // find all windows from blockers' hierarchies
+        IdentityArrayList<Window> blockersHierarchies = new IdentityArrayList<Window>(blockers);
+        int k = 0;
+        while (k < blockersHierarchies.size()) {
+            Window w = blockersHierarchies.get(k);
+            Window[] ownedWindows = w.getOwnedWindows_NoClientCode();
+            for (Window win : ownedWindows) {
+                blockersHierarchies.add(win);
+            }
+            k++;
+        }
+
+        java.util.List<Window> toBlock = new IdentityLinkedList<Window>();
+        // block all windows from scope of blocking except from blockers' hierarchies
+        IdentityArrayList<Window> unblockedWindows = Window.getAllUnblockedWindows();
+        for (Window w : unblockedWindows) {
+            if (shouldBlock(w) && !blockersHierarchies.contains(w)) {
+                if ((w instanceof Dialog) && ((Dialog)w).isModal_NoClientCode()) {
+                    Dialog wd = (Dialog)w;
+                    if (wd.shouldBlock(this) && (modalDialogs.indexOf(wd) > modalDialogs.indexOf(this))) {
+                        continue;
+                    }
+                }
+                toBlock.add(w);
+            }
+        }
+        blockWindows(toBlock);
+
+        if (!isModalBlocked()) {
+            updateChildrenBlocking();
+        }
+!!!6173314.java!!!	modalHide() : void
+        // we should unblock all the windows first...
+        IdentityArrayList<Window> save = new IdentityArrayList<Window>();
+        int blockedWindowsCount = blockedWindows.size();
+        for (int i = 0; i < blockedWindowsCount; i++) {
+            Window w = blockedWindows.get(0);
+            save.add(w);
+            unblockWindow(w); // also removes w from blockedWindows
+        }
+        // ... and only after that check if they should be blocked
+        // by another dialogs
+        for (int i = 0; i < blockedWindowsCount; i++) {
+            Window w = save.get(i);
+            if ((w instanceof Dialog) && ((Dialog)w).isModal_NoClientCode()) {
+                Dialog d = (Dialog)w;
+                d.modalShow();
+            } else {
+                checkShouldBeBlocked(w);
+            }
+        }
+!!!6173442.java!!!	shouldBlock(inout w : Window) : boolean
+        if (!isVisible_NoClientCode() ||
+            (!w.isVisible_NoClientCode() && !w.isInShow) ||
+            isInHide ||
+            (w == this) ||
+            !isModal_NoClientCode())
+        {
+            return false;
+        }
+        if ((w instanceof Dialog) && ((Dialog)w).isInHide) {
+            return false;
+        }
+        // check if w is from children hierarchy
+        // fix for 6271546: we should also take into consideration child hierarchies
+        // of this dialog's blockers
+        Window blockerToCheck = this;
+        while (blockerToCheck != null) {
+            Component c = w;
+            while ((c != null) && (c != blockerToCheck)) {
+                c = c.getParent_NoClientCode();
+            }
+            if (c == blockerToCheck) {
+                return false;
+            }
+            blockerToCheck = blockerToCheck.getModalBlocker();
+        }
+        switch (modalityType) {
+            case MODELESS:
+                return false;
+            case DOCUMENT_MODAL:
+                if (w.isModalExcluded(ModalExclusionType.APPLICATION_EXCLUDE)) {
+                    // application- and toolkit-excluded windows are not blocked by
+                    // document-modal dialogs from outside their children hierarchy
+                    Component c = this;
+                    while ((c != null) && (c != w)) {
+                        c = c.getParent_NoClientCode();
+                    }
+                    return c == w;
+                } else {
+                    return getDocumentRoot() == w.getDocumentRoot();
+                }
+            case APPLICATION_MODAL:
+                return !w.isModalExcluded(ModalExclusionType.APPLICATION_EXCLUDE) &&
+                    (appContext == w.appContext);
+            case TOOLKIT_MODAL:
+                return !w.isModalExcluded(ModalExclusionType.TOOLKIT_EXCLUDE);
+        }
+
+        return false;
+!!!6173570.java!!!	blockWindow(inout w : Window) : void
+        if (!w.isModalBlocked()) {
+            w.setModalBlocked(this, true, true);
+            blockedWindows.add(w);
+        }
+!!!6173698.java!!!	blockWindows(inout toBlock : List) : void
+        DialogPeer dpeer = (DialogPeer)peer;
+        if (dpeer == null) {
+            return;
+        }
+        Iterator<Window> it = toBlock.iterator();
+        while (it.hasNext()) {
+            Window w = it.next();
+            if (!w.isModalBlocked()) {
+                w.setModalBlocked(this, true, false);
+            } else {
+                it.remove();
+            }
+        }
+        dpeer.blockWindows(toBlock);
+        blockedWindows.addAll(toBlock);
+!!!6173826.java!!!	unblockWindow(inout w : Window) : void
+        if (w.isModalBlocked() && blockedWindows.contains(w)) {
+            blockedWindows.remove(w);
+            w.setModalBlocked(this, false, true);
+        }
+!!!6173954.java!!!	checkShouldBeBlocked(inout w : Window) : void
+        synchronized (w.getTreeLock()) {
+            for (int i = 0; i < modalDialogs.size(); i++) {
+                Dialog modalDialog = modalDialogs.get(i);
+                if (modalDialog.shouldBlock(w)) {
+                    modalDialog.blockWindow(w);
+                    break;
+                }
+            }
+        }
+!!!6174082.java!!!	checkModalityPermission(inout mt : Dialog::ModalityType) : void
+        if (mt == ModalityType.TOOLKIT_MODAL) {
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                sm.checkPermission(
+                    SecurityConstants.AWT.TOOLKIT_MODALITY_PERMISSION
+                );
+            }
+        }
+!!!6174210.java!!!	readObject(inout s : ObjectInputStream) : void
+        GraphicsEnvironment.checkHeadless();
+
+        java.io.ObjectInputStream.GetField fields =
+            s.readFields();
+
+        ModalityType localModalityType = (ModalityType)fields.get("modalityType", null);
+
+        try {
+            checkModalityPermission(localModalityType);
+        } catch (AccessControlException ace) {
+            localModalityType = DEFAULT_MODALITY_TYPE;
+        }
+
+        // in 1.5 or earlier modalityType was absent, so use "modal" instead
+        if (localModalityType == null) {
+            this.modal = fields.get("modal", false);
+            setModal(modal);
+        } else {
+            this.modalityType = localModalityType;
+        }
+
+        this.resizable = fields.get("resizable", true);
+        this.undecorated = fields.get("undecorated", false);
+        this.title = (String)fields.get("title", "");
+
+        blockedWindows = new IdentityArrayList<>();
+
+        SunToolkit.checkAndSetPolicy(this);
+
+        initialized = true;
+
+!!!6174338.java!!!	getAccessibleContext() : AccessibleContext
+        if (accessibleContext == null) {
+            accessibleContext = new AccessibleAWTDialog();
+        }
+        return accessibleContext;

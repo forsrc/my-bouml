@@ -1,0 +1,91 @@
+class CASUpdater
+!!!9269506.java!!!	CASUpdater(in tclass : Class, in fieldName : String, in caller : Class)
+            final Field field;
+            final int modifiers;
+            try {
+                field = AccessController.doPrivileged(
+                    new PrivilegedExceptionAction<Field>() {
+                        public Field run() throws NoSuchFieldException {
+                            return tclass.getDeclaredField(fieldName);
+                        }
+                    });
+                modifiers = field.getModifiers();
+                sun.reflect.misc.ReflectUtil.ensureMemberAccess(
+                    caller, tclass, null, modifiers);
+                ClassLoader cl = tclass.getClassLoader();
+                ClassLoader ccl = caller.getClassLoader();
+                if ((ccl != null) && (ccl != cl) &&
+                    ((cl == null) || !isAncestor(cl, ccl))) {
+                    sun.reflect.misc.ReflectUtil.checkPackageAccess(tclass);
+                }
+            } catch (PrivilegedActionException pae) {
+                throw new RuntimeException(pae.getException());
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+
+            if (field.getType() != long.class)
+                throw new IllegalArgumentException("Must be long type");
+
+            if (!Modifier.isVolatile(modifiers))
+                throw new IllegalArgumentException("Must be volatile type");
+
+            // Access to protected field members is restricted to receivers only
+            // of the accessing class, or one of its subclasses, and the
+            // accessing class must in turn be a subclass (or package sibling)
+            // of the protected member's defining class.
+            // If the updater refers to a protected field of a declaring class
+            // outside the current package, the receiver argument will be
+            // narrowed to the type of the accessing class.
+            this.cclass = (Modifier.isProtected(modifiers) &&
+                           tclass.isAssignableFrom(caller) &&
+                           !isSamePackage(tclass, caller))
+                          ? caller : tclass;
+            this.tclass = tclass;
+            this.offset = U.objectFieldOffset(field);
+!!!9269634.java!!!	accessCheck(inout obj : T) : void
+            if (!cclass.isInstance(obj))
+                throwAccessCheckException(obj);
+!!!9269762.java!!!	throwAccessCheckException(inout obj : T) : void
+            if (cclass == tclass)
+                throw new ClassCastException();
+            else
+                throw new RuntimeException(
+                    new IllegalAccessException(
+                        "Class " +
+                        cclass.getName() +
+                        " can not access a protected member of class " +
+                        tclass.getName() +
+                        " using an instance of " +
+                        obj.getClass().getName()));
+!!!9269890.java!!!	compareAndSet(inout obj : T, in expect : long, in update : long) : boolean
+            accessCheck(obj);
+            return U.compareAndSwapLong(obj, offset, expect, update);
+!!!9270018.java!!!	weakCompareAndSet(inout obj : T, in expect : long, in update : long) : boolean
+            accessCheck(obj);
+            return U.compareAndSwapLong(obj, offset, expect, update);
+!!!9270146.java!!!	set(inout obj : T, in newValue : long) : void
+            accessCheck(obj);
+            U.putLongVolatile(obj, offset, newValue);
+!!!9270274.java!!!	lazySet(inout obj : T, in newValue : long) : void
+            accessCheck(obj);
+            U.putOrderedLong(obj, offset, newValue);
+!!!9270402.java!!!	get(inout obj : T) : long
+            accessCheck(obj);
+            return U.getLongVolatile(obj, offset);
+!!!9270530.java!!!	getAndSet(inout obj : T, in newValue : long) : long
+            accessCheck(obj);
+            return U.getAndSetLong(obj, offset, newValue);
+!!!9270658.java!!!	getAndAdd(inout obj : T, in delta : long) : long
+            accessCheck(obj);
+            return U.getAndAddLong(obj, offset, delta);
+!!!9270786.java!!!	getAndIncrement(inout obj : T) : long
+            return getAndAdd(obj, 1);
+!!!9270914.java!!!	getAndDecrement(inout obj : T) : long
+            return getAndAdd(obj, -1);
+!!!9271042.java!!!	incrementAndGet(inout obj : T) : long
+            return getAndAdd(obj, 1) + 1;
+!!!9271170.java!!!	decrementAndGet(inout obj : T) : long
+            return getAndAdd(obj, -1) - 1;
+!!!9271298.java!!!	addAndGet(inout obj : T, in delta : long) : long
+            return getAndAdd(obj, delta) + delta;

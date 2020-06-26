@@ -1,0 +1,167 @@
+class IORImpl
+!!!637314.java!!!	getORB() : ORB
+        return factory ;
+!!!637442.java!!!	equals(inout obj : Object) : boolean
+        if (obj == null)
+            return false ;
+
+        if (!(obj instanceof IOR))
+            return false ;
+
+        IOR other = (IOR)obj ;
+
+        return super.equals( obj ) && typeId.equals( other.getTypeId() ) ;
+!!!637570.java!!!	hashCode() : int
+        if (! isCachedHashValue) {
+              cachedHashValue =  (super.hashCode() ^ typeId.hashCode());
+              isCachedHashValue = true;
+        }
+        return cachedHashValue;
+!!!637698.java!!!	IORImpl(inout orb : ORB)
+        this( orb, "" ) ;
+!!!637826.java!!!	IORImpl(inout orb : ORB, inout typeid : String)
+        factory = orb ;
+        wrapper = IORSystemException.get( orb,
+            CORBALogDomains.OA_IOR ) ;
+        this.typeId = typeid ;
+!!!637954.java!!!	IORImpl(inout orb : ORB, inout typeId : String, inout iortemp : IORTemplate, inout id : ObjectId)
+        this( orb, typeId ) ;
+
+        this.iortemps = IORFactories.makeIORTemplateList() ;
+        this.iortemps.add( iortemp ) ;
+
+        addTaggedProfiles( iortemp, id ) ;
+
+        makeImmutable() ;
+!!!638082.java!!!	addTaggedProfiles(inout iortemp : IORTemplate, inout id : ObjectId) : void
+        ObjectKeyTemplate oktemp = iortemp.getObjectKeyTemplate() ;
+        Iterator templateIterator = iortemp.iterator() ;
+
+        while (templateIterator.hasNext()) {
+            TaggedProfileTemplate ptemp =
+                (TaggedProfileTemplate)(templateIterator.next()) ;
+
+            TaggedProfile profile = ptemp.create( oktemp, id ) ;
+
+            add( profile ) ;
+        }
+!!!638210.java!!!	IORImpl(inout orb : ORB, inout typeId : String, inout iortemps : IORTemplateList, inout id : ObjectId)
+        this( orb, typeId ) ;
+
+        this.iortemps = iortemps ;
+
+        Iterator iter = iortemps.iterator() ;
+        while (iter.hasNext()) {
+            IORTemplate iortemp = (IORTemplate)(iter.next()) ;
+            addTaggedProfiles( iortemp, id ) ;
+        }
+
+        makeImmutable() ;
+!!!638338.java!!!	IORImpl(inout is : InputStream)
+        this( (ORB)(is.orb()), is.read_string() ) ;
+
+        IdentifiableFactoryFinder finder =
+            factory.getTaggedProfileFactoryFinder() ;
+
+        EncapsulationUtility.readIdentifiableSequence( this, finder, is ) ;
+
+        makeImmutable() ;
+!!!638466.java!!!	getTypeId() : String
+        return typeId ;
+!!!638594.java!!!	write(inout os : OutputStream) : void
+        os.write_string( typeId ) ;
+        EncapsulationUtility.writeIdentifiableSequence( this, os ) ;
+!!!638722.java!!!	stringify() : String
+        StringWriter bs;
+
+        MarshalOutputStream s =
+            sun.corba.OutputStreamFactory.newEncapsOutputStream(factory);
+        s.putEndian();
+        write( (OutputStream)s );
+        bs = new StringWriter();
+        try {
+            s.writeTo(new HexOutputStream(bs));
+        } catch (IOException ex) {
+            throw wrapper.stringifyWriteError( ex ) ;
+        }
+
+        return ORBConstants.STRINGIFY_PREFIX + bs;
+!!!638850.java!!!	makeImmutable() : void
+        makeElementsImmutable() ;
+
+        if (iortemps != null)
+            iortemps.makeImmutable() ;
+
+        super.makeImmutable() ;
+!!!638978.java!!!	getIOPIOR() : IOR
+        EncapsOutputStream os =
+            sun.corba.OutputStreamFactory.newEncapsOutputStream(factory);
+        write(os);
+        InputStream is = (InputStream) (os.create_input_stream());
+        return org.omg.IOP.IORHelper.read(is);
+!!!639106.java!!!	isNil() : boolean
+        //
+        // The check for typeId length of 0 below is commented out
+        // as a workaround for a bug in ORBs which send a
+        // null objref with a non-empty typeId string.
+        //
+        return ((size() == 0) /* && (typeId.length() == 0) */);
+!!!639234.java!!!	isEquivalent(inout ior : IOR) : boolean
+        Iterator myIterator = iterator() ;
+        Iterator otherIterator = ior.iterator() ;
+        while (myIterator.hasNext() && otherIterator.hasNext()) {
+            TaggedProfile myProfile = (TaggedProfile)(myIterator.next()) ;
+            TaggedProfile otherProfile = (TaggedProfile)(otherIterator.next()) ;
+            if (!myProfile.isEquivalent( otherProfile ))
+                return false ;
+        }
+
+        return myIterator.hasNext() == otherIterator.hasNext() ;
+!!!639362.java!!!	initializeIORTemplateList() : void
+        // Maps ObjectKeyTemplate to IORTemplate
+        Map oktempToIORTemplate = new HashMap() ;
+
+        iortemps = IORFactories.makeIORTemplateList() ;
+        Iterator iter = iterator() ;
+        ObjectId oid = null ; // used to check that all profiles have the same oid.
+        while (iter.hasNext()) {
+            TaggedProfile prof = (TaggedProfile)(iter.next()) ;
+            TaggedProfileTemplate ptemp = prof.getTaggedProfileTemplate() ;
+            ObjectKeyTemplate oktemp = prof.getObjectKeyTemplate() ;
+
+            // Check that all oids for all profiles are the same: if they are not,
+            // throw exception.
+            if (oid == null)
+                oid = prof.getObjectId() ;
+            else if (!oid.equals( prof.getObjectId() ))
+                throw wrapper.badOidInIorTemplateList() ;
+
+            // Find or create the IORTemplate for oktemp.
+            IORTemplate iortemp = (IORTemplate)(oktempToIORTemplate.get( oktemp )) ;
+            if (iortemp == null) {
+                iortemp = IORFactories.makeIORTemplate( oktemp ) ;
+                oktempToIORTemplate.put( oktemp, iortemp ) ;
+                iortemps.add( iortemp ) ;
+            }
+
+            iortemp.add( ptemp ) ;
+        }
+
+        iortemps.makeImmutable() ;
+!!!639490.java!!!	getIORTemplates() : IORTemplateList
+        if (iortemps == null)
+            initializeIORTemplateList() ;
+
+        return iortemps ;
+!!!639618.java!!!	getProfile() : IIOPProfile
+        IIOPProfile iop = null ;
+        Iterator iter = iteratorById( TAG_INTERNET_IOP.value ) ;
+        if (iter.hasNext())
+            iop = (IIOPProfile)(iter.next()) ;
+
+        if (iop != null)
+            return iop ;
+
+        // if we come to this point then no IIOP Profile
+        // is present.  Therefore, throw an exception.
+        throw wrapper.iorMustHaveIiopProfile() ;

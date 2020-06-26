@@ -1,0 +1,455 @@
+class RETest
+!!!3633154.java!!!	main(inout args : String [[]]) : void
+        try
+        {
+            if (!test( args )) {
+                System.exit(1);
+            }
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+            System.exit(1);
+        }
+!!!3633282.java!!!	test(inout args : String [[]]) : boolean
+        RETest test = new RETest();
+        // Run interactive tests against a single regexp
+        if (args.length == 2)
+        {
+            test.runInteractiveTests(args[1]);
+        }
+        else if (args.length == 1)
+        {
+            // Run automated tests
+            test.runAutomatedTests(args[0]);
+        }
+        else
+        {
+            System.out.println( "Usage: RETest ([-i] [regex]) ([/path/to/testfile.txt])" );
+            System.out.println( "By Default will run automated tests from file 'docs/RETest.txt' ..." );
+            System.out.println();
+            test.runAutomatedTests("docs/RETest.txt");
+        }
+        return test.failures == 0;
+!!!3633538.java!!!	runInteractiveTests(inout expr : String) : void
+        RE r = new RE();
+        try
+        {
+            // Compile expression
+            r.setProgram(compiler.compile(expr));
+
+            // Show expression
+            say("" + NEW_LINE + "" + expr + "" + NEW_LINE + "");
+
+            // Show program for compiled expression
+            PrintWriter writer = new PrintWriter( System.out );
+            compiler.dumpProgram( writer );
+            writer.flush();
+
+            boolean running = true;
+            // Test matching against compiled expression
+            while ( running )
+            {
+                // Read from keyboard
+                BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+                System.out.print("> ");
+                System.out.flush();
+                String match = br.readLine();
+
+                if ( match != null )
+                {
+                    // Try a match against the keyboard input
+                    if (r.match(match))
+                    {
+                        say("Match successful.");
+                    }
+                    else
+                    {
+                        say("Match failed.");
+                    }
+
+                    // Show subparen registers
+                    showParens(r);
+                }
+                else
+                {
+                    running = false;
+                    System.out.println();
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            say("Error: " + e.toString());
+            e.printStackTrace();
+        }
+!!!3633666.java!!!	die(inout s : String) : void
+        say("FATAL ERROR: " + s);
+        System.exit(-1);
+!!!3633794.java!!!	fail(inout log : StringBuffer, inout s : String) : void
+        System.out.print(log.toString());
+        fail(s);
+!!!3633922.java!!!	fail(inout s : String) : void
+        failures++;
+        say("" + NEW_LINE + "");
+        say("*******************************************************");
+        say("*********************  FAILURE!  **********************");
+        say("*******************************************************");
+        say("" + NEW_LINE + "");
+        say(s);
+        say("");
+        // make sure the writer gets flushed.
+        if (compiler != null) {
+            PrintWriter writer = new PrintWriter( System.out );
+            compiler.dumpProgram( writer );
+            writer.flush();
+            say("" + NEW_LINE + "");
+        }
+!!!3634050.java!!!	say(inout s : String) : void
+        System.out.println(s);
+!!!3634178.java!!!	showParens(inout r : RE) : void
+        // Loop through each paren
+        for (int i = 0; i < r.getParenCount(); i++)
+        {
+            // Show paren register
+            say("$" + i + " = " + r.getParen(i));
+        }
+!!!3634306.java!!!	runAutomatedTests(inout testDocument : String) : void
+        long ms = System.currentTimeMillis();
+
+        // Some unit tests
+        testPrecompiledRE();
+        testSplitAndGrep();
+        testSubst();
+        testOther();
+
+        // Test from script file
+        File testInput = new File(testDocument);
+        if (! testInput.exists()) {
+            throw new Exception ("Could not find: " + testDocument);
+        }
+
+        BufferedReader br = new BufferedReader(new FileReader(testInput));
+        try
+        {
+            // While input is available, parse lines
+            while (br.ready())
+            {
+                RETestCase testcase = getNextTestCase(br);
+                if (testcase != null) {
+                    testcase.runTest();
+                }
+            }
+        }
+        finally
+        {
+            br.close();
+        }
+
+        // Show match time
+        say(NEW_LINE + NEW_LINE + "Match time = " + (System.currentTimeMillis() - ms) + " ms.");
+
+        // Print final results
+        if (failures > 0) {
+            say("*************** THERE ARE FAILURES! *******************");
+        }
+        say("Tests complete.  " + testCount + " tests, " + failures + " failure(s).");
+!!!3634434.java!!!	testOther() : void
+        // Serialization test 1: Compile regexp and serialize/deserialize it
+        RE r = new RE("(a*)b");
+        say("Serialized/deserialized (a*)b");
+        ByteArrayOutputStream out = new ByteArrayOutputStream(128);
+        new ObjectOutputStream(out).writeObject(r);
+        ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
+        r = (RE)new ObjectInputStream(in).readObject();
+        if (!r.match("aaab"))
+        {
+            fail("Did not match 'aaab' with deserialized RE.");
+        } else {
+            say("aaaab = true");
+            showParens(r);
+        }
+
+        // Serialization test 2: serialize/deserialize used regexp
+        out.reset();
+        say("Deserialized (a*)b");
+        new ObjectOutputStream(out).writeObject(r);
+        in = new ByteArrayInputStream(out.toByteArray());
+        r = (RE)new ObjectInputStream(in).readObject();
+        if (r.getParenCount() != 0)
+        {
+            fail("Has parens after deserialization.");
+        }
+        if (!r.match("aaab"))
+        {
+            fail("Did not match 'aaab' with deserialized RE.");
+        } else {
+            say("aaaab = true");
+            showParens(r);
+        }
+
+        // Test MATCH_CASEINDEPENDENT
+        r = new RE("abc(\\w*)");
+        say("MATCH_CASEINDEPENDENT abc(\\w*)");
+        r.setMatchFlags(RE.MATCH_CASEINDEPENDENT);
+        say("abc(d*)");
+        if (!r.match("abcddd"))
+        {
+            fail("Did not match 'abcddd'.");
+        } else {
+            say("abcddd = true");
+            showParens(r);
+        }
+
+        if (!r.match("aBcDDdd"))
+        {
+            fail("Did not match 'aBcDDdd'.");
+        } else {
+            say("aBcDDdd = true");
+            showParens(r);
+        }
+
+        if (!r.match("ABCDDDDD"))
+        {
+            fail("Did not match 'ABCDDDDD'.");
+        } else {
+            say("ABCDDDDD = true");
+            showParens(r);
+        }
+
+        r = new RE("(A*)b\\1");
+        r.setMatchFlags(RE.MATCH_CASEINDEPENDENT);
+        if (!r.match("AaAaaaBAAAAAA"))
+        {
+            fail("Did not match 'AaAaaaBAAAAAA'.");
+        } else {
+            say("AaAaaaBAAAAAA = true");
+            showParens(r);
+        }
+
+        r = new RE("[A-Z]*");
+        r.setMatchFlags(RE.MATCH_CASEINDEPENDENT);
+        if (!r.match("CaBgDe12"))
+        {
+            fail("Did not match 'CaBgDe12'.");
+        } else {
+            say("CaBgDe12 = true");
+            showParens(r);
+        }
+
+        // Test MATCH_MULTILINE. Test for eol/bol symbols.
+        r = new RE("^abc$", RE.MATCH_MULTILINE);
+        if (!r.match("\nabc")) {
+            fail("\"\\nabc\" doesn't match \"^abc$\"");
+        }
+        if (!r.match("\rabc")) {
+            fail("\"\\rabc\" doesn't match \"^abc$\"");
+        }
+        if (!r.match("\r\nabc")) {
+            fail("\"\\r\\nabc\" doesn't match \"^abc$\"");
+        }
+        if (!r.match("\u0085abc")) {
+            fail("\"\\u0085abc\" doesn't match \"^abc$\"");
+        }
+        if (!r.match("\u2028abc")) {
+            fail("\"\\u2028abc\" doesn't match \"^abc$\"");
+        }
+        if (!r.match("\u2029abc")) {
+            fail("\"\\u2029abc\" doesn't match \"^abc$\"");
+        }
+
+        // Test MATCH_MULTILINE. Test that '.' does not matches new line.
+        r = new RE("^a.*b$", RE.MATCH_MULTILINE);
+        if (r.match("a\nb")) {
+            fail("\"a\\nb\" matches \"^a.*b$\"");
+        }
+        if (r.match("a\rb")) {
+            fail("\"a\\rb\" matches \"^a.*b$\"");
+        }
+        if (r.match("a\r\nb")) {
+            fail("\"a\\r\\nb\" matches \"^a.*b$\"");
+        }
+        if (r.match("a\u0085b")) {
+            fail("\"a\\u0085b\" matches \"^a.*b$\"");
+        }
+        if (r.match("a\u2028b")) {
+            fail("\"a\\u2028b\" matches \"^a.*b$\"");
+        }
+        if (r.match("a\u2029b")) {
+            fail("\"a\\u2029b\" matches \"^a.*b$\"");
+        }
+!!!3634562.java!!!	testPrecompiledRE() : void
+        // Pre-compiled regular expression "a*b"
+        char[] re1Instructions =
+        {
+            0x007c, 0x0000, 0x001a, 0x007c, 0x0000, 0x000d, 0x0041,
+            0x0001, 0x0004, 0x0061, 0x007c, 0x0000, 0x0003, 0x0047,
+            0x0000, 0xfff6, 0x007c, 0x0000, 0x0003, 0x004e, 0x0000,
+            0x0003, 0x0041, 0x0001, 0x0004, 0x0062, 0x0045, 0x0000,
+            0x0000,
+        };
+
+        REProgram re1 = new REProgram(re1Instructions);
+
+        // Simple test of pre-compiled regular expressions
+        RE r = new RE(re1);
+        say("a*b");
+        boolean result = r.match("aaab");
+        say("aaab = " + result);
+        showParens(r);
+        if (!result) {
+            fail("\"aaab\" doesn't match to precompiled \"a*b\"");
+        }
+
+        result = r.match("b");
+        say("b = " + result);
+        showParens(r);
+        if (!result) {
+            fail("\"b\" doesn't match to precompiled \"a*b\"");
+        }
+
+        result = r.match("c");
+        say("c = " + result);
+        showParens(r);
+        if (result) {
+            fail("\"c\" matches to precompiled \"a*b\"");
+        }
+
+        result = r.match("ccccaaaaab");
+        say("ccccaaaaab = " + result);
+        showParens(r);
+        if (!result) {
+            fail("\"ccccaaaaab\" doesn't match to precompiled \"a*b\"");
+        }
+!!!3634690.java!!!	testSplitAndGrep() : void
+        String[] expected = {"xxxx", "xxxx", "yyyy", "zzz"};
+        RE r = new RE("a*b");
+        String[] s = r.split("xxxxaabxxxxbyyyyaaabzzz");
+        for (int i = 0; i < expected.length && i < s.length; i++) {
+            assertEquals("Wrong splitted part", expected[i], s[i]);
+        }
+        assertEquals("Wrong number of splitted parts", expected.length,
+                     s.length);
+
+        r = new RE("x+");
+        expected = new String[] {"xxxx", "xxxx"};
+        s = r.grep(s);
+        for (int i = 0; i < s.length; i++)
+        {
+            say("s[" + i + "] = " + s[i]);
+            assertEquals("Grep fails", expected[i], s[i]);
+        }
+        assertEquals("Wrong number of string found by grep", expected.length,
+                     s.length);
+!!!3634818.java!!!	testSubst() : void
+        RE r = new RE("a*b");
+        String expected = "-foo-garply-wacky-";
+        String actual = r.subst("aaaabfooaaabgarplyaaabwackyb", "-");
+        assertEquals("Wrong result of substitution in \"a*b\"", expected, actual);
+
+        // Test subst() with backreferences
+        r = new RE("http://[\\.\\w\\-\\?/~_@&=%]+");
+        actual = r.subst("visit us: http://www.apache.org!",
+                         "1234<a href=\"$0\">$0</a>", RE.REPLACE_BACKREFERENCES);
+        assertEquals("Wrong subst() result", "visit us: 1234<a href=\"http://www.apache.org\">http://www.apache.org</a>!", actual);
+
+        // Test subst() with backreferences without leading characters
+        // before first backreference
+        r = new RE("(.*?)=(.*)");
+        actual = r.subst("variable=value",
+                         "$1_test_$212", RE.REPLACE_BACKREFERENCES);
+        assertEquals("Wrong subst() result", "variable_test_value12", actual);
+
+        // Test subst() with NO backreferences
+        r = new RE("^a$");
+        actual = r.subst("a",
+                         "b", RE.REPLACE_BACKREFERENCES);
+        assertEquals("Wrong subst() result", "b", actual);
+
+        // Test subst() with NO backreferences
+        r = new RE("^a$", RE.MATCH_MULTILINE);
+        actual = r.subst("\r\na\r\n",
+                         "b", RE.REPLACE_BACKREFERENCES);
+        assertEquals("Wrong subst() result", "\r\nb\r\n", actual);
+!!!3634946.java!!!	assertEquals(inout message : String, inout expected : String, inout actual : String) : void
+        if (expected != null && !expected.equals(actual)
+            || actual != null && !actual.equals(expected))
+        {
+            fail(message + " (expected \"" + expected
+                 + "\", actual \"" + actual + "\")");
+        }
+!!!3635074.java!!!	assertEquals(inout message : String, in expected : int, in actual : int) : void
+        if (expected != actual) {
+            fail(message + " (expected \"" + expected
+                 + "\", actual \"" + actual + "\")");
+        }
+!!!3635202.java!!!	getExpectedResult(inout yesno : String) : boolean
+        if ("NO".equals(yesno))
+        {
+            return false;
+        }
+        else if ("YES".equals(yesno))
+        {
+            return true;
+        }
+        else
+        {
+            // Bad test script
+            die("Test script error!");
+            return false; //to please javac
+        }
+!!!3635330.java!!!	findNextTest(inout br : BufferedReader) : String
+        String number = "";
+
+        while (br.ready())
+        {
+            number = br.readLine();
+            if (number == null)
+            {
+                break;
+            }
+            number = number.trim();
+            if (number.startsWith("#"))
+            {
+                break;
+            }
+            if (!number.equals(""))
+            {
+                say("Script error.  Line = " + number);
+                System.exit(-1);
+            }
+        }
+        return number;
+!!!3635458.java!!!	getNextTestCase(inout br : BufferedReader) : RETestCase
+        // Find next re test case
+        final String tag = findNextTest(br);
+
+        // Are we done?
+        if (!br.ready())
+        {
+            return null;
+        }
+
+        // Get expression
+        final String expr = br.readLine();
+
+        // Get test information
+        final String matchAgainst = br.readLine();
+        final boolean badPattern = "ERR".equals(matchAgainst);
+        boolean shouldMatch = false;
+        int expectedParenCount = 0;
+        String[] expectedParens = null;
+
+        if (!badPattern) {
+            shouldMatch = getExpectedResult(br.readLine().trim());
+            if (shouldMatch) {
+                expectedParenCount = Integer.parseInt(br.readLine().trim());
+                expectedParens = new String[expectedParenCount];
+                for (int i = 0; i < expectedParenCount; i++) {
+                    expectedParens[i] = br.readLine();
+                }
+            }
+        }
+
+        return new RETestCase(this, tag, expr, matchAgainst, badPattern,
+                              shouldMatch, expectedParens);

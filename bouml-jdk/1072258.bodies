@@ -1,0 +1,138 @@
+class Decoder
+!!!8648962.java!!!	Decoder(inout isURL : boolean, inout isMIME : boolean)
+            this.isURL = isURL;
+            this.isMIME = isMIME;
+!!!8649090.java!!!	decode(inout src : byte [[]]) : byte
+            byte[] dst = new byte[outLength(src, 0, src.length)];
+            int ret = decode0(src, 0, src.length, dst);
+            if (ret != dst.length) {
+                dst = Arrays.copyOf(dst, ret);
+            }
+            return dst;
+!!!8649218.java!!!	decode(inout src : String) : byte
+            return decode(src.getBytes(StandardCharsets.ISO_8859_1));
+!!!8649346.java!!!	decode(inout src : byte [[]], inout dst : byte [[]]) : int
+            int len = outLength(src, 0, src.length);
+            if (dst.length < len)
+                throw new IllegalArgumentException(
+                    "Output byte array is too small for decoding all input bytes");
+            return decode0(src, 0, src.length, dst);
+!!!8649474.java!!!	decode(inout buffer : ByteBuffer) : ByteBuffer
+            int pos0 = buffer.position();
+            try {
+                byte[] src;
+                int sp, sl;
+                if (buffer.hasArray()) {
+                    src = buffer.array();
+                    sp = buffer.arrayOffset() + buffer.position();
+                    sl = buffer.arrayOffset() + buffer.limit();
+                    buffer.position(buffer.limit());
+                } else {
+                    src = new byte[buffer.remaining()];
+                    buffer.get(src);
+                    sp = 0;
+                    sl = src.length;
+                }
+                byte[] dst = new byte[outLength(src, sp, sl)];
+                return ByteBuffer.wrap(dst, 0, decode0(src, sp, sl, dst));
+            } catch (IllegalArgumentException iae) {
+                buffer.position(pos0);
+                throw iae;
+            }
+!!!8649602.java!!!	wrap(inout is : InputStream) : InputStream
+            Objects.requireNonNull(is);
+            return new DecInputStream(is, isURL ? fromBase64URL : fromBase64, isMIME);
+!!!8649730.java!!!	outLength(inout src : byte [[]], in sp : int, in sl : int) : int
+            int[] base64 = isURL ? fromBase64URL : fromBase64;
+            int paddings = 0;
+            int len = sl - sp;
+            if (len == 0)
+                return 0;
+            if (len < 2) {
+                if (isMIME && base64[0] == -1)
+                    return 0;
+                throw new IllegalArgumentException(
+                    "Input byte[] should at least have 2 bytes for base64 bytes");
+            }
+            if (isMIME) {
+                // scan all bytes to fill out all non-alphabet. a performance
+                // trade-off of pre-scan or Arrays.copyOf
+                int n = 0;
+                while (sp < sl) {
+                    int b = src[sp++] & 0xff;
+                    if (b == '=') {
+                        len -= (sl - sp + 1);
+                        break;
+                    }
+                    if ((b = base64[b]) == -1)
+                        n++;
+                }
+                len -= n;
+            } else {
+                if (src[sl - 1] == '=') {
+                    paddings++;
+                    if (src[sl - 2] == '=')
+                        paddings++;
+                }
+            }
+            if (paddings == 0 && (len & 0x3) !=  0)
+                paddings = 4 - (len & 0x3);
+            return 3 * ((len + 3) / 4) - paddings;
+!!!8649858.java!!!	decode0(inout src : byte [[]], in sp : int, in sl : int, inout dst : byte [[]]) : int
+            int[] base64 = isURL ? fromBase64URL : fromBase64;
+            int dp = 0;
+            int bits = 0;
+            int shiftto = 18;       // pos of first byte of 4-byte atom
+            while (sp < sl) {
+                int b = src[sp++] & 0xff;
+                if ((b = base64[b]) < 0) {
+                    if (b == -2) {         // padding byte '='
+                        // =     shiftto==18 unnecessary padding
+                        // x=    shiftto==12 a dangling single x
+                        // x     to be handled together with non-padding case
+                        // xx=   shiftto==6&&sp==sl missing last =
+                        // xx=y  shiftto==6 last is not =
+                        if (shiftto == 6 && (sp == sl || src[sp++] != '=') ||
+                            shiftto == 18) {
+                            throw new IllegalArgumentException(
+                                "Input byte array has wrong 4-byte ending unit");
+                        }
+                        break;
+                    }
+                    if (isMIME)    // skip if for rfc2045
+                        continue;
+                    else
+                        throw new IllegalArgumentException(
+                            "Illegal base64 character " +
+                            Integer.toString(src[sp - 1], 16));
+                }
+                bits |= (b << shiftto);
+                shiftto -= 6;
+                if (shiftto < 0) {
+                    dst[dp++] = (byte)(bits >> 16);
+                    dst[dp++] = (byte)(bits >>  8);
+                    dst[dp++] = (byte)(bits);
+                    shiftto = 18;
+                    bits = 0;
+                }
+            }
+            // reached end of byte array or hit padding '=' characters.
+            if (shiftto == 6) {
+                dst[dp++] = (byte)(bits >> 16);
+            } else if (shiftto == 0) {
+                dst[dp++] = (byte)(bits >> 16);
+                dst[dp++] = (byte)(bits >>  8);
+            } else if (shiftto == 12) {
+                // dangling single "x", incorrectly encoded.
+                throw new IllegalArgumentException(
+                    "Last unit does not have enough valid bits");
+            }
+            // anything left is invalid, if is not MIME.
+            // if MIME, ignore all non-base64 character
+            while (sp < sl) {
+                if (isMIME && base64[src[sp++]] < 0)
+                    continue;
+                throw new IllegalArgumentException(
+                    "Input byte array has incorrect ending byte at " + sp);
+            }
+            return dp;

@@ -1,0 +1,441 @@
+class ORBConfiguratorImpl
+!!!1165442.java!!!	configure(inout collector : DataCollector, inout orb : ORB) : void
+        ORB theOrb = orb ;
+        wrapper = ORBUtilSystemException.get( orb, CORBALogDomains.ORB_LIFECYCLE ) ;
+
+        initObjectCopiers( theOrb ) ;
+        initIORFinders( theOrb ) ;
+
+        theOrb.setClientDelegateFactory(
+            // REVISIT: this should be ProtocolDefault.
+            TransportDefault.makeClientDelegateFactory( theOrb )) ;
+
+        initializeTransport(theOrb) ;
+
+        initializeNaming( theOrb ) ;
+        initServiceContextRegistry( theOrb ) ;
+        initRequestDispatcherRegistry( theOrb ) ;
+        registerInitialReferences( theOrb ) ;
+
+        persistentServerInitialization( theOrb ) ;
+
+        runUserConfigurators( collector, theOrb ) ;
+!!!1165570.java!!!	runUserConfigurators(inout collector : DataCollector, inout orb : ORB) : void
+        // Run any pluggable configurators.  This is a lot like
+        // ORBInitializers, only it uses the internal ORB and has
+        // access to all data for parsing.
+        ConfigParser parser = new ConfigParser()  ;
+        parser.init( collector ) ;
+        if (parser.userConfigurators != null) {
+            for (int ctr=0; ctr<parser.userConfigurators.length; ctr++) {
+                Class cls = parser.userConfigurators[ctr] ;
+                try {
+                    ORBConfigurator config = (ORBConfigurator)(cls.newInstance()) ;
+                    config.configure( collector, orb ) ;
+                } catch (Exception exc) {
+                    // XXX Log this exception
+                    // ignore this for now: a bad user configurator does nothing
+                }
+            }
+        }
+!!!1165698.java!!!	persistentServerInitialization(inout orb : ORB) : void
+        ORBData data = orb.getORBData() ;
+
+        // determine the ORBD port so that persistent objrefs can be
+        // created.
+        if (data.getServerIsORBActivated()) {
+            try {
+                Locator locator = LocatorHelper.narrow(
+                    orb.resolve_initial_references(
+                        ORBConstants.SERVER_LOCATOR_NAME )) ;
+                Activator activator = ActivatorHelper.narrow(
+                    orb.resolve_initial_references(
+                        ORBConstants.SERVER_ACTIVATOR_NAME )) ;
+                Collection serverEndpoints =
+                    orb.getCorbaTransportManager().getAcceptors(null, null);
+                EndPointInfo[] endpointList =
+                    new EndPointInfo[serverEndpoints.size()];
+                Iterator iterator = serverEndpoints.iterator();
+                int i = 0 ;
+                while (iterator.hasNext()) {
+                    Object n = iterator.next();
+                    if (! (n instanceof LegacyServerSocketEndPointInfo)) {
+                        continue;
+                    }
+                    LegacyServerSocketEndPointInfo ep =
+                        (LegacyServerSocketEndPointInfo) n;
+                    // REVISIT - use exception instead of -1.
+                    int port = locator.getEndpoint(ep.getType());
+                    if (port == -1) {
+                        port = locator.getEndpoint(SocketInfo.IIOP_CLEAR_TEXT);
+                        if (port == -1) {
+                            throw new Exception(
+                                "ORBD must support IIOP_CLEAR_TEXT");
+                        }
+                    }
+
+                    ep.setLocatorPort(port);
+
+                    endpointList[i++] =
+                        new EndPointInfo(ep.getType(), ep.getPort());
+                }
+
+                activator.registerEndpoints(
+                    data.getPersistentServerId(), data.getORBId(),
+                        endpointList);
+            } catch (Exception ex) {
+                throw wrapper.persistentServerInitError(
+                    CompletionStatus.COMPLETED_MAYBE, ex ) ;
+            }
+        }
+!!!1165826.java!!!	initializeTransport(in orb : ORB) : void
+        ORBData od = orb.getORBData();
+
+        CorbaContactInfoListFactory contactInfoListFactory =
+            od.getCorbaContactInfoListFactory();
+        Acceptor[] acceptors = od.getAcceptors();
+
+        // BEGIN Legacy
+        ORBSocketFactory legacySocketFactory = od.getLegacySocketFactory();
+        USLPort[] uslPorts = od.getUserSpecifiedListenPorts() ;
+        setLegacySocketFactoryORB(orb, legacySocketFactory);
+        // END Legacy
+
+        //
+        // Check for incorrect configuration.
+        //
+
+        if (legacySocketFactory != null && contactInfoListFactory != null) {
+            throw wrapper.socketFactoryAndContactInfoListAtSameTime();
+        }
+
+        if (acceptors.length != 0 && legacySocketFactory != null) {
+            throw wrapper.acceptorsAndLegacySocketFactoryAtSameTime();
+        }
+
+
+        //
+        // Client and Server side setup.
+        //
+
+        od.getSocketFactory().setORB(orb);
+
+        //
+        // Set up client side.
+        //
+
+        if (legacySocketFactory != null) {
+            // BEGIN Legacy
+            // Since the user specified a legacy socket factory we need to
+            // use a ContactInfoList that will use the legacy socket factory.
+            contactInfoListFactory =
+                new CorbaContactInfoListFactory() {
+                        public void setORB(ORB orb) { }
+                        public CorbaContactInfoList create( IOR ior ) {
+                            return new SocketFactoryContactInfoListImpl(
+                                orb, ior);
+                        }
+                    };
+            // END Legacy
+        } else if (contactInfoListFactory != null) {
+            // The user specified an explicit ContactInfoListFactory.
+            contactInfoListFactory.setORB(orb);
+        } else {
+            // Use the default.
+            contactInfoListFactory =
+                TransportDefault.makeCorbaContactInfoListFactory(orb);
+        }
+        orb.setCorbaContactInfoListFactory(contactInfoListFactory);
+
+        //
+        // Set up server side.
+        //
+
+        //
+        // Maybe allocate the Legacy default listener.
+        //
+        // If old legacy properties set, or there are no explicit
+        // acceptors then register a default listener.  Type of
+        // default listener depends on presence of legacy socket factory.
+        //
+        // Note: this must happen *BEFORE* registering explicit acceptors.
+        //
+
+        // BEGIN Legacy
+        int port = -1;
+        if (od.getORBServerPort() != 0) {
+            port = od.getORBServerPort();
+        } else if (od.getPersistentPortInitialized()) {
+            port = od.getPersistentServerPort();
+        } else if (acceptors.length == 0) {
+            port = 0;
+        }
+        if (port != -1) {
+            createAndRegisterAcceptor(orb, legacySocketFactory, port,
+                        LegacyServerSocketEndPointInfo.DEFAULT_ENDPOINT,
+                        SocketInfo.IIOP_CLEAR_TEXT);
+        }
+        // END Legacy
+
+        for (int i = 0; i < acceptors.length; i++) {
+            orb.getCorbaTransportManager().registerAcceptor(acceptors[i]);
+        }
+
+        // BEGIN Legacy
+        // Allocate user listeners.
+        USLPort[] ports = od.getUserSpecifiedListenPorts() ;
+        if (ports != null) {
+            for (int i = 0; i < ports.length; i++) {
+                createAndRegisterAcceptor(
+                    orb, legacySocketFactory, ports[i].getPort(),
+                    LegacyServerSocketEndPointInfo.NO_NAME,
+                    ports[i].getType());
+            }
+        }
+        // END Legacy
+!!!1165954.java!!!	createAndRegisterAcceptor(inout orb : ORB, inout legacySocketFactory : ORBSocketFactory, in port : int, inout name : String, inout type : String) : void
+        Acceptor acceptor;
+        if (legacySocketFactory == null) {
+            acceptor =
+                new SocketOrChannelAcceptorImpl(orb, port, name, type);
+        } else {
+            acceptor =
+                new SocketFactoryAcceptorImpl(orb, port, name, type);
+        }
+        orb.getTransportManager().registerAcceptor(acceptor);
+!!!1166082.java!!!	setLegacySocketFactoryORB(in orb : ORB, in legacySocketFactory : ORBSocketFactory) : void
+        if (legacySocketFactory == null) {
+            return;
+        }
+
+        // Note: the createServerSocket and createSocket methods on the
+        // DefaultSocketFactory need to get data from the ORB but
+        // we cannot change the interface.  So set the ORB (if it's ours)
+        // by reflection.
+
+        try {
+            AccessController.doPrivileged(
+                new PrivilegedExceptionAction() {
+                    public Object run()
+                        throws InstantiationException, IllegalAccessException
+                    {
+                        try {
+                            Class[] params = { ORB.class };
+                            Method method =
+                                legacySocketFactory.getClass().getMethod(
+                                  "setORB", params);
+                            Object[] args = { orb };
+                            method.invoke(legacySocketFactory, args);
+                        } catch (NoSuchMethodException e) {
+                            // NOTE: If there is no method then it
+                            // is not ours - so ignore it.
+                            ;
+                        } catch (IllegalAccessException e) {
+                            RuntimeException rte = new RuntimeException();
+                            rte.initCause(e);
+                            throw rte;
+                        } catch (InvocationTargetException e) {
+                            RuntimeException rte = new RuntimeException();
+                            rte.initCause(e);
+                            throw rte;
+                        }
+                        return null;
+                    }
+                }
+            );
+        } catch (Throwable t) {
+            throw wrapper.unableToSetSocketFactoryOrb(t);
+        }
+!!!1166210.java!!!	initializeNaming(inout orb : ORB) : void
+        LocalResolver localResolver = ResolverDefault.makeLocalResolver() ;
+        orb.setLocalResolver( localResolver ) ;
+
+        Resolver bootResolver = ResolverDefault.makeBootstrapResolver( orb,
+            orb.getORBData().getORBInitialHost(),
+            orb.getORBData().getORBInitialPort() ) ;
+
+        Operation urlOperation = ResolverDefault.makeINSURLOperation( orb,
+            bootResolver ) ;
+        orb.setURLOperation( urlOperation ) ;
+
+        Resolver irResolver = ResolverDefault.makeORBInitRefResolver( urlOperation,
+            orb.getORBData().getORBInitialReferences() ) ;
+
+        Resolver dirResolver = ResolverDefault.makeORBDefaultInitRefResolver(
+            urlOperation, orb.getORBData().getORBDefaultInitialReference() ) ;
+
+        Resolver resolver =
+            ResolverDefault.makeCompositeResolver( localResolver,
+                ResolverDefault.makeCompositeResolver( irResolver,
+                    ResolverDefault.makeCompositeResolver( dirResolver,
+                        bootResolver ) ) ) ;
+        orb.setResolver( resolver ) ;
+!!!1166338.java!!!	initServiceContextRegistry(inout orb : ORB) : void
+        ServiceContextRegistry scr = orb.getServiceContextRegistry() ;
+
+        scr.register( UEInfoServiceContext.class ) ;
+        scr.register( CodeSetServiceContext.class ) ;
+        scr.register( SendingContextServiceContext.class ) ;
+        scr.register( ORBVersionServiceContext.class ) ;
+        scr.register( MaxStreamFormatVersionServiceContext.class ) ;
+!!!1166466.java!!!	registerInitialReferences(in orb : ORB) : void
+        // Register the Dynamic Any factory
+        Closure closure = new Closure() {
+            public java.lang.Object evaluate() {
+                return new DynAnyFactoryImpl( orb ) ;
+            }
+        } ;
+
+        Closure future = ClosureFactory.makeFuture( closure ) ;
+        orb.getLocalResolver().register( ORBConstants.DYN_ANY_FACTORY_NAME,
+            future ) ;
+!!!1166594.java!!!	initObjectCopiers(inout orb : ORB) : void
+        // No optimization or policy selection here.
+        ObjectCopierFactory orbStream =
+            CopyobjectDefaults.makeORBStreamObjectCopierFactory( orb ) ;
+
+        CopierManager cm = orb.getCopierManager() ;
+        cm.setDefaultId( ORB_STREAM ) ;
+
+        cm.registerObjectCopierFactory( orbStream, ORB_STREAM ) ;
+!!!1166722.java!!!	initIORFinders(inout orb : ORB) : void
+        IdentifiableFactoryFinder profFinder =
+            orb.getTaggedProfileFactoryFinder() ;
+        profFinder.registerFactory( IIOPFactories.makeIIOPProfileFactory() ) ;
+
+        IdentifiableFactoryFinder profTempFinder =
+            orb.getTaggedProfileTemplateFactoryFinder() ;
+        profTempFinder.registerFactory(
+            IIOPFactories.makeIIOPProfileTemplateFactory() ) ;
+
+        IdentifiableFactoryFinder compFinder =
+            orb.getTaggedComponentFactoryFinder() ;
+        compFinder.registerFactory(
+            IIOPFactories.makeCodeSetsComponentFactory() ) ;
+        compFinder.registerFactory(
+            IIOPFactories.makeJavaCodebaseComponentFactory() ) ;
+        compFinder.registerFactory(
+            IIOPFactories.makeORBTypeComponentFactory() ) ;
+        compFinder.registerFactory(
+            IIOPFactories.makeMaxStreamFormatVersionComponentFactory() ) ;
+        compFinder.registerFactory(
+            IIOPFactories.makeAlternateIIOPAddressComponentFactory() ) ;
+        compFinder.registerFactory(
+            IIOPFactories.makeRequestPartitioningComponentFactory() ) ;
+        compFinder.registerFactory(
+            IIOPFactories.makeJavaSerializationComponentFactory());
+
+        // Register the ValueFactory instances for ORT
+        IORFactories.registerValueFactories( orb ) ;
+
+        // Register an ObjectKeyFactory
+        orb.setObjectKeyFactory( IORFactories.makeObjectKeyFactory(orb) ) ;
+!!!1166850.java!!!	initRequestDispatcherRegistry(inout orb : ORB) : void
+        RequestDispatcherRegistry scr = orb.getRequestDispatcherRegistry() ;
+
+        // register client subcontracts
+        ClientRequestDispatcher csub =
+            RequestDispatcherDefault.makeClientRequestDispatcher() ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.TOA_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.TRANSIENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.PERSISTENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.SC_TRANSIENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.SC_PERSISTENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.IISC_TRANSIENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.IISC_PERSISTENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.MINSC_TRANSIENT_SCID ) ;
+        scr.registerClientRequestDispatcher( csub,
+            ORBConstants.MINSC_PERSISTENT_SCID ) ;
+
+        // register server delegates
+        CorbaServerRequestDispatcher sd =
+            RequestDispatcherDefault.makeServerRequestDispatcher( orb );
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.TOA_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.TRANSIENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.PERSISTENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.SC_TRANSIENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.SC_PERSISTENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.IISC_TRANSIENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.IISC_PERSISTENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.MINSC_TRANSIENT_SCID ) ;
+        scr.registerServerRequestDispatcher( sd,
+            ORBConstants.MINSC_PERSISTENT_SCID ) ;
+
+        orb.setINSDelegate(
+            RequestDispatcherDefault.makeINSServerRequestDispatcher( orb ) ) ;
+
+        // register local client subcontracts
+        LocalClientRequestDispatcherFactory lcsf =
+            RequestDispatcherDefault.makeJIDLLocalClientRequestDispatcherFactory(
+                orb ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.TOA_SCID ) ;
+
+        lcsf =
+            RequestDispatcherDefault.makePOALocalClientRequestDispatcherFactory(
+                orb ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.TRANSIENT_SCID ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.PERSISTENT_SCID ) ;
+
+        lcsf = RequestDispatcherDefault.
+            makeFullServantCacheLocalClientRequestDispatcherFactory( orb ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.SC_TRANSIENT_SCID ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.SC_PERSISTENT_SCID ) ;
+
+        lcsf = RequestDispatcherDefault.
+            makeInfoOnlyServantCacheLocalClientRequestDispatcherFactory( orb ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.IISC_TRANSIENT_SCID ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.IISC_PERSISTENT_SCID ) ;
+
+        lcsf = RequestDispatcherDefault.
+            makeMinimalServantCacheLocalClientRequestDispatcherFactory( orb ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.MINSC_TRANSIENT_SCID ) ;
+        scr.registerLocalClientRequestDispatcherFactory( lcsf,
+            ORBConstants.MINSC_PERSISTENT_SCID ) ;
+
+        /* Register the server delegate that implements the ancient bootstrap
+         * naming protocol.  This takes an object key of either "INIT" or
+         * "TINI" to allow for big or little endian implementations.
+         */
+        CorbaServerRequestDispatcher bootsd =
+            RequestDispatcherDefault.makeBootstrapServerRequestDispatcher(
+                orb ) ;
+        scr.registerServerRequestDispatcher( bootsd, "INIT" ) ;
+        scr.registerServerRequestDispatcher( bootsd, "TINI" ) ;
+
+        // Register object adapter factories
+        ObjectAdapterFactory oaf = OADefault.makeTOAFactory( orb ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.TOA_SCID ) ;
+
+        oaf = OADefault.makePOAFactory( orb ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.TRANSIENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.PERSISTENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.SC_TRANSIENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.SC_PERSISTENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.IISC_TRANSIENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.IISC_PERSISTENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.MINSC_TRANSIENT_SCID ) ;
+        scr.registerObjectAdapterFactory( oaf, ORBConstants.MINSC_PERSISTENT_SCID ) ;

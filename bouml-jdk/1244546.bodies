@@ -1,0 +1,82 @@
+class KrbServicePermissionCollection
+!!!10238082.java!!!	KrbServicePermissionCollection()
+        perms = new ArrayList<Permission>();
+!!!10238210.java!!!	implies(inout permission : Permission) : boolean
+        if (! (permission instanceof ServicePermission))
+                return false;
+
+        ServicePermission np = (ServicePermission) permission;
+        int desired = np.getMask();
+
+        if (desired == 0) {
+            for (Permission p: perms) {
+                ServicePermission sp = (ServicePermission)p;
+                if (sp.impliesIgnoreMask(np)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        int effective = 0;
+        int needed = desired;
+
+        synchronized (this) {
+            int len = perms.size();
+
+            // need to deal with the case where the needed permission has
+            // more than one action and the collection has individual permissions
+            // that sum up to the needed.
+
+            for (int i = 0; i < len; i++) {
+                ServicePermission x = (ServicePermission) perms.get(i);
+
+                //System.out.println("  trying "+x);
+                if (((needed & x.getMask()) != 0) && x.impliesIgnoreMask(np)) {
+                    effective |=  x.getMask();
+                    if ((effective & desired) == desired)
+                        return true;
+                    needed = (desired ^ effective);
+                }
+            }
+        }
+        return false;
+!!!10238338.java!!!	add(inout permission : Permission) : void
+        if (! (permission instanceof ServicePermission))
+            throw new IllegalArgumentException("invalid permission: "+
+                                               permission);
+        if (isReadOnly())
+            throw new SecurityException("attempt to add a Permission to a readonly PermissionCollection");
+
+        synchronized (this) {
+            perms.add(0, permission);
+        }
+!!!10238466.java!!!	elements() : Enumeration
+        // Convert Iterator into Enumeration
+        synchronized (this) {
+            return Collections.enumeration(perms);
+        }
+!!!10238594.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        // Don't call out.defaultWriteObject()
+
+        // Write out Vector
+        Vector<Permission> permissions = new Vector<>(perms.size());
+
+        synchronized (this) {
+            permissions.addAll(perms);
+        }
+
+        ObjectOutputStream.PutField pfields = out.putFields();
+        pfields.put("permissions", permissions);
+        out.writeFields();
+!!!10238722.java!!!	readObject(inout in : ObjectInputStream) : void
+        // Don't call defaultReadObject()
+
+        // Read in serialized fields
+        ObjectInputStream.GetField gfields = in.readFields();
+
+        // Get the one we want
+        Vector<Permission> permissions =
+                (Vector<Permission>)gfields.get("permissions", null);
+        perms = new ArrayList<Permission>(permissions.size());
+        perms.addAll(permissions);

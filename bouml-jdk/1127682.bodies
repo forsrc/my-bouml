@@ -1,0 +1,107 @@
+class AtomicIntegerFieldUpdaterImpl
+!!!9258754.java!!!	AtomicIntegerFieldUpdaterImpl(in tclass : Class, in fieldName : String, in caller : Class)
+            final Field field;
+            final int modifiers;
+            try {
+                field = AccessController.doPrivileged(
+                    new PrivilegedExceptionAction<Field>() {
+                        public Field run() throws NoSuchFieldException {
+                            return tclass.getDeclaredField(fieldName);
+                        }
+                    });
+                modifiers = field.getModifiers();
+                sun.reflect.misc.ReflectUtil.ensureMemberAccess(
+                    caller, tclass, null, modifiers);
+                ClassLoader cl = tclass.getClassLoader();
+                ClassLoader ccl = caller.getClassLoader();
+                if ((ccl != null) && (ccl != cl) &&
+                    ((cl == null) || !isAncestor(cl, ccl))) {
+                    sun.reflect.misc.ReflectUtil.checkPackageAccess(tclass);
+                }
+            } catch (PrivilegedActionException pae) {
+                throw new RuntimeException(pae.getException());
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+
+            if (field.getType() != int.class)
+                throw new IllegalArgumentException("Must be integer type");
+
+            if (!Modifier.isVolatile(modifiers))
+                throw new IllegalArgumentException("Must be volatile type");
+
+            // Access to protected field members is restricted to receivers only
+            // of the accessing class, or one of its subclasses, and the
+            // accessing class must in turn be a subclass (or package sibling)
+            // of the protected member's defining class.
+            // If the updater refers to a protected field of a declaring class
+            // outside the current package, the receiver argument will be
+            // narrowed to the type of the accessing class.
+            this.cclass = (Modifier.isProtected(modifiers) &&
+                           tclass.isAssignableFrom(caller) &&
+                           !isSamePackage(tclass, caller))
+                          ? caller : tclass;
+            this.tclass = tclass;
+            this.offset = U.objectFieldOffset(field);
+!!!9258882.java!!!	isAncestor(inout first : ClassLoader, inout second : ClassLoader) : boolean
+            ClassLoader acl = first;
+            do {
+                acl = acl.getParent();
+                if (second == acl) {
+                    return true;
+                }
+            } while (acl != null);
+            return false;
+!!!9259010.java!!!	isSamePackage(inout class1 : Class, inout class2 : Class) : boolean
+            return class1.getClassLoader() == class2.getClassLoader()
+                   && Objects.equals(getPackageName(class1), getPackageName(class2));
+!!!9259138.java!!!	getPackageName(inout cls : Class) : String
+            String cn = cls.getName();
+            int dot = cn.lastIndexOf('.');
+            return (dot != -1) ? cn.substring(0, dot) : "";
+!!!9259266.java!!!	accessCheck(inout obj : T) : void
+            if (!cclass.isInstance(obj))
+                throwAccessCheckException(obj);
+!!!9259394.java!!!	throwAccessCheckException(inout obj : T) : void
+            if (cclass == tclass)
+                throw new ClassCastException();
+            else
+                throw new RuntimeException(
+                    new IllegalAccessException(
+                        "Class " +
+                        cclass.getName() +
+                        " can not access a protected member of class " +
+                        tclass.getName() +
+                        " using an instance of " +
+                        obj.getClass().getName()));
+!!!9259522.java!!!	compareAndSet(inout obj : T, in expect : int, in update : int) : boolean
+            accessCheck(obj);
+            return U.compareAndSwapInt(obj, offset, expect, update);
+!!!9259650.java!!!	weakCompareAndSet(inout obj : T, in expect : int, in update : int) : boolean
+            accessCheck(obj);
+            return U.compareAndSwapInt(obj, offset, expect, update);
+!!!9259778.java!!!	set(inout obj : T, in newValue : int) : void
+            accessCheck(obj);
+            U.putIntVolatile(obj, offset, newValue);
+!!!9259906.java!!!	lazySet(inout obj : T, in newValue : int) : void
+            accessCheck(obj);
+            U.putOrderedInt(obj, offset, newValue);
+!!!9260034.java!!!	get(inout obj : T) : int
+            accessCheck(obj);
+            return U.getIntVolatile(obj, offset);
+!!!9260162.java!!!	getAndSet(inout obj : T, in newValue : int) : int
+            accessCheck(obj);
+            return U.getAndSetInt(obj, offset, newValue);
+!!!9260290.java!!!	getAndAdd(inout obj : T, in delta : int) : int
+            accessCheck(obj);
+            return U.getAndAddInt(obj, offset, delta);
+!!!9260418.java!!!	getAndIncrement(inout obj : T) : int
+            return getAndAdd(obj, 1);
+!!!9260546.java!!!	getAndDecrement(inout obj : T) : int
+            return getAndAdd(obj, -1);
+!!!9260674.java!!!	incrementAndGet(inout obj : T) : int
+            return getAndAdd(obj, 1) + 1;
+!!!9260802.java!!!	decrementAndGet(inout obj : T) : int
+            return getAndAdd(obj, -1) - 1;
+!!!9260930.java!!!	addAndGet(inout obj : T, in delta : int) : int
+            return getAndAdd(obj, delta) + delta;

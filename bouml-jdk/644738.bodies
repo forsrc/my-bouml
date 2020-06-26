@@ -1,0 +1,157 @@
+class TemplatesHandlerImpl
+!!!4124674.java!!!	TemplatesHandlerImpl(in indentNumber : int, inout tfactory : TransformerFactoryImpl)
+        _indentNumber = indentNumber;
+        _tfactory = tfactory;
+
+        // Instantiate XSLTC and get reference to parser object
+        XSLTC xsltc = new XSLTC(tfactory.useServicesMechnism(), tfactory.getFeatureManager());
+        if (tfactory.getFeature(XMLConstants.FEATURE_SECURE_PROCESSING))
+            xsltc.setSecureProcessing(true);
+
+        xsltc.setProperty(XMLConstants.ACCESS_EXTERNAL_STYLESHEET,
+                (String)tfactory.getAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET));
+        xsltc.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD,
+                (String)tfactory.getAttribute(XMLConstants.ACCESS_EXTERNAL_DTD));
+        xsltc.setProperty(XalanConstants.SECURITY_MANAGER,
+                tfactory.getAttribute(XalanConstants.SECURITY_MANAGER));
+
+
+        if ("true".equals(tfactory.getAttribute(TransformerFactoryImpl.ENABLE_INLINING)))
+            xsltc.setTemplateInlining(true);
+        else
+            xsltc.setTemplateInlining(false);
+
+        _parser = xsltc.getParser();
+!!!4124802.java!!!	getSystemId() : String
+        return _systemId;
+!!!4124930.java!!!	setSystemId(inout id : String) : void
+        _systemId = id;
+!!!4125058.java!!!	setURIResolver(inout resolver : URIResolver) : void
+        _uriResolver = resolver;
+!!!4125186.java!!!	getTemplates() : Templates
+        return _templates;
+!!!4125314.java!!!	loadSource(inout href : String, inout context : String, inout xsltc : XSLTC) : InputSource
+        try {
+            // A _uriResolver must be set if this method is called
+            final Source source = _uriResolver.resolve(href, context);
+            if (source != null) {
+                return Util.getInputSource(xsltc, source);
+            }
+        }
+        catch (TransformerException e) {
+            // Falls through
+        }
+        return null;
+!!!4125442.java!!!	startDocument() : void
+        XSLTC xsltc = _parser.getXSLTC();
+        xsltc.init();   // calls _parser.init()
+        xsltc.setOutputType(XSLTC.BYTEARRAY_OUTPUT);
+        _parser.startDocument();
+!!!4125570.java!!!	endDocument() : void
+        _parser.endDocument();
+
+        // create the templates
+        try {
+            XSLTC xsltc = _parser.getXSLTC();
+
+            // Set the translet class name if not already set
+            String transletName;
+            if (_systemId != null) {
+                transletName = Util.baseName(_systemId);
+            }
+            else {
+                transletName = (String)_tfactory.getAttribute("translet-name");
+            }
+            xsltc.setClassName(transletName);
+
+            // Get java-legal class name from XSLTC module
+            transletName = xsltc.getClassName();
+
+            Stylesheet stylesheet = null;
+            SyntaxTreeNode root = _parser.getDocumentRoot();
+
+            // Compile the translet - this is where the work is done!
+            if (!_parser.errorsFound() && root != null) {
+                // Create a Stylesheet element from the root node
+                stylesheet = _parser.makeStylesheet(root);
+                stylesheet.setSystemId(_systemId);
+                stylesheet.setParentStylesheet(null);
+
+                if (xsltc.getTemplateInlining())
+                   stylesheet.setTemplateInlining(true);
+                else
+                   stylesheet.setTemplateInlining(false);
+
+                // Set a document loader (for xsl:include/import) if defined
+                if (_uriResolver != null) {
+                    stylesheet.setSourceLoader(this);
+                }
+
+                _parser.setCurrentStylesheet(stylesheet);
+
+                // Set it as top-level in the XSLTC object
+                xsltc.setStylesheet(stylesheet);
+
+                // Create AST under the Stylesheet element
+                _parser.createAST(stylesheet);
+            }
+
+            // Generate the bytecodes and output the translet class(es)
+            if (!_parser.errorsFound() && stylesheet != null) {
+                stylesheet.setMultiDocument(xsltc.isMultiDocument());
+                stylesheet.setHasIdCall(xsltc.hasIdCall());
+
+                // Class synchronization is needed for BCEL
+                synchronized (xsltc.getClass()) {
+                    stylesheet.translate();
+                }
+            }
+
+            if (!_parser.errorsFound()) {
+                // Check that the transformation went well before returning
+                final byte[][] bytecodes = xsltc.getBytecodes();
+                if (bytecodes != null) {
+                    _templates =
+                    new TemplatesImpl(xsltc.getBytecodes(), transletName,
+                        _parser.getOutputProperties(), _indentNumber, _tfactory);
+
+                    // Set URIResolver on templates object
+                    if (_uriResolver != null) {
+                        _templates.setURIResolver(_uriResolver);
+                    }
+                }
+            }
+            else {
+                StringBuffer errorMessage = new StringBuffer();
+                Vector errors = _parser.getErrors();
+                final int count = errors.size();
+                for (int i = 0; i < count; i++) {
+                    if (errorMessage.length() > 0)
+                        errorMessage.append('\n');
+                    errorMessage.append(errors.elementAt(i).toString());
+                }
+                throw new SAXException(ErrorMsg.JAXP_COMPILE_ERR, new TransformerException(errorMessage.toString()));
+            }
+        }
+        catch (CompilerException e) {
+            throw new SAXException(ErrorMsg.JAXP_COMPILE_ERR, e);
+        }
+!!!4125698.java!!!	startPrefixMapping(inout prefix : String, inout uri : String) : void
+        _parser.startPrefixMapping(prefix, uri);
+!!!4125826.java!!!	endPrefixMapping(inout prefix : String) : void
+        _parser.endPrefixMapping(prefix);
+!!!4125954.java!!!	startElement(inout uri : String, inout localname : String, inout qname : String, inout attributes : Attributes) : void
+        _parser.startElement(uri, localname, qname, attributes);
+!!!4126082.java!!!	endElement(inout uri : String, inout localname : String, inout qname : String) : void
+        _parser.endElement(uri, localname, qname);
+!!!4126210.java!!!	characters(inout ch : char [[]], in start : int, in length : int) : void
+        _parser.characters(ch, start, length);
+!!!4126338.java!!!	processingInstruction(inout name : String, inout value : String) : void
+        _parser.processingInstruction(name, value);
+!!!4126466.java!!!	ignorableWhitespace(inout ch : char [[]], in start : int, in length : int) : void
+        _parser.ignorableWhitespace(ch, start, length);
+!!!4126594.java!!!	skippedEntity(inout name : String) : void
+        _parser.skippedEntity(name);
+!!!4126722.java!!!	setDocumentLocator(inout locator : Locator) : void
+        setSystemId(locator.getSystemId());
+        _parser.setDocumentLocator(locator);

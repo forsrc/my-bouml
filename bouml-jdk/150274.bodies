@@ -1,0 +1,132 @@
+class CodeSetConversion
+!!!399874.java!!!	getCTBConverter(inout codeset : OSFCodeSetRegistry::Entry) : CodeSetConversion::CTBConverter
+        int alignment = (!codeset.isFixedWidth() ?
+                         1 :
+                         codeset.getMaxBytesPerChar());
+
+        return new JavaCTBConverter(codeset, alignment);
+!!!400002.java!!!	getCTBConverter(inout codeset : OSFCodeSetRegistry::Entry, inout littleEndian : boolean, inout useByteOrderMarkers : boolean) : CodeSetConversion::CTBConverter
+
+        // UCS2 doesn't have byte order markers, and we're encoding it
+        // as UTF-16 since UCS2 isn't available in all Java platforms.
+        // They should be identical with only minor differences in
+        // negative cases.
+        if (codeset == OSFCodeSetRegistry.UCS_2)
+            return new UTF16CTBConverter(littleEndian);
+
+        // We can write UTF-16 with or without a byte order marker.
+        if (codeset == OSFCodeSetRegistry.UTF_16) {
+            if (useByteOrderMarkers)
+                return new UTF16CTBConverter();
+            else
+                return new UTF16CTBConverter(littleEndian);
+        }
+
+        // Everything else uses the generic JavaCTBConverter.
+        //
+        // Variable width encodings are aligned on 1 byte boundaries.
+        // A fixed width encoding with a max. of 4 bytes/char should
+        // align on a 4 byte boundary.  Note that UTF-16 is a special
+        // case because of the optional byte order marker, so it's
+        // handled above.
+        //
+        // This doesn't matter for GIOP 1.2 wchars and wstrings
+        // since the encoded bytes are treated as an encapsulation.
+        int alignment = (!codeset.isFixedWidth() ?
+                         1 :
+                         codeset.getMaxBytesPerChar());
+
+        return new JavaCTBConverter(codeset, alignment);
+!!!400130.java!!!	getBTCConverter(inout codeset : OSFCodeSetRegistry::Entry) : CodeSetConversion::BTCConverter
+        return new JavaBTCConverter(codeset);
+!!!400258.java!!!	getBTCConverter(inout codeset : OSFCodeSetRegistry::Entry, inout defaultToLittleEndian : boolean) : CodeSetConversion::BTCConverter
+
+        if (codeset == OSFCodeSetRegistry.UTF_16 ||
+            codeset == OSFCodeSetRegistry.UCS_2) {
+
+            return new UTF16BTCConverter(defaultToLittleEndian);
+        } else {
+            return new JavaBTCConverter(codeset);
+        }
+!!!400386.java!!!	selectEncoding(inout client : CodeSetComponentInfo::CodeSetComponent, inout server : CodeSetComponentInfo::CodeSetComponent) : int
+
+        // A "null" value for the server's nativeCodeSet means that
+        // the server desired not to indicate one.  We'll take that
+        // to mean that it wants the first thing in its conversion list.
+        // If it's conversion list is empty, too, then use the fallback
+        // codeset.
+        int serverNative = server.nativeCodeSet;
+
+        if (serverNative == 0) {
+            if (server.conversionCodeSets.length > 0)
+                serverNative = server.conversionCodeSets[0];
+            else
+                return CodeSetConversion.FALLBACK_CODESET;
+        }
+
+        if (client.nativeCodeSet == serverNative) {
+            // Best case -- client and server don't have to convert
+            return serverNative;
+        }
+
+        // Is this client capable of converting to the server's
+        // native code set?
+        for (int i = 0; i < client.conversionCodeSets.length; i++) {
+            if (serverNative == client.conversionCodeSets[i]) {
+                // The client will convert to the server's
+                // native code set.
+                return serverNative;
+            }
+        }
+
+        // Is the server capable of converting to the client's
+        // native code set?
+        for (int i = 0; i < server.conversionCodeSets.length; i++) {
+            if (client.nativeCodeSet == server.conversionCodeSets[i]) {
+                // The server will convert to the client's
+                // native code set.
+                return client.nativeCodeSet;
+            }
+        }
+
+        // See if there are any code sets that both the server and client
+        // support (giving preference to the server).  The order
+        // of conversion sets is from most to least desired.
+        for (int i = 0; i < server.conversionCodeSets.length; i++) {
+            for (int y = 0; y < client.conversionCodeSets.length; y++) {
+                if (server.conversionCodeSets[i] == client.conversionCodeSets[y]) {
+                    return server.conversionCodeSets[i];
+                }
+            }
+        }
+
+        // Before using the fallback codesets, the spec calls for a
+        // compatibility check on the native code sets.  It doesn't make
+        // sense because loss free communication is always possible with
+        // UTF8 and UTF16, the fall back code sets.  It's also a lot
+        // of work to implement.  In the case of incompatibility, the
+        // spec says to throw a CODESET_INCOMPATIBLE exception.
+
+        // Use the fallback
+        return CodeSetConversion.FALLBACK_CODESET;
+!!!400514.java!!!	negotiate(inout client : CodeSetComponentInfo, inout server : CodeSetComponentInfo) : CodeSetComponentInfo::CodeSetContext
+        int charData
+            = selectEncoding(client.getCharComponent(),
+                             server.getCharComponent());
+
+        if (charData == CodeSetConversion.FALLBACK_CODESET) {
+            charData = OSFCodeSetRegistry.UTF_8.getNumber();
+        }
+
+        int wcharData
+            = selectEncoding(client.getWCharComponent(),
+                             server.getWCharComponent());
+
+        if (wcharData == CodeSetConversion.FALLBACK_CODESET) {
+            wcharData = OSFCodeSetRegistry.UTF_16.getNumber();
+        }
+
+        return new CodeSetComponentInfo.CodeSetContext(charData,
+                                                       wcharData);
+!!!400770.java!!!	impl() : CodeSetConversion
+        return CodeSetConversionHolder.csc ;

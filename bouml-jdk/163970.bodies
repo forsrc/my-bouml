@@ -1,0 +1,122 @@
+class CachedCodeBase
+!!!331394.java!!!	cleanCache(inout orb : ORB) : void
+        synchronized (iorMapLock) {
+            for (IOR ior : iorMap.keySet()) {
+                if (ior.getORB() == orb) {
+                    iorMap.remove(ior);
+                }
+            }
+        }
+!!!331522.java!!!	CachedCodeBase(inout connection : CorbaConnection)
+        conn = connection;
+!!!331650.java!!!	get_ir() : com.sun.org.omg.CORBA.Repository
+        return null;
+!!!331778.java!!!	implementation(inout repId : String) : String
+        String urlResult = null;
+
+        if (implementations == null)
+            implementations = new Hashtable();
+        else
+            urlResult = (String)implementations.get(repId);
+
+        if (urlResult == null && connectedCodeBase()) {
+            urlResult = delegate.implementation(repId);
+
+            if (urlResult != null)
+                implementations.put(repId, urlResult);
+        }
+
+        return urlResult;
+!!!331906.java!!!	implementations(inout repIds : String [[]]) : String
+        String[] urlResults = new String[repIds.length];
+
+        for (int i = 0; i < urlResults.length; i++)
+            urlResults[i] = implementation(repIds[i]);
+
+        return urlResults;
+!!!332034.java!!!	meta(inout repId : String) : FullValueDescription
+        FullValueDescription result = null;
+
+        if (fvds == null)
+            fvds = new Hashtable();
+        else
+            result = (FullValueDescription)fvds.get(repId);
+
+        if (result == null && connectedCodeBase()) {
+            result = delegate.meta(repId);
+
+            if (result != null)
+                fvds.put(repId, result);
+        }
+
+        return result;
+!!!332162.java!!!	metas(inout repIds : String [[]]) : FullValueDescription
+        FullValueDescription[] results
+            = new FullValueDescription[repIds.length];
+
+        for (int i = 0; i < results.length; i++)
+            results[i] = meta(repIds[i]);
+
+        return results;
+!!!332290.java!!!	bases(inout repId : String) : String
+
+        String[] results = null;
+
+        if (bases == null)
+            bases = new Hashtable();
+        else
+            results = (String[])bases.get(repId);
+
+        if (results == null && connectedCodeBase()) {
+            results = delegate.bases(repId);
+
+            if (results != null)
+                bases.put(repId, results);
+        }
+
+        return results;
+!!!332418.java!!!	connectedCodeBase() : boolean
+        if (delegate != null)
+            return true;
+
+        // The delegate was null, so see if the connection's
+        // IOR was set.  If so, then we just need to connect
+        // it.  Otherwise, there is no hope of checking the
+        // remote code base.  That could be bug if the
+        // service context processing didn't occur, or it
+        // could be that we're talking to a foreign ORB which
+        // doesn't include this optional service context.
+        if (conn.getCodeBaseIOR() == null) {
+            // REVISIT.  Use Merlin logging service to report that
+            // codebase functionality was requested but unavailable.
+            if (conn.getBroker().transportDebugFlag)
+                conn.dprint("CodeBase unavailable on connection: " + conn);
+
+            return false;
+        }
+
+        synchronized(iorMapLock) {
+
+            // Recheck the condition to make sure another
+            // thread didn't already do this while we waited
+            if (delegate != null)
+                return true;
+
+            // Do we have a reference initialized by another connection?
+            delegate = CachedCodeBase.iorMap.get(conn.getCodeBaseIOR());
+
+            if (delegate != null)
+                return true;
+
+            // Connect the delegate and update the cache
+            delegate = CodeBaseHelper.narrow(getObjectFromIOR());
+
+            // Save it for the benefit of other connections
+            CachedCodeBase.iorMap.put(conn.getCodeBaseIOR(), delegate);
+        }
+
+        // It's now safe to use the delegate
+        return true;
+!!!332546.java!!!	getObjectFromIOR() : Object
+        return CDRInputStream_1_0.internalIORToObject(
+            conn.getCodeBaseIOR(), null /*stubFactory*/, conn.getBroker());

@@ -1,0 +1,137 @@
+class VariableBase
+!!!3749378.java!!!	disable() : void
+        _ignore = true;
+!!!3749506.java!!!	addReference(inout vref : VariableRefBase) : void
+        _refs.addElement(vref);
+!!!3749634.java!!!	copyReferences(inout var : VariableBase) : void
+        final int size = _refs.size();
+        for (int i = 0; i < size; i++) {
+            var.addReference(_refs.get(i));
+        }
+!!!3749762.java!!!	mapRegister(inout methodGen : MethodGenerator) : void
+        if (_local == null) {
+            final InstructionList il = methodGen.getInstructionList();
+            final String name = getEscapedName(); // TODO: namespace ?
+            final com.sun.org.apache.bcel.internal.generic.Type varType = _type.toJCType();
+            _local = methodGen.addLocalVariable2(name, varType, il.getEnd());
+        }
+!!!3749890.java!!!	unmapRegister(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        if (_local != null) {
+            if (_type instanceof ResultTreeType) {
+                final ConstantPoolGen cpg = classGen.getConstantPool();
+                final InstructionList il = methodGen.getInstructionList();
+                if (classGen.getStylesheet().callsNodeset() && classGen.getDOMClass().equals(MULTI_DOM_CLASS)) {
+                    final int removeDA = cpg.addMethodref(MULTI_DOM_CLASS, "removeDOMAdapter", "(" + DOM_ADAPTER_SIG + ")V");
+                    il.append(methodGen.loadDOM());
+                    il.append(new CHECKCAST(cpg.addClass(MULTI_DOM_CLASS)));
+                    il.append(loadInstruction());
+                    il.append(new CHECKCAST(cpg.addClass(DOM_ADAPTER_CLASS)));
+                    il.append(new INVOKEVIRTUAL(removeDA));
+                }
+                final int release = cpg.addInterfaceMethodref(DOM_IMPL_CLASS, "release", "()V");
+                il.append(loadInstruction());
+                il.append(new INVOKEINTERFACE(release, 1));
+            }
+
+            _local.setEnd(methodGen.getInstructionList().getEnd());
+            methodGen.removeLocalVariable(_local);
+            _refs = null;
+            _local = null;
+        }
+!!!3750018.java!!!	loadInstruction() : Instruction
+        if (_loadInstruction == null) {
+            _loadInstruction = _type.LOAD(_local.getIndex());
+        }
+        return _loadInstruction;
+!!!3750146.java!!!	storeInstruction() : Instruction
+        if (_storeInstruction == null) {
+            _storeInstruction = _type.STORE(_local.getIndex());
+        }
+        return _storeInstruction;
+!!!3750274.java!!!	getExpression() : Expression
+        return(_select);
+!!!3750402.java!!!	toString() : String
+        return("variable("+_name+")");
+!!!3750530.java!!!	display(in indent : int) : void
+        indent(indent);
+        System.out.println("Variable " + _name);
+        if (_select != null) {
+            indent(indent + IndentIncrement);
+            System.out.println("select " + _select.toString());
+        }
+        displayContents(indent + IndentIncrement);
+!!!3750658.java!!!	getType() : Type
+        return _type;
+!!!3750786.java!!!	getName() : QName
+        return _name;
+!!!3750914.java!!!	getEscapedName() : String
+        return _escapedName;
+!!!3751042.java!!!	setName(inout name : QName) : void
+        _name = name;
+        _escapedName = Util.escape(name.getStringRep());
+!!!3751170.java!!!	isLocal() : boolean
+        return _isLocal;
+!!!3751298.java!!!	parseContents(inout parser : Parser) : void
+        // Get the 'name attribute
+        String name = getAttribute("name");
+
+        if (name.length() > 0) {
+            if (!XML11Char.isXML11ValidQName(name)) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.INVALID_QNAME_ERR, name, this);
+                parser.reportError(Constants.ERROR, err);
+            }
+            setName(parser.getQNameIgnoreDefaultNs(name));
+        }
+        else
+            reportError(this, parser, ErrorMsg.REQUIRED_ATTR_ERR, "name");
+
+        // Check whether variable/param of the same name is already in scope
+        VariableBase other = parser.lookupVariable(_name);
+        if ((other != null) && (other.getParent() == getParent())) {
+            reportError(this, parser, ErrorMsg.VARIABLE_REDEF_ERR, name);
+        }
+
+        select = getAttribute("select");
+        if (select.length() > 0) {
+            _select = getParser().parseExpression(this, "select", null);
+            if (_select.isDummy()) {
+                reportError(this, parser, ErrorMsg.REQUIRED_ATTR_ERR, "select");
+                return;
+            }
+        }
+
+        // Children must be parsed first -> static scoping
+        parseChildren(parser);
+!!!3751426.java!!!	translateValue(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        // Compile expression is 'select' attribute if present
+        if (_select != null) {
+            _select.translate(classGen, methodGen);
+            // Create a CachedNodeListIterator for select expressions
+            // in a variable or parameter.
+            if (_select.getType() instanceof NodeSetType) {
+                final ConstantPoolGen cpg = classGen.getConstantPool();
+                final InstructionList il = methodGen.getInstructionList();
+
+                final int initCNI = cpg.addMethodref(CACHED_NODE_LIST_ITERATOR_CLASS,
+                                            "<init>",
+                                            "("
+                                            +NODE_ITERATOR_SIG
+                                            +")V");
+                il.append(new NEW(cpg.addClass(CACHED_NODE_LIST_ITERATOR_CLASS)));
+                il.append(DUP_X1);
+                il.append(SWAP);
+
+                il.append(new INVOKESPECIAL(initCNI));
+            }
+            _select.startIterator(classGen, methodGen);
+        }
+        // If not, compile result tree from parameter body if present.
+        else if (hasContents()) {
+            compileResultTree(classGen, methodGen);
+        }
+        // If neither are present then store empty string in variable
+        else {
+            final ConstantPoolGen cpg = classGen.getConstantPool();
+            final InstructionList il = methodGen.getInstructionList();
+            il.append(new PUSH(cpg, Constants.EMPTYSTRING));
+        }

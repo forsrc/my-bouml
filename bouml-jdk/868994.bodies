@@ -1,0 +1,144 @@
+class GraphicsDevice
+!!!6233730.java!!!	getBestConfiguration(inout gct : GraphicsConfigTemplate) : GraphicsConfiguration
+        GraphicsConfiguration[] configs = getConfigurations();
+        return gct.getBestConfiguration(configs);
+!!!6233858.java!!!	isFullScreenSupported() : boolean
+        return false;
+!!!6233986.java!!!	setFullScreenWindow(inout w : Window) : void
+        if (w != null) {
+            if (w.getShape() != null) {
+                w.setShape(null);
+            }
+            if (w.getOpacity() < 1.0f) {
+                w.setOpacity(1.0f);
+            }
+            if (!w.isOpaque()) {
+                Color bgColor = w.getBackground();
+                bgColor = new Color(bgColor.getRed(), bgColor.getGreen(),
+                                    bgColor.getBlue(), 255);
+                w.setBackground(bgColor);
+            }
+            // Check if this window is in fullscreen mode on another device.
+            final GraphicsConfiguration gc = w.getGraphicsConfiguration();
+            if (gc != null && gc.getDevice() != this
+                    && gc.getDevice().getFullScreenWindow() == w) {
+                gc.getDevice().setFullScreenWindow(null);
+            }
+        }
+        if (fullScreenWindow != null && windowedModeBounds != null) {
+            // if the window went into fs mode before it was realized it may
+            // have (0,0) dimensions
+            if (windowedModeBounds.width  == 0) windowedModeBounds.width  = 1;
+            if (windowedModeBounds.height == 0) windowedModeBounds.height = 1;
+            fullScreenWindow.setBounds(windowedModeBounds);
+        }
+        // Set the full screen window
+        synchronized (fsAppContextLock) {
+            // Associate fullscreen window with current AppContext
+            if (w == null) {
+                fullScreenAppContext = null;
+            } else {
+                fullScreenAppContext = AppContext.getAppContext();
+            }
+            fullScreenWindow = w;
+        }
+        if (fullScreenWindow != null) {
+            windowedModeBounds = fullScreenWindow.getBounds();
+            // Note that we use the graphics configuration of the device,
+            // not the window's, because we're setting the fs window for
+            // this device.
+            final GraphicsConfiguration gc = getDefaultConfiguration();
+            final Rectangle screenBounds = gc.getBounds();
+            if (SunToolkit.isDispatchThreadForAppContext(fullScreenWindow)) {
+                // Update graphics configuration here directly and do not wait
+                // asynchronous notification from the peer. Note that
+                // setBounds() will reset a GC, if it was set incorrectly.
+                fullScreenWindow.setGraphicsConfiguration(gc);
+            }
+            fullScreenWindow.setBounds(screenBounds.x, screenBounds.y,
+                                       screenBounds.width, screenBounds.height);
+            fullScreenWindow.setVisible(true);
+            fullScreenWindow.toFront();
+        }
+!!!6234114.java!!!	getFullScreenWindow() : Window
+        Window returnWindow = null;
+        synchronized (fsAppContextLock) {
+            // Only return a handle to the current fs window if we are in the
+            // same AppContext that set the fs window
+            if (fullScreenAppContext == AppContext.getAppContext()) {
+                returnWindow = fullScreenWindow;
+            }
+        }
+        return returnWindow;
+!!!6234242.java!!!	isDisplayChangeSupported() : boolean
+        return false;
+!!!6234370.java!!!	setDisplayMode(inout dm : DisplayMode) : void
+        throw new UnsupportedOperationException("Cannot change display mode");
+!!!6234498.java!!!	getDisplayMode() : DisplayMode
+        GraphicsConfiguration gc = getDefaultConfiguration();
+        Rectangle r = gc.getBounds();
+        ColorModel cm = gc.getColorModel();
+        return new DisplayMode(r.width, r.height, cm.getPixelSize(), 0);
+!!!6234626.java!!!	getDisplayModes() : DisplayMode
+        return new DisplayMode[] { getDisplayMode() };
+!!!6234754.java!!!	getAvailableAcceleratedMemory() : int
+        return -1;
+!!!6234882.java!!!	isWindowTranslucencySupported(inout translucencyKind : GraphicsDevice::WindowTranslucency) : boolean
+        switch (translucencyKind) {
+            case PERPIXEL_TRANSPARENT:
+                return isWindowShapingSupported();
+            case TRANSLUCENT:
+                return isWindowOpacitySupported();
+            case PERPIXEL_TRANSLUCENT:
+                return isWindowPerpixelTranslucencySupported();
+        }
+        return false;
+!!!6235010.java!!!	isWindowShapingSupported() : boolean
+        Toolkit curToolkit = Toolkit.getDefaultToolkit();
+        if (!(curToolkit instanceof SunToolkit)) {
+            return false;
+        }
+        return ((SunToolkit)curToolkit).isWindowShapingSupported();
+!!!6235138.java!!!	isWindowOpacitySupported() : boolean
+        Toolkit curToolkit = Toolkit.getDefaultToolkit();
+        if (!(curToolkit instanceof SunToolkit)) {
+            return false;
+        }
+        return ((SunToolkit)curToolkit).isWindowOpacitySupported();
+!!!6235266.java!!!	isWindowPerpixelTranslucencySupported() : boolean
+        /*
+         * Per-pixel alpha is supported if all the conditions are TRUE:
+         *    1. The toolkit is a sort of SunToolkit
+         *    2. The toolkit supports translucency in general
+         *        (isWindowTranslucencySupported())
+         *    3. There's at least one translucency-capable
+         *        GraphicsConfiguration
+         */
+        Toolkit curToolkit = Toolkit.getDefaultToolkit();
+        if (!(curToolkit instanceof SunToolkit)) {
+            return false;
+        }
+        if (!((SunToolkit)curToolkit).isWindowTranslucencySupported()) {
+            return false;
+        }
+
+        // TODO: cache translucency capable GC
+        return getTranslucencyCapableGC() != null;
+!!!6235394.java!!!	getTranslucencyCapableGC() : GraphicsConfiguration
+        // If the default GC supports translucency return true.
+        // It is important to optimize the verification this way,
+        // see CR 6661196 for more details.
+        GraphicsConfiguration defaultGC = getDefaultConfiguration();
+        if (defaultGC.isTranslucencyCapable()) {
+            return defaultGC;
+        }
+
+        // ... otherwise iterate through all the GCs.
+        GraphicsConfiguration[] configs = getConfigurations();
+        for (int j = 0; j < configs.length; j++) {
+            if (configs[j].isTranslucencyCapable()) {
+                return configs[j];
+            }
+        }
+
+        return null;

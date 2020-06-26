@@ -1,0 +1,374 @@
+class SequentialGroup
+!!!10520834.java!!!	addGroup(inout group : GroupLayout::Group) : GroupLayout::SequentialGroup
+            return (SequentialGroup)super.addGroup(group);
+!!!10520962.java!!!	addGroup(inout useAsBaseline : boolean, inout group : GroupLayout::Group) : GroupLayout::SequentialGroup
+            super.addGroup(group);
+            if (useAsBaseline) {
+                baselineSpring = group;
+            }
+            return this;
+!!!10521090.java!!!	addComponent(inout component : Component) : GroupLayout::SequentialGroup
+            return (SequentialGroup)super.addComponent(component);
+!!!10521218.java!!!	addComponent(inout useAsBaseline : boolean, inout component : Component) : GroupLayout::SequentialGroup
+            super.addComponent(component);
+            if (useAsBaseline) {
+                baselineSpring = springs.get(springs.size() - 1);
+            }
+            return this;
+!!!10521346.java!!!	addComponent(inout component : Component, in min : int, in pref : int, in max : int) : GroupLayout::SequentialGroup
+            return (SequentialGroup)super.addComponent(
+                    component, min, pref, max);
+!!!10521474.java!!!	addComponent(inout useAsBaseline : boolean, inout component : Component, in min : int, in pref : int, in max : int) : GroupLayout::SequentialGroup
+            super.addComponent(component, min, pref, max);
+            if (useAsBaseline) {
+                baselineSpring = springs.get(springs.size() - 1);
+            }
+            return this;
+!!!10521602.java!!!	addGap(in size : int) : GroupLayout::SequentialGroup
+            return (SequentialGroup)super.addGap(size);
+!!!10521730.java!!!	addGap(in min : int, in pref : int, in max : int) : GroupLayout::SequentialGroup
+            return (SequentialGroup)super.addGap(min, pref, max);
+!!!10521858.java!!!	addPreferredGap(inout comp1 : JComponent, inout comp2 : JComponent, inout type : ComponentPlacement) : GroupLayout::SequentialGroup
+            return addPreferredGap(comp1, comp2, type, DEFAULT_SIZE,
+                    PREFERRED_SIZE);
+!!!10521986.java!!!	addPreferredGap(inout comp1 : JComponent, inout comp2 : JComponent, inout type : ComponentPlacement, in pref : int, in max : int) : GroupLayout::SequentialGroup
+            if (type == null) {
+                throw new IllegalArgumentException("Type must be non-null");
+            }
+            if (comp1 == null || comp2 == null) {
+                throw new IllegalArgumentException(
+                        "Components must be non-null");
+            }
+            checkPreferredGapValues(pref, max);
+            return (SequentialGroup)addSpring(new PreferredGapSpring(
+                    comp1, comp2, type, pref, max));
+!!!10522114.java!!!	addPreferredGap(inout type : ComponentPlacement) : GroupLayout::SequentialGroup
+            return addPreferredGap(type, DEFAULT_SIZE, DEFAULT_SIZE);
+!!!10522242.java!!!	addPreferredGap(inout type : ComponentPlacement, in pref : int, in max : int) : GroupLayout::SequentialGroup
+            if (type != ComponentPlacement.RELATED &&
+                    type != ComponentPlacement.UNRELATED) {
+                throw new IllegalArgumentException(
+                        "Type must be one of " +
+                        "LayoutStyle.ComponentPlacement.RELATED or " +
+                        "LayoutStyle.ComponentPlacement.UNRELATED");
+            }
+            checkPreferredGapValues(pref, max);
+            hasPreferredPaddingSprings = true;
+            return (SequentialGroup)addSpring(new AutoPreferredGapSpring(
+                    type, pref, max));
+!!!10522370.java!!!	addContainerGap() : GroupLayout::SequentialGroup
+            return addContainerGap(DEFAULT_SIZE, DEFAULT_SIZE);
+!!!10522498.java!!!	addContainerGap(in pref : int, in max : int) : GroupLayout::SequentialGroup
+            if ((pref < 0 && pref != DEFAULT_SIZE) ||
+                    (max < 0 && max != DEFAULT_SIZE && max != PREFERRED_SIZE)||
+                    (pref >= 0 && max >= 0 && pref > max)) {
+                throw new IllegalArgumentException(
+                        "Pref and max must be either DEFAULT_VALUE " +
+                        "or >= 0 and pref <= max");
+            }
+            hasPreferredPaddingSprings = true;
+            return (SequentialGroup)addSpring(
+                    new ContainerAutoPreferredGapSpring(pref, max));
+!!!10522626.java!!!	operator(in a : int, in b : int) : int
+            return constrain(a) + constrain(b);
+!!!10522754.java!!!	setValidSize(in axis : int, in origin : int, in size : int) : void
+            int pref = getPreferredSize(axis);
+            if (size == pref) {
+                // Layout at preferred size
+                for (Spring spring : springs) {
+                    int springPref = spring.getPreferredSize(axis);
+                    spring.setSize(axis, origin, springPref);
+                    origin += springPref;
+                }
+            } else if (springs.size() == 1) {
+                Spring spring = getSpring(0);
+                spring.setSize(axis, origin, Math.min(
+                        Math.max(size, spring.getMinimumSize(axis)),
+                        spring.getMaximumSize(axis)));
+            } else if (springs.size() > 1) {
+                // Adjust between min/pref
+                setValidSizeNotPreferred(axis, origin, size);
+            }
+!!!10522882.java!!!	setValidSizeNotPreferred(in axis : int, in origin : int, in size : int) : void
+            int delta = size - getPreferredSize(axis);
+            assert delta != 0;
+            boolean useMin = (delta < 0);
+            int springCount = springs.size();
+            if (useMin) {
+                delta *= -1;
+            }
+
+            // The following algorithm if used for resizing springs:
+            // 1. Calculate the resizability of each spring (pref - min or
+            //    max - pref) into a list.
+            // 2. Sort the list in ascending order
+            // 3. Iterate through each of the resizable Springs, attempting
+            //    to give them (pref - size) / resizeCount
+            // 4. For any Springs that can not accommodate that much space
+            //    add the remainder back to the amount to distribute and
+            //    recalculate how must space the remaining springs will get.
+            // 5. Set the size of the springs.
+
+            // First pass, sort the resizable springs into the List resizable
+            List<SpringDelta> resizable = buildResizableList(axis, useMin);
+            int resizableCount = resizable.size();
+
+            if (resizableCount > 0) {
+                // How much we would like to give each Spring.
+                int sDelta = delta / resizableCount;
+                // Remaining space.
+                int slop = delta - sDelta * resizableCount;
+                int[] sizes = new int[springCount];
+                int sign = useMin ? -1 : 1;
+                // Second pass, accumulate the resulting deltas (relative to
+                // preferred) into sizes.
+                for (int counter = 0; counter < resizableCount; counter++) {
+                    SpringDelta springDelta = resizable.get(counter);
+                    if ((counter + 1) == resizableCount) {
+                        sDelta += slop;
+                    }
+                    springDelta.delta = Math.min(sDelta, springDelta.delta);
+                    delta -= springDelta.delta;
+                    if (springDelta.delta != sDelta && counter + 1 <
+                            resizableCount) {
+                        // Spring didn't take all the space, reset how much
+                        // each spring will get.
+                        sDelta = delta / (resizableCount - counter - 1);
+                        slop = delta - sDelta * (resizableCount - counter - 1);
+                    }
+                    sizes[springDelta.index] = sign * springDelta.delta;
+                }
+
+                // And finally set the size of each spring
+                for (int counter = 0; counter < springCount; counter++) {
+                    Spring spring = getSpring(counter);
+                    int sSize = spring.getPreferredSize(axis) + sizes[counter];
+                    spring.setSize(axis, origin, sSize);
+                    origin += sSize;
+                }
+            } else {
+                // Nothing resizable, use the min or max of each of the
+                // springs.
+                for (int counter = 0; counter < springCount; counter++) {
+                    Spring spring = getSpring(counter);
+                    int sSize;
+                    if (useMin) {
+                        sSize = spring.getMinimumSize(axis);
+                    } else {
+                        sSize = spring.getMaximumSize(axis);
+                    }
+                    spring.setSize(axis, origin, sSize);
+                    origin += sSize;
+                }
+            }
+!!!10523010.java!!!	buildResizableList(in axis : int, inout useMin : boolean) : List
+            // First pass, figure out what is resizable
+            int size = springs.size();
+            List<SpringDelta> sorted = new ArrayList<SpringDelta>(size);
+            for (int counter = 0; counter < size; counter++) {
+                Spring spring = getSpring(counter);
+                int sDelta;
+                if (useMin) {
+                    sDelta = spring.getPreferredSize(axis) -
+                            spring.getMinimumSize(axis);
+                } else {
+                    sDelta = spring.getMaximumSize(axis) -
+                            spring.getPreferredSize(axis);
+                }
+                if (sDelta > 0) {
+                    sorted.add(new SpringDelta(counter, sDelta));
+                }
+            }
+            Collections.sort(sorted);
+            return sorted;
+!!!10523138.java!!!	indexOfNextNonZeroSpring(in index : int, inout treatAutopaddingAsZeroSized : boolean) : int
+            while (index < springs.size()) {
+                Spring spring = springs.get(index);
+                if (!spring.willHaveZeroSize(treatAutopaddingAsZeroSized)) {
+                    return index;
+                }
+                index++;
+            }
+            return index;
+!!!10523266.java!!!	insertAutopadding(in axis : int, inout leadingPadding : List, inout trailingPadding : List, inout leading : List, inout trailing : List, inout insert : boolean) : void
+            List<AutoPreferredGapSpring> newLeadingPadding =
+                    new ArrayList<AutoPreferredGapSpring>(leadingPadding);
+            List<AutoPreferredGapSpring> newTrailingPadding =
+                    new ArrayList<AutoPreferredGapSpring>(1);
+            List<ComponentSpring> newLeading =
+                    new ArrayList<ComponentSpring>(leading);
+            List<ComponentSpring> newTrailing = null;
+            int counter = 0;
+            // Warning, this must use springs.size, as it may change during the
+            // loop.
+            while (counter < springs.size()) {
+                Spring spring = getSpring(counter);
+                if (spring instanceof AutoPreferredGapSpring) {
+                    if (newLeadingPadding.size() == 0) {
+                        // Autopadding spring. Set the sources of the
+                        // autopadding spring based on newLeading.
+                        AutoPreferredGapSpring padding =
+                            (AutoPreferredGapSpring)spring;
+                        padding.setSources(newLeading);
+                        newLeading.clear();
+                        counter = indexOfNextNonZeroSpring(counter + 1, true);
+                        if (counter == springs.size()) {
+                            // Last spring in the list, add it to
+                            // trailingPadding.
+                            if (!(padding instanceof
+                                  ContainerAutoPreferredGapSpring)) {
+                                trailingPadding.add(padding);
+                            }
+                        } else {
+                            newLeadingPadding.clear();
+                            newLeadingPadding.add(padding);
+                        }
+                    } else {
+                        counter = indexOfNextNonZeroSpring(counter + 1, true);
+                    }
+                } else {
+                    // Not a padding spring
+                    if (newLeading.size() > 0 && insert) {
+                        // There's leading ComponentSprings, create an
+                        // autopadding spring.
+                        AutoPreferredGapSpring padding =
+                                new AutoPreferredGapSpring();
+                        // Force the newly created spring to be considered
+                        // by NOT incrementing counter
+                        springs.add(counter, padding);
+                        continue;
+                    }
+                    if (spring instanceof ComponentSpring) {
+                        // Spring is a Component, make it the target of any
+                        // leading AutopaddingSpring.
+                        ComponentSpring cSpring = (ComponentSpring)spring;
+                        if (!cSpring.isVisible()) {
+                            counter++;
+                            continue;
+                        }
+                        for (AutoPreferredGapSpring gapSpring : newLeadingPadding) {
+                            gapSpring.addTarget(cSpring, axis);
+                        }
+                        newLeading.clear();
+                        newLeadingPadding.clear();
+                        counter = indexOfNextNonZeroSpring(counter + 1, false);
+                        if (counter == springs.size()) {
+                            // Last Spring, add it to trailing
+                            trailing.add(cSpring);
+                        } else {
+                            // Not that last Spring, add it to leading
+                            newLeading.add(cSpring);
+                        }
+                    } else if (spring instanceof Group) {
+                        // Forward call to child Group
+                        if (newTrailing == null) {
+                            newTrailing = new ArrayList<ComponentSpring>(1);
+                        } else {
+                            newTrailing.clear();
+                        }
+                        newTrailingPadding.clear();
+                        ((Group)spring).insertAutopadding(axis,
+                                newLeadingPadding, newTrailingPadding,
+                                newLeading, newTrailing, insert);
+                        newLeading.clear();
+                        newLeadingPadding.clear();
+                        counter = indexOfNextNonZeroSpring(
+                                    counter + 1, (newTrailing.size() == 0));
+                        if (counter == springs.size()) {
+                            trailing.addAll(newTrailing);
+                            trailingPadding.addAll(newTrailingPadding);
+                        } else {
+                            newLeading.addAll(newTrailing);
+                            newLeadingPadding.addAll(newTrailingPadding);
+                        }
+                    } else {
+                        // Gap
+                        newLeadingPadding.clear();
+                        newLeading.clear();
+                        counter++;
+                    }
+                }
+            }
+!!!10523394.java!!!	getBaseline() : int
+            if (baselineSpring != null) {
+                int baseline = baselineSpring.getBaseline();
+                if (baseline >= 0) {
+                    int size = 0;
+                    for (Spring spring : springs) {
+                        if (spring == baselineSpring) {
+                            return size + baseline;
+                        } else {
+                            size += spring.getPreferredSize(VERTICAL);
+                        }
+                    }
+                }
+            }
+            return -1;
+!!!10523522.java!!!	getBaselineResizeBehavior() : BaselineResizeBehavior
+            if (isResizable(VERTICAL)) {
+                if (!baselineSpring.isResizable(VERTICAL)) {
+                    // Spring to use for baseline isn't resizable. In this case
+                    // baseline resize behavior can be determined based on how
+                    // preceding springs resize.
+                    boolean leadingResizable = false;
+                    for (Spring spring : springs) {
+                        if (spring == baselineSpring) {
+                            break;
+                        } else if (spring.isResizable(VERTICAL)) {
+                            leadingResizable = true;
+                            break;
+                        }
+                    }
+                    boolean trailingResizable = false;
+                    for (int i = springs.size() - 1; i >= 0; i--) {
+                        Spring spring = springs.get(i);
+                        if (spring == baselineSpring) {
+                            break;
+                        }
+                        if (spring.isResizable(VERTICAL)) {
+                            trailingResizable = true;
+                            break;
+                        }
+                    }
+                    if (leadingResizable && !trailingResizable) {
+                        return BaselineResizeBehavior.CONSTANT_DESCENT;
+                    } else if (!leadingResizable && trailingResizable) {
+                        return BaselineResizeBehavior.CONSTANT_ASCENT;
+                    }
+                    // If we get here, both leading and trailing springs are
+                    // resizable. Fall through to OTHER.
+                } else {
+                    BaselineResizeBehavior brb = baselineSpring.getBaselineResizeBehavior();
+                    if (brb == BaselineResizeBehavior.CONSTANT_ASCENT) {
+                        for (Spring spring : springs) {
+                            if (spring == baselineSpring) {
+                                return BaselineResizeBehavior.CONSTANT_ASCENT;
+                            }
+                            if (spring.isResizable(VERTICAL)) {
+                                return BaselineResizeBehavior.OTHER;
+                            }
+                        }
+                    } else if (brb == BaselineResizeBehavior.CONSTANT_DESCENT) {
+                        for (int i = springs.size() - 1; i >= 0; i--) {
+                            Spring spring = springs.get(i);
+                            if (spring == baselineSpring) {
+                                return BaselineResizeBehavior.CONSTANT_DESCENT;
+                            }
+                            if (spring.isResizable(VERTICAL)) {
+                                return BaselineResizeBehavior.OTHER;
+                            }
+                        }
+                    }
+                }
+                return BaselineResizeBehavior.OTHER;
+            }
+            // Not resizable, treat as constant_ascent
+            return BaselineResizeBehavior.CONSTANT_ASCENT;
+!!!10523650.java!!!	checkPreferredGapValues(in pref : int, in max : int) : void
+            if ((pref < 0 && pref != DEFAULT_SIZE && pref != PREFERRED_SIZE) ||
+                    (max < 0 && max != DEFAULT_SIZE && max != PREFERRED_SIZE)||
+                    (pref >= 0 && max >= 0 && pref > max)) {
+                throw new IllegalArgumentException(
+                        "Pref and max must be either DEFAULT_SIZE, " +
+                        "PREFERRED_SIZE, or >= 0 and pref <= max");
+            }

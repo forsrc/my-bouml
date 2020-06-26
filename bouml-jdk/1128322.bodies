@@ -1,0 +1,83 @@
+class LockedUpdater
+!!!9271426.java!!!	LockedUpdater(in tclass : Class, in fieldName : String, in caller : Class)
+            Field field = null;
+            int modifiers = 0;
+            try {
+                field = AccessController.doPrivileged(
+                    new PrivilegedExceptionAction<Field>() {
+                        public Field run() throws NoSuchFieldException {
+                            return tclass.getDeclaredField(fieldName);
+                        }
+                    });
+                modifiers = field.getModifiers();
+                sun.reflect.misc.ReflectUtil.ensureMemberAccess(
+                    caller, tclass, null, modifiers);
+                ClassLoader cl = tclass.getClassLoader();
+                ClassLoader ccl = caller.getClassLoader();
+                if ((ccl != null) && (ccl != cl) &&
+                    ((cl == null) || !isAncestor(cl, ccl))) {
+                    sun.reflect.misc.ReflectUtil.checkPackageAccess(tclass);
+                }
+            } catch (PrivilegedActionException pae) {
+                throw new RuntimeException(pae.getException());
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+
+            if (field.getType() != long.class)
+                throw new IllegalArgumentException("Must be long type");
+
+            if (!Modifier.isVolatile(modifiers))
+                throw new IllegalArgumentException("Must be volatile type");
+
+            // Access to protected field members is restricted to receivers only
+            // of the accessing class, or one of its subclasses, and the
+            // accessing class must in turn be a subclass (or package sibling)
+            // of the protected member's defining class.
+            // If the updater refers to a protected field of a declaring class
+            // outside the current package, the receiver argument will be
+            // narrowed to the type of the accessing class.
+            this.cclass = (Modifier.isProtected(modifiers) &&
+                           tclass.isAssignableFrom(caller) &&
+                           !isSamePackage(tclass, caller))
+                          ? caller : tclass;
+            this.tclass = tclass;
+            this.offset = U.objectFieldOffset(field);
+!!!9271554.java!!!	accessCheck(inout obj : T) : void
+            if (!cclass.isInstance(obj))
+                throw accessCheckException(obj);
+!!!9271682.java!!!	accessCheckException(inout obj : T) : RuntimeException
+            if (cclass == tclass)
+                return new ClassCastException();
+            else
+                return new RuntimeException(
+                    new IllegalAccessException(
+                        "Class " +
+                        cclass.getName() +
+                        " can not access a protected member of class " +
+                        tclass.getName() +
+                        " using an instance of " +
+                        obj.getClass().getName()));
+!!!9271810.java!!!	compareAndSet(inout obj : T, in expect : long, in update : long) : boolean
+            accessCheck(obj);
+            synchronized (this) {
+                long v = U.getLong(obj, offset);
+                if (v != expect)
+                    return false;
+                U.putLong(obj, offset, update);
+                return true;
+            }
+!!!9271938.java!!!	weakCompareAndSet(inout obj : T, in expect : long, in update : long) : boolean
+            return compareAndSet(obj, expect, update);
+!!!9272066.java!!!	set(inout obj : T, in newValue : long) : void
+            accessCheck(obj);
+            synchronized (this) {
+                U.putLong(obj, offset, newValue);
+            }
+!!!9272194.java!!!	lazySet(inout obj : T, in newValue : long) : void
+            set(obj, newValue);
+!!!9272322.java!!!	get(inout obj : T) : long
+            accessCheck(obj);
+            synchronized (this) {
+                return U.getLong(obj, offset);
+            }

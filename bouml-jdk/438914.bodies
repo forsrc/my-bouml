@@ -1,0 +1,1106 @@
+class BasicSliderUI
+!!!2620034.java!!!	getShadowColor() : Color
+        return shadowColor;
+!!!2620162.java!!!	getHighlightColor() : Color
+        return highlightColor;
+!!!2620290.java!!!	getFocusColor() : Color
+        return focusColor;
+!!!2620418.java!!!	isDragging() : boolean
+        return isDragging;
+!!!2620546.java!!!	createUI(inout b : JComponent) : ComponentUI
+        return new BasicSliderUI((JSlider)b);
+!!!2620802.java!!!	installUI(inout c : JComponent) : void
+        slider = (JSlider) c;
+
+        checkedLabelBaselines = false;
+
+        slider.setEnabled(slider.isEnabled());
+        LookAndFeel.installProperty(slider, "opaque", Boolean.TRUE);
+
+        isDragging = false;
+        trackListener = createTrackListener( slider );
+        changeListener = createChangeListener( slider );
+        componentListener = createComponentListener( slider );
+        focusListener = createFocusListener( slider );
+        scrollListener = createScrollListener( slider );
+        propertyChangeListener = createPropertyChangeListener( slider );
+
+        installDefaults( slider );
+        installListeners( slider );
+        installKeyboardActions( slider );
+
+        scrollTimer = new Timer( 100, scrollListener );
+        scrollTimer.setInitialDelay( 300 );
+
+        insetCache = slider.getInsets();
+        leftToRightCache = BasicGraphicsUtils.isLeftToRight(slider);
+        focusRect = new Rectangle();
+        contentRect = new Rectangle();
+        labelRect = new Rectangle();
+        tickRect = new Rectangle();
+        trackRect = new Rectangle();
+        thumbRect = new Rectangle();
+        lastValue = slider.getValue();
+
+        calculateGeometry(); // This figures out where the labels, ticks, track, and thumb are.
+!!!2620930.java!!!	uninstallUI(inout c : JComponent) : void
+        if ( c != slider )
+            throw new IllegalComponentStateException(
+                                                    this + " was asked to deinstall() "
+                                                    + c + " when it only knows about "
+                                                    + slider + ".");
+
+        scrollTimer.stop();
+        scrollTimer = null;
+
+        uninstallDefaults(slider);
+        uninstallListeners( slider );
+        uninstallKeyboardActions(slider);
+
+        insetCache = null;
+        leftToRightCache = true;
+        focusRect = null;
+        contentRect = null;
+        labelRect = null;
+        tickRect = null;
+        trackRect = null;
+        thumbRect = null;
+        trackListener = null;
+        changeListener = null;
+        componentListener = null;
+        focusListener = null;
+        scrollListener = null;
+        propertyChangeListener = null;
+        slider = null;
+!!!2621058.java!!!	installDefaults(inout slider : JSlider) : void
+        LookAndFeel.installBorder(slider, "Slider.border");
+        LookAndFeel.installColorsAndFont(slider, "Slider.background",
+                                         "Slider.foreground", "Slider.font");
+        highlightColor = UIManager.getColor("Slider.highlight");
+
+        shadowColor = UIManager.getColor("Slider.shadow");
+        focusColor = UIManager.getColor("Slider.focus");
+
+        focusInsets = (Insets)UIManager.get( "Slider.focusInsets" );
+        // use default if missing so that BasicSliderUI can be used in other
+        // LAFs like Nimbus
+        if (focusInsets == null) focusInsets = new InsetsUIResource(2,2,2,2);
+!!!2621186.java!!!	uninstallDefaults(inout slider : JSlider) : void
+        LookAndFeel.uninstallBorder(slider);
+
+        focusInsets = null;
+!!!2621314.java!!!	createTrackListener(inout slider : JSlider) : BasicSliderUI::TrackListener
+        return new TrackListener();
+!!!2621442.java!!!	createChangeListener(inout slider : JSlider) : ChangeListener
+        return getHandler();
+!!!2621570.java!!!	createComponentListener(inout slider : JSlider) : ComponentListener
+        return getHandler();
+!!!2621698.java!!!	createFocusListener(inout slider : JSlider) : FocusListener
+        return getHandler();
+!!!2621826.java!!!	createScrollListener(inout slider : JSlider) : BasicSliderUI::ScrollListener
+        return new ScrollListener();
+!!!2621954.java!!!	createPropertyChangeListener(inout slider : JSlider) : PropertyChangeListener
+        return getHandler();
+!!!2622082.java!!!	getHandler() : BasicSliderUI::Handler
+        if (handler == null) {
+            handler = new Handler();
+        }
+        return handler;
+!!!2622210.java!!!	installListeners(inout slider : JSlider) : void
+        slider.addMouseListener(trackListener);
+        slider.addMouseMotionListener(trackListener);
+        slider.addFocusListener(focusListener);
+        slider.addComponentListener(componentListener);
+        slider.addPropertyChangeListener( propertyChangeListener );
+        slider.getModel().addChangeListener(changeListener);
+!!!2622338.java!!!	uninstallListeners(inout slider : JSlider) : void
+        slider.removeMouseListener(trackListener);
+        slider.removeMouseMotionListener(trackListener);
+        slider.removeFocusListener(focusListener);
+        slider.removeComponentListener(componentListener);
+        slider.removePropertyChangeListener( propertyChangeListener );
+        slider.getModel().removeChangeListener(changeListener);
+        handler = null;
+!!!2622466.java!!!	installKeyboardActions(inout slider : JSlider) : void
+        InputMap km = getInputMap(JComponent.WHEN_FOCUSED, slider);
+        SwingUtilities.replaceUIInputMap(slider, JComponent.WHEN_FOCUSED, km);
+        LazyActionMap.installLazyActionMap(slider, BasicSliderUI.class,
+                "Slider.actionMap");
+!!!2622594.java!!!	getInputMap(in condition : int, inout slider : JSlider) : InputMap
+        if (condition == JComponent.WHEN_FOCUSED) {
+            InputMap keyMap = (InputMap)DefaultLookup.get(slider, this,
+                  "Slider.focusInputMap");
+            InputMap rtlKeyMap;
+
+            if (slider.getComponentOrientation().isLeftToRight() ||
+                ((rtlKeyMap = (InputMap)DefaultLookup.get(slider, this,
+                          "Slider.focusInputMap.RightToLeft")) == null)) {
+                return keyMap;
+            } else {
+                rtlKeyMap.setParent(keyMap);
+                return rtlKeyMap;
+            }
+        }
+        return null;
+!!!2622722.java!!!	loadActionMap(inout map : LazyActionMap) : void
+        map.put(new Actions(Actions.POSITIVE_UNIT_INCREMENT));
+        map.put(new Actions(Actions.POSITIVE_BLOCK_INCREMENT));
+        map.put(new Actions(Actions.NEGATIVE_UNIT_INCREMENT));
+        map.put(new Actions(Actions.NEGATIVE_BLOCK_INCREMENT));
+        map.put(new Actions(Actions.MIN_SCROLL_INCREMENT));
+        map.put(new Actions(Actions.MAX_SCROLL_INCREMENT));
+!!!2622850.java!!!	uninstallKeyboardActions(inout slider : JSlider) : void
+        SwingUtilities.replaceUIActionMap(slider, null);
+        SwingUtilities.replaceUIInputMap(slider, JComponent.WHEN_FOCUSED,
+                                         null);
+!!!2622978.java!!!	getBaseline(inout c : JComponent, in width : int, in height : int) : int
+        super.getBaseline(c, width, height);
+        if (slider.getPaintLabels() && labelsHaveSameBaselines()) {
+            FontMetrics metrics = slider.getFontMetrics(slider.getFont());
+            Insets insets = slider.getInsets();
+            Dimension thumbSize = getThumbSize();
+            if (slider.getOrientation() == JSlider.HORIZONTAL) {
+                int tickLength = getTickLength();
+                int contentHeight = height - insets.top - insets.bottom -
+                    focusInsets.top - focusInsets.bottom;
+                int thumbHeight = thumbSize.height;
+                int centerSpacing = thumbHeight;
+                if (slider.getPaintTicks()) {
+                    centerSpacing += tickLength;
+                }
+                // Assume uniform labels.
+                centerSpacing += getHeightOfTallestLabel();
+                int trackY = insets.top + focusInsets.top +
+                    (contentHeight - centerSpacing - 1) / 2;
+                int trackHeight = thumbHeight;
+                int tickY = trackY + trackHeight;
+                int tickHeight = tickLength;
+                if (!slider.getPaintTicks()) {
+                    tickHeight = 0;
+                }
+                int labelY = tickY + tickHeight;
+                return labelY + metrics.getAscent();
+            }
+            else { // vertical
+                boolean inverted = slider.getInverted();
+                Integer value = inverted ? getLowestValue() :
+                                           getHighestValue();
+                if (value != null) {
+                    int thumbHeight = thumbSize.height;
+                    int trackBuffer = Math.max(metrics.getHeight() / 2,
+                                               thumbHeight / 2);
+                    int contentY = focusInsets.top + insets.top;
+                    int trackY = contentY + trackBuffer;
+                    int trackHeight = height - focusInsets.top -
+                        focusInsets.bottom - insets.top - insets.bottom -
+                        trackBuffer - trackBuffer;
+                    int yPosition = yPositionForValue(value, trackY,
+                                                      trackHeight);
+                    return yPosition - metrics.getHeight() / 2 +
+                        metrics.getAscent();
+                }
+            }
+        }
+        return 0;
+!!!2623106.java!!!	getBaselineResizeBehavior(inout c : JComponent) : Component::BaselineResizeBehavior
+        super.getBaselineResizeBehavior(c);
+        // NOTE: BasicSpinner really provides for CENTER_OFFSET, but
+        // the default min/pref size is smaller than it should be
+        // so that getBaseline() doesn't implement the contract
+        // for CENTER_OFFSET as defined in Component.
+        return Component.BaselineResizeBehavior.OTHER;
+!!!2623234.java!!!	labelsHaveSameBaselines() : boolean
+        if (!checkedLabelBaselines) {
+            checkedLabelBaselines = true;
+            Dictionary dictionary = slider.getLabelTable();
+            if (dictionary != null) {
+                sameLabelBaselines = true;
+                Enumeration elements = dictionary.elements();
+                int baseline = -1;
+                while (elements.hasMoreElements()) {
+                    JComponent label = (JComponent) elements.nextElement();
+                    Dimension pref = label.getPreferredSize();
+                    int labelBaseline = label.getBaseline(pref.width,
+                                                          pref.height);
+                    if (labelBaseline >= 0) {
+                        if (baseline == -1) {
+                            baseline = labelBaseline;
+                        }
+                        else if (baseline != labelBaseline) {
+                            sameLabelBaselines = false;
+                            break;
+                        }
+                    }
+                    else {
+                        sameLabelBaselines = false;
+                        break;
+                    }
+                }
+            }
+            else {
+                sameLabelBaselines = false;
+            }
+        }
+        return sameLabelBaselines;
+!!!2623362.java!!!	getPreferredHorizontalSize() : Dimension
+        Dimension horizDim = (Dimension)DefaultLookup.get(slider,
+                this, "Slider.horizontalSize");
+        if (horizDim == null) {
+            horizDim = new Dimension(200, 21);
+        }
+        return horizDim;
+!!!2623490.java!!!	getPreferredVerticalSize() : Dimension
+        Dimension vertDim = (Dimension)DefaultLookup.get(slider,
+                this, "Slider.verticalSize");
+        if (vertDim == null) {
+            vertDim = new Dimension(21, 200);
+        }
+        return vertDim;
+!!!2623618.java!!!	getMinimumHorizontalSize() : Dimension
+        Dimension minHorizDim = (Dimension)DefaultLookup.get(slider,
+                this, "Slider.minimumHorizontalSize");
+        if (minHorizDim == null) {
+            minHorizDim = new Dimension(36, 21);
+        }
+        return minHorizDim;
+!!!2623746.java!!!	getMinimumVerticalSize() : Dimension
+        Dimension minVertDim = (Dimension)DefaultLookup.get(slider,
+                this, "Slider.minimumVerticalSize");
+        if (minVertDim == null) {
+            minVertDim = new Dimension(21, 36);
+        }
+        return minVertDim;
+!!!2623874.java!!!	getPreferredSize(inout c : JComponent) : Dimension
+        recalculateIfInsetsChanged();
+        Dimension d;
+        if ( slider.getOrientation() == JSlider.VERTICAL ) {
+            d = new Dimension(getPreferredVerticalSize());
+            d.width = insetCache.left + insetCache.right;
+            d.width += focusInsets.left + focusInsets.right;
+            d.width += trackRect.width + tickRect.width + labelRect.width;
+        }
+        else {
+            d = new Dimension(getPreferredHorizontalSize());
+            d.height = insetCache.top + insetCache.bottom;
+            d.height += focusInsets.top + focusInsets.bottom;
+            d.height += trackRect.height + tickRect.height + labelRect.height;
+        }
+
+        return d;
+!!!2624002.java!!!	getMinimumSize(inout c : JComponent) : Dimension
+        recalculateIfInsetsChanged();
+        Dimension d;
+
+        if ( slider.getOrientation() == JSlider.VERTICAL ) {
+            d = new Dimension(getMinimumVerticalSize());
+            d.width = insetCache.left + insetCache.right;
+            d.width += focusInsets.left + focusInsets.right;
+            d.width += trackRect.width + tickRect.width + labelRect.width;
+        }
+        else {
+            d = new Dimension(getMinimumHorizontalSize());
+            d.height = insetCache.top + insetCache.bottom;
+            d.height += focusInsets.top + focusInsets.bottom;
+            d.height += trackRect.height + tickRect.height + labelRect.height;
+        }
+
+        return d;
+!!!2624130.java!!!	getMaximumSize(inout c : JComponent) : Dimension
+        Dimension d = getPreferredSize(c);
+        if ( slider.getOrientation() == JSlider.VERTICAL ) {
+            d.height = Short.MAX_VALUE;
+        }
+        else {
+            d.width = Short.MAX_VALUE;
+        }
+
+        return d;
+!!!2624258.java!!!	calculateGeometry() : void
+        calculateFocusRect();
+        calculateContentRect();
+        calculateThumbSize();
+        calculateTrackBuffer();
+        calculateTrackRect();
+        calculateTickRect();
+        calculateLabelRect();
+        calculateThumbLocation();
+!!!2624386.java!!!	calculateFocusRect() : void
+        focusRect.x = insetCache.left;
+        focusRect.y = insetCache.top;
+        focusRect.width = slider.getWidth() - (insetCache.left + insetCache.right);
+        focusRect.height = slider.getHeight() - (insetCache.top + insetCache.bottom);
+!!!2624514.java!!!	calculateThumbSize() : void
+        Dimension size = getThumbSize();
+        thumbRect.setSize( size.width, size.height );
+!!!2624642.java!!!	calculateContentRect() : void
+        contentRect.x = focusRect.x + focusInsets.left;
+        contentRect.y = focusRect.y + focusInsets.top;
+        contentRect.width = focusRect.width - (focusInsets.left + focusInsets.right);
+        contentRect.height = focusRect.height - (focusInsets.top + focusInsets.bottom);
+!!!2624770.java!!!	getTickSpacing() : int
+        int majorTickSpacing = slider.getMajorTickSpacing();
+        int minorTickSpacing = slider.getMinorTickSpacing();
+
+        int result;
+
+        if (minorTickSpacing > 0) {
+            result = minorTickSpacing;
+        } else if (majorTickSpacing > 0) {
+            result = majorTickSpacing;
+        } else {
+            result = 0;
+        }
+
+        return result;
+!!!2624898.java!!!	calculateThumbLocation() : void
+        if ( slider.getSnapToTicks() ) {
+            int sliderValue = slider.getValue();
+            int snappedValue = sliderValue;
+            int tickSpacing = getTickSpacing();
+
+            if ( tickSpacing != 0 ) {
+                // If it's not on a tick, change the value
+                if ( (sliderValue - slider.getMinimum()) % tickSpacing != 0 ) {
+                    float temp = (float)(sliderValue - slider.getMinimum()) / (float)tickSpacing;
+                    int whichTick = Math.round( temp );
+
+                    // This is the fix for the bug #6401380
+                    if (temp - (int)temp == .5 && sliderValue < lastValue) {
+                      whichTick --;
+                    }
+                    snappedValue = slider.getMinimum() + (whichTick * tickSpacing);
+                }
+
+                if( snappedValue != sliderValue ) {
+                    slider.setValue( snappedValue );
+                }
+            }
+        }
+
+        if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+            int valuePosition = xPositionForValue(slider.getValue());
+
+            thumbRect.x = valuePosition - (thumbRect.width / 2);
+            thumbRect.y = trackRect.y;
+        }
+        else {
+            int valuePosition = yPositionForValue(slider.getValue());
+
+            thumbRect.x = trackRect.x;
+            thumbRect.y = valuePosition - (thumbRect.height / 2);
+        }
+!!!2625026.java!!!	calculateTrackBuffer() : void
+        if ( slider.getPaintLabels() && slider.getLabelTable()  != null ) {
+            Component highLabel = getHighestValueLabel();
+            Component lowLabel = getLowestValueLabel();
+
+            if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+                trackBuffer = Math.max( highLabel.getBounds().width, lowLabel.getBounds().width ) / 2;
+                trackBuffer = Math.max( trackBuffer, thumbRect.width / 2 );
+            }
+            else {
+                trackBuffer = Math.max( highLabel.getBounds().height, lowLabel.getBounds().height ) / 2;
+                trackBuffer = Math.max( trackBuffer, thumbRect.height / 2 );
+            }
+        }
+        else {
+            if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+                trackBuffer = thumbRect.width / 2;
+            }
+            else {
+                trackBuffer = thumbRect.height / 2;
+            }
+        }
+!!!2625154.java!!!	calculateTrackRect() : void
+        int centerSpacing; // used to center sliders added using BorderLayout.CENTER (bug 4275631)
+        if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+            centerSpacing = thumbRect.height;
+            if ( slider.getPaintTicks() ) centerSpacing += getTickLength();
+            if ( slider.getPaintLabels() ) centerSpacing += getHeightOfTallestLabel();
+            trackRect.x = contentRect.x + trackBuffer;
+            trackRect.y = contentRect.y + (contentRect.height - centerSpacing - 1)/2;
+            trackRect.width = contentRect.width - (trackBuffer * 2);
+            trackRect.height = thumbRect.height;
+        }
+        else {
+            centerSpacing = thumbRect.width;
+            if (BasicGraphicsUtils.isLeftToRight(slider)) {
+                if ( slider.getPaintTicks() ) centerSpacing += getTickLength();
+                if ( slider.getPaintLabels() ) centerSpacing += getWidthOfWidestLabel();
+            } else {
+                if ( slider.getPaintTicks() ) centerSpacing -= getTickLength();
+                if ( slider.getPaintLabels() ) centerSpacing -= getWidthOfWidestLabel();
+            }
+            trackRect.x = contentRect.x + (contentRect.width - centerSpacing - 1)/2;
+            trackRect.y = contentRect.y + trackBuffer;
+            trackRect.width = thumbRect.width;
+            trackRect.height = contentRect.height - (trackBuffer * 2);
+        }
+
+!!!2625282.java!!!	getTickLength() : int
+        return 8;
+!!!2625410.java!!!	calculateTickRect() : void
+        if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+            tickRect.x = trackRect.x;
+            tickRect.y = trackRect.y + trackRect.height;
+            tickRect.width = trackRect.width;
+            tickRect.height = (slider.getPaintTicks()) ? getTickLength() : 0;
+        }
+        else {
+            tickRect.width = (slider.getPaintTicks()) ? getTickLength() : 0;
+            if(BasicGraphicsUtils.isLeftToRight(slider)) {
+                tickRect.x = trackRect.x + trackRect.width;
+            }
+            else {
+                tickRect.x = trackRect.x - tickRect.width;
+            }
+            tickRect.y = trackRect.y;
+            tickRect.height = trackRect.height;
+        }
+!!!2625538.java!!!	calculateLabelRect() : void
+        if ( slider.getPaintLabels() ) {
+            if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+                labelRect.x = tickRect.x - trackBuffer;
+                labelRect.y = tickRect.y + tickRect.height;
+                labelRect.width = tickRect.width + (trackBuffer * 2);
+                labelRect.height = getHeightOfTallestLabel();
+            }
+            else {
+                if(BasicGraphicsUtils.isLeftToRight(slider)) {
+                    labelRect.x = tickRect.x + tickRect.width;
+                    labelRect.width = getWidthOfWidestLabel();
+                }
+                else {
+                    labelRect.width = getWidthOfWidestLabel();
+                    labelRect.x = tickRect.x - labelRect.width;
+                }
+                labelRect.y = tickRect.y - trackBuffer;
+                labelRect.height = tickRect.height + (trackBuffer * 2);
+            }
+        }
+        else {
+            if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+                labelRect.x = tickRect.x;
+                labelRect.y = tickRect.y + tickRect.height;
+                labelRect.width = tickRect.width;
+                labelRect.height = 0;
+            }
+            else {
+                if(BasicGraphicsUtils.isLeftToRight(slider)) {
+                    labelRect.x = tickRect.x + tickRect.width;
+                }
+                else {
+                    labelRect.x = tickRect.x;
+                }
+                labelRect.y = tickRect.y;
+                labelRect.width = 0;
+                labelRect.height = tickRect.height;
+            }
+        }
+!!!2625666.java!!!	getThumbSize() : Dimension
+        Dimension size = new Dimension();
+
+        if ( slider.getOrientation() == JSlider.VERTICAL ) {
+            size.width = 20;
+            size.height = 11;
+        }
+        else {
+            size.width = 11;
+            size.height = 20;
+        }
+
+        return size;
+!!!2625922.java!!!	getWidthOfWidestLabel() : int
+        Dictionary dictionary = slider.getLabelTable();
+        int widest = 0;
+        if ( dictionary != null ) {
+            Enumeration keys = dictionary.keys();
+            while ( keys.hasMoreElements() ) {
+                JComponent label = (JComponent) dictionary.get(keys.nextElement());
+                widest = Math.max( label.getPreferredSize().width, widest );
+            }
+        }
+        return widest;
+!!!2626050.java!!!	getHeightOfTallestLabel() : int
+        Dictionary dictionary = slider.getLabelTable();
+        int tallest = 0;
+        if ( dictionary != null ) {
+            Enumeration keys = dictionary.keys();
+            while ( keys.hasMoreElements() ) {
+                JComponent label = (JComponent) dictionary.get(keys.nextElement());
+                tallest = Math.max( label.getPreferredSize().height, tallest );
+            }
+        }
+        return tallest;
+!!!2626178.java!!!	getWidthOfHighValueLabel() : int
+        Component label = getHighestValueLabel();
+        int width = 0;
+
+        if ( label != null ) {
+            width = label.getPreferredSize().width;
+        }
+
+        return width;
+!!!2626306.java!!!	getWidthOfLowValueLabel() : int
+        Component label = getLowestValueLabel();
+        int width = 0;
+
+        if ( label != null ) {
+            width = label.getPreferredSize().width;
+        }
+
+        return width;
+!!!2626434.java!!!	getHeightOfHighValueLabel() : int
+        Component label = getHighestValueLabel();
+        int height = 0;
+
+        if ( label != null ) {
+            height = label.getPreferredSize().height;
+        }
+
+        return height;
+!!!2626562.java!!!	getHeightOfLowValueLabel() : int
+        Component label = getLowestValueLabel();
+        int height = 0;
+
+        if ( label != null ) {
+            height = label.getPreferredSize().height;
+        }
+
+        return height;
+!!!2626690.java!!!	drawInverted() : boolean
+        if (slider.getOrientation()==JSlider.HORIZONTAL) {
+            if(BasicGraphicsUtils.isLeftToRight(slider)) {
+                return slider.getInverted();
+            } else {
+                return !slider.getInverted();
+            }
+        } else {
+            return slider.getInverted();
+        }
+!!!2626818.java!!!	getHighestValue() : Integer
+        Dictionary dictionary = slider.getLabelTable();
+
+        if (dictionary == null) {
+            return null;
+        }
+
+        Enumeration keys = dictionary.keys();
+
+        Integer max = null;
+
+        while (keys.hasMoreElements()) {
+            Integer i = (Integer) keys.nextElement();
+
+            if (max == null || i > max) {
+                max = i;
+            }
+        }
+
+        return max;
+!!!2626946.java!!!	getLowestValue() : Integer
+        Dictionary dictionary = slider.getLabelTable();
+
+        if (dictionary == null) {
+            return null;
+        }
+
+        Enumeration keys = dictionary.keys();
+
+        Integer min = null;
+
+        while (keys.hasMoreElements()) {
+            Integer i = (Integer) keys.nextElement();
+
+            if (min == null || i < min) {
+                min = i;
+            }
+        }
+
+        return min;
+!!!2627074.java!!!	getLowestValueLabel() : Component
+        Integer min = getLowestValue();
+        if (min != null) {
+            return (Component)slider.getLabelTable().get(min);
+        }
+        return null;
+!!!2627202.java!!!	getHighestValueLabel() : Component
+        Integer max = getHighestValue();
+        if (max != null) {
+            return (Component)slider.getLabelTable().get(max);
+        }
+        return null;
+!!!2627330.java!!!	paint(inout g : Graphics, inout c : JComponent) : void
+        recalculateIfInsetsChanged();
+        recalculateIfOrientationChanged();
+        Rectangle clip = g.getClipBounds();
+
+        if ( !clip.intersects(trackRect) && slider.getPaintTrack())
+            calculateGeometry();
+
+        if ( slider.getPaintTrack() && clip.intersects( trackRect ) ) {
+            paintTrack( g );
+        }
+        if ( slider.getPaintTicks() && clip.intersects( tickRect ) ) {
+            paintTicks( g );
+        }
+        if ( slider.getPaintLabels() && clip.intersects( labelRect ) ) {
+            paintLabels( g );
+        }
+        if ( slider.hasFocus() && clip.intersects( focusRect ) ) {
+            paintFocus( g );
+        }
+        if ( clip.intersects( thumbRect ) ) {
+            paintThumb( g );
+        }
+!!!2627458.java!!!	recalculateIfInsetsChanged() : void
+        Insets newInsets = slider.getInsets();
+        if ( !newInsets.equals( insetCache ) ) {
+            insetCache = newInsets;
+            calculateGeometry();
+        }
+!!!2627586.java!!!	recalculateIfOrientationChanged() : void
+        boolean ltr = BasicGraphicsUtils.isLeftToRight(slider);
+        if ( ltr!=leftToRightCache ) {
+            leftToRightCache = ltr;
+            calculateGeometry();
+        }
+!!!2627714.java!!!	paintFocus(inout g : Graphics) : void
+        g.setColor( getFocusColor() );
+
+        BasicGraphicsUtils.drawDashedRect( g, focusRect.x, focusRect.y,
+                                           focusRect.width, focusRect.height );
+!!!2627842.java!!!	paintTrack(inout g : Graphics) : void
+
+        Rectangle trackBounds = trackRect;
+
+        if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+            int cy = (trackBounds.height / 2) - 2;
+            int cw = trackBounds.width;
+
+            g.translate(trackBounds.x, trackBounds.y + cy);
+
+            g.setColor(getShadowColor());
+            g.drawLine(0, 0, cw - 1, 0);
+            g.drawLine(0, 1, 0, 2);
+            g.setColor(getHighlightColor());
+            g.drawLine(0, 3, cw, 3);
+            g.drawLine(cw, 0, cw, 3);
+            g.setColor(Color.black);
+            g.drawLine(1, 1, cw-2, 1);
+
+            g.translate(-trackBounds.x, -(trackBounds.y + cy));
+        }
+        else {
+            int cx = (trackBounds.width / 2) - 2;
+            int ch = trackBounds.height;
+
+            g.translate(trackBounds.x + cx, trackBounds.y);
+
+            g.setColor(getShadowColor());
+            g.drawLine(0, 0, 0, ch - 1);
+            g.drawLine(1, 0, 2, 0);
+            g.setColor(getHighlightColor());
+            g.drawLine(3, 0, 3, ch);
+            g.drawLine(0, ch, 3, ch);
+            g.setColor(Color.black);
+            g.drawLine(1, 1, 1, ch-2);
+
+            g.translate(-(trackBounds.x + cx), -trackBounds.y);
+        }
+!!!2627970.java!!!	paintTicks(inout g : Graphics) : void
+        Rectangle tickBounds = tickRect;
+
+        g.setColor(DefaultLookup.getColor(slider, this, "Slider.tickColor", Color.black));
+
+        if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+            g.translate(0, tickBounds.y);
+
+            if (slider.getMinorTickSpacing() > 0) {
+                int value = slider.getMinimum();
+
+                while ( value <= slider.getMaximum() ) {
+                    int xPos = xPositionForValue(value);
+                    paintMinorTickForHorizSlider( g, tickBounds, xPos );
+
+                    // Overflow checking
+                    if (Integer.MAX_VALUE - slider.getMinorTickSpacing() < value) {
+                        break;
+                    }
+
+                    value += slider.getMinorTickSpacing();
+                }
+            }
+
+            if (slider.getMajorTickSpacing() > 0) {
+                int value = slider.getMinimum();
+
+                while ( value <= slider.getMaximum() ) {
+                    int xPos = xPositionForValue(value);
+                    paintMajorTickForHorizSlider( g, tickBounds, xPos );
+
+                    // Overflow checking
+                    if (Integer.MAX_VALUE - slider.getMajorTickSpacing() < value) {
+                        break;
+                    }
+
+                    value += slider.getMajorTickSpacing();
+                }
+            }
+
+            g.translate( 0, -tickBounds.y);
+        } else {
+            g.translate(tickBounds.x, 0);
+
+            if (slider.getMinorTickSpacing() > 0) {
+                int offset = 0;
+                if(!BasicGraphicsUtils.isLeftToRight(slider)) {
+                    offset = tickBounds.width - tickBounds.width / 2;
+                    g.translate(offset, 0);
+                }
+
+                int value = slider.getMinimum();
+
+                while (value <= slider.getMaximum()) {
+                    int yPos = yPositionForValue(value);
+                    paintMinorTickForVertSlider( g, tickBounds, yPos );
+
+                    // Overflow checking
+                    if (Integer.MAX_VALUE - slider.getMinorTickSpacing() < value) {
+                        break;
+                    }
+
+                    value += slider.getMinorTickSpacing();
+                }
+
+                if(!BasicGraphicsUtils.isLeftToRight(slider)) {
+                    g.translate(-offset, 0);
+                }
+            }
+
+            if (slider.getMajorTickSpacing() > 0) {
+                if(!BasicGraphicsUtils.isLeftToRight(slider)) {
+                    g.translate(2, 0);
+                }
+
+                int value = slider.getMinimum();
+
+                while (value <= slider.getMaximum()) {
+                    int yPos = yPositionForValue(value);
+                    paintMajorTickForVertSlider( g, tickBounds, yPos );
+
+                    // Overflow checking
+                    if (Integer.MAX_VALUE - slider.getMajorTickSpacing() < value) {
+                        break;
+                    }
+
+                    value += slider.getMajorTickSpacing();
+                }
+
+                if(!BasicGraphicsUtils.isLeftToRight(slider)) {
+                    g.translate(-2, 0);
+                }
+            }
+            g.translate(-tickBounds.x, 0);
+        }
+!!!2628098.java!!!	paintMinorTickForHorizSlider(inout g : Graphics, inout tickBounds : Rectangle, in x : int) : void
+        g.drawLine( x, 0, x, tickBounds.height / 2 - 1 );
+!!!2628226.java!!!	paintMajorTickForHorizSlider(inout g : Graphics, inout tickBounds : Rectangle, in x : int) : void
+        g.drawLine( x, 0, x, tickBounds.height - 2 );
+!!!2628354.java!!!	paintMinorTickForVertSlider(inout g : Graphics, inout tickBounds : Rectangle, in y : int) : void
+        g.drawLine( 0, y, tickBounds.width / 2 - 1, y );
+!!!2628482.java!!!	paintMajorTickForVertSlider(inout g : Graphics, inout tickBounds : Rectangle, in y : int) : void
+        g.drawLine( 0, y,  tickBounds.width - 2, y );
+!!!2628610.java!!!	paintLabels(inout g : Graphics) : void
+        Rectangle labelBounds = labelRect;
+
+        Dictionary dictionary = slider.getLabelTable();
+        if ( dictionary != null ) {
+            Enumeration keys = dictionary.keys();
+            int minValue = slider.getMinimum();
+            int maxValue = slider.getMaximum();
+            boolean enabled = slider.isEnabled();
+            while ( keys.hasMoreElements() ) {
+                Integer key = (Integer)keys.nextElement();
+                int value = key.intValue();
+                if (value >= minValue && value <= maxValue) {
+                    JComponent label = (JComponent) dictionary.get(key);
+                    label.setEnabled(enabled);
+
+                    if (label instanceof JLabel) {
+                        Icon icon = label.isEnabled() ? ((JLabel) label).getIcon() : ((JLabel) label).getDisabledIcon();
+
+                        if (icon instanceof ImageIcon) {
+                            // Register Slider as an image observer. It allows to catch notifications about
+                            // image changes (e.g. gif animation)
+                            Toolkit.getDefaultToolkit().checkImage(((ImageIcon) icon).getImage(), -1, -1, slider);
+                        }
+                    }
+
+                    if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+                        g.translate( 0, labelBounds.y );
+                        paintHorizontalLabel( g, value, label );
+                        g.translate( 0, -labelBounds.y );
+                    }
+                    else {
+                        int offset = 0;
+                        if (!BasicGraphicsUtils.isLeftToRight(slider)) {
+                            offset = labelBounds.width -
+                                label.getPreferredSize().width;
+                        }
+                        g.translate( labelBounds.x + offset, 0 );
+                        paintVerticalLabel( g, value, label );
+                        g.translate( -labelBounds.x - offset, 0 );
+                    }
+                }
+            }
+        }
+
+!!!2628738.java!!!	paintHorizontalLabel(inout g : Graphics, in value : int, inout label : Component) : void
+        int labelCenter = xPositionForValue( value );
+        int labelLeft = labelCenter - (label.getPreferredSize().width / 2);
+        g.translate( labelLeft, 0 );
+        label.paint( g );
+        g.translate( -labelLeft, 0 );
+!!!2628866.java!!!	paintVerticalLabel(inout g : Graphics, in value : int, inout label : Component) : void
+        int labelCenter = yPositionForValue( value );
+        int labelTop = labelCenter - (label.getPreferredSize().height / 2);
+        g.translate( 0, labelTop );
+        label.paint( g );
+        g.translate( 0, -labelTop );
+!!!2628994.java!!!	paintThumb(inout g : Graphics) : void
+        Rectangle knobBounds = thumbRect;
+        int w = knobBounds.width;
+        int h = knobBounds.height;
+
+        g.translate(knobBounds.x, knobBounds.y);
+
+        if ( slider.isEnabled() ) {
+            g.setColor(slider.getBackground());
+        }
+        else {
+            g.setColor(slider.getBackground().darker());
+        }
+
+        Boolean paintThumbArrowShape =
+            (Boolean)slider.getClientProperty("Slider.paintThumbArrowShape");
+
+        if ((!slider.getPaintTicks() && paintThumbArrowShape == null) ||
+            paintThumbArrowShape == Boolean.FALSE) {
+
+            // "plain" version
+            g.fillRect(0, 0, w, h);
+
+            g.setColor(Color.black);
+            g.drawLine(0, h-1, w-1, h-1);
+            g.drawLine(w-1, 0, w-1, h-1);
+
+            g.setColor(highlightColor);
+            g.drawLine(0, 0, 0, h-2);
+            g.drawLine(1, 0, w-2, 0);
+
+            g.setColor(shadowColor);
+            g.drawLine(1, h-2, w-2, h-2);
+            g.drawLine(w-2, 1, w-2, h-3);
+        }
+        else if ( slider.getOrientation() == JSlider.HORIZONTAL ) {
+            int cw = w / 2;
+            g.fillRect(1, 1, w-3, h-1-cw);
+            Polygon p = new Polygon();
+            p.addPoint(1, h-cw);
+            p.addPoint(cw-1, h-1);
+            p.addPoint(w-2, h-1-cw);
+            g.fillPolygon(p);
+
+            g.setColor(highlightColor);
+            g.drawLine(0, 0, w-2, 0);
+            g.drawLine(0, 1, 0, h-1-cw);
+            g.drawLine(0, h-cw, cw-1, h-1);
+
+            g.setColor(Color.black);
+            g.drawLine(w-1, 0, w-1, h-2-cw);
+            g.drawLine(w-1, h-1-cw, w-1-cw, h-1);
+
+            g.setColor(shadowColor);
+            g.drawLine(w-2, 1, w-2, h-2-cw);
+            g.drawLine(w-2, h-1-cw, w-1-cw, h-2);
+        }
+        else {  // vertical
+            int cw = h / 2;
+            if(BasicGraphicsUtils.isLeftToRight(slider)) {
+                  g.fillRect(1, 1, w-1-cw, h-3);
+                  Polygon p = new Polygon();
+                  p.addPoint(w-cw-1, 0);
+                  p.addPoint(w-1, cw);
+                  p.addPoint(w-1-cw, h-2);
+                  g.fillPolygon(p);
+
+                  g.setColor(highlightColor);
+                  g.drawLine(0, 0, 0, h - 2);                  // left
+                  g.drawLine(1, 0, w-1-cw, 0);                 // top
+                  g.drawLine(w-cw-1, 0, w-1, cw);              // top slant
+
+                  g.setColor(Color.black);
+                  g.drawLine(0, h-1, w-2-cw, h-1);             // bottom
+                  g.drawLine(w-1-cw, h-1, w-1, h-1-cw);        // bottom slant
+
+                  g.setColor(shadowColor);
+                  g.drawLine(1, h-2, w-2-cw,  h-2 );         // bottom
+                  g.drawLine(w-1-cw, h-2, w-2, h-cw-1 );     // bottom slant
+            }
+            else {
+                  g.fillRect(5, 1, w-1-cw, h-3);
+                  Polygon p = new Polygon();
+                  p.addPoint(cw, 0);
+                  p.addPoint(0, cw);
+                  p.addPoint(cw, h-2);
+                  g.fillPolygon(p);
+
+                  g.setColor(highlightColor);
+                  g.drawLine(cw-1, 0, w-2, 0);             // top
+                  g.drawLine(0, cw, cw, 0);                // top slant
+
+                  g.setColor(Color.black);
+                  g.drawLine(0, h-1-cw, cw, h-1 );         // bottom slant
+                  g.drawLine(cw, h-1, w-1, h-1);           // bottom
+
+                  g.setColor(shadowColor);
+                  g.drawLine(cw, h-2, w-2,  h-2 );         // bottom
+                  g.drawLine(w-1, 1, w-1,  h-2 );          // right
+            }
+        }
+
+        g.translate(-knobBounds.x, -knobBounds.y);
+!!!2629122.java!!!	setThumbLocation(in x : int, in y : int) : void
+        unionRect.setBounds( thumbRect );
+
+        thumbRect.setLocation( x, y );
+
+        SwingUtilities.computeUnion( thumbRect.x, thumbRect.y, thumbRect.width, thumbRect.height, unionRect );
+        slider.repaint( unionRect.x, unionRect.y, unionRect.width, unionRect.height );
+!!!2629250.java!!!	scrollByBlock(in direction : int) : void
+        synchronized(slider)    {
+            int blockIncrement =
+                (slider.getMaximum() - slider.getMinimum()) / 10;
+            if (blockIncrement == 0) {
+                blockIncrement = 1;
+            }
+
+            if (slider.getSnapToTicks()) {
+                int tickSpacing = getTickSpacing();
+
+                if (blockIncrement < tickSpacing) {
+                    blockIncrement = tickSpacing;
+                }
+            }
+
+            int delta = blockIncrement * ((direction > 0) ? POSITIVE_SCROLL : NEGATIVE_SCROLL);
+            slider.setValue(slider.getValue() + delta);
+        }
+!!!2629378.java!!!	scrollByUnit(in direction : int) : void
+        synchronized(slider)    {
+            int delta = ((direction > 0) ? POSITIVE_SCROLL : NEGATIVE_SCROLL);
+
+            if (slider.getSnapToTicks()) {
+                delta *= getTickSpacing();
+            }
+
+            slider.setValue(slider.getValue() + delta);
+        }
+!!!2629506.java!!!	scrollDueToClickInTrack(in dir : int) : void
+        scrollByBlock( dir );
+!!!2629634.java!!!	xPositionForValue(in value : int) : int
+        int min = slider.getMinimum();
+        int max = slider.getMaximum();
+        int trackLength = trackRect.width;
+        double valueRange = (double)max - (double)min;
+        double pixelsPerValue = (double)trackLength / valueRange;
+        int trackLeft = trackRect.x;
+        int trackRight = trackRect.x + (trackRect.width - 1);
+        int xPosition;
+
+        if ( !drawInverted() ) {
+            xPosition = trackLeft;
+            xPosition += Math.round( pixelsPerValue * ((double)value - min) );
+        }
+        else {
+            xPosition = trackRight;
+            xPosition -= Math.round( pixelsPerValue * ((double)value - min) );
+        }
+
+        xPosition = Math.max( trackLeft, xPosition );
+        xPosition = Math.min( trackRight, xPosition );
+
+        return xPosition;
+!!!2629762.java!!!	yPositionForValue(in value : int) : int
+        return yPositionForValue(value, trackRect.y, trackRect.height);
+!!!2629890.java!!!	yPositionForValue(in value : int, in trackY : int, in trackHeight : int) : int
+        int min = slider.getMinimum();
+        int max = slider.getMaximum();
+        double valueRange = (double)max - (double)min;
+        double pixelsPerValue = (double)trackHeight / valueRange;
+        int trackBottom = trackY + (trackHeight - 1);
+        int yPosition;
+
+        if ( !drawInverted() ) {
+            yPosition = trackY;
+            yPosition += Math.round( pixelsPerValue * ((double)max - value ) );
+        }
+        else {
+            yPosition = trackY;
+            yPosition += Math.round( pixelsPerValue * ((double)value - min) );
+        }
+
+        yPosition = Math.max( trackY, yPosition );
+        yPosition = Math.min( trackBottom, yPosition );
+
+        return yPosition;
+!!!2630018.java!!!	valueForYPosition(in yPos : int) : int
+        int value;
+        final int minValue = slider.getMinimum();
+        final int maxValue = slider.getMaximum();
+        final int trackLength = trackRect.height;
+        final int trackTop = trackRect.y;
+        final int trackBottom = trackRect.y + (trackRect.height - 1);
+
+        if ( yPos <= trackTop ) {
+            value = drawInverted() ? minValue : maxValue;
+        }
+        else if ( yPos >= trackBottom ) {
+            value = drawInverted() ? maxValue : minValue;
+        }
+        else {
+            int distanceFromTrackTop = yPos - trackTop;
+            double valueRange = (double)maxValue - (double)minValue;
+            double valuePerPixel = valueRange / (double)trackLength;
+            int valueFromTrackTop = (int)Math.round( distanceFromTrackTop * valuePerPixel );
+
+            value = drawInverted() ? minValue + valueFromTrackTop : maxValue - valueFromTrackTop;
+        }
+
+        return value;
+!!!2630146.java!!!	valueForXPosition(in xPos : int) : int
+        int value;
+        final int minValue = slider.getMinimum();
+        final int maxValue = slider.getMaximum();
+        final int trackLength = trackRect.width;
+        final int trackLeft = trackRect.x;
+        final int trackRight = trackRect.x + (trackRect.width - 1);
+
+        if ( xPos <= trackLeft ) {
+            value = drawInverted() ? maxValue : minValue;
+        }
+        else if ( xPos >= trackRight ) {
+            value = drawInverted() ? minValue : maxValue;
+        }
+        else {
+            int distanceFromTrackLeft = xPos - trackLeft;
+            double valueRange = (double)maxValue - (double)minValue;
+            double valuePerPixel = valueRange / (double)trackLength;
+            int valueFromTrackLeft = (int)Math.round( distanceFromTrackLeft * valuePerPixel );
+
+            value = drawInverted() ? maxValue - valueFromTrackLeft :
+              minValue + valueFromTrackLeft;
+        }
+
+        return value;

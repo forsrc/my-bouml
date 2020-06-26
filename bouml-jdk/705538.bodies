@@ -1,0 +1,128 @@
+class ValueStoreCache
+!!!4683650.java!!!	startDocument() : void
+            fValueStores.removeAllElements();
+            fIdentityConstraint2ValueStoreMap.clear();
+            fGlobalIDConstraintMap.clear();
+            fGlobalMapStack.removeAllElements();
+!!!4683778.java!!!	startElement() : void
+            // only clone the hashtable when there are elements
+            if (fGlobalIDConstraintMap.size() > 0)
+                fGlobalMapStack.push((Map<IdentityConstraint, ValueStoreBase>)
+                        ((HashMap)fGlobalIDConstraintMap).clone());
+            else
+                fGlobalMapStack.push(null);
+            fGlobalIDConstraintMap.clear();
+!!!4683906.java!!!	endElement() : void
+            if (fGlobalMapStack.isEmpty()) {
+                return; // must be an invalid doc!
+            }
+            Map<IdentityConstraint, ValueStoreBase> oldMap = fGlobalMapStack.pop();
+            // return if there is no element
+            if (oldMap == null) {
+                return;
+            }
+
+            for (Map.Entry<IdentityConstraint, ValueStoreBase> entry : oldMap.entrySet()) {
+                IdentityConstraint id = entry.getKey();
+                ValueStoreBase oldVal = entry.getValue();
+                if (oldVal != null) {
+                    ValueStoreBase currVal = fGlobalIDConstraintMap.get(id);
+                    if (currVal == null) {
+                        fGlobalIDConstraintMap.put(id, oldVal);
+                    }
+                    else if (currVal != oldVal) {
+                        currVal.append(oldVal);
+                    }
+                }
+            }
+!!!4684034.java!!!	initValueStoresFor(inout eDecl : XSElementDecl, inout activator : FieldActivator) : void
+            // initialize value stores for unique fields
+            IdentityConstraint[] icArray = eDecl.fIDConstraints;
+            int icCount = eDecl.fIDCPos;
+            for (int i = 0; i < icCount; i++) {
+                switch (icArray[i].getCategory()) {
+                    case (IdentityConstraint.IC_UNIQUE) :
+                        // initialize value stores for unique fields
+                        UniqueOrKey unique = (UniqueOrKey) icArray[i];
+                        LocalIDKey toHash = new LocalIDKey(unique, fElementDepth);
+                        UniqueValueStore uniqueValueStore =
+                            (UniqueValueStore) fIdentityConstraint2ValueStoreMap.get(toHash);
+                        if (uniqueValueStore == null) {
+                            uniqueValueStore = new UniqueValueStore(unique);
+                            fIdentityConstraint2ValueStoreMap.put(toHash, uniqueValueStore);
+                        } else {
+                            uniqueValueStore.clear();
+                        }
+                        fValueStores.addElement(uniqueValueStore);
+                        activateSelectorFor(icArray[i]);
+                        break;
+                    case (IdentityConstraint.IC_KEY) :
+                        // initialize value stores for key fields
+                        UniqueOrKey key = (UniqueOrKey) icArray[i];
+                        toHash = new LocalIDKey(key, fElementDepth);
+                        KeyValueStore keyValueStore =
+                            (KeyValueStore) fIdentityConstraint2ValueStoreMap.get(toHash);
+                        if (keyValueStore == null) {
+                            keyValueStore = new KeyValueStore(key);
+                            fIdentityConstraint2ValueStoreMap.put(toHash, keyValueStore);
+                        } else {
+                            keyValueStore.clear();
+                        }
+                        fValueStores.addElement(keyValueStore);
+                        activateSelectorFor(icArray[i]);
+                        break;
+                    case (IdentityConstraint.IC_KEYREF) :
+                        // initialize value stores for keyRef fields
+                        KeyRef keyRef = (KeyRef) icArray[i];
+                        toHash = new LocalIDKey(keyRef, fElementDepth);
+                        KeyRefValueStore keyRefValueStore =
+                            (KeyRefValueStore) fIdentityConstraint2ValueStoreMap.get(toHash);
+                        if (keyRefValueStore == null) {
+                            keyRefValueStore = new KeyRefValueStore(keyRef, null);
+                            fIdentityConstraint2ValueStoreMap.put(toHash, keyRefValueStore);
+                        } else {
+                            keyRefValueStore.clear();
+                        }
+                        fValueStores.addElement(keyRefValueStore);
+                        activateSelectorFor(icArray[i]);
+                        break;
+                }
+            }
+!!!4684162.java!!!	getValueStoreFor(inout id : IdentityConstraint, in initialDepth : int) : XMLSchemaValidator::ValueStoreBase
+            fLocalId.fDepth = initialDepth;
+            fLocalId.fId = id;
+            return fIdentityConstraint2ValueStoreMap.get(fLocalId);
+!!!4684290.java!!!	getGlobalValueStoreFor(inout id : IdentityConstraint) : XMLSchemaValidator::ValueStoreBase
+            return fGlobalIDConstraintMap.get(id);
+!!!4684418.java!!!	transplant(inout id : IdentityConstraint, in initialDepth : int) : void
+            fLocalId.fDepth = initialDepth;
+            fLocalId.fId = id;
+            ValueStoreBase newVals = fIdentityConstraint2ValueStoreMap.get(fLocalId);
+            if (id.getCategory() == IdentityConstraint.IC_KEYREF)
+                return;
+            ValueStoreBase currVals = fGlobalIDConstraintMap.get(id);
+            if (currVals != null) {
+                currVals.append(newVals);
+                fGlobalIDConstraintMap.put(id, currVals);
+            } else
+                fGlobalIDConstraintMap.put(id, newVals);
+
+!!!4684546.java!!!	endDocument() : void
+
+            int count = fValueStores.size();
+            for (int i = 0; i < count; i++) {
+                ValueStoreBase valueStore = (ValueStoreBase) fValueStores.elementAt(i);
+                valueStore.endDocument();
+            }
+
+!!!4684674.java!!!	toString() : String
+            String s = super.toString();
+            int index1 = s.lastIndexOf('$');
+            if (index1 != -1) {
+                return s.substring(index1 + 1);
+            }
+            int index2 = s.lastIndexOf('.');
+            if (index2 != -1) {
+                return s.substring(index2 + 1);
+            }
+            return s;

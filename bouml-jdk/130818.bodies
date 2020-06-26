@@ -1,0 +1,1165 @@
+class Class
+!!!6986114.java!!!	Class(inout loader : ClassLoader)
+        // Initialize final field for classLoader.  The initialization value of non-null
+        // prevents future JIT optimizations from assuming this final field is null.
+        classLoader = loader;
+!!!6986242.java!!!	toString() : String
+        return (isInterface() ? "interface " : (isPrimitive() ? "" : "class "))
+            + getName();
+!!!6986370.java!!!	toGenericString() : String
+        if (isPrimitive()) {
+            return toString();
+        } else {
+            StringBuilder sb = new StringBuilder();
+
+            // Class modifiers are a superset of interface modifiers
+            int modifiers = getModifiers() & Modifier.classModifiers();
+            if (modifiers != 0) {
+                sb.append(Modifier.toString(modifiers));
+                sb.append(' ');
+            }
+
+            if (isAnnotation()) {
+                sb.append('@');
+            }
+            if (isInterface()) { // Note: all annotation types are interfaces
+                sb.append("interface");
+            } else {
+                if (isEnum())
+                    sb.append("enum");
+                else
+                    sb.append("class");
+            }
+            sb.append(' ');
+            sb.append(getName());
+
+            TypeVariable<?>[] typeparms = getTypeParameters();
+            if (typeparms.length > 0) {
+                boolean first = true;
+                sb.append('<');
+                for(TypeVariable<?> typeparm: typeparms) {
+                    if (!first)
+                        sb.append(',');
+                    sb.append(typeparm.getTypeName());
+                    first = false;
+                }
+                sb.append('>');
+            }
+
+            return sb.toString();
+        }
+!!!6986498.java!!!	forName(inout className : String) : Class
+        Class<?> caller = Reflection.getCallerClass();
+        return forName0(className, true, ClassLoader.getClassLoader(caller), caller);
+!!!6986626.java!!!	forName(inout name : String, inout initialize : boolean, inout loader : ClassLoader) : Class
+        Class<?> caller = null;
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            // Reflective call to get caller class is only needed if a security manager
+            // is present.  Avoid the overhead of making this call otherwise.
+            caller = Reflection.getCallerClass();
+            if (sun.misc.VM.isSystemDomainLoader(loader)) {
+                ClassLoader ccl = ClassLoader.getClassLoader(caller);
+                if (!sun.misc.VM.isSystemDomainLoader(ccl)) {
+                    sm.checkPermission(
+                        SecurityConstants.GET_CLASSLOADER_PERMISSION);
+                }
+            }
+        }
+        return forName0(name, initialize, loader, caller);
+!!!6986882.java!!!	newInstance() : T
+        if (System.getSecurityManager() != null) {
+            checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), false);
+        }
+
+        // NOTE: the following code may not be strictly correct under
+        // the current Java memory model.
+
+        // Constructor lookup
+        if (cachedConstructor == null) {
+            if (this == Class.class) {
+                throw new IllegalAccessException(
+                    "Can not call newInstance() on the Class for java.lang.Class"
+                );
+            }
+            try {
+                Class<?>[] empty = {};
+                final Constructor<T> c = getConstructor0(empty, Member.DECLARED);
+                // Disable accessibility checks on the constructor
+                // since we have to do the security check here anyway
+                // (the stack depth is wrong for the Constructor's
+                // security check to work)
+                java.security.AccessController.doPrivileged(
+                    new java.security.PrivilegedAction<Void>() {
+                        public Void run() {
+                                c.setAccessible(true);
+                                return null;
+                            }
+                        });
+                cachedConstructor = c;
+            } catch (NoSuchMethodException e) {
+                throw (InstantiationException)
+                    new InstantiationException(getName()).initCause(e);
+            }
+        }
+        Constructor<T> tmpConstructor = cachedConstructor;
+        // Security check (same as in java.lang.reflect.Constructor)
+        int modifiers = tmpConstructor.getModifiers();
+        if (!Reflection.quickCheckMemberAccess(this, modifiers)) {
+            Class<?> caller = Reflection.getCallerClass();
+            if (newInstanceCallerCache != caller) {
+                Reflection.ensureMemberAccess(caller, this, null, modifiers);
+                newInstanceCallerCache = caller;
+            }
+        }
+        // Run constructor
+        try {
+            return tmpConstructor.newInstance((Object[])null);
+        } catch (InvocationTargetException e) {
+            Unsafe.getUnsafe().throwException(e.getTargetException());
+            // Not reached
+            return null;
+        }
+!!!6987650.java!!!	isAnnotation() : boolean
+        return (getModifiers() & ANNOTATION) != 0;
+!!!6987778.java!!!	isSynthetic() : boolean
+        return (getModifiers() & SYNTHETIC) != 0;
+!!!6987906.java!!!	getName() : String
+        String name = this.name;
+        if (name == null)
+            this.name = name = getName0();
+        return name;
+!!!6988162.java!!!	getClassLoader() : ClassLoader
+        ClassLoader cl = getClassLoader0();
+        if (cl == null)
+            return null;
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            ClassLoader.checkClassLoaderPermission(cl, Reflection.getCallerClass());
+        }
+        return cl;
+!!!6988290.java!!!	getClassLoader0() : ClassLoader
+ return classLoader;
+!!!6988418.java!!!	getTypeParameters() : TypeVariable
+        ClassRepository info = getGenericInfo();
+        if (info != null)
+            return (TypeVariable<Class<T>>[])info.getTypeParameters();
+        else
+            return (TypeVariable<Class<T>>[])new TypeVariable<?>[0];
+!!!6988674.java!!!	getGenericSuperclass() : Type
+        ClassRepository info = getGenericInfo();
+        if (info == null) {
+            return getSuperclass();
+        }
+
+        // Historical irregularity:
+        // Generic signature marks interfaces with superclass = Object
+        // but this API returns null for interfaces
+        if (isInterface()) {
+            return null;
+        }
+
+        return info.getSuperclass();
+!!!6988802.java!!!	getPackage() : Package
+        return Package.getPackage(this);
+!!!6988930.java!!!	getInterfaces() : Class
+        ReflectionData<T> rd = reflectionData();
+        if (rd == null) {
+            // no cloning required
+            return getInterfaces0();
+        } else {
+            Class<?>[] interfaces = rd.interfaces;
+            if (interfaces == null) {
+                interfaces = getInterfaces0();
+                rd.interfaces = interfaces;
+            }
+            // defensively copy before handing over to user code
+            return interfaces.clone();
+        }
+!!!6989186.java!!!	getGenericInterfaces() : Type
+        ClassRepository info = getGenericInfo();
+        return (info == null) ?  getInterfaces() : info.getSuperInterfaces();
+!!!6989826.java!!!	getEnclosingMethod() : Method
+        EnclosingMethodInfo enclosingInfo = getEnclosingMethodInfo();
+
+        if (enclosingInfo == null)
+            return null;
+        else {
+            if (!enclosingInfo.isMethod())
+                return null;
+
+            MethodRepository typeInfo = MethodRepository.make(enclosingInfo.getDescriptor(),
+                                                              getFactory());
+            Class<?>   returnType       = toClass(typeInfo.getReturnType());
+            Type []    parameterTypes   = typeInfo.getParameterTypes();
+            Class<?>[] parameterClasses = new Class<?>[parameterTypes.length];
+
+            // Convert Types to Classes; returned types *should*
+            // be class objects since the methodDescriptor's used
+            // don't have generics information
+            for(int i = 0; i < parameterClasses.length; i++)
+                parameterClasses[i] = toClass(parameterTypes[i]);
+
+            // Perform access check
+            Class<?> enclosingCandidate = enclosingInfo.getEnclosingClass();
+            enclosingCandidate.checkMemberAccess(Member.DECLARED,
+                                                 Reflection.getCallerClass(), true);
+            /*
+             * Loop over all declared methods; match method name,
+             * number of and type of parameters, *and* return
+             * type.  Matching return type is also necessary
+             * because of covariant returns, etc.
+             */
+            for(Method m: enclosingCandidate.getDeclaredMethods()) {
+                if (m.getName().equals(enclosingInfo.getName()) ) {
+                    Class<?>[] candidateParamClasses = m.getParameterTypes();
+                    if (candidateParamClasses.length == parameterClasses.length) {
+                        boolean matches = true;
+                        for(int i = 0; i < candidateParamClasses.length; i++) {
+                            if (!candidateParamClasses[i].equals(parameterClasses[i])) {
+                                matches = false;
+                                break;
+                            }
+                        }
+
+                        if (matches) { // finally, check return type
+                            if (m.getReturnType().equals(returnType) )
+                                return m;
+                        }
+                    }
+                }
+            }
+
+            throw new InternalError("Enclosing method not found");
+        }
+!!!6990082.java!!!	getEnclosingMethodInfo() : Class::EnclosingMethodInfo
+        Object[] enclosingInfo = getEnclosingMethod0();
+        if (enclosingInfo == null)
+            return null;
+        else {
+            return new EnclosingMethodInfo(enclosingInfo);
+        }
+!!!6991106.java!!!	toClass(inout o : Type) : Class
+        if (o instanceof GenericArrayType)
+            return Array.newInstance(toClass(((GenericArrayType)o).getGenericComponentType()),
+                                     0)
+                .getClass();
+        return (Class<?>)o;
+!!!6991234.java!!!	getEnclosingConstructor() : Constructor
+        EnclosingMethodInfo enclosingInfo = getEnclosingMethodInfo();
+
+        if (enclosingInfo == null)
+            return null;
+        else {
+            if (!enclosingInfo.isConstructor())
+                return null;
+
+            ConstructorRepository typeInfo = ConstructorRepository.make(enclosingInfo.getDescriptor(),
+                                                                        getFactory());
+            Type []    parameterTypes   = typeInfo.getParameterTypes();
+            Class<?>[] parameterClasses = new Class<?>[parameterTypes.length];
+
+            // Convert Types to Classes; returned types *should*
+            // be class objects since the methodDescriptor's used
+            // don't have generics information
+            for(int i = 0; i < parameterClasses.length; i++)
+                parameterClasses[i] = toClass(parameterTypes[i]);
+
+            // Perform access check
+            Class<?> enclosingCandidate = enclosingInfo.getEnclosingClass();
+            enclosingCandidate.checkMemberAccess(Member.DECLARED,
+                                                 Reflection.getCallerClass(), true);
+            /*
+             * Loop over all declared constructors; match number
+             * of and type of parameters.
+             */
+            for(Constructor<?> c: enclosingCandidate.getDeclaredConstructors()) {
+                Class<?>[] candidateParamClasses = c.getParameterTypes();
+                if (candidateParamClasses.length == parameterClasses.length) {
+                    boolean matches = true;
+                    for(int i = 0; i < candidateParamClasses.length; i++) {
+                        if (!candidateParamClasses[i].equals(parameterClasses[i])) {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if (matches)
+                        return c;
+                }
+            }
+
+            throw new InternalError("Enclosing constructor not found");
+        }
+!!!6991362.java!!!	getDeclaringClass() : Class
+        final Class<?> candidate = getDeclaringClass0();
+
+        if (candidate != null)
+            candidate.checkPackageAccess(
+                    ClassLoader.getClassLoader(Reflection.getCallerClass()), true);
+        return candidate;
+!!!6991618.java!!!	getEnclosingClass() : Class
+        // There are five kinds of classes (or interfaces):
+        // a) Top level classes
+        // b) Nested classes (static member classes)
+        // c) Inner classes (non-static member classes)
+        // d) Local classes (named classes declared within a method)
+        // e) Anonymous classes
+
+
+        // JVM Spec 4.8.6: A class must have an EnclosingMethod
+        // attribute if and only if it is a local class or an
+        // anonymous class.
+        EnclosingMethodInfo enclosingInfo = getEnclosingMethodInfo();
+        Class<?> enclosingCandidate;
+
+        if (enclosingInfo == null) {
+            // This is a top level or a nested class or an inner class (a, b, or c)
+            enclosingCandidate = getDeclaringClass();
+        } else {
+            Class<?> enclosingClass = enclosingInfo.getEnclosingClass();
+            // This is a local class or an anonymous class (d or e)
+            if (enclosingClass == this || enclosingClass == null)
+                throw new InternalError("Malformed enclosing method information");
+            else
+                enclosingCandidate = enclosingClass;
+        }
+
+        if (enclosingCandidate != null)
+            enclosingCandidate.checkPackageAccess(
+                    ClassLoader.getClassLoader(Reflection.getCallerClass()), true);
+        return enclosingCandidate;
+!!!6991746.java!!!	getSimpleName() : String
+        if (isArray())
+            return getComponentType().getSimpleName()+"[]";
+
+        String simpleName = getSimpleBinaryName();
+        if (simpleName == null) { // top level class
+            simpleName = getName();
+            return simpleName.substring(simpleName.lastIndexOf(".")+1); // strip the package name
+        }
+        // According to JLS3 "Binary Compatibility" (13.1) the binary
+        // name of non-package classes (not top level) is the binary
+        // name of the immediately enclosing class followed by a '$' followed by:
+        // (for nested and inner classes): the simple name.
+        // (for local classes): 1 or more digits followed by the simple name.
+        // (for anonymous classes): 1 or more digits.
+
+        // Since getSimpleBinaryName() will strip the binary name of
+        // the immediatly enclosing class, we are now looking at a
+        // string that matches the regular expression "\$[0-9]*"
+        // followed by a simple name (considering the simple of an
+        // anonymous class to be the empty string).
+
+        // Remove leading "\$[0-9]*" from the name
+        int length = simpleName.length();
+        if (length < 1 || simpleName.charAt(0) != '$')
+            throw new InternalError("Malformed class name");
+        int index = 1;
+        while (index < length && isAsciiDigit(simpleName.charAt(index)))
+            index++;
+        // Eventually, this is the empty string iff this is an anonymous class
+        return simpleName.substring(index);
+!!!6991874.java!!!	getTypeName() : String
+        if (isArray()) {
+            try {
+                Class<?> cl = this;
+                int dimensions = 0;
+                while (cl.isArray()) {
+                    dimensions++;
+                    cl = cl.getComponentType();
+                }
+                StringBuilder sb = new StringBuilder();
+                sb.append(cl.getName());
+                for (int i = 0; i < dimensions; i++) {
+                    sb.append("[]");
+                }
+                return sb.toString();
+            } catch (Throwable e) { /*FALLTHRU*/ }
+        }
+        return getName();
+!!!6992002.java!!!	isAsciiDigit(in c : char) : boolean
+        return '0' <= c && c <= '9';
+!!!6992130.java!!!	getCanonicalName() : String
+        if (isArray()) {
+            String canonicalName = getComponentType().getCanonicalName();
+            if (canonicalName != null)
+                return canonicalName + "[]";
+            else
+                return null;
+        }
+        if (isLocalOrAnonymousClass())
+            return null;
+        Class<?> enclosingClass = getEnclosingClass();
+        if (enclosingClass == null) { // top level class
+            return getName();
+        } else {
+            String enclosingName = enclosingClass.getCanonicalName();
+            if (enclosingName == null)
+                return null;
+            return enclosingName + "." + getSimpleName();
+        }
+!!!6992258.java!!!	isAnonymousClass() : boolean
+        return "".equals(getSimpleName());
+!!!6992386.java!!!	isLocalClass() : boolean
+        return isLocalOrAnonymousClass() && !isAnonymousClass();
+!!!6992514.java!!!	isMemberClass() : boolean
+        return getSimpleBinaryName() != null && !isLocalOrAnonymousClass();
+!!!6992642.java!!!	getSimpleBinaryName() : String
+        Class<?> enclosingClass = getEnclosingClass();
+        if (enclosingClass == null) // top level class
+            return null;
+        // Otherwise, strip the enclosing class' name
+        try {
+            return getName().substring(enclosingClass.getName().length());
+        } catch (IndexOutOfBoundsException ex) {
+            throw new InternalError("Malformed class name", ex);
+        }
+!!!6992770.java!!!	isLocalOrAnonymousClass() : boolean
+        // JVM Spec 4.8.6: A class must have an EnclosingMethod
+        // attribute if and only if it is a local class or an
+        // anonymous class.
+        return getEnclosingMethodInfo() != null;
+!!!6992898.java!!!	getClasses() : Class
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), false);
+
+        // Privileged so this implementation can look at DECLARED classes,
+        // something the caller might not have privilege to do.  The code here
+        // is allowed to look at DECLARED classes because (1) it does not hand
+        // out anything other than public members and (2) public member access
+        // has already been ok'd by the SecurityManager.
+
+        return java.security.AccessController.doPrivileged(
+            new java.security.PrivilegedAction<Class<?>[]>() {
+                public Class<?>[] run() {
+                    List<Class<?>> list = new ArrayList<>();
+                    Class<?> currentClass = Class.this;
+                    while (currentClass != null) {
+                        Class<?>[] members = currentClass.getDeclaredClasses();
+                        for (int i = 0; i < members.length; i++) {
+                            if (Modifier.isPublic(members[i].getModifiers())) {
+                                list.add(members[i]);
+                            }
+                        }
+                        currentClass = currentClass.getSuperclass();
+                    }
+                    return list.toArray(new Class<?>[0]);
+                }
+            });
+!!!6993026.java!!!	getFields() : Field
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), true);
+        return copyFields(privateGetPublicFields(null));
+!!!6993154.java!!!	getMethods() : Method
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), true);
+        return copyMethods(privateGetPublicMethods());
+!!!6993282.java!!!	getConstructors() : Constructor
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), true);
+        return copyConstructors(privateGetDeclaredConstructors(true));
+!!!6993410.java!!!	getField(inout name : String) : Field
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), true);
+        Field field = getField0(name);
+        if (field == null) {
+            throw new NoSuchFieldException(name);
+        }
+        return field;
+!!!6993538.java!!!	getMethod(inout name : String, inout parameterTypes : Class<?>...) : Method
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), true);
+        Method method = getMethod0(name, parameterTypes, true);
+        if (method == null) {
+            throw new NoSuchMethodException(getName() + "." + name + argumentTypesToString(parameterTypes));
+        }
+        return method;
+!!!6993666.java!!!	getConstructor(inout parameterTypes : Class<?>...) : Constructor
+        checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), true);
+        return getConstructor0(parameterTypes, Member.PUBLIC);
+!!!6993794.java!!!	getDeclaredClasses() : Class
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), false);
+        return getDeclaredClasses0();
+!!!6993922.java!!!	getDeclaredFields() : Field
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), true);
+        return copyFields(privateGetDeclaredFields(false));
+!!!6994050.java!!!	getDeclaredMethods() : Method
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), true);
+        return copyMethods(privateGetDeclaredMethods(false));
+!!!6994178.java!!!	getDeclaredConstructors() : Constructor
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), true);
+        return copyConstructors(privateGetDeclaredConstructors(false));
+!!!6994306.java!!!	getDeclaredField(inout name : String) : Field
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), true);
+        Field field = searchFields(privateGetDeclaredFields(false), name);
+        if (field == null) {
+            throw new NoSuchFieldException(name);
+        }
+        return field;
+!!!6994434.java!!!	getDeclaredMethod(inout name : String, inout parameterTypes : Class<?>...) : Method
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), true);
+        Method method = searchMethods(privateGetDeclaredMethods(false), name, parameterTypes);
+        if (method == null) {
+            throw new NoSuchMethodException(getName() + "." + name + argumentTypesToString(parameterTypes));
+        }
+        return method;
+!!!6994562.java!!!	getDeclaredConstructor(inout parameterTypes : Class<?>...) : Constructor
+        checkMemberAccess(Member.DECLARED, Reflection.getCallerClass(), true);
+        return getConstructor0(parameterTypes, Member.DECLARED);
+!!!6994690.java!!!	getResourceAsStream(inout name : String) : InputStream
+        name = resolveName(name);
+        ClassLoader cl = getClassLoader0();
+        if (cl==null) {
+            // A system class.
+            return ClassLoader.getSystemResourceAsStream(name);
+        }
+        return cl.getResourceAsStream(name);
+!!!6994818.java!!!	getResource(inout name : String) : URL
+        name = resolveName(name);
+        ClassLoader cl = getClassLoader0();
+        if (cl==null) {
+            // A system class.
+            return ClassLoader.getSystemResource(name);
+        }
+        return cl.getResource(name);
+!!!6994946.java!!!	getProtectionDomain() : ProtectionDomain
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            sm.checkPermission(SecurityConstants.GET_PD_PERMISSION);
+        }
+        java.security.ProtectionDomain pd = getProtectionDomain0();
+        if (pd == null) {
+            if (allPermDomain == null) {
+                java.security.Permissions perms =
+                    new java.security.Permissions();
+                perms.add(SecurityConstants.ALL_PERMISSION);
+                allPermDomain =
+                    new java.security.ProtectionDomain(null, perms);
+            }
+            pd = allPermDomain;
+        }
+        return pd;
+!!!6995330.java!!!	checkMemberAccess(in which : int, inout caller : Class, inout checkProxyInterfaces : boolean) : void
+        final SecurityManager s = System.getSecurityManager();
+        if (s != null) {
+            /* Default policy allows access to all {@link Member#PUBLIC} members,
+             * as well as access to classes that have the same class loader as the caller.
+             * In all other cases, it requires RuntimePermission("accessDeclaredMembers")
+             * permission.
+             */
+            final ClassLoader ccl = ClassLoader.getClassLoader(caller);
+            final ClassLoader cl = getClassLoader0();
+            if (which != Member.PUBLIC) {
+                if (ccl != cl) {
+                    s.checkPermission(SecurityConstants.CHECK_MEMBER_ACCESS_PERMISSION);
+                }
+            }
+            this.checkPackageAccess(ccl, checkProxyInterfaces);
+        }
+!!!6995458.java!!!	checkPackageAccess(in ccl : ClassLoader, inout checkProxyInterfaces : boolean) : void
+        final SecurityManager s = System.getSecurityManager();
+        if (s != null) {
+            final ClassLoader cl = getClassLoader0();
+
+            if (ReflectUtil.needsPackageAccessCheck(ccl, cl)) {
+                String name = this.getName();
+                int i = name.lastIndexOf('.');
+                if (i != -1) {
+                    // skip the package access check on a proxy class in default proxy package
+                    String pkg = name.substring(0, i);
+                    if (!Proxy.isProxyClass(this) || ReflectUtil.isNonPublicProxyClass(this)) {
+                        s.checkPackageAccess(pkg);
+                    }
+                }
+            }
+            // check package access on the proxy interfaces
+            if (checkProxyInterfaces && Proxy.isProxyClass(this)) {
+                ReflectUtil.checkProxyPackageAccess(ccl, this.getInterfaces());
+            }
+        }
+!!!6995586.java!!!	resolveName(inout name : String) : String
+        if (name == null) {
+            return name;
+        }
+        if (!name.startsWith("/")) {
+            Class<?> c = this;
+            while (c.isArray()) {
+                c = c.getComponentType();
+            }
+            String baseName = c.getName();
+            int index = baseName.lastIndexOf('.');
+            if (index != -1) {
+                name = baseName.substring(0, index).replace('.', '/')
+                    +"/"+name;
+            }
+        } else {
+            name = name.substring(1);
+        }
+        return name;
+!!!6996354.java!!!	reflectionData() : Class::ReflectionData
+        SoftReference<ReflectionData<T>> reflectionData = this.reflectionData;
+        int classRedefinedCount = this.classRedefinedCount;
+        ReflectionData<T> rd;
+        if (useCaches &&
+            reflectionData != null &&
+            (rd = reflectionData.get()) != null &&
+            rd.redefinedCount == classRedefinedCount) {
+            return rd;
+        }
+        // else no SoftReference or cleared SoftReference or stale ReflectionData
+        // -> create and replace new instance
+        return newReflectionData(reflectionData, classRedefinedCount);
+!!!6996482.java!!!	newReflectionData(inout oldReflectionData : SoftReference, in classRedefinedCount : int) : Class::ReflectionData
+        if (!useCaches) return null;
+
+        while (true) {
+            ReflectionData<T> rd = new ReflectionData<>(classRedefinedCount);
+            // try to CAS it...
+            if (Atomic.casReflectionData(this, oldReflectionData, new SoftReference<>(rd))) {
+                return rd;
+            }
+            // else retry
+            oldReflectionData = this.reflectionData;
+            classRedefinedCount = this.classRedefinedCount;
+            if (oldReflectionData != null &&
+                (rd = oldReflectionData.get()) != null &&
+                rd.redefinedCount == classRedefinedCount) {
+                return rd;
+            }
+        }
+!!!6996738.java!!!	getFactory() : GenericsFactory
+        // create scope and factory
+        return CoreReflectionFactory.make(this, ClassScope.make(this));
+!!!6996866.java!!!	getGenericInfo() : ClassRepository
+        ClassRepository genericInfo = this.genericInfo;
+        if (genericInfo == null) {
+            String signature = getGenericSignature0();
+            if (signature == null) {
+                genericInfo = ClassRepository.NONE;
+            } else {
+                genericInfo = ClassRepository.make(signature, getFactory());
+            }
+            this.genericInfo = genericInfo;
+        }
+        return (genericInfo != ClassRepository.NONE) ? genericInfo : null;
+!!!6997250.java!!!	getExecutableTypeAnnotationBytes(inout ex : Executable) : byte
+        return getReflectionFactory().getExecutableTypeAnnotationBytes(ex);
+!!!6997506.java!!!	privateGetDeclaredFields(inout publicOnly : boolean) : Field
+        checkInitted();
+        Field[] res;
+        ReflectionData<T> rd = reflectionData();
+        if (rd != null) {
+            res = publicOnly ? rd.declaredPublicFields : rd.declaredFields;
+            if (res != null) return res;
+        }
+        // No cached value available; request value from VM
+        res = Reflection.filterFields(this, getDeclaredFields0(publicOnly));
+        if (rd != null) {
+            if (publicOnly) {
+                rd.declaredPublicFields = res;
+            } else {
+                rd.declaredFields = res;
+            }
+        }
+        return res;
+!!!6997634.java!!!	privateGetPublicFields(inout traversedInterfaces : Set) : Field
+        checkInitted();
+        Field[] res;
+        ReflectionData<T> rd = reflectionData();
+        if (rd != null) {
+            res = rd.publicFields;
+            if (res != null) return res;
+        }
+
+        // No cached value available; compute value recursively.
+        // Traverse in correct order for getField().
+        List<Field> fields = new ArrayList<>();
+        if (traversedInterfaces == null) {
+            traversedInterfaces = new HashSet<>();
+        }
+
+        // Local fields
+        Field[] tmp = privateGetDeclaredFields(true);
+        addAll(fields, tmp);
+
+        // Direct superinterfaces, recursively
+        for (Class<?> c : getInterfaces()) {
+            if (!traversedInterfaces.contains(c)) {
+                traversedInterfaces.add(c);
+                addAll(fields, c.privateGetPublicFields(traversedInterfaces));
+            }
+        }
+
+        // Direct superclass, recursively
+        if (!isInterface()) {
+            Class<?> c = getSuperclass();
+            if (c != null) {
+                addAll(fields, c.privateGetPublicFields(traversedInterfaces));
+            }
+        }
+
+        res = new Field[fields.size()];
+        fields.toArray(res);
+        if (rd != null) {
+            rd.publicFields = res;
+        }
+        return res;
+!!!6997762.java!!!	addAll(inout c : Collection, inout o : Field [[]]) : void
+        for (int i = 0; i < o.length; i++) {
+            c.add(o[i]);
+        }
+!!!6997890.java!!!	privateGetDeclaredConstructors(inout publicOnly : boolean) : Constructor
+        checkInitted();
+        Constructor<T>[] res;
+        ReflectionData<T> rd = reflectionData();
+        if (rd != null) {
+            res = publicOnly ? rd.publicConstructors : rd.declaredConstructors;
+            if (res != null) return res;
+        }
+        // No cached value available; request value from VM
+        if (isInterface()) {
+            @SuppressWarnings("unchecked")
+            Constructor<T>[] temporaryRes = (Constructor<T>[]) new Constructor<?>[0];
+            res = temporaryRes;
+        } else {
+            res = getDeclaredConstructors0(publicOnly);
+        }
+        if (rd != null) {
+            if (publicOnly) {
+                rd.publicConstructors = res;
+            } else {
+                rd.declaredConstructors = res;
+            }
+        }
+        return res;
+!!!6998018.java!!!	privateGetDeclaredMethods(inout publicOnly : boolean) : Method
+        checkInitted();
+        Method[] res;
+        ReflectionData<T> rd = reflectionData();
+        if (rd != null) {
+            res = publicOnly ? rd.declaredPublicMethods : rd.declaredMethods;
+            if (res != null) return res;
+        }
+        // No cached value available; request value from VM
+        res = Reflection.filterMethods(this, getDeclaredMethods0(publicOnly));
+        if (rd != null) {
+            if (publicOnly) {
+                rd.declaredPublicMethods = res;
+            } else {
+                rd.declaredMethods = res;
+            }
+        }
+        return res;
+!!!7000578.java!!!	privateGetPublicMethods() : Method
+        checkInitted();
+        Method[] res;
+        ReflectionData<T> rd = reflectionData();
+        if (rd != null) {
+            res = rd.publicMethods;
+            if (res != null) return res;
+        }
+
+        // No cached value available; compute value recursively.
+        // Start by fetching public declared methods
+        MethodArray methods = new MethodArray();
+        {
+            Method[] tmp = privateGetDeclaredMethods(true);
+            methods.addAll(tmp);
+        }
+        // Now recur over superclass and direct superinterfaces.
+        // Go over superinterfaces first so we can more easily filter
+        // out concrete implementations inherited from superclasses at
+        // the end.
+        MethodArray inheritedMethods = new MethodArray();
+        for (Class<?> i : getInterfaces()) {
+            inheritedMethods.addInterfaceMethods(i.privateGetPublicMethods());
+        }
+        if (!isInterface()) {
+            Class<?> c = getSuperclass();
+            if (c != null) {
+                MethodArray supers = new MethodArray();
+                supers.addAll(c.privateGetPublicMethods());
+                // Filter out concrete implementations of any
+                // interface methods
+                for (int i = 0; i < supers.length(); i++) {
+                    Method m = supers.get(i);
+                    if (m != null &&
+                            !Modifier.isAbstract(m.getModifiers()) &&
+                            !m.isDefault()) {
+                        inheritedMethods.removeByNameAndDescriptor(m);
+                    }
+                }
+                // Insert superclass's inherited methods before
+                // superinterfaces' to satisfy getMethod's search
+                // order
+                supers.addAll(inheritedMethods);
+                inheritedMethods = supers;
+            }
+        }
+        // Filter out all local methods from inherited ones
+        for (int i = 0; i < methods.length(); i++) {
+            Method m = methods.get(i);
+            inheritedMethods.removeByNameAndDescriptor(m);
+        }
+        methods.addAllIfNotPresent(inheritedMethods);
+        methods.removeLessSpecifics();
+        methods.compactAndTrim();
+        res = methods.getArray();
+        if (rd != null) {
+            rd.publicMethods = res;
+        }
+        return res;
+!!!7000706.java!!!	searchFields(inout fields : Field [[]], inout name : String) : Field
+        String internedName = name.intern();
+        for (int i = 0; i < fields.length; i++) {
+            if (fields[i].getName() == internedName) {
+                return getReflectionFactory().copyField(fields[i]);
+            }
+        }
+        return null;
+!!!7000834.java!!!	getField0(inout name : String) : Field
+        // Note: the intent is that the search algorithm this routine
+        // uses be equivalent to the ordering imposed by
+        // privateGetPublicFields(). It fetches only the declared
+        // public fields for each class, however, to reduce the number
+        // of Field objects which have to be created for the common
+        // case where the field being requested is declared in the
+        // class which is being queried.
+        Field res;
+        // Search declared public fields
+        if ((res = searchFields(privateGetDeclaredFields(true), name)) != null) {
+            return res;
+        }
+        // Direct superinterfaces, recursively
+        Class<?>[] interfaces = getInterfaces();
+        for (int i = 0; i < interfaces.length; i++) {
+            Class<?> c = interfaces[i];
+            if ((res = c.getField0(name)) != null) {
+                return res;
+            }
+        }
+        // Direct superclass, recursively
+        if (!isInterface()) {
+            Class<?> c = getSuperclass();
+            if (c != null) {
+                if ((res = c.getField0(name)) != null) {
+                    return res;
+                }
+            }
+        }
+        return null;
+!!!7000962.java!!!	searchMethods(inout methods : Method [[]], inout name : String, inout parameterTypes : Class [[]]) : Method
+        Method res = null;
+        String internedName = name.intern();
+        for (int i = 0; i < methods.length; i++) {
+            Method m = methods[i];
+            if (m.getName() == internedName
+                && arrayContentsEq(parameterTypes, m.getParameterTypes())
+                && (res == null
+                    || res.getReturnType().isAssignableFrom(m.getReturnType())))
+                res = m;
+        }
+
+        return (res == null ? res : getReflectionFactory().copyMethod(res));
+!!!7001090.java!!!	getMethod0(inout name : String, inout parameterTypes : Class [[]], inout includeStaticMethods : boolean) : Method
+        MethodArray interfaceCandidates = new MethodArray(2);
+        Method res =  privateGetMethodRecursive(name, parameterTypes, includeStaticMethods, interfaceCandidates);
+        if (res != null)
+            return res;
+
+        // Not found on class or superclass directly
+        interfaceCandidates.removeLessSpecifics();
+        return interfaceCandidates.getFirst(); // may be null
+!!!7001218.java!!!	privateGetMethodRecursive(inout name : String, inout parameterTypes : Class [[]], inout includeStaticMethods : boolean, inout allInterfaceCandidates : Class::MethodArray) : Method
+        // Note: the intent is that the search algorithm this routine
+        // uses be equivalent to the ordering imposed by
+        // privateGetPublicMethods(). It fetches only the declared
+        // public methods for each class, however, to reduce the
+        // number of Method objects which have to be created for the
+        // common case where the method being requested is declared in
+        // the class which is being queried.
+        //
+        // Due to default methods, unless a method is found on a superclass,
+        // methods declared in any superinterface needs to be considered.
+        // Collect all candidates declared in superinterfaces in {@code
+        // allInterfaceCandidates} and select the most specific if no match on
+        // a superclass is found.
+
+        // Must _not_ return root methods
+        Method res;
+        // Search declared public methods
+        if ((res = searchMethods(privateGetDeclaredMethods(true),
+                                 name,
+                                 parameterTypes)) != null) {
+            if (includeStaticMethods || !Modifier.isStatic(res.getModifiers()))
+                return res;
+        }
+        // Search superclass's methods
+        if (!isInterface()) {
+            Class<? super T> c = getSuperclass();
+            if (c != null) {
+                if ((res = c.getMethod0(name, parameterTypes, true)) != null) {
+                    return res;
+                }
+            }
+        }
+        // Search superinterfaces' methods
+        Class<?>[] interfaces = getInterfaces();
+        for (Class<?> c : interfaces)
+            if ((res = c.getMethod0(name, parameterTypes, false)) != null)
+                allInterfaceCandidates.add(res);
+        // Not found
+        return null;
+!!!7001346.java!!!	getConstructor0(inout parameterTypes : Class [[]], in which : int) : Constructor
+        Constructor<T>[] constructors = privateGetDeclaredConstructors((which == Member.PUBLIC));
+        for (Constructor<T> constructor : constructors) {
+            if (arrayContentsEq(parameterTypes,
+                                constructor.getParameterTypes())) {
+                return getReflectionFactory().copyConstructor(constructor);
+            }
+        }
+        throw new NoSuchMethodException(getName() + ".<init>" + argumentTypesToString(parameterTypes));
+!!!7001474.java!!!	arrayContentsEq(inout a1 : Object [[]], inout a2 : Object [[]]) : boolean
+        if (a1 == null) {
+            return a2 == null || a2.length == 0;
+        }
+
+        if (a2 == null) {
+            return a1.length == 0;
+        }
+
+        if (a1.length != a2.length) {
+            return false;
+        }
+
+        for (int i = 0; i < a1.length; i++) {
+            if (a1[i] != a2[i]) {
+                return false;
+            }
+        }
+
+        return true;
+!!!7001602.java!!!	copyFields(inout arg : Field [[]]) : Field
+        Field[] out = new Field[arg.length];
+        ReflectionFactory fact = getReflectionFactory();
+        for (int i = 0; i < arg.length; i++) {
+            out[i] = fact.copyField(arg[i]);
+        }
+        return out;
+!!!7001730.java!!!	copyMethods(inout arg : Method [[]]) : Method
+        Method[] out = new Method[arg.length];
+        ReflectionFactory fact = getReflectionFactory();
+        for (int i = 0; i < arg.length; i++) {
+            out[i] = fact.copyMethod(arg[i]);
+        }
+        return out;
+!!!7001858.java!!!	copyConstructors(inout arg : Constructor [[]]) : Constructor
+        Constructor<U>[] out = arg.clone();
+        ReflectionFactory fact = getReflectionFactory();
+        for (int i = 0; i < out.length; i++) {
+            out[i] = fact.copyConstructor(out[i]);
+        }
+        return out;
+!!!7002498.java!!!	argumentTypesToString(inout argTypes : Class [[]]) : String
+        StringBuilder buf = new StringBuilder();
+        buf.append("(");
+        if (argTypes != null) {
+            for (int i = 0; i < argTypes.length; i++) {
+                if (i > 0) {
+                    buf.append(", ");
+                }
+                Class<?> c = argTypes[i];
+                buf.append((c == null) ? "null" : c.getName());
+            }
+        }
+        buf.append(")");
+        return buf.toString();
+!!!7002626.java!!!	desiredAssertionStatus() : boolean
+        ClassLoader loader = getClassLoader();
+        // If the loader is null this is a system class, so ask the VM
+        if (loader == null)
+            return desiredAssertionStatus0(this);
+
+        // If the classloader has been initialized with the assertion
+        // directives, ask it. Otherwise, ask the VM.
+        synchronized(loader.assertionLock) {
+            if (loader.classAssertionStatus != null) {
+                return loader.desiredAssertionStatus(getName());
+            }
+        }
+        return desiredAssertionStatus0(this);
+!!!7002882.java!!!	isEnum() : boolean
+        // An enum must both directly extend java.lang.Enum and have
+        // the ENUM bit set; classes for specialized enum constants
+        // don't do the former.
+        return (this.getModifiers() & ENUM) != 0 &&
+        this.getSuperclass() == java.lang.Enum.class;
+!!!7003010.java!!!	getReflectionFactory() : ReflectionFactory
+        if (reflectionFactory == null) {
+            reflectionFactory =
+                java.security.AccessController.doPrivileged
+                    (new sun.reflect.ReflectionFactory.GetReflectionFactoryAction());
+        }
+        return reflectionFactory;
+!!!7003138.java!!!	checkInitted() : void
+        if (initted) return;
+        AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                public Void run() {
+                    // Tests to ensure the system properties table is fully
+                    // initialized. This is needed because reflection code is
+                    // called very early in the initialization process (before
+                    // command-line arguments have been parsed and therefore
+                    // these user-settable properties installed.) We assume that
+                    // if System.out is non-null then the System class has been
+                    // fully initialized and that the bulk of the startup code
+                    // has been run.
+
+                    if (System.out == null) {
+                        // java.lang.System not yet fully initialized
+                        return null;
+                    }
+
+                    // Doesn't use Boolean.getBoolean to avoid class init.
+                    String val =
+                        System.getProperty("sun.reflect.noCaches");
+                    if (val != null && val.equals("true")) {
+                        useCaches = false;
+                    }
+
+                    initted = true;
+                    return null;
+                }
+            });
+!!!7003266.java!!!	getEnumConstants() : T
+        T[] values = getEnumConstantsShared();
+        return (values != null) ? values.clone() : null;
+!!!7003394.java!!!	getEnumConstantsShared() : T
+        if (enumConstants == null) {
+            if (!isEnum()) return null;
+            try {
+                final Method values = getMethod("values");
+                java.security.AccessController.doPrivileged(
+                    new java.security.PrivilegedAction<Void>() {
+                        public Void run() {
+                                values.setAccessible(true);
+                                return null;
+                            }
+                        });
+                @SuppressWarnings("unchecked")
+                T[] temporaryConstants = (T[])values.invoke(null);
+                enumConstants = temporaryConstants;
+            }
+            // These can happen when users concoct enum-like classes
+            // that don't comply with the enum spec.
+            catch (InvocationTargetException | NoSuchMethodException |
+                   IllegalAccessException ex) { return null; }
+        }
+        return enumConstants;
+!!!7003522.java!!!	enumConstantDirectory() : Map
+        if (enumConstantDirectory == null) {
+            T[] universe = getEnumConstantsShared();
+            if (universe == null)
+                throw new IllegalArgumentException(
+                    getName() + " is not an enum type");
+            Map<String, T> m = new HashMap<>(2 * universe.length);
+            for (T constant : universe)
+                m.put(((Enum<?>)constant).name(), constant);
+            enumConstantDirectory = m;
+        }
+        return enumConstantDirectory;
+!!!7003650.java!!!	cast(inout obj : Object) : T
+        if (obj != null && !isInstance(obj))
+            throw new ClassCastException(cannotCastMsg(obj));
+        return (T) obj;
+!!!7003778.java!!!	cannotCastMsg(inout obj : Object) : String
+        return "Cannot cast " + obj.getClass().getName() + " to " + getName();
+!!!7003906.java!!!	asSubclass(inout clazz : Class) : Class
+        if (clazz.isAssignableFrom(this))
+            return (Class<? extends U>) this;
+        else
+            throw new ClassCastException(this.toString());
+!!!7004034.java!!!	getAnnotation(inout annotationClass : Class) : A
+        Objects.requireNonNull(annotationClass);
+
+        return (A) annotationData().annotations.get(annotationClass);
+!!!7004162.java!!!	isAnnotationPresent(inout annotationClass : Class) : boolean
+        return GenericDeclaration.super.isAnnotationPresent(annotationClass);
+!!!7004290.java!!!	getAnnotationsByType(inout annotationClass : Class) : A
+        Objects.requireNonNull(annotationClass);
+
+        AnnotationData annotationData = annotationData();
+        return AnnotationSupport.getAssociatedAnnotations(annotationData.declaredAnnotations,
+                                                          this,
+                                                          annotationClass);
+!!!7004418.java!!!	getAnnotations() : Annotation
+        return AnnotationParser.toArray(annotationData().annotations);
+!!!7004546.java!!!	getDeclaredAnnotation(inout annotationClass : Class) : A
+        Objects.requireNonNull(annotationClass);
+
+        return (A) annotationData().declaredAnnotations.get(annotationClass);
+!!!7004674.java!!!	getDeclaredAnnotationsByType(inout annotationClass : Class) : A
+        Objects.requireNonNull(annotationClass);
+
+        return AnnotationSupport.getDirectlyAndIndirectlyPresent(annotationData().declaredAnnotations,
+                                                                 annotationClass);
+!!!7004802.java!!!	getDeclaredAnnotations() : Annotation
+        return AnnotationParser.toArray(annotationData().declaredAnnotations);
+!!!7005058.java!!!	annotationData() : Class::AnnotationData
+        while (true) { // retry loop
+            AnnotationData annotationData = this.annotationData;
+            int classRedefinedCount = this.classRedefinedCount;
+            if (annotationData != null &&
+                annotationData.redefinedCount == classRedefinedCount) {
+                return annotationData;
+            }
+            // null or stale annotationData -> optimistically create new instance
+            AnnotationData newAnnotationData = createAnnotationData(classRedefinedCount);
+            // try to install it
+            if (Atomic.casAnnotationData(this, annotationData, newAnnotationData)) {
+                // successfully installed new AnnotationData
+                return newAnnotationData;
+            }
+        }
+!!!7005186.java!!!	createAnnotationData(in classRedefinedCount : int) : Class::AnnotationData
+        Map<Class<? extends Annotation>, Annotation> declaredAnnotations =
+            AnnotationParser.parseAnnotations(getRawAnnotations(), getConstantPool(), this);
+        Class<?> superClass = getSuperclass();
+        Map<Class<? extends Annotation>, Annotation> annotations = null;
+        if (superClass != null) {
+            Map<Class<? extends Annotation>, Annotation> superAnnotations =
+                superClass.annotationData().annotations;
+            for (Map.Entry<Class<? extends Annotation>, Annotation> e : superAnnotations.entrySet()) {
+                Class<? extends Annotation> annotationClass = e.getKey();
+                if (AnnotationType.getInstance(annotationClass).isInherited()) {
+                    if (annotations == null) { // lazy construction
+                        annotations = new LinkedHashMap<>((Math.max(
+                                declaredAnnotations.size(),
+                                Math.min(12, declaredAnnotations.size() + superAnnotations.size())
+                            ) * 4 + 2) / 3
+                        );
+                    }
+                    annotations.put(annotationClass, e.getValue());
+                }
+            }
+        }
+        if (annotations == null) {
+            // no inherited annotations -> share the Map with declaredAnnotations
+            annotations = declaredAnnotations;
+        } else {
+            // at least one inherited annotation -> declared may override inherited
+            annotations.putAll(declaredAnnotations);
+        }
+        return new AnnotationData(annotations, declaredAnnotations, classRedefinedCount);
+!!!7005314.java!!!	casAnnotationType(inout oldType : AnnotationType, inout newType : AnnotationType) : boolean
+        return Atomic.casAnnotationType(this, oldType, newType);
+!!!7005442.java!!!	getAnnotationType() : AnnotationType
+        return annotationType;
+!!!7005570.java!!!	getDeclaredAnnotationMap() : Map
+        return annotationData().declaredAnnotations;
+!!!7005698.java!!!	getAnnotatedSuperclass() : AnnotatedType
+        if (this == Object.class ||
+                isInterface() ||
+                isArray() ||
+                isPrimitive() ||
+                this == Void.TYPE) {
+            return null;
+        }
+
+        return TypeAnnotationParser.buildAnnotatedSuperclass(getRawTypeAnnotations(), getConstantPool(), this);
+!!!7005826.java!!!	getAnnotatedInterfaces() : AnnotatedType
+         return TypeAnnotationParser.buildAnnotatedInterfaces(getRawTypeAnnotations(), getConstantPool(), this);

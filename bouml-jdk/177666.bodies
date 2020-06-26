@@ -1,0 +1,236 @@
+class ServiceContexts
+!!!1651202.java!!!	isDebugging(inout os : OutputStream) : boolean
+        ORB orb = (ORB)(os.orb()) ;
+        if (orb==null)
+            return false ;
+        return orb.serviceContextDebugFlag ;
+!!!1651330.java!!!	isDebugging(inout is : InputStream) : boolean
+        ORB orb = (ORB)(is.orb()) ;
+        if (orb==null)
+            return false ;
+        return orb.serviceContextDebugFlag ;
+!!!1651458.java!!!	dprint(inout msg : String) : void
+        ORBUtility.dprint( this, msg ) ;
+!!!1651586.java!!!	writeNullServiceContext(inout os : OutputStream) : void
+        if (isDebugging(os))
+            ORBUtility.dprint( "ServiceContexts", "Writing null service context" ) ;
+        os.write_long( 0 ) ;
+!!!1651714.java!!!	createMapFromInputStream(inout is : InputStream) : void
+        orb = (ORB)(is.orb()) ;
+        if (orb.serviceContextDebugFlag)
+            dprint( "Constructing ServiceContexts from input stream" ) ;
+
+        int numValid = is.read_long() ;
+
+        if (orb.serviceContextDebugFlag)
+            dprint("Number of service contexts = " + numValid);
+
+        for (int ctr = 0; ctr < numValid; ctr++) {
+            int scId = is.read_long();
+
+            if (orb.serviceContextDebugFlag)
+                dprint("Reading service context id " + scId);
+
+            byte[] data = OctetSeqHelper.read(is);
+
+            if (orb.serviceContextDebugFlag)
+                dprint("Service context" + scId + " length: " + data.length);
+
+            scMap.put(new Integer(scId), data);
+        }
+!!!1651842.java!!!	ServiceContexts(inout orb : ORB)
+        this.orb = orb ;
+        wrapper = ORBUtilSystemException.get( orb,
+            CORBALogDomains.RPC_PROTOCOL ) ;
+
+        addAlignmentOnWrite = false ;
+
+        scMap = new HashMap();
+
+        // Use the GIOP version of the ORB.  Should
+        // be specified in ServiceContext.
+        // See REVISIT below concerning giopVersion.
+        giopVersion = orb.getORBData().getGIOPVersion();
+        codeBase = null ;
+!!!1651970.java!!!	ServiceContexts(inout s : InputStream)
+        this( (ORB)(s.orb()) ) ;
+
+        // We need to store this so that we can have access
+        // to the CodeBase for unmarshaling possible
+        // RMI-IIOP valuetype data within an encapsulation.
+        // (Known case: UnknownExceptionInfo)
+        codeBase = ((CDRInputStream)s).getCodeBase();
+
+        createMapFromInputStream(s);
+
+        // Fix for bug 4904723
+        giopVersion = ((CDRInputStream)s).getGIOPVersion();
+!!!1652098.java!!!	unmarshal(inout scId : Integer, inout data : byte [[]]) : ServiceContext
+
+        ServiceContextRegistry scr = orb.getServiceContextRegistry();
+
+        ServiceContextData scd = scr.findServiceContextData(scId.intValue());
+        ServiceContext sc = null;
+
+        if (scd == null) {
+            if (orb.serviceContextDebugFlag) {
+                dprint("Could not find ServiceContextData for "
+                       + scId
+                       + " using UnknownServiceContext");
+            }
+
+            sc = new UnknownServiceContext(scId.intValue(), data);
+
+        } else {
+
+            if (orb.serviceContextDebugFlag) {
+                dprint("Found " + scd);
+            }
+
+            // REVISIT.  GIOP version should be specified as
+            // part of a service context's definition, so should
+            // be accessible from ServiceContextData via
+            // its ServiceContext implementation class.
+            //
+            // Since we don't have that, yet, I'm using the GIOP
+            // version of the input stream, presuming that someone
+            // can't send a service context of a later GIOP
+            // version than its stream version.
+            //
+            // Note:  As of Jan 2001, no standard OMG or Sun service contexts
+            // ship wchar data or are defined as using anything but GIOP 1.0 CDR.
+            EncapsInputStream eis
+                = EncapsInputStreamFactory.newEncapsInputStream(orb,
+                                    data,
+                                    data.length,
+                                    giopVersion,
+                                    codeBase);
+            eis.consumeEndian();
+
+            // Now the input stream passed to a ServiceContext
+            // constructor is already the encapsulation input
+            // stream with the endianness read off, so the
+            // service context should just unmarshal its own
+            // data.
+            sc = scd.makeServiceContext(eis, giopVersion);
+            if (sc == null)
+                throw wrapper.svcctxUnmarshalError(
+                    CompletionStatus.COMPLETED_MAYBE);
+        }
+
+        return sc;
+!!!1652226.java!!!	addAlignmentPadding() : void
+        // Make service context 12 bytes longer by adding
+        // JAVAIDL_ALIGN_SERVICE_ID service context at end.
+        // The exact length
+        // must be >8 (minimum service context size) and
+        // =4 mod 8, so 12 is the minimum.
+        addAlignmentOnWrite = true ;
+!!!1652354.java!!!	write(inout os : OutputStream, inout gv : GIOPVersion) : void
+        if (isDebugging(os)) {
+            dprint( "Writing service contexts to output stream" ) ;
+            Utility.printStackTrace() ;
+        }
+
+        int numsc = scMap.size();
+
+        if (addAlignmentOnWrite) {
+            if (isDebugging(os))
+                dprint( "Adding alignment padding" ) ;
+
+            numsc++ ;
+        }
+
+        if (isDebugging(os))
+            dprint( "Service context has " + numsc + " components"  ) ;
+
+        os.write_long( numsc ) ;
+
+        writeServiceContextsInOrder(os, gv);
+
+        if (addAlignmentOnWrite) {
+            if (isDebugging(os))
+                dprint( "Writing alignment padding" ) ;
+
+            os.write_long( JAVAIDL_ALIGN_SERVICE_ID ) ;
+            os.write_long( 4 ) ;
+            os.write_octet( (byte)0 ) ;
+            os.write_octet( (byte)0 ) ;
+            os.write_octet( (byte)0 ) ;
+            os.write_octet( (byte)0 ) ;
+        }
+
+        if (isDebugging(os))
+            dprint( "Service context writing complete" ) ;
+!!!1652482.java!!!	writeServiceContextsInOrder(inout os : OutputStream, inout gv : GIOPVersion) : void
+
+        // Temporarily remove this rather than check it per iteration
+        Integer ueInfoId
+            = new Integer(UEInfoServiceContext.SERVICE_CONTEXT_ID);
+
+        Object unknownExceptionInfo = scMap.remove(ueInfoId);
+
+        Iterator iter = scMap.keySet().iterator();
+
+        while (iter.hasNext()) {
+            Integer id = (Integer)iter.next();
+
+            writeMapEntry(os, id, scMap.get(id), gv);
+        }
+
+        // Write the UnknownExceptionInfo service context last
+        // (so it will be after the CodeBase) and restore it in
+        // the map.
+        if (unknownExceptionInfo != null) {
+            writeMapEntry(os, ueInfoId, unknownExceptionInfo, gv);
+
+            scMap.put(ueInfoId, unknownExceptionInfo);
+        }
+!!!1652610.java!!!	writeMapEntry(inout os : OutputStream, inout id : Integer, inout scObj : Object, inout gv : GIOPVersion) : void
+
+        // If it's still in byte[] form, we don't need to
+        // unmarshal it here, just copy the bytes into
+        // the new stream.
+
+        if (scObj instanceof byte[]) {
+            if (isDebugging(os))
+                dprint( "Writing service context bytes for id " + id);
+
+            OctetSeqHelper.write(os, (byte[])scObj);
+
+        } else {
+
+            // We actually unmarshaled it into a ServiceContext
+            // at some point.
+            ServiceContext sc = (ServiceContext)scObj;
+
+            if (isDebugging(os))
+                dprint( "Writing service context " + sc ) ;
+
+            sc.write(os, gv);
+        }
+!!!1652738.java!!!	put(inout sc : ServiceContext) : void
+        Integer id = new Integer(sc.getId());
+        scMap.put(id, sc);
+!!!1652866.java!!!	delete(in scId : int) : void
+        this.delete(new Integer(scId));
+!!!1652994.java!!!	delete(inout id : Integer) : void
+        scMap.remove(id)  ;
+!!!1653122.java!!!	get(in scId : int) : ServiceContext
+        return this.get(new Integer(scId));
+!!!1653250.java!!!	get(inout id : Integer) : ServiceContext
+        Object result = scMap.get(id);
+        if (result == null)
+            return null ;
+
+        // Lazy unmarshaling on first use.
+        if (result instanceof byte[]) {
+
+            ServiceContext sc = unmarshal(id, (byte[])result);
+
+            scMap.put(id, sc);
+
+            return sc;
+        } else {
+            return (ServiceContext)result;
+        }

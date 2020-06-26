@@ -1,0 +1,205 @@
+class StateEngineImpl
+!!!1283586.java!!!	StateEngineImpl()
+        initializing = true ;
+        defaultAction = new ActionBase("Invalid Transition")
+            {
+                public void doIt( FSM fsm, Input in )
+                {
+                    throw new INTERNAL(
+                        "Invalid transition attempted from " +
+                            fsm.getState() + " under " + in ) ;
+                }
+            } ;
+!!!1283714.java!!!	add(inout oldState : State, inout input : Input, inout guard : Guard, inout action : Action, inout newState : State) : StateEngine
+        mustBeInitializing() ;
+
+        StateImpl oldStateImpl = (StateImpl)oldState ;
+        GuardedAction ga = new GuardedAction( guard, action, newState ) ;
+        oldStateImpl.addGuardedAction( input, ga ) ;
+
+        return this ;
+!!!1283842.java!!!	add(inout oldState : State, inout input : Input, inout action : Action, inout newState : State) : StateEngine
+        mustBeInitializing() ;
+
+        StateImpl oldStateImpl = (StateImpl)oldState ;
+        GuardedAction ta = new GuardedAction( action, newState ) ;
+        oldStateImpl.addGuardedAction( input, ta ) ;
+
+        return this ;
+!!!1283970.java!!!	setDefault(inout oldState : State, inout action : Action, inout newState : State) : StateEngine
+        mustBeInitializing() ;
+
+        StateImpl oldStateImpl = (StateImpl)oldState ;
+        oldStateImpl.setDefaultAction( action ) ;
+        oldStateImpl.setDefaultNextState( newState ) ;
+
+        return this ;
+!!!1284098.java!!!	setDefault(inout oldState : State, inout newState : State) : StateEngine
+        return setDefault( oldState, emptyAction, newState ) ;
+!!!1284226.java!!!	setDefault(inout oldState : State) : StateEngine
+        return setDefault( oldState, oldState ) ;
+!!!1284354.java!!!	done() : void
+        mustBeInitializing() ;
+
+        // optimize FSM here if desired.  For example,
+        // we could choose different strategies for implementing
+        // the state transition function based on the distribution
+        // of values for states and input labels.
+
+        initializing = false ;
+!!!1284482.java!!!	setDefaultAction(inout act : Action) : void
+        mustBeInitializing() ;
+        defaultAction = act ;
+!!!1284610.java!!!	doIt(inout fsm : FSM, inout in : Input, inout debug : boolean) : void
+        // This method is present only for debugging.
+        // innerDoIt does the actual transition.
+
+        if (debug)
+            ORBUtility.dprint( this, "doIt enter: currentState = " +
+                fsm.getState() + " in = " + in ) ;
+
+        try {
+            innerDoIt( fsm, in, debug ) ;
+        } finally {
+            if (debug)
+                ORBUtility.dprint( this, "doIt exit" ) ;
+        }
+!!!1284738.java!!!	getDefaultNextState(inout currentState : StateImpl) : StateImpl
+        // Use the currentState defaults if
+        // set, otherwise use the state engine default.
+        StateImpl nextState = (StateImpl)currentState.getDefaultNextState() ;
+        if (nextState == null)
+            // The state engine default never changes the state
+            nextState = currentState ;
+
+        return nextState ;
+!!!1284866.java!!!	getDefaultAction(inout currentState : StateImpl) : Action
+        Action action = currentState.getDefaultAction() ;
+        if (action == null)
+            action = defaultAction ;
+
+        return action ;
+!!!1284994.java!!!	innerDoIt(inout fsm : FSM, inout in : Input, inout debug : boolean) : void
+        if (debug) {
+            ORBUtility.dprint( this, "Calling innerDoIt with input " + in ) ;
+        }
+
+        // Locals needed for performing the state transition, once we determine
+        // the required transition.
+        StateImpl currentState = null ;
+        StateImpl nextState = null ;
+        Action action = null ;
+
+        // Do until no guard has deferred.
+        boolean deferral = false ;
+        do {
+            deferral = false ; // clear this after each deferral!
+            currentState = (StateImpl)fsm.getState() ;
+            nextState = getDefaultNextState( currentState ) ;
+            action = getDefaultAction( currentState ) ;
+
+            if (debug) {
+                ORBUtility.dprint( this, "currentState      = " + currentState ) ;
+                ORBUtility.dprint( this, "in                = " + in ) ;
+                ORBUtility.dprint( this, "default nextState = " + nextState    ) ;
+                ORBUtility.dprint( this, "default action    = " + action ) ;
+            }
+
+            Set gas = currentState.getGuardedActions(in) ;
+            if (gas != null) {
+                Iterator iter = gas.iterator() ;
+
+                // Search for a guard that is not DISABLED.
+                // All DISABLED means use defaults.
+                while (iter.hasNext()) {
+                    GuardedAction ga = (GuardedAction)iter.next() ;
+                    Guard.Result gr = ga.getGuard().evaluate( fsm, in ) ;
+                    if (debug)
+                        ORBUtility.dprint( this,
+                            "doIt: evaluated " + ga + " with result " + gr ) ;
+
+                    if (gr == Guard.Result.ENABLED) {
+                        // ga has the next state and action.
+                        nextState = (StateImpl)ga.getNextState() ;
+                        action = ga.getAction() ;
+                        if (debug) {
+                            ORBUtility.dprint( this, "nextState = " + nextState ) ;
+                            ORBUtility.dprint( this, "action    = " + action ) ;
+                        }
+                        break ;
+                    } else if (gr == Guard.Result.DEFERED) {
+                        deferral = true ;
+                        break ;
+                    }
+                }
+            }
+        } while (deferral) ;
+
+        performStateTransition( fsm, in, nextState, action, debug ) ;
+!!!1285122.java!!!	performStateTransition(inout fsm : FSM, inout in : Input, inout nextState : StateImpl, inout action : Action, inout debug : boolean) : void
+        StateImpl currentState = (StateImpl)fsm.getState() ;
+
+        // Perform the state transition.  Pre and post actions are only
+        // performed if the state changes (see UML hidden transitions).
+
+        boolean different = !currentState.equals( nextState ) ;
+
+        if (different) {
+            if (debug)
+                ORBUtility.dprint( this,
+                    "doIt: executing postAction for state " + currentState ) ;
+            try {
+                currentState.postAction( fsm ) ;
+            } catch (Throwable thr) {
+                if (debug)
+                    ORBUtility.dprint( this,
+                        "doIt: postAction threw " + thr ) ;
+
+                if (thr instanceof ThreadDeath)
+                    throw (ThreadDeath)thr ;
+            }
+        }
+
+        try {
+            // Note that action may be null in a transition, which simply
+            // means that no action is needed.  Note that action.doIt may
+            // throw an exception, in which case the exception is
+            // propagated after making sure that the transition is properly
+            // completed.
+            if (action != null)
+                action.doIt( fsm, in ) ;
+        } finally {
+            if (different) {
+                if (debug)
+                    ORBUtility.dprint( this,
+                        "doIt: executing preAction for state " + nextState ) ;
+
+                try {
+                    nextState.preAction( fsm ) ;
+                } catch (Throwable thr) {
+                    if (debug)
+                        ORBUtility.dprint( this,
+                            "doIt: preAction threw " + thr ) ;
+
+                    if (thr instanceof ThreadDeath)
+                        throw (ThreadDeath)thr ;
+                }
+
+                ((FSMImpl)fsm).internalSetState( nextState ) ;
+            }
+
+            if (debug)
+                ORBUtility.dprint( this, "doIt: state is now " + nextState ) ;
+        }
+!!!1285250.java!!!	makeFSM(inout startState : State) : FSM
+        mustNotBeInitializing() ;
+
+        return new FSMImpl( this, startState ) ;
+!!!1285378.java!!!	mustBeInitializing() : void
+        if (!initializing)
+            throw new IllegalStateException(
+                "Invalid method call after initialization completed" ) ;
+!!!1285506.java!!!	mustNotBeInitializing() : void
+        if (initializing)
+            throw new IllegalStateException(
+                "Invalid method call before initialization completed" ) ;

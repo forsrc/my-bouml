@@ -1,0 +1,79 @@
+class TransferAction
+!!!1986946.java!!!	TransferAction(inout name : String)
+            super(name);
+!!!1987074.java!!!	isEnabled(inout sender : Object) : boolean
+            if (sender instanceof JComponent
+                && ((JComponent)sender).getTransferHandler() == null) {
+                    return false;
+            }
+
+            return true;
+!!!1987202.java!!!	actionPerformed(in e : ActionEvent) : void
+            final Object src = e.getSource();
+
+            final PrivilegedAction<Void> action = new PrivilegedAction<Void>() {
+                public Void run() {
+                    actionPerformedImpl(e);
+                    return null;
+                }
+            };
+
+            final AccessControlContext stack = AccessController.getContext();
+            final AccessControlContext srcAcc = AWTAccessor.getComponentAccessor().getAccessControlContext((Component)src);
+            final AccessControlContext eventAcc = AWTAccessor.getAWTEventAccessor().getAccessControlContext(e);
+
+                if (srcAcc == null) {
+                    javaSecurityAccess.doIntersectionPrivilege(action, stack, eventAcc);
+                } else {
+                    javaSecurityAccess.doIntersectionPrivilege(
+                        new PrivilegedAction<Void>() {
+                            public Void run() {
+                                javaSecurityAccess.doIntersectionPrivilege(action, eventAcc);
+                                return null;
+                             }
+                    }, stack, srcAcc);
+                }
+!!!1987330.java!!!	actionPerformedImpl(inout e : ActionEvent) : void
+            Object src = e.getSource();
+            if (src instanceof JComponent) {
+                JComponent c = (JComponent) src;
+                TransferHandler th = c.getTransferHandler();
+                Clipboard clipboard = getClipboard(c);
+                String name = (String) getValue(Action.NAME);
+
+                Transferable trans = null;
+
+                // any of these calls may throw IllegalStateException
+                try {
+                    if ((clipboard != null) && (th != null) && (name != null)) {
+                        if ("cut".equals(name)) {
+                            th.exportToClipboard(c, clipboard, MOVE);
+                        } else if ("copy".equals(name)) {
+                            th.exportToClipboard(c, clipboard, COPY);
+                        } else if ("paste".equals(name)) {
+                            trans = clipboard.getContents(null);
+                        }
+                    }
+                } catch (IllegalStateException ise) {
+                    // clipboard was unavailable
+                    UIManager.getLookAndFeel().provideErrorFeedback(c);
+                    return;
+                }
+
+                // this is a paste action, import data into the component
+                if (trans != null) {
+                    th.importData(new TransferSupport(c, trans));
+                }
+            }
+!!!1987458.java!!!	getClipboard(inout c : JComponent) : Clipboard
+            if (SwingUtilities2.canAccessSystemClipboard()) {
+                return c.getToolkit().getSystemClipboard();
+            }
+            Clipboard clipboard = (Clipboard)sun.awt.AppContext.getAppContext().
+                get(SandboxClipboardKey);
+            if (clipboard == null) {
+                clipboard = new Clipboard("Sandboxed Component Clipboard");
+                sun.awt.AppContext.getAppContext().put(SandboxClipboardKey,
+                                                       clipboard);
+            }
+            return clipboard;

@@ -1,0 +1,144 @@
+class TypeCodeOutputStream
+!!!472962.java!!!	TypeCodeOutputStream(inout orb : ORB)
+        super(orb, false);
+!!!473090.java!!!	TypeCodeOutputStream(inout orb : ORB, inout littleEndian : boolean)
+        super(orb, littleEndian);
+!!!473218.java!!!	create_input_stream() : InputStream
+        TypeCodeInputStream tcis = EncapsInputStreamFactory
+                .newTypeCodeInputStream((ORB) orb(), getByteBuffer(),
+                        getIndex(), isLittleEndian(), getGIOPVersion());
+        //if (TypeCodeImpl.debug) {
+            //System.out.println("Created TypeCodeInputStream " + tcis + " with no parent");
+            //tcis.printBuffer();
+        //}
+        return tcis;
+!!!473346.java!!!	setEnclosingOutputStream(inout enclosure : OutputStream) : void
+        this.enclosure = enclosure;
+!!!473474.java!!!	getTopLevelStream() : TypeCodeOutputStream
+        if (enclosure == null)
+            return this;
+        if (enclosure instanceof TypeCodeOutputStream)
+            return ((TypeCodeOutputStream)enclosure).getTopLevelStream();
+        return this;
+!!!473602.java!!!	getTopLevelPosition() : int
+        if (enclosure != null && enclosure instanceof TypeCodeOutputStream) {
+            int pos = ((TypeCodeOutputStream)enclosure).getTopLevelPosition() + getPosition();
+            // Add four bytes for the encaps length, not another 4 for the byte order
+            // which is included in getPosition().
+            if (isEncapsulation) pos += 4;
+            //if (TypeCodeImpl.debug) {
+                //System.out.println("TypeCodeOutputStream.getTopLevelPosition using getTopLevelPosition " +
+                    //((TypeCodeOutputStream)enclosure).getTopLevelPosition() +
+                    //" + getPosition() " + getPosition() +
+                    //(isEncapsulation ? " + encaps length 4" : "") +
+                    //" = " + pos);
+            //}
+            return pos;
+        }
+        //if (TypeCodeImpl.debug) {
+            //System.out.println("TypeCodeOutputStream.getTopLevelPosition returning getPosition() = " +
+                               //getPosition() + ", enclosure is " + enclosure);
+        //}
+        return getPosition();
+!!!473730.java!!!	addIDAtPosition(inout id : String, in position : int) : void
+        if (typeMap == null)
+            typeMap = new HashMap(16);
+        //if (TypeCodeImpl.debug) System.out.println(this + " adding id " + id + " at position " + position);
+        typeMap.put(id, new Integer(position));
+!!!473858.java!!!	getPositionForID(inout id : String) : int
+        if (typeMap == null)
+            throw wrapper.refTypeIndirType( CompletionStatus.COMPLETED_NO ) ;
+        //if (TypeCodeImpl.debug) System.out.println("Getting position " + ((Integer)typeMap.get(id)).intValue() +
+            //" for id " + id);
+        return ((Integer)typeMap.get(id)).intValue();
+!!!473986.java!!!	writeRawBuffer(inout s : OutputStream, in firstLong : int) : void
+        // Writes this streams buffer to the given OutputStream
+        // without byte order flag and length as is the case for encapsulations.
+
+        // Make sure to align s to 4 byte boundaries.
+        // Unfortunately we can't do just this:
+        // s.alignAndReserve(4, 4);
+        // So we have to take the first four bytes given in firstLong and write them
+        // with a call to write_long which will trigger the alignment.
+        // Then write the rest of the byte array.
+
+        //if (TypeCodeImpl.debug) {
+            //System.out.println(this + ".writeRawBuffer(" + s + ", " + firstLong + ")");
+            //if (s instanceof CDROutputStream) {
+                //System.out.println("Parent position before writing kind = " + ((CDROutputStream)s).getIndex());
+            //}
+        //}
+        s.write_long(firstLong);
+        //if (TypeCodeImpl.debug) {
+            //if (s instanceof CDROutputStream) {
+                //System.out.println("Parent position after writing kind = " + ((CDROutputStream)s).getIndex());
+            //}
+        //}
+        ByteBuffer byteBuffer = getByteBuffer();
+        if (byteBuffer.hasArray())
+        {
+             s.write_octet_array(byteBuffer.array(), 4, getIndex() - 4);
+        }
+        else
+        {
+             // get bytes from DirectByteBuffer
+             // NOTE: Microbenchmarks are showing it is faster to do
+             //       a loop of ByteBuffer.get(int) than it is to do
+             //       a bulk ByteBuffer.get(byte[], offset, length)
+             byte[] buf = new byte[byteBuffer.limit()];
+             for (int i = 0; i < buf.length; i++)
+                  buf[i] = byteBuffer.get(i);
+             s.write_octet_array(buf, 4, getIndex() - 4);
+        }
+        //if (TypeCodeImpl.debug) {
+            //if (s instanceof CDROutputStream) {
+                //System.out.println("Parent position after writing all " + getIndex() + " bytes = " + ((CDROutputStream)s).getIndex());
+            //}
+        //}
+!!!474114.java!!!	createEncapsulation(inout _orb : ORB) : TypeCodeOutputStream
+        TypeCodeOutputStream encap =
+            sun.corba.OutputStreamFactory.newTypeCodeOutputStream((ORB)_orb, isLittleEndian());
+        encap.setEnclosingOutputStream(this);
+        encap.makeEncapsulation();
+        //if (TypeCodeImpl.debug) System.out.println("Created TypeCodeOutputStream " + encap + " with parent " + this);
+        return encap;
+!!!474242.java!!!	makeEncapsulation() : void
+        // first entry in an encapsulation is the endianess
+        putEndian();
+        isEncapsulation = true;
+!!!474370.java!!!	wrapOutputStream(inout os : OutputStream) : TypeCodeOutputStream
+        boolean littleEndian = ((os instanceof CDROutputStream) ? ((CDROutputStream)os).isLittleEndian() : false);
+        TypeCodeOutputStream tos =
+            sun.corba.OutputStreamFactory.newTypeCodeOutputStream((ORB)os.orb(), littleEndian);
+        tos.setEnclosingOutputStream(os);
+        //if (TypeCodeImpl.debug) System.out.println("Created TypeCodeOutputStream " + tos + " with parent " + os);
+        return tos;
+!!!474498.java!!!	getPosition() : int
+        return getIndex();
+!!!474626.java!!!	getRealIndex(in index : int) : int
+        int topPos = getTopLevelPosition();
+        //if (TypeCodeImpl.debug) System.out.println("TypeCodeOutputStream.getRealIndex using getTopLevelPosition " +
+            //topPos + " instead of getPosition " + getPosition());
+        return topPos;
+!!!474754.java!!!	getTypeCodeBuffer() : byte
+        // Returns the buffer trimmed of the trailing zeros and without the
+        // known _kind value at the beginning.
+        ByteBuffer theBuffer = getByteBuffer();
+        //System.out.println("outBuffer length = " + (getIndex() - 4));
+        byte[] tcBuffer = new byte[getIndex() - 4];
+        // Micro-benchmarks show that DirectByteBuffer.get(int) is faster
+        // than DirectByteBuffer.get(byte[], offset, length).
+        // REVISIT - May want to check if buffer is direct or non-direct
+        //           and use array copy if ByteBuffer is non-direct.
+        for (int i = 0; i < tcBuffer.length; i++)
+            tcBuffer[i] = theBuffer.get(i+4);
+        return tcBuffer;
+!!!474882.java!!!	printTypeMap() : void
+        System.out.println("typeMap = {");
+        Iterator i = typeMap.keySet().iterator();
+        while (i.hasNext()) {
+            String id = (String)i.next();
+            Integer pos = (Integer)typeMap.get(id);
+            System.out.println("  key = " + id + ", value = " + pos);
+        }
+        System.out.println("}");

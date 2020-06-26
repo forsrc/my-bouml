@@ -1,0 +1,77 @@
+class InfoFromMemberName
+!!!7179522.java!!!	InfoFromMemberName(inout lookup : MethodHandles::Lookup, inout member : MemberName, in referenceKind : byte)
+        assert(member.isResolved() || member.isMethodHandleInvoke());
+        assert(member.referenceKindIsConsistentWith(referenceKind));
+        this.member = member;
+        this.referenceKind = referenceKind;
+!!!7179650.java!!!	getDeclaringClass() : Class
+        return member.getDeclaringClass();
+!!!7179778.java!!!	getName() : String
+        return member.getName();
+!!!7179906.java!!!	getMethodType() : MethodType
+        return member.getMethodOrFieldType();
+!!!7180034.java!!!	getModifiers() : int
+        return member.getModifiers();
+!!!7180162.java!!!	getReferenceKind() : int
+        return referenceKind;
+!!!7180290.java!!!	toString() : String
+        return MethodHandleInfo.toString(getReferenceKind(), getDeclaringClass(), getName(), getMethodType());
+!!!7180418.java!!!	reflectAs(inout expected : Class, inout lookup : MethodHandles::Lookup) : T
+        if (member.isMethodHandleInvoke() && !member.isVarargs()) {
+            // This member is an instance of a signature-polymorphic method, which cannot be reflected
+            // A method handle invoker can come in either of two forms:
+            // A generic placeholder (present in the source code, and varargs)
+            // and a signature-polymorphic instance (synthetic and not varargs).
+            // For more information see comments on {@link MethodHandleNatives#linkMethod}.
+            throw new IllegalArgumentException("cannot reflect signature polymorphic method");
+        }
+        Member mem = AccessController.doPrivileged(new PrivilegedAction<Member>() {
+                public Member run() {
+                    try {
+                        return reflectUnchecked();
+                    } catch (ReflectiveOperationException ex) {
+                        throw new IllegalArgumentException(ex);
+                    }
+                }
+            });
+        try {
+            Class<?> defc = getDeclaringClass();
+            byte refKind = (byte) getReferenceKind();
+            lookup.checkAccess(refKind, defc, convertToMemberName(refKind, mem));
+        } catch (IllegalAccessException ex) {
+            throw new IllegalArgumentException(ex);
+        }
+        return expected.cast(mem);
+!!!7180546.java!!!	reflectUnchecked() : Member
+        byte refKind = (byte) getReferenceKind();
+        Class<?> defc = getDeclaringClass();
+        boolean isPublic = Modifier.isPublic(getModifiers());
+        if (MethodHandleNatives.refKindIsMethod(refKind)) {
+            if (isPublic)
+                return defc.getMethod(getName(), getMethodType().parameterArray());
+            else
+                return defc.getDeclaredMethod(getName(), getMethodType().parameterArray());
+        } else if (MethodHandleNatives.refKindIsConstructor(refKind)) {
+            if (isPublic)
+                return defc.getConstructor(getMethodType().parameterArray());
+            else
+                return defc.getDeclaredConstructor(getMethodType().parameterArray());
+        } else if (MethodHandleNatives.refKindIsField(refKind)) {
+            if (isPublic)
+                return defc.getField(getName());
+            else
+                return defc.getDeclaredField(getName());
+        } else {
+            throw new IllegalArgumentException("referenceKind="+refKind);
+        }
+!!!7180674.java!!!	convertToMemberName(in refKind : byte, inout mem : Member) : MemberName
+        if (mem instanceof Method) {
+            boolean wantSpecial = (refKind == REF_invokeSpecial);
+            return new MemberName((Method) mem, wantSpecial);
+        } else if (mem instanceof Constructor) {
+            return new MemberName((Constructor) mem);
+        } else if (mem instanceof Field) {
+            boolean isSetter = (refKind == REF_putField || refKind == REF_putStatic);
+            return new MemberName((Field) mem, isSetter);
+        }
+        throw new InternalError(mem.getClass().getName());

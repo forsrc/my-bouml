@@ -1,0 +1,153 @@
+class Code
+!!!3327234.java!!!	Code(inout c : Code)
+    this(c.getNameIndex(), c.getLength(), c.getMaxStack(), c.getMaxLocals(),
+         c.getCode(), c.getExceptionTable(), c.getAttributes(),
+         c.getConstantPool());
+!!!3327362.java!!!	Code(in name_index : int, in length : int, inout file : DataInputStream, inout constant_pool : ConstantPool)
+    // Initialize with some default values which will be overwritten later
+    this(name_index, length,
+         file.readUnsignedShort(), file.readUnsignedShort(),
+         (byte[])null, (CodeException[])null, (Attribute[])null,
+         constant_pool);
+
+    code_length = file.readInt();
+    code = new byte[code_length]; // Read byte code
+    file.readFully(code);
+
+    /* Read exception table that contains all regions where an exception
+     * handler is active, i.e., a try { ... } catch() block.
+     */
+    exception_table_length = file.readUnsignedShort();
+    exception_table        = new CodeException[exception_table_length];
+
+    for(int i=0; i < exception_table_length; i++)
+      exception_table[i] = new CodeException(file);
+
+    /* Read all attributes, currently `LineNumberTable' and
+     * `LocalVariableTable'
+     */
+    attributes_count = file.readUnsignedShort();
+    attributes = new Attribute[attributes_count];
+    for(int i=0; i < attributes_count; i++)
+      attributes[i] = Attribute.readAttribute(file, constant_pool);
+
+    /* Adjust length, because of setAttributes in this(), s.b.  length
+     * is incorrect, because it didn't take the internal attributes
+     * into account yet! Very subtle bug, fixed in 3.1.1.
+     */
+    this.length = length;
+!!!3327490.java!!!	Code(in name_index : int, in length : int, in max_stack : int, in max_locals : int, inout code : byte [[]], inout exception_table : CodeException [[]], inout attributes : Attribute [[]], inout constant_pool : ConstantPool)
+    super(Constants.ATTR_CODE, name_index, length, constant_pool);
+
+    this.max_stack         = max_stack;
+    this.max_locals        = max_locals;
+
+    setCode(code);
+    setExceptionTable(exception_table);
+    setAttributes(attributes); // Overwrites length!
+!!!3327618.java!!!	accept(inout v : Visitor) : void
+    v.visitCode(this);
+!!!3327746.java!!!	dump(inout file : DataOutputStream) : void
+    super.dump(file);
+
+    file.writeShort(max_stack);
+    file.writeShort(max_locals);
+    file.writeInt(code_length);
+    file.write(code, 0, code_length);
+
+    file.writeShort(exception_table_length);
+    for(int i=0; i < exception_table_length; i++)
+      exception_table[i].dump(file);
+
+    file.writeShort(attributes_count);
+    for(int i=0; i < attributes_count; i++)
+      attributes[i].dump(file);
+!!!3327874.java!!!	getAttributes() : Attribute
+ return attributes;
+!!!3328002.java!!!	getLineNumberTable() : LineNumberTable
+    for(int i=0; i < attributes_count; i++)
+      if(attributes[i] instanceof LineNumberTable)
+        return (LineNumberTable)attributes[i];
+
+    return null;
+!!!3328130.java!!!	getLocalVariableTable() : LocalVariableTable
+    for(int i=0; i < attributes_count; i++)
+      if(attributes[i] instanceof LocalVariableTable)
+        return (LocalVariableTable)attributes[i];
+
+    return null;
+!!!3328258.java!!!	getCode() : byte
+ return code;
+!!!3328386.java!!!	getExceptionTable() : CodeException
+ return exception_table;
+!!!3328514.java!!!	getMaxLocals() : int
+ return max_locals;
+!!!3328642.java!!!	getMaxStack() : int
+ return max_stack;
+!!!3328770.java!!!	getInternalLength() : int
+    return 2 /*max_stack*/ + 2 /*max_locals*/ + 4 /*code length*/
+      + code_length /*byte-code*/
+      + 2 /*exception-table length*/
+      + 8 * exception_table_length /* exception table */
+      + 2 /* attributes count */;
+!!!3328898.java!!!	calculateLength() : int
+    int len = 0;
+
+    for(int i=0; i < attributes_count; i++)
+      len += attributes[i].length + 6 /*attribute header size*/;
+
+    return len + getInternalLength();
+!!!3329026.java!!!	setAttributes(inout attributes : Attribute [[]]) : void
+    this.attributes  = attributes;
+    attributes_count = (attributes == null)? 0 : attributes.length;
+    length = calculateLength(); // Adjust length
+!!!3329154.java!!!	setCode(inout code : byte [[]]) : void
+    this.code   = code;
+    code_length = (code == null)? 0 : code.length;
+!!!3329282.java!!!	setExceptionTable(inout exception_table : CodeException [[]]) : void
+    this.exception_table   = exception_table;
+    exception_table_length = (exception_table == null)? 0 :
+      exception_table.length;
+!!!3329410.java!!!	setMaxLocals(in max_locals : int) : void
+    this.max_locals = max_locals;
+!!!3329538.java!!!	setMaxStack(in max_stack : int) : void
+    this.max_stack = max_stack;
+!!!3329666.java!!!	toString(inout verbose : boolean) : String
+    StringBuffer buf;
+
+    buf = new StringBuffer("Code(max_stack = " + max_stack +
+                           ", max_locals = " + max_locals +
+                           ", code_length = " + code_length + ")\n" +
+                           Utility.codeToString(code, constant_pool, 0, -1, verbose));
+
+    if(exception_table_length > 0) {
+      buf.append("\nException handler(s) = \n" + "From\tTo\tHandler\tType\n");
+
+      for(int i=0; i < exception_table_length; i++)
+        buf.append(exception_table[i].toString(constant_pool, verbose) + "\n");
+    }
+
+    if(attributes_count > 0) {
+      buf.append("\nAttribute(s) = \n");
+
+      for(int i=0; i < attributes_count; i++)
+        buf.append(attributes[i].toString() + "\n");
+    }
+
+    return buf.toString();
+!!!3329794.java!!!	toString() : String
+    return toString(true);
+!!!3329922.java!!!	copy(inout constant_pool : ConstantPool) : Attribute
+    Code c = (Code)clone();
+    c.code          = (byte[])code.clone();
+    c.constant_pool = constant_pool;
+
+    c.exception_table = new CodeException[exception_table_length];
+    for(int i=0; i < exception_table_length; i++)
+      c.exception_table[i] = exception_table[i].copy();
+
+    c.attributes = new Attribute[attributes_count];
+    for(int i=0; i < attributes_count; i++)
+      c.attributes[i] = attributes[i].copy(constant_pool);
+
+    return c;

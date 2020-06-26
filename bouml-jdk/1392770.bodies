@@ -1,0 +1,833 @@
+class HTMLWriter
+!!!11780354.java!!!	HTMLWriter(inout w : Writer, inout doc : HTMLDocument)
+        this(w, doc, 0, doc.getLength());
+!!!11780482.java!!!	HTMLWriter(inout w : Writer, inout doc : HTMLDocument, in pos : int, in len : int)
+        super(w, doc, pos, len);
+        completeDoc = (pos == 0 && len == doc.getLength());
+        setLineLength(80);
+!!!11780610.java!!!	write() : void
+        ElementIterator it = getElementIterator();
+        Element current = null;
+        Element next;
+
+        wroteHead = false;
+        setCurrentLineLength(0);
+        replaceEntities = false;
+        setCanWrapLines(false);
+        if (segment == null) {
+            segment = new Segment();
+        }
+        inPre = false;
+        boolean forcedBody = false;
+        while ((next = it.next()) != null) {
+            if (!inRange(next)) {
+                if (completeDoc && next.getAttributes().getAttribute(
+                        StyleConstants.NameAttribute) == HTML.Tag.BODY) {
+                    forcedBody = true;
+                }
+                else {
+                    continue;
+                }
+            }
+            if (current != null) {
+
+                /*
+                  if next is child of current increment indent
+                */
+
+                if (indentNeedsIncrementing(current, next)) {
+                    incrIndent();
+                } else if (current.getParentElement() != next.getParentElement()) {
+                    /*
+                       next and current are not siblings
+                       so emit end tags for items on the stack until the
+                       item on top of the stack, is the parent of the
+                       next.
+                    */
+                    Element top = blockElementStack.peek();
+                    while (top != next.getParentElement()) {
+                        /*
+                           pop() will return top.
+                        */
+                        blockElementStack.pop();
+                        if (!synthesizedElement(top)) {
+                            AttributeSet attrs = top.getAttributes();
+                            if (!matchNameAttribute(attrs, HTML.Tag.PRE) &&
+                                !isFormElementWithContent(attrs)) {
+                                decrIndent();
+                            }
+                            endTag(top);
+                        }
+                        top = blockElementStack.peek();
+                    }
+                } else if (current.getParentElement() == next.getParentElement()) {
+                    /*
+                       if next and current are siblings the indent level
+                       is correct.  But, we need to make sure that if current is
+                       on the stack, we pop it off, and put out its end tag.
+                    */
+                    Element top = blockElementStack.peek();
+                    if (top == current) {
+                        blockElementStack.pop();
+                        endTag(top);
+                    }
+                }
+            }
+            if (!next.isLeaf() || isFormElementWithContent(next.getAttributes())) {
+                blockElementStack.push(next);
+                startTag(next);
+            } else {
+                emptyTag(next);
+            }
+            current = next;
+        }
+        /* Emit all remaining end tags */
+
+        /* A null parameter ensures that all embedded tags
+           currently in the tags vector have their
+           corresponding end tags written out.
+        */
+        closeOutUnwantedEmbeddedTags(null);
+
+        if (forcedBody) {
+            blockElementStack.pop();
+            endTag(current);
+        }
+        while (!blockElementStack.empty()) {
+            current = blockElementStack.pop();
+            if (!synthesizedElement(current)) {
+                AttributeSet attrs = current.getAttributes();
+                if (!matchNameAttribute(attrs, HTML.Tag.PRE) &&
+                              !isFormElementWithContent(attrs)) {
+                    decrIndent();
+                }
+                endTag(current);
+            }
+        }
+
+        if (completeDoc) {
+            writeAdditionalComments();
+        }
+
+        segment.array = null;
+!!!11780738.java!!!	writeAttributes(inout attr : AttributeSet) : void
+        // translate css attributes to html
+        convAttr.removeAttributes(convAttr);
+        convertToHTML32(attr, convAttr);
+
+        Enumeration names = convAttr.getAttributeNames();
+        while (names.hasMoreElements()) {
+            Object name = names.nextElement();
+            if (name instanceof HTML.Tag ||
+                name instanceof StyleConstants ||
+                name == HTML.Attribute.ENDTAG) {
+                continue;
+            }
+            write(" " + name + "=\"" + convAttr.getAttribute(name) + "\"");
+        }
+!!!11780866.java!!!	emptyTag(inout elem : Element) : void
+
+        if (!inContent && !inPre) {
+            indentSmart();
+        }
+
+        AttributeSet attr = elem.getAttributes();
+        closeOutUnwantedEmbeddedTags(attr);
+        writeEmbeddedTags(attr);
+
+        if (matchNameAttribute(attr, HTML.Tag.CONTENT)) {
+            inContent = true;
+            text(elem);
+        } else if (matchNameAttribute(attr, HTML.Tag.COMMENT)) {
+            comment(elem);
+        }  else {
+            boolean isBlock = isBlockTag(elem.getAttributes());
+            if (inContent && isBlock ) {
+                writeLineSeparator();
+                indentSmart();
+            }
+
+            Object nameTag = (attr != null) ? attr.getAttribute
+                              (StyleConstants.NameAttribute) : null;
+            Object endTag = (attr != null) ? attr.getAttribute
+                              (HTML.Attribute.ENDTAG) : null;
+
+            boolean outputEndTag = false;
+            // If an instance of an UNKNOWN Tag, or an instance of a
+            // tag that is only visible during editing
+            //
+            if (nameTag != null && endTag != null &&
+                (endTag instanceof String) &&
+                endTag.equals("true")) {
+                outputEndTag = true;
+            }
+
+            if (completeDoc && matchNameAttribute(attr, HTML.Tag.HEAD)) {
+                if (outputEndTag) {
+                    // Write out any styles.
+                    writeStyles(((HTMLDocument)getDocument()).getStyleSheet());
+                }
+                wroteHead = true;
+            }
+
+            write('<');
+            if (outputEndTag) {
+                write('/');
+            }
+            write(elem.getName());
+            writeAttributes(attr);
+            write('>');
+            if (matchNameAttribute(attr, HTML.Tag.TITLE) && !outputEndTag) {
+                Document doc = elem.getDocument();
+                String title = (String)doc.getProperty(Document.TitleProperty);
+                write(title);
+            } else if (!inContent || isBlock) {
+                writeLineSeparator();
+                if (isBlock && inContent) {
+                    indentSmart();
+                }
+            }
+        }
+!!!11780994.java!!!	isBlockTag(inout attr : AttributeSet) : boolean
+        Object o = attr.getAttribute(StyleConstants.NameAttribute);
+        if (o instanceof HTML.Tag) {
+            HTML.Tag name = (HTML.Tag) o;
+            return name.isBlock();
+        }
+        return false;
+!!!11781122.java!!!	startTag(inout elem : Element) : void
+
+        if (synthesizedElement(elem)) {
+            return;
+        }
+
+        // Determine the name, as an HTML.Tag.
+        AttributeSet attr = elem.getAttributes();
+        Object nameAttribute = attr.getAttribute(StyleConstants.NameAttribute);
+        HTML.Tag name;
+        if (nameAttribute instanceof HTML.Tag) {
+            name = (HTML.Tag)nameAttribute;
+        }
+        else {
+            name = null;
+        }
+
+        if (name == HTML.Tag.PRE) {
+            inPre = true;
+            preEndOffset = elem.getEndOffset();
+        }
+
+        // write out end tags for item on stack
+        closeOutUnwantedEmbeddedTags(attr);
+
+        if (inContent) {
+            writeLineSeparator();
+            inContent = false;
+            newlineOutputed = false;
+        }
+
+        if (completeDoc && name == HTML.Tag.BODY && !wroteHead) {
+            // If the head has not been output, output it and the styles.
+            wroteHead = true;
+            indentSmart();
+            write("<head>");
+            writeLineSeparator();
+            incrIndent();
+            writeStyles(((HTMLDocument)getDocument()).getStyleSheet());
+            decrIndent();
+            writeLineSeparator();
+            indentSmart();
+            write("</head>");
+            writeLineSeparator();
+        }
+
+        indentSmart();
+        write('<');
+        write(elem.getName());
+        writeAttributes(attr);
+        write('>');
+        if (name != HTML.Tag.PRE) {
+            writeLineSeparator();
+        }
+
+        if (name == HTML.Tag.TEXTAREA) {
+            textAreaContent(elem.getAttributes());
+        } else if (name == HTML.Tag.SELECT) {
+            selectContent(elem.getAttributes());
+        } else if (completeDoc && name == HTML.Tag.BODY) {
+            // Write out the maps, which is not stored as Elements in
+            // the Document.
+            writeMaps(((HTMLDocument)getDocument()).getMaps());
+        }
+        else if (name == HTML.Tag.HEAD) {
+            HTMLDocument document = (HTMLDocument)getDocument();
+            wroteHead = true;
+            incrIndent();
+            writeStyles(document.getStyleSheet());
+            if (document.hasBaseTag()) {
+                indentSmart();
+                write("<base href=\"" + document.getBase() + "\">");
+                writeLineSeparator();
+            }
+            decrIndent();
+        }
+
+!!!11781250.java!!!	textAreaContent(inout attr : AttributeSet) : void
+        Document doc = (Document)attr.getAttribute(StyleConstants.ModelAttribute);
+        if (doc != null && doc.getLength() > 0) {
+            if (segment == null) {
+                segment = new Segment();
+            }
+            doc.getText(0, doc.getLength(), segment);
+            if (segment.count > 0) {
+                inTextArea = true;
+                incrIndent();
+                indentSmart();
+                setCanWrapLines(true);
+                replaceEntities = true;
+                write(segment.array, segment.offset, segment.count);
+                replaceEntities = false;
+                setCanWrapLines(false);
+                writeLineSeparator();
+                inTextArea = false;
+                decrIndent();
+            }
+        }
+!!!11781378.java!!!	text(inout elem : Element) : void
+        int start = Math.max(getStartOffset(), elem.getStartOffset());
+        int end = Math.min(getEndOffset(), elem.getEndOffset());
+        if (start < end) {
+            if (segment == null) {
+                segment = new Segment();
+            }
+            getDocument().getText(start, end - start, segment);
+            newlineOutputed = false;
+            if (segment.count > 0) {
+                if (segment.array[segment.offset + segment.count - 1] == '\n'){
+                    newlineOutputed = true;
+                }
+                if (inPre && end == preEndOffset) {
+                    if (segment.count > 1) {
+                        segment.count--;
+                    }
+                    else {
+                        return;
+                    }
+                }
+                replaceEntities = true;
+                setCanWrapLines(!inPre);
+                write(segment.array, segment.offset, segment.count);
+                setCanWrapLines(false);
+                replaceEntities = false;
+            }
+        }
+!!!11781506.java!!!	selectContent(inout attr : AttributeSet) : void
+        Object model = attr.getAttribute(StyleConstants.ModelAttribute);
+        incrIndent();
+        if (model instanceof OptionListModel) {
+            OptionListModel<Option> listModel = (OptionListModel<Option>) model;
+            int size = listModel.getSize();
+            for (int i = 0; i < size; i++) {
+                Option option = listModel.getElementAt(i);
+                writeOption(option);
+            }
+        } else if (model instanceof OptionComboBoxModel) {
+            OptionComboBoxModel<Option> comboBoxModel = (OptionComboBoxModel<Option>) model;
+            int size = comboBoxModel.getSize();
+            for (int i = 0; i < size; i++) {
+                Option option = comboBoxModel.getElementAt(i);
+                writeOption(option);
+            }
+        }
+        decrIndent();
+!!!11781634.java!!!	writeOption(inout option : Option) : void
+
+        indentSmart();
+        write('<');
+        write("option");
+        // PENDING: should this be changed to check for null first?
+        Object value = option.getAttributes().getAttribute
+                              (HTML.Attribute.VALUE);
+        if (value != null) {
+            write(" value="+ value);
+        }
+        if (option.isSelected()) {
+            write(" selected");
+        }
+        write('>');
+        if (option.getLabel() != null) {
+            write(option.getLabel());
+        }
+        writeLineSeparator();
+!!!11781762.java!!!	endTag(inout elem : Element) : void
+        if (synthesizedElement(elem)) {
+            return;
+        }
+
+        // write out end tags for item on stack
+        closeOutUnwantedEmbeddedTags(elem.getAttributes());
+        if (inContent) {
+            if (!newlineOutputed && !inPre) {
+                writeLineSeparator();
+            }
+            newlineOutputed = false;
+            inContent = false;
+        }
+        if (!inPre) {
+            indentSmart();
+        }
+        if (matchNameAttribute(elem.getAttributes(), HTML.Tag.PRE)) {
+            inPre = false;
+        }
+        write('<');
+        write('/');
+        write(elem.getName());
+        write('>');
+        writeLineSeparator();
+!!!11781890.java!!!	comment(inout elem : Element) : void
+        AttributeSet as = elem.getAttributes();
+        if (matchNameAttribute(as, HTML.Tag.COMMENT)) {
+            Object comment = as.getAttribute(HTML.Attribute.COMMENT);
+            if (comment instanceof String) {
+                writeComment((String)comment);
+            }
+            else {
+                writeComment(null);
+            }
+        }
+!!!11782018.java!!!	writeComment(inout string : String) : void
+        write("<!--");
+        if (string != null) {
+            write(string);
+        }
+        write("-->");
+        writeLineSeparator();
+        indentSmart();
+!!!11782146.java!!!	writeAdditionalComments() : void
+        Object comments = getDocument().getProperty
+                                        (HTMLDocument.AdditionalComments);
+
+        if (comments instanceof Vector) {
+            Vector v = (Vector)comments;
+            for (int counter = 0, maxCounter = v.size(); counter < maxCounter;
+                 counter++) {
+                writeComment(v.elementAt(counter).toString());
+            }
+        }
+!!!11782274.java!!!	synthesizedElement(inout elem : Element) : boolean
+        if (matchNameAttribute(elem.getAttributes(), HTML.Tag.IMPLIED)) {
+            return true;
+        }
+        return false;
+!!!11782402.java!!!	matchNameAttribute(inout attr : AttributeSet, inout tag : HTML::Tag) : boolean
+        Object o = attr.getAttribute(StyleConstants.NameAttribute);
+        if (o instanceof HTML.Tag) {
+            HTML.Tag name = (HTML.Tag) o;
+            if (name == tag) {
+                return true;
+            }
+        }
+        return false;
+!!!11782530.java!!!	writeEmbeddedTags(inout attr : AttributeSet) : void
+
+        // translate css attributes to html
+        attr = convertToHTML(attr, oConvAttr);
+
+        Enumeration names = attr.getAttributeNames();
+        while (names.hasMoreElements()) {
+            Object name = names.nextElement();
+            if (name instanceof HTML.Tag) {
+                HTML.Tag tag = (HTML.Tag)name;
+                if (tag == HTML.Tag.FORM || tags.contains(tag)) {
+                    continue;
+                }
+                write('<');
+                write(tag.toString());
+                Object o = attr.getAttribute(tag);
+                if (o != null && o instanceof AttributeSet) {
+                    writeAttributes((AttributeSet)o);
+                }
+                write('>');
+                tags.addElement(tag);
+                tagValues.addElement(o);
+            }
+        }
+!!!11782658.java!!!	noMatchForTagInAttributes(inout attr : AttributeSet, inout t : HTML::Tag, inout tagValue : Object) : boolean
+        if (attr != null && attr.isDefined(t)) {
+            Object newValue = attr.getAttribute(t);
+
+            if ((tagValue == null) ? (newValue == null) :
+                (newValue != null && tagValue.equals(newValue))) {
+                return false;
+            }
+        }
+        return true;
+!!!11782786.java!!!	closeOutUnwantedEmbeddedTags(inout attr : AttributeSet) : void
+
+        tagsToRemove.removeAllElements();
+
+        // translate css attributes to html
+        attr = convertToHTML(attr, null);
+
+        HTML.Tag t;
+        Object tValue;
+        int firstIndex = -1;
+        int size = tags.size();
+        // First, find all the tags that need to be removed.
+        for (int i = size - 1; i >= 0; i--) {
+            t = tags.elementAt(i);
+            tValue = tagValues.elementAt(i);
+            if ((attr == null) || noMatchForTagInAttributes(attr, t, tValue)) {
+                firstIndex = i;
+                tagsToRemove.addElement(t);
+            }
+        }
+        if (firstIndex != -1) {
+            // Then close them out.
+            boolean removeAll = ((size - firstIndex) == tagsToRemove.size());
+            for (int i = size - 1; i >= firstIndex; i--) {
+                t = tags.elementAt(i);
+                if (removeAll || tagsToRemove.contains(t)) {
+                    tags.removeElementAt(i);
+                    tagValues.removeElementAt(i);
+                }
+                write('<');
+                write('/');
+                write(t.toString());
+                write('>');
+            }
+            // Have to output any tags after firstIndex that still remaing,
+            // as we closed them out, but they should remain open.
+            size = tags.size();
+            for (int i = firstIndex; i < size; i++) {
+                t = tags.elementAt(i);
+                write('<');
+                write(t.toString());
+                Object o = tagValues.elementAt(i);
+                if (o != null && o instanceof AttributeSet) {
+                    writeAttributes((AttributeSet)o);
+                }
+                write('>');
+            }
+        }
+!!!11782914.java!!!	isFormElementWithContent(inout attr : AttributeSet) : boolean
+        return matchNameAttribute(attr, HTML.Tag.TEXTAREA) ||
+                matchNameAttribute(attr, HTML.Tag.SELECT);
+!!!11783042.java!!!	indentNeedsIncrementing(inout current : Element, inout next : Element) : boolean
+        if ((next.getParentElement() == current) && !inPre) {
+            if (indentNext) {
+                indentNext = false;
+                return true;
+            } else if (synthesizedElement(next)) {
+                indentNext = true;
+            } else if (!synthesizedElement(current)){
+                return true;
+            }
+        }
+        return false;
+!!!11783170.java!!!	writeMaps(inout maps : Enumeration) : void
+        if (maps != null) {
+            while(maps.hasMoreElements()) {
+                Map map = (Map)maps.nextElement();
+                String name = map.getName();
+
+                incrIndent();
+                indentSmart();
+                write("<map");
+                if (name != null) {
+                    write(" name=\"");
+                    write(name);
+                    write("\">");
+                }
+                else {
+                    write('>');
+                }
+                writeLineSeparator();
+                incrIndent();
+
+                // Output the areas
+                AttributeSet[] areas = map.getAreas();
+                if (areas != null) {
+                    for (int counter = 0, maxCounter = areas.length;
+                         counter < maxCounter; counter++) {
+                        indentSmart();
+                        write("<area");
+                        writeAttributes(areas[counter]);
+                        write("></area>");
+                        writeLineSeparator();
+                    }
+                }
+                decrIndent();
+                indentSmart();
+                write("</map>");
+                writeLineSeparator();
+                decrIndent();
+            }
+        }
+!!!11783298.java!!!	writeStyles(inout sheet : StyleSheet) : void
+        if (sheet != null) {
+            Enumeration styles = sheet.getStyleNames();
+            if (styles != null) {
+                boolean outputStyle = false;
+                while (styles.hasMoreElements()) {
+                    String name = (String)styles.nextElement();
+                    // Don't write out the default style.
+                    if (!StyleContext.DEFAULT_STYLE.equals(name) &&
+                        writeStyle(name, sheet.getStyle(name), outputStyle)) {
+                        outputStyle = true;
+                    }
+                }
+                if (outputStyle) {
+                    writeStyleEndTag();
+                }
+            }
+        }
+!!!11783426.java!!!	writeStyle(inout name : String, inout style : Style, inout outputStyle : boolean) : boolean
+        boolean didOutputStyle = false;
+        Enumeration attributes = style.getAttributeNames();
+        if (attributes != null) {
+            while (attributes.hasMoreElements()) {
+                Object attribute = attributes.nextElement();
+                if (attribute instanceof CSS.Attribute) {
+                    String value = style.getAttribute(attribute).toString();
+                    if (value != null) {
+                        if (!outputStyle) {
+                            writeStyleStartTag();
+                            outputStyle = true;
+                        }
+                        if (!didOutputStyle) {
+                            didOutputStyle = true;
+                            indentSmart();
+                            write(name);
+                            write(" {");
+                        }
+                        else {
+                            write(";");
+                        }
+                        write(' ');
+                        write(attribute.toString());
+                        write(": ");
+                        write(value);
+                    }
+                }
+            }
+        }
+        if (didOutputStyle) {
+            write(" }");
+            writeLineSeparator();
+        }
+        return didOutputStyle;
+!!!11783554.java!!!	writeStyleStartTag() : void
+        indentSmart();
+        write("<style type=\"text/css\">");
+        incrIndent();
+        writeLineSeparator();
+        indentSmart();
+        write("<!--");
+        incrIndent();
+        writeLineSeparator();
+!!!11783682.java!!!	writeStyleEndTag() : void
+        decrIndent();
+        indentSmart();
+        write("-->");
+        writeLineSeparator();
+        decrIndent();
+        indentSmart();
+        write("</style>");
+        writeLineSeparator();
+        indentSmart();
+!!!11783810.java!!!	convertToHTML(inout from : AttributeSet, inout to : MutableAttributeSet) : AttributeSet
+        if (to == null) {
+            to = convAttr;
+        }
+        to.removeAttributes(to);
+        if (writeCSS) {
+            convertToHTML40(from, to);
+        } else {
+            convertToHTML32(from, to);
+        }
+        return to;
+!!!11783938.java!!!	convertToHTML32(inout from : AttributeSet, inout to : MutableAttributeSet) : void
+        if (from == null) {
+            return;
+        }
+        Enumeration keys = from.getAttributeNames();
+        String value = "";
+        while (keys.hasMoreElements()) {
+            Object key = keys.nextElement();
+            if (key instanceof CSS.Attribute) {
+                if ((key == CSS.Attribute.FONT_FAMILY) ||
+                    (key == CSS.Attribute.FONT_SIZE) ||
+                    (key == CSS.Attribute.COLOR)) {
+
+                    createFontAttribute((CSS.Attribute)key, from, to);
+                } else if (key == CSS.Attribute.FONT_WEIGHT) {
+                    // add a bold tag is weight is bold
+                    CSS.FontWeight weightValue = (CSS.FontWeight)
+                        from.getAttribute(CSS.Attribute.FONT_WEIGHT);
+                    if ((weightValue != null) && (weightValue.getValue() > 400)) {
+                        addAttribute(to, HTML.Tag.B, SimpleAttributeSet.EMPTY);
+                    }
+                } else if (key == CSS.Attribute.FONT_STYLE) {
+                    String s = from.getAttribute(key).toString();
+                    if (s.indexOf("italic") >= 0) {
+                        addAttribute(to, HTML.Tag.I, SimpleAttributeSet.EMPTY);
+                    }
+                } else if (key == CSS.Attribute.TEXT_DECORATION) {
+                    String decor = from.getAttribute(key).toString();
+                    if (decor.indexOf("underline") >= 0) {
+                        addAttribute(to, HTML.Tag.U, SimpleAttributeSet.EMPTY);
+                    }
+                    if (decor.indexOf("line-through") >= 0) {
+                        addAttribute(to, HTML.Tag.STRIKE, SimpleAttributeSet.EMPTY);
+                    }
+                } else if (key == CSS.Attribute.VERTICAL_ALIGN) {
+                    String vAlign = from.getAttribute(key).toString();
+                    if (vAlign.indexOf("sup") >= 0) {
+                        addAttribute(to, HTML.Tag.SUP, SimpleAttributeSet.EMPTY);
+                    }
+                    if (vAlign.indexOf("sub") >= 0) {
+                        addAttribute(to, HTML.Tag.SUB, SimpleAttributeSet.EMPTY);
+                    }
+                } else if (key == CSS.Attribute.TEXT_ALIGN) {
+                    addAttribute(to, HTML.Attribute.ALIGN,
+                                    from.getAttribute(key).toString());
+                } else {
+                    // default is to store in a HTML style attribute
+                    if (value.length() > 0) {
+                        value = value + "; ";
+                    }
+                    value = value + key + ": " + from.getAttribute(key);
+                }
+            } else {
+                Object attr = from.getAttribute(key);
+                if (attr instanceof AttributeSet) {
+                    attr = ((AttributeSet)attr).copyAttributes();
+                }
+                addAttribute(to, key, attr);
+            }
+        }
+        if (value.length() > 0) {
+            to.addAttribute(HTML.Attribute.STYLE, value);
+        }
+!!!11784066.java!!!	addAttribute(inout to : MutableAttributeSet, inout key : Object, inout value : Object) : void
+        Object attr = to.getAttribute(key);
+        if (attr == null || attr == SimpleAttributeSet.EMPTY) {
+            to.addAttribute(key, value);
+        } else {
+            if (attr instanceof MutableAttributeSet &&
+                value instanceof AttributeSet) {
+                ((MutableAttributeSet)attr).addAttributes((AttributeSet)value);
+            }
+        }
+!!!11784194.java!!!	createFontAttribute(inout a : CSS::Attribute, inout from : AttributeSet, inout to : MutableAttributeSet) : void
+        MutableAttributeSet fontAttr = (MutableAttributeSet)
+            to.getAttribute(HTML.Tag.FONT);
+        if (fontAttr == null) {
+            fontAttr = new SimpleAttributeSet();
+            to.addAttribute(HTML.Tag.FONT, fontAttr);
+        }
+        // edit the parameters to the font tag
+        String htmlValue = from.getAttribute(a).toString();
+        if (a == CSS.Attribute.FONT_FAMILY) {
+            fontAttr.addAttribute(HTML.Attribute.FACE, htmlValue);
+        } else if (a == CSS.Attribute.FONT_SIZE) {
+            fontAttr.addAttribute(HTML.Attribute.SIZE, htmlValue);
+        } else if (a == CSS.Attribute.COLOR) {
+            fontAttr.addAttribute(HTML.Attribute.COLOR, htmlValue);
+        }
+!!!11784322.java!!!	convertToHTML40(inout from : AttributeSet, inout to : MutableAttributeSet) : void
+        Enumeration keys = from.getAttributeNames();
+        String value = "";
+        while (keys.hasMoreElements()) {
+            Object key = keys.nextElement();
+            if (key instanceof CSS.Attribute) {
+                value = value + " " + key + "=" + from.getAttribute(key) + ";";
+            } else {
+                to.addAttribute(key, from.getAttribute(key));
+            }
+        }
+        if (value.length() > 0) {
+            to.addAttribute(HTML.Attribute.STYLE, value);
+        }
+!!!11784450.java!!!	writeLineSeparator() : void
+        boolean oldReplace = replaceEntities;
+        replaceEntities = false;
+        super.writeLineSeparator();
+        replaceEntities = oldReplace;
+        indented = false;
+!!!11784578.java!!!	output(inout chars : char [[]], in start : int, in length : int) : void
+        if (!replaceEntities) {
+            super.output(chars, start, length);
+            return;
+        }
+        int last = start;
+        length += start;
+        for (int counter = start; counter < length; counter++) {
+            // This will change, we need better support character level
+            // entities.
+            switch(chars[counter]) {
+                // Character level entities.
+            case '<':
+                if (counter > last) {
+                    super.output(chars, last, counter - last);
+                }
+                last = counter + 1;
+                output("&lt;");
+                break;
+            case '>':
+                if (counter > last) {
+                    super.output(chars, last, counter - last);
+                }
+                last = counter + 1;
+                output("&gt;");
+                break;
+            case '&':
+                if (counter > last) {
+                    super.output(chars, last, counter - last);
+                }
+                last = counter + 1;
+                output("&amp;");
+                break;
+            case '"':
+                if (counter > last) {
+                    super.output(chars, last, counter - last);
+                }
+                last = counter + 1;
+                output("&quot;");
+                break;
+                // Special characters
+            case '\n':
+            case '\t':
+            case '\r':
+                break;
+            default:
+                if (chars[counter] < ' ' || chars[counter] > 127) {
+                    if (counter > last) {
+                        super.output(chars, last, counter - last);
+                    }
+                    last = counter + 1;
+                    // If the character is outside of ascii, write the
+                    // numeric value.
+                    output("&#");
+                    output(String.valueOf((int)chars[counter]));
+                    output(";");
+                }
+                break;
+            }
+        }
+        if (last < length) {
+            super.output(chars, last, length - last);
+        }
+!!!11784706.java!!!	output(inout string : String) : void
+        int length = string.length();
+        if (tempChars == null || tempChars.length < length) {
+            tempChars = new char[length];
+        }
+        string.getChars(0, length, tempChars, 0);
+        super.output(tempChars, 0, length);
+!!!11784834.java!!!	indentSmart() : void
+        if (!indented) {
+            indent();
+            indented = true;
+        }

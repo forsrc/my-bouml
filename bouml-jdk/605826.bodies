@@ -1,0 +1,92 @@
+class ParentPattern
+!!!3755650.java!!!	ParentPattern(inout left : Pattern, inout right : RelativePathPattern)
+        (_left = left).setParent(this);
+        (_right = right).setParent(this);
+!!!3755778.java!!!	setParser(inout parser : Parser) : void
+        super.setParser(parser);
+        _left.setParser(parser);
+        _right.setParser(parser);
+!!!3755906.java!!!	isWildcard() : boolean
+        return false;
+!!!3756034.java!!!	getKernelPattern() : StepPattern
+        return _right.getKernelPattern();
+!!!3756162.java!!!	reduceKernelPattern() : void
+        _right.reduceKernelPattern();
+!!!3756290.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        _left.typeCheck(stable);
+        return _right.typeCheck(stable);
+!!!3756418.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+        final LocalVariableGen local =
+            methodGen.addLocalVariable2("ppt",
+                                        Util.getJCRefType(NODE_SIG),
+                                        null);
+
+        final com.sun.org.apache.bcel.internal.generic.Instruction loadLocal =
+            new ILOAD(local.getIndex());
+        final com.sun.org.apache.bcel.internal.generic.Instruction storeLocal =
+            new ISTORE(local.getIndex());
+
+        if (_right.isWildcard()) {
+            il.append(methodGen.loadDOM());
+            il.append(SWAP);
+        }
+        else if (_right instanceof StepPattern) {
+            il.append(DUP);
+            local.setStart(il.append(storeLocal));
+
+            _right.translate(classGen, methodGen);
+
+            il.append(methodGen.loadDOM());
+            local.setEnd(il.append(loadLocal));
+        }
+        else {
+            _right.translate(classGen, methodGen);
+
+            if (_right instanceof AncestorPattern) {
+                il.append(methodGen.loadDOM());
+                il.append(SWAP);
+            }
+        }
+
+        final int getParent = cpg.addInterfaceMethodref(DOM_INTF,
+                                                        GET_PARENT,
+                                                        GET_PARENT_SIG);
+        il.append(new INVOKEINTERFACE(getParent, 2));
+
+        final SyntaxTreeNode p = getParent();
+        if (p == null || p instanceof Instruction ||
+            p instanceof TopLevelElement)
+        {
+            _left.translate(classGen, methodGen);
+        }
+        else {
+            il.append(DUP);
+            InstructionHandle storeInst = il.append(storeLocal);
+
+            if (local.getStart() == null) {
+                local.setStart(storeInst);
+            }
+
+            _left.translate(classGen, methodGen);
+
+            il.append(methodGen.loadDOM());
+            local.setEnd(il.append(loadLocal));
+        }
+
+        methodGen.removeLocalVariable(local);
+
+        /*
+         * If _right is an ancestor pattern, backpatch _left false
+         * list to the loop that searches for more ancestors.
+         */
+        if (_right instanceof AncestorPattern) {
+            final AncestorPattern ancestor = (AncestorPattern) _right;
+            _left.backPatchFalseList(ancestor.getLoopHandle());    // clears list
+        }
+
+        _trueList.append(_right._trueList.append(_left._trueList));
+        _falseList.append(_right._falseList.append(_left._falseList));
+!!!3756546.java!!!	toString() : String
+        return "Parent(" + _left + ", " + _right + ')';

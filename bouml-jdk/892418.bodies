@@ -1,0 +1,392 @@
+class Path2D
+!!!6539650.java!!!	Path2D(in rule : int, in initialTypes : int)
+        setWindingRule(rule);
+        this.pointTypes = new byte[initialTypes];
+!!!6540802.java!!!	expandPointTypes(inout oldPointTypes : byte [[]], in needed : int) : byte
+        final int oldSize = oldPointTypes.length;
+        final int newSizeMin = oldSize + needed;
+        if (newSizeMin < oldSize) {
+            // hard overflow failure - we can't even accommodate
+            // new items without overflowing
+            throw new ArrayIndexOutOfBoundsException(
+                          "pointTypes exceeds maximum capacity !");
+        }
+        // growth algorithm computation
+        int grow = oldSize;
+        if (grow > EXPAND_MAX) {
+            grow = Math.max(EXPAND_MAX, oldSize >> 3); // 1/8th min
+        } else if (grow < EXPAND_MIN) {
+            grow = EXPAND_MIN;
+        }
+        assert grow > 0;
+
+        int newSize = oldSize + grow;
+        if (newSize < newSizeMin) {
+            // overflow in growth algorithm computation
+            newSize = Integer.MAX_VALUE;
+        }
+        while (true) {
+            try {
+                // try allocating the larger array
+                return Arrays.copyOf(oldPointTypes, newSize);
+            } catch (OutOfMemoryError oome) {
+                if (newSize == newSizeMin) {
+                    throw oome;
+                }
+            }
+            newSize = newSizeMin + (newSize - newSizeMin) / 2;
+        }
+!!!6549890.java!!!	closePath() : void
+        if (numTypes == 0 || pointTypes[numTypes - 1] != SEG_CLOSE) {
+            needRoom(true, 0);
+            pointTypes[numTypes++] = SEG_CLOSE;
+        }
+!!!6550018.java!!!	append(inout s : Shape, inout connect : boolean) : void
+        append(s.getPathIterator(null), connect);
+!!!6550274.java!!!	getWindingRule() : int
+        return windingRule;
+!!!6550402.java!!!	setWindingRule(in rule : int) : void
+        if (rule != WIND_EVEN_ODD && rule != WIND_NON_ZERO) {
+            throw new IllegalArgumentException("winding rule must be "+
+                                               "WIND_EVEN_ODD or "+
+                                               "WIND_NON_ZERO");
+        }
+        windingRule = rule;
+!!!6550530.java!!!	getCurrentPoint() : Point2D
+        int index = numCoords;
+        if (numTypes < 1 || index < 1) {
+            return null;
+        }
+        if (pointTypes[numTypes - 1] == SEG_CLOSE) {
+        loop:
+            for (int i = numTypes - 2; i > 0; i--) {
+                switch (pointTypes[i]) {
+                case SEG_MOVETO:
+                    break loop;
+                case SEG_LINETO:
+                    index -= 2;
+                    break;
+                case SEG_QUADTO:
+                    index -= 4;
+                    break;
+                case SEG_CUBICTO:
+                    index -= 6;
+                    break;
+                case SEG_CLOSE:
+                    break;
+                }
+            }
+        }
+        return getPoint(index - 2);
+!!!6550658.java!!!	reset() : void
+        numTypes = numCoords = 0;
+!!!6550914.java!!!	createTransformedShape(inout at : AffineTransform) : Shape
+        Path2D p2d = (Path2D) clone();
+        if (at != null) {
+            p2d.transform(at);
+        }
+        return p2d;
+!!!6551042.java!!!	getBounds() : Rectangle
+        return getBounds2D().getBounds();
+!!!6551170.java!!!	contains(inout pi : PathIterator, in x : double, in y : double) : boolean
+        if (x * 0.0 + y * 0.0 == 0.0) {
+            /* N * 0.0 is 0.0 only if N is finite.
+             * Here we know that both x and y are finite.
+             */
+            int mask = (pi.getWindingRule() == WIND_NON_ZERO ? -1 : 1);
+            int cross = Curve.pointCrossingsForPath(pi, x, y);
+            return ((cross & mask) != 0);
+        } else {
+            /* Either x or y was infinite or NaN.
+             * A NaN always produces a negative response to any test
+             * and Infinity values cannot be "inside" any path so
+             * they should return false as well.
+             */
+            return false;
+        }
+!!!6551298.java!!!	contains(inout pi : PathIterator, inout p : Point2D) : boolean
+        return contains(pi, p.getX(), p.getY());
+!!!6551426.java!!!	contains(in x : double, in y : double) : boolean
+        if (x * 0.0 + y * 0.0 == 0.0) {
+            /* N * 0.0 is 0.0 only if N is finite.
+             * Here we know that both x and y are finite.
+             */
+            if (numTypes < 2) {
+                return false;
+            }
+            int mask = (windingRule == WIND_NON_ZERO ? -1 : 1);
+            return ((pointCrossings(x, y) & mask) != 0);
+        } else {
+            /* Either x or y was infinite or NaN.
+             * A NaN always produces a negative response to any test
+             * and Infinity values cannot be "inside" any path so
+             * they should return false as well.
+             */
+            return false;
+        }
+!!!6551554.java!!!	contains(inout p : Point2D) : boolean
+        return contains(p.getX(), p.getY());
+!!!6551682.java!!!	contains(inout pi : PathIterator, in x : double, in y : double, in w : double, in h : double) : boolean
+        if (java.lang.Double.isNaN(x+w) || java.lang.Double.isNaN(y+h)) {
+            /* [xy]+[wh] is NaN if any of those values are NaN,
+             * or if adding the two together would produce NaN
+             * by virtue of adding opposing Infinte values.
+             * Since we need to add them below, their sum must
+             * not be NaN.
+             * We return false because NaN always produces a
+             * negative response to tests
+             */
+            return false;
+        }
+        if (w <= 0 || h <= 0) {
+            return false;
+        }
+        int mask = (pi.getWindingRule() == WIND_NON_ZERO ? -1 : 2);
+        int crossings = Curve.rectCrossingsForPath(pi, x, y, x+w, y+h);
+        return (crossings != Curve.RECT_INTERSECTS &&
+                (crossings & mask) != 0);
+!!!6551810.java!!!	contains(inout pi : PathIterator, inout r : Rectangle2D) : boolean
+        return contains(pi, r.getX(), r.getY(), r.getWidth(), r.getHeight());
+!!!6551938.java!!!	contains(in x : double, in y : double, in w : double, in h : double) : boolean
+        if (java.lang.Double.isNaN(x+w) || java.lang.Double.isNaN(y+h)) {
+            /* [xy]+[wh] is NaN if any of those values are NaN,
+             * or if adding the two together would produce NaN
+             * by virtue of adding opposing Infinte values.
+             * Since we need to add them below, their sum must
+             * not be NaN.
+             * We return false because NaN always produces a
+             * negative response to tests
+             */
+            return false;
+        }
+        if (w <= 0 || h <= 0) {
+            return false;
+        }
+        int mask = (windingRule == WIND_NON_ZERO ? -1 : 2);
+        int crossings = rectCrossings(x, y, x+w, y+h);
+        return (crossings != Curve.RECT_INTERSECTS &&
+                (crossings & mask) != 0);
+!!!6552066.java!!!	contains(inout r : Rectangle2D) : boolean
+        return contains(r.getX(), r.getY(), r.getWidth(), r.getHeight());
+!!!6552194.java!!!	intersects(inout pi : PathIterator, in x : double, in y : double, in w : double, in h : double) : boolean
+        if (java.lang.Double.isNaN(x+w) || java.lang.Double.isNaN(y+h)) {
+            /* [xy]+[wh] is NaN if any of those values are NaN,
+             * or if adding the two together would produce NaN
+             * by virtue of adding opposing Infinte values.
+             * Since we need to add them below, their sum must
+             * not be NaN.
+             * We return false because NaN always produces a
+             * negative response to tests
+             */
+            return false;
+        }
+        if (w <= 0 || h <= 0) {
+            return false;
+        }
+        int mask = (pi.getWindingRule() == WIND_NON_ZERO ? -1 : 2);
+        int crossings = Curve.rectCrossingsForPath(pi, x, y, x+w, y+h);
+        return (crossings == Curve.RECT_INTERSECTS ||
+                (crossings & mask) != 0);
+!!!6552322.java!!!	intersects(inout pi : PathIterator, inout r : Rectangle2D) : boolean
+        return intersects(pi, r.getX(), r.getY(), r.getWidth(), r.getHeight());
+!!!6552450.java!!!	intersects(in x : double, in y : double, in w : double, in h : double) : boolean
+        if (java.lang.Double.isNaN(x+w) || java.lang.Double.isNaN(y+h)) {
+            /* [xy]+[wh] is NaN if any of those values are NaN,
+             * or if adding the two together would produce NaN
+             * by virtue of adding opposing Infinte values.
+             * Since we need to add them below, their sum must
+             * not be NaN.
+             * We return false because NaN always produces a
+             * negative response to tests
+             */
+            return false;
+        }
+        if (w <= 0 || h <= 0) {
+            return false;
+        }
+        int mask = (windingRule == WIND_NON_ZERO ? -1 : 2);
+        int crossings = rectCrossings(x, y, x+w, y+h);
+        return (crossings == Curve.RECT_INTERSECTS ||
+                (crossings & mask) != 0);
+!!!6552578.java!!!	intersects(inout r : Rectangle2D) : boolean
+        return intersects(r.getX(), r.getY(), r.getWidth(), r.getHeight());
+!!!6552706.java!!!	getPathIterator(inout at : AffineTransform, in flatness : double) : PathIterator
+        return new FlatteningPathIterator(getPathIterator(at), flatness);
+!!!6552962.java!!!	writeObject(inout s : ObjectOutputStream, inout isdbl : boolean) : void
+        s.defaultWriteObject();
+
+        float fCoords[];
+        double dCoords[];
+
+        if (isdbl) {
+            dCoords = ((Path2D.Double) this).doubleCoords;
+            fCoords = null;
+        } else {
+            fCoords = ((Path2D.Float) this).floatCoords;
+            dCoords = null;
+        }
+
+        int numTypes = this.numTypes;
+
+        s.writeByte(isdbl
+                    ? SERIAL_STORAGE_DBL_ARRAY
+                    : SERIAL_STORAGE_FLT_ARRAY);
+        s.writeInt(numTypes);
+        s.writeInt(numCoords);
+        s.writeByte((byte) windingRule);
+
+        int cindex = 0;
+        for (int i = 0; i < numTypes; i++) {
+            int npoints;
+            byte serialtype;
+            switch (pointTypes[i]) {
+            case SEG_MOVETO:
+                npoints = 1;
+                serialtype = (isdbl
+                              ? SERIAL_SEG_DBL_MOVETO
+                              : SERIAL_SEG_FLT_MOVETO);
+                break;
+            case SEG_LINETO:
+                npoints = 1;
+                serialtype = (isdbl
+                              ? SERIAL_SEG_DBL_LINETO
+                              : SERIAL_SEG_FLT_LINETO);
+                break;
+            case SEG_QUADTO:
+                npoints = 2;
+                serialtype = (isdbl
+                              ? SERIAL_SEG_DBL_QUADTO
+                              : SERIAL_SEG_FLT_QUADTO);
+                break;
+            case SEG_CUBICTO:
+                npoints = 3;
+                serialtype = (isdbl
+                              ? SERIAL_SEG_DBL_CUBICTO
+                              : SERIAL_SEG_FLT_CUBICTO);
+                break;
+            case SEG_CLOSE:
+                npoints = 0;
+                serialtype = SERIAL_SEG_CLOSE;
+                break;
+
+            default:
+                // Should never happen
+                throw new InternalError("unrecognized path type");
+            }
+            s.writeByte(serialtype);
+            while (--npoints >= 0) {
+                if (isdbl) {
+                    s.writeDouble(dCoords[cindex++]);
+                    s.writeDouble(dCoords[cindex++]);
+                } else {
+                    s.writeFloat(fCoords[cindex++]);
+                    s.writeFloat(fCoords[cindex++]);
+                }
+            }
+        }
+        s.writeByte(SERIAL_PATH_END);
+!!!6553090.java!!!	readObject(inout s : ObjectInputStream, inout storedbl : boolean) : void
+        s.defaultReadObject();
+
+        // The subclass calls this method with the storage type that
+        // they want us to use (storedbl) so we ignore the storage
+        // method hint from the stream.
+        s.readByte();
+        int nT = s.readInt();
+        int nC = s.readInt();
+        try {
+            setWindingRule(s.readByte());
+        } catch (IllegalArgumentException iae) {
+            throw new java.io.InvalidObjectException(iae.getMessage());
+        }
+
+        pointTypes = new byte[(nT < 0) ? INIT_SIZE : nT];
+        if (nC < 0) {
+            nC = INIT_SIZE * 2;
+        }
+        if (storedbl) {
+            ((Path2D.Double) this).doubleCoords = new double[nC];
+        } else {
+            ((Path2D.Float) this).floatCoords = new float[nC];
+        }
+
+    PATHDONE:
+        for (int i = 0; nT < 0 || i < nT; i++) {
+            boolean isdbl;
+            int npoints;
+            byte segtype;
+
+            byte serialtype = s.readByte();
+            switch (serialtype) {
+            case SERIAL_SEG_FLT_MOVETO:
+                isdbl = false;
+                npoints = 1;
+                segtype = SEG_MOVETO;
+                break;
+            case SERIAL_SEG_FLT_LINETO:
+                isdbl = false;
+                npoints = 1;
+                segtype = SEG_LINETO;
+                break;
+            case SERIAL_SEG_FLT_QUADTO:
+                isdbl = false;
+                npoints = 2;
+                segtype = SEG_QUADTO;
+                break;
+            case SERIAL_SEG_FLT_CUBICTO:
+                isdbl = false;
+                npoints = 3;
+                segtype = SEG_CUBICTO;
+                break;
+
+            case SERIAL_SEG_DBL_MOVETO:
+                isdbl = true;
+                npoints = 1;
+                segtype = SEG_MOVETO;
+                break;
+            case SERIAL_SEG_DBL_LINETO:
+                isdbl = true;
+                npoints = 1;
+                segtype = SEG_LINETO;
+                break;
+            case SERIAL_SEG_DBL_QUADTO:
+                isdbl = true;
+                npoints = 2;
+                segtype = SEG_QUADTO;
+                break;
+            case SERIAL_SEG_DBL_CUBICTO:
+                isdbl = true;
+                npoints = 3;
+                segtype = SEG_CUBICTO;
+                break;
+
+            case SERIAL_SEG_CLOSE:
+                isdbl = false;
+                npoints = 0;
+                segtype = SEG_CLOSE;
+                break;
+
+            case SERIAL_PATH_END:
+                if (nT < 0) {
+                    break PATHDONE;
+                }
+                throw new StreamCorruptedException("unexpected PATH_END");
+
+            default:
+                throw new StreamCorruptedException("unrecognized path type");
+            }
+            needRoom(segtype != SEG_MOVETO, npoints * 2);
+            if (isdbl) {
+                while (--npoints >= 0) {
+                    append(s.readDouble(), s.readDouble());
+                }
+            } else {
+                while (--npoints >= 0) {
+                    append(s.readFloat(), s.readFloat());
+                }
+            }
+            pointTypes[numTypes++] = segtype;
+        }
+        if (nT >= 0 && s.readByte() != SERIAL_PATH_END) {
+            throw new StreamCorruptedException("missing PATH_END");
+        }

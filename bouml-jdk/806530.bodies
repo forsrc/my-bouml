@@ -1,0 +1,289 @@
+class LocPathIterator
+!!!5810178.java!!!	LocPathIterator(inout nscontext : PrefixResolver)
+
+    setLocPathIterator(this);
+    m_prefixResolver = nscontext;
+!!!5810306.java!!!	LocPathIterator(inout compiler : Compiler, in opPos : int, in analysis : int)
+    this(compiler, opPos, analysis, true);
+!!!5810434.java!!!	LocPathIterator(inout compiler : Compiler, in opPos : int, in analysis : int, inout shouldLoadWalkers : boolean)
+    setLocPathIterator(this);
+!!!5810562.java!!!	getAnalysisBits() : int
+        int axis = getAxis();
+        int bit = WalkerFactory.getAnalysisBitFromAxes(axis);
+        return bit;
+!!!5810690.java!!!	readObject(inout stream : ObjectInputStream) : void
+    try
+    {
+      stream.defaultReadObject();
+      m_clones =  new IteratorPool(this);
+    }
+    catch (ClassNotFoundException cnfe)
+    {
+      throw new javax.xml.transform.TransformerException(cnfe);
+    }
+!!!5810818.java!!!	setEnvironment(inout environment : Object) : void
+    // no-op for now.
+!!!5810946.java!!!	getDTM(in nodeHandle : int) : DTM
+    // %OPT%
+    return m_execContext.getDTM(nodeHandle);
+!!!5811074.java!!!	getDTMManager() : DTMManager
+    return m_execContext.getDTMManager();
+!!!5811202.java!!!	execute(inout xctxt : XPathContext) : XObject
+
+    XNodeSet iter = new XNodeSet((LocPathIterator)m_clones.getInstance());
+
+    iter.setRoot(xctxt.getCurrentNode(), xctxt);
+
+    return iter;
+!!!5811330.java!!!	executeCharsToContentHandler(inout xctxt : XPathContext, inout handler : ContentHandler) : void
+    LocPathIterator clone = (LocPathIterator)m_clones.getInstance();
+
+    int current = xctxt.getCurrentNode();
+    clone.setRoot(current, xctxt);
+
+    int node = clone.nextNode();
+    DTM dtm = clone.getDTM(node);
+    clone.detach();
+
+    if(node != DTM.NULL)
+    {
+      dtm.dispatchCharactersEvents(node, handler, false);
+    }
+!!!5811458.java!!!	asIterator(inout xctxt : XPathContext, in contextNode : int) : DTMIterator
+    XNodeSet iter = new XNodeSet((LocPathIterator)m_clones.getInstance());
+
+    iter.setRoot(contextNode, xctxt);
+
+    return iter;
+!!!5811586.java!!!	isNodesetExpr() : boolean
+    return true;
+!!!5811714.java!!!	asNode(inout xctxt : XPathContext) : int
+    DTMIterator iter = (DTMIterator)m_clones.getInstance();
+
+    int current = xctxt.getCurrentNode();
+
+    iter.setRoot(current, xctxt);
+
+    int next = iter.nextNode();
+    // m_clones.freeInstance(iter);
+    iter.detach();
+    return next;
+!!!5811842.java!!!	bool(inout xctxt : XPathContext) : boolean
+    return (asNode(xctxt) != DTM.NULL);
+!!!5811970.java!!!	setIsTopLevel(inout b : boolean) : void
+    m_isTopLevel = b;
+!!!5812098.java!!!	getIsTopLevel() : boolean
+    return m_isTopLevel;
+!!!5812226.java!!!	setRoot(in context : int, inout environment : Object) : void
+
+    m_context = context;
+
+    XPathContext xctxt = (XPathContext)environment;
+    m_execContext = xctxt;
+    m_cdtm = xctxt.getDTM(context);
+
+    m_currentContextNode = context; // only if top level?
+
+    // Yech, shouldn't have to do this.  -sb
+    if(null == m_prefixResolver)
+        m_prefixResolver = xctxt.getNamespaceContext();
+
+    m_lastFetched = DTM.NULL;
+    m_foundLast = false;
+    m_pos = 0;
+    m_length = -1;
+
+    if (m_isTopLevel)
+      this.m_stackFrame = xctxt.getVarStack().getStackFrame();
+
+    // reset();
+!!!5812354.java!!!	setNextPosition(in next : int) : void
+    assertion(false, "setNextPosition not supported in this iterator!");
+!!!5812482.java!!!	getCurrentPos() : int
+    return m_pos;
+!!!5812610.java!!!	setShouldCacheNodes(inout b : boolean) : void
+
+    assertion(false, "setShouldCacheNodes not supported by this iterater!");
+!!!5812738.java!!!	isMutable() : boolean
+    return false;
+!!!5812866.java!!!	setCurrentPos(in i : int) : void
+        assertion(false, "setCurrentPos not supported by this iterator!");
+!!!5812994.java!!!	incrementCurrentPos() : void
+        m_pos++;
+!!!5813122.java!!!	size() : int
+        assertion(false, "size() not supported by this iterator!");
+        return 0;
+!!!5813250.java!!!	item(in index : int) : int
+        assertion(false, "item(int index) not supported by this iterator!");
+        return 0;
+!!!5813378.java!!!	setItem(in node : int, in index : int) : void
+        assertion(false, "setItem not supported by this iterator!");
+!!!5813506.java!!!	getLength() : int
+    // Tell if this is being called from within a predicate.
+        boolean isPredicateTest = (this == m_execContext.getSubContextList());
+
+    // And get how many total predicates are part of this step.
+        int predCount = getPredicateCount();
+
+    // If we have already calculated the length, and the current predicate
+    // is the first predicate, then return the length.  We don't cache
+    // the anything but the length of the list to the first predicate.
+    if (-1 != m_length && isPredicateTest && m_predicateIndex < 1)
+                return m_length;
+
+    // I'm a bit worried about this one, since it doesn't have the
+    // checks found above.  I suspect it's fine.  -sb
+    if (m_foundLast)
+                return m_pos;
+
+    // Create a clone, and count from the current position to the end
+    // of the list, not taking into account the current predicate and
+    // predicates after the current one.
+    int pos = (m_predicateIndex >= 0) ? getProximityPosition() : m_pos;
+
+    LocPathIterator clone;
+
+    try
+    {
+      clone = (LocPathIterator) clone();
+    }
+    catch (CloneNotSupportedException cnse)
+    {
+      return -1;
+    }
+
+    // We want to clip off the last predicate, but only if we are a sub
+    // context node list, NOT if we are a context list.  See pos68 test,
+    // also test against bug4638.
+    if (predCount > 0 && isPredicateTest)
+    {
+      // Don't call setPredicateCount, because it clones and is slower.
+      clone.m_predCount = m_predicateIndex;
+      // The line above used to be:
+      // clone.m_predCount = predCount - 1;
+      // ...which looks like a dumb bug to me. -sb
+    }
+
+    int next;
+
+    while (DTM.NULL != (next = clone.nextNode()))
+    {
+      pos++;
+    }
+
+    if (isPredicateTest && m_predicateIndex < 1)
+      m_length = pos;
+
+    return pos;
+!!!5813634.java!!!	isFresh() : boolean
+    return (m_pos == 0);
+!!!5813762.java!!!	previousNode() : int
+    throw new RuntimeException(
+      XSLMessages.createXPATHMessage(XPATHErrorResources.ER_NODESETDTM_CANNOT_ITERATE, null)); //"This NodeSetDTM can not iterate to a previous node!");
+!!!5813890.java!!!	getWhatToShow() : int
+
+    // TODO: ??
+    return DTMFilter.SHOW_ALL & ~DTMFilter.SHOW_ENTITY_REFERENCE;
+!!!5814018.java!!!	getFilter() : DTMFilter
+    return null;
+!!!5814146.java!!!	getRoot() : int
+    return m_context;
+!!!5814274.java!!!	getExpandEntityReferences() : boolean
+    return true;
+!!!5814402.java!!!	allowDetachToRelease(inout allowRelease : boolean) : void
+    m_allowDetach = allowRelease;
+!!!5814530.java!!!	detach() : void
+    if(m_allowDetach)
+    {
+      // sb: allow reusing of cached nodes when possible?
+      // m_cachedNodes = null;
+      m_execContext = null;
+      // m_prefixResolver = null;  sb: Why would this ever want to be null?
+      m_cdtm = null;
+      m_length = -1;
+      m_pos = 0;
+      m_lastFetched = DTM.NULL;
+      m_context = DTM.NULL;
+      m_currentContextNode = DTM.NULL;
+
+      m_clones.freeInstance(this);
+    }
+!!!5814658.java!!!	reset() : void
+        assertion(false, "This iterator can not reset!");
+!!!5814786.java!!!	cloneWithReset() : DTMIterator
+    LocPathIterator clone;
+//    clone = (LocPathIterator) clone();
+    clone = (LocPathIterator)m_clones.getInstanceOrThrow();
+    clone.m_execContext = m_execContext;
+    clone.m_cdtm = m_cdtm;
+
+    clone.m_context = m_context;
+    clone.m_currentContextNode = m_currentContextNode;
+    clone.m_stackFrame = m_stackFrame;
+
+    // clone.reset();
+
+    return clone;
+!!!5815042.java!!!	returnNextNode(in nextNode : int) : int
+
+    if (DTM.NULL != nextNode)
+    {
+      m_pos++;
+    }
+
+    m_lastFetched = nextNode;
+
+    if (DTM.NULL == nextNode)
+      m_foundLast = true;
+
+    return nextNode;
+!!!5815170.java!!!	getCurrentNode() : int
+    return m_lastFetched;
+!!!5815298.java!!!	runTo(in index : int) : void
+
+    if (m_foundLast || ((index >= 0) && (index <= getCurrentPos())))
+      return;
+
+    int n;
+
+    if (-1 == index)
+    {
+      while (DTM.NULL != (n = nextNode()));
+    }
+    else
+    {
+      while (DTM.NULL != (n = nextNode()))
+      {
+        if (getCurrentPos() >= index)
+          break;
+      }
+    }
+!!!5815426.java!!!	getFoundLast() : boolean
+    return m_foundLast;
+!!!5815554.java!!!	getXPathContext() : XPathContext
+    return m_execContext;
+!!!5815682.java!!!	getContext() : int
+    return m_context;
+!!!5815810.java!!!	getCurrentContextNode() : int
+    return m_currentContextNode;
+!!!5815938.java!!!	setCurrentContextNode(in n : int) : void
+    m_currentContextNode = n;
+!!!5816066.java!!!	getPrefixResolver() : PrefixResolver
+        if(null == m_prefixResolver)
+        {
+        m_prefixResolver = (PrefixResolver)getExpressionOwner();
+        }
+
+    return m_prefixResolver;
+!!!5816194.java!!!	callVisitors(inout owner : ExpressionOwner, inout visitor : XPathVisitor) : void
+                if(visitor.visitLocationPath(owner, this))
+                {
+                        visitor.visitStep(owner, this);
+                        callPredicateVisitors(visitor);
+                }
+!!!5816322.java!!!	isDocOrdered() : boolean
+    return true;
+!!!5816450.java!!!	getAxis() : int
+    return -1;
+!!!5816578.java!!!	getLastPos(inout xctxt : XPathContext) : int
+    return getLength();

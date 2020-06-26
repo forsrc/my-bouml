@@ -1,0 +1,120 @@
+class Factory
+!!!7242242.java!!!	getMembers(inout defc : Class, inout matchName : String, inout matchType : Object, in matchFlags : int, inout lookupClass : Class) : List
+            matchFlags &= ALLOWED_FLAGS;
+            String matchSig = null;
+            if (matchType != null) {
+                matchSig = BytecodeDescriptor.unparse(matchType);
+                if (matchSig.startsWith("("))
+                    matchFlags &= ~(ALL_KINDS & ~IS_INVOCABLE);
+                else
+                    matchFlags &= ~(ALL_KINDS & ~IS_FIELD);
+            }
+            final int BUF_MAX = 0x2000;
+            int len1 = matchName == null ? 10 : matchType == null ? 4 : 1;
+            MemberName[] buf = newMemberBuffer(len1);
+            int totalCount = 0;
+            ArrayList<MemberName[]> bufs = null;
+            int bufCount = 0;
+            for (;;) {
+                bufCount = MethodHandleNatives.getMembers(defc,
+                        matchName, matchSig, matchFlags,
+                        lookupClass,
+                        totalCount, buf);
+                if (bufCount <= buf.length) {
+                    if (bufCount < 0)  bufCount = 0;
+                    totalCount += bufCount;
+                    break;
+                }
+                // JVM returned to us with an intentional overflow!
+                totalCount += buf.length;
+                int excess = bufCount - buf.length;
+                if (bufs == null)  bufs = new ArrayList<>(1);
+                bufs.add(buf);
+                int len2 = buf.length;
+                len2 = Math.max(len2, excess);
+                len2 = Math.max(len2, totalCount / 4);
+                buf = newMemberBuffer(Math.min(BUF_MAX, len2));
+            }
+            ArrayList<MemberName> result = new ArrayList<>(totalCount);
+            if (bufs != null) {
+                for (MemberName[] buf0 : bufs) {
+                    Collections.addAll(result, buf0);
+                }
+            }
+            result.addAll(Arrays.asList(buf).subList(0, bufCount));
+            // Signature matching is not the same as type matching, since
+            // one signature might correspond to several types.
+            // So if matchType is a Class or MethodType, refilter the results.
+            if (matchType != null && matchType != matchSig) {
+                for (Iterator<MemberName> it = result.iterator(); it.hasNext();) {
+                    MemberName m = it.next();
+                    if (!matchType.equals(m.getType()))
+                        it.remove();
+                }
+            }
+            return result;
+!!!7242370.java!!!	resolve(in refKind : byte, inout ref : MemberName, inout lookupClass : Class) : MemberName
+            MemberName m = ref.clone();  // JVM will side-effect the ref
+            assert(refKind == m.getReferenceKind());
+            try {
+                // There are 4 entities in play here:
+                //   * LC: lookupClass
+                //   * REFC: symbolic reference class (MN.clazz before resolution);
+                //   * DEFC: resolved method holder (MN.clazz after resolution);
+                //   * PTYPES: parameter types (MN.type)
+                //
+                // What we care about when resolving a MemberName is consistency between DEFC and PTYPES.
+                // We do type alias (TA) checks on DEFC to ensure that. DEFC is not known until the JVM
+                // finishes the resolution, so do TA checks right after MHN.resolve() is over.
+                //
+                // All parameters passed by a caller are checked against MH type (PTYPES) on every invocation,
+                // so it is safe to call a MH from any context.
+                //
+                // REFC view on PTYPES doesn't matter, since it is used only as a starting point for resolution and doesn't
+                // participate in method selection.
+                m = MethodHandleNatives.resolve(m, lookupClass);
+                m.checkForTypeAlias(m.getDeclaringClass());
+                m.resolution = null;
+            } catch (ClassNotFoundException | LinkageError ex) {
+                // JVM reports that the "bytecode behavior" would get an error
+                assert(!m.isResolved());
+                m.resolution = ex;
+                return m;
+            }
+            assert(m.referenceKindIsConsistent());
+            m.initResolved(true);
+            assert(m.vminfoIsConsistent());
+            return m;
+!!!7242498.java!!!	resolveOrFail(in refKind : byte, inout m : MemberName, inout lookupClass : Class, inout nsmClass : Class) : MemberName
+            MemberName result = resolve(refKind, m, lookupClass);
+            if (result.isResolved())
+                return result;
+            ReflectiveOperationException ex = result.makeAccessException();
+            if (ex instanceof IllegalAccessException)  throw (IllegalAccessException) ex;
+            throw nsmClass.cast(ex);
+!!!7242626.java!!!	resolveOrNull(in refKind : byte, inout m : MemberName, inout lookupClass : Class) : MemberName
+            MemberName result = resolve(refKind, m, lookupClass);
+            if (result.isResolved())
+                return result;
+            return null;
+!!!7242754.java!!!	getMethods(inout defc : Class, inout searchSupers : boolean, inout lookupClass : Class) : List
+            return getMethods(defc, searchSupers, null, null, lookupClass);
+!!!7242882.java!!!	getMethods(inout defc : Class, inout searchSupers : boolean, inout name : String, inout type : MethodType, inout lookupClass : Class) : List
+            int matchFlags = IS_METHOD | (searchSupers ? SEARCH_ALL_SUPERS : 0);
+            return getMembers(defc, name, type, matchFlags, lookupClass);
+!!!7243010.java!!!	getConstructors(inout defc : Class, inout lookupClass : Class) : List
+            return getMembers(defc, null, null, IS_CONSTRUCTOR, lookupClass);
+!!!7243138.java!!!	getFields(inout defc : Class, inout searchSupers : boolean, inout lookupClass : Class) : List
+            return getFields(defc, searchSupers, null, null, lookupClass);
+!!!7243266.java!!!	getFields(inout defc : Class, inout searchSupers : boolean, inout name : String, inout type : Class, inout lookupClass : Class) : List
+            int matchFlags = IS_FIELD | (searchSupers ? SEARCH_ALL_SUPERS : 0);
+            return getMembers(defc, name, type, matchFlags, lookupClass);
+!!!7243394.java!!!	getNestedTypes(inout defc : Class, inout searchSupers : boolean, inout lookupClass : Class) : List
+            int matchFlags = IS_TYPE | (searchSupers ? SEARCH_ALL_SUPERS : 0);
+            return getMembers(defc, null, null, matchFlags, lookupClass);
+!!!7243522.java!!!	newMemberBuffer(in length : int) : MemberName
+            MemberName[] buf = new MemberName[length];
+            // fill the buffer with dummy structs for the JVM to fill in
+            for (int i = 0; i < length; i++)
+                buf[i] = new MemberName();
+            return buf;

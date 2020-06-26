@@ -1,0 +1,164 @@
+class LocalVariableRegistry
+!!!3831426.java!!!	registerLocalVariable(inout lvg : LocalVariableGen) : void
+            int slot = lvg.getIndex();
+
+            int registrySize = _variables.size();
+
+            // If the LocalVariableGen uses a slot index beyond any previously
+            // encountered, expand the _variables, padding with intervening null
+            // entries as required.
+            if (slot >= registrySize) {
+                for (int i = registrySize; i < slot; i++) {
+                    _variables.add(null);
+                }
+                _variables.add(lvg);
+            } else {
+                // If the LocalVariableGen reuses a slot, make sure the entry
+                // in _variables contains an ArrayList and add the newly
+                // registered LocalVariableGen to the list.  If the entry in
+                // _variables just contains null padding, store the
+                // LocalVariableGen directly.
+                Object localsInSlot = _variables.get(slot);
+                if (localsInSlot != null) {
+                    if (localsInSlot instanceof LocalVariableGen) {
+                        ArrayList listOfLocalsInSlot = new ArrayList();
+                        listOfLocalsInSlot.add(localsInSlot);
+                        listOfLocalsInSlot.add(lvg);
+                        _variables.set(slot, listOfLocalsInSlot);
+                    } else {
+                        ((ArrayList) localsInSlot).add(lvg);
+                    }
+                } else {
+                    _variables.set(slot, lvg);
+                }
+            }
+
+            registerByName(lvg);
+!!!3831554.java!!!	lookupRegisteredLocalVariable(in slot : int, in offset : int) : LocalVariableGen
+            Object localsInSlot = (_variables != null) ? _variables.get(slot)
+                                                       : null;
+
+            // If this slot index was never used, _variables.get will return
+            // null; if it was used once, it will return the LocalVariableGen;
+            // more than once it will return an ArrayList of all the
+            // LocalVariableGens for variables stored in that slot.  For each
+            // LocalVariableGen, check whether its range includes the
+            // specified offset, and return the first such encountered.
+            if (localsInSlot != null) {
+                if (localsInSlot instanceof LocalVariableGen) {
+                    LocalVariableGen lvg = (LocalVariableGen)localsInSlot;
+                    if (offsetInLocalVariableGenRange(lvg, offset)) {
+                        return lvg;
+                    }
+                } else {
+                    ArrayList listOfLocalsInSlot = (ArrayList) localsInSlot;
+                    int size = listOfLocalsInSlot.size();
+
+                    for (int i = 0; i < size; i++) {
+                        LocalVariableGen lvg =
+                            (LocalVariableGen)listOfLocalsInSlot.get(i);
+                        if (offsetInLocalVariableGenRange(lvg, offset)) {
+                            return lvg;
+                        }
+                    }
+                }
+            }
+
+            // No local variable stored in the specified slot at the specified
+            return null;
+!!!3831682.java!!!	registerByName(inout lvg : LocalVariableGen) : void
+            Object duplicateNameEntry = _nameToLVGMap.get(lvg.getName());
+
+            if (duplicateNameEntry == null) {
+                _nameToLVGMap.put(lvg.getName(), lvg);
+            } else {
+                ArrayList sameNameList;
+
+                if (duplicateNameEntry instanceof ArrayList) {
+                    sameNameList = (ArrayList) duplicateNameEntry;
+                    sameNameList.add(lvg);
+                } else {
+                    sameNameList = new ArrayList();
+                    sameNameList.add(duplicateNameEntry);
+                    sameNameList.add(lvg);
+                }
+
+                _nameToLVGMap.put(lvg.getName(), sameNameList);
+            }
+!!!3831810.java!!!	removeByNameTracking(inout lvg : LocalVariableGen) : void
+            Object duplicateNameEntry = _nameToLVGMap.get(lvg.getName());
+
+            if (duplicateNameEntry instanceof ArrayList) {
+                ArrayList sameNameList = (ArrayList) duplicateNameEntry;
+                for (int i = 0; i < sameNameList.size(); i++) {
+                    if (sameNameList.get(i) == lvg) {
+                        sameNameList.remove(i);
+                        break;
+                    }
+                }
+            } else {
+                _nameToLVGMap.remove(lvg);
+            }
+!!!3831938.java!!!	lookUpByName(inout name : String) : LocalVariableGen
+            LocalVariableGen lvg = null;
+            Object duplicateNameEntry = _nameToLVGMap.get(name);
+
+            if (duplicateNameEntry instanceof ArrayList) {
+                ArrayList sameNameList = (ArrayList) duplicateNameEntry;
+
+                for (int i = 0; i < sameNameList.size(); i++) {
+                    lvg = (LocalVariableGen)sameNameList.get(i);
+                    if (lvg.getName() == name) {
+                        break;
+                    }
+                }
+            } else {
+                lvg = (LocalVariableGen) duplicateNameEntry;
+            }
+
+            return lvg;
+!!!3832066.java!!!	getLocals(inout includeRemoved : boolean) : LocalVariableGen
+            LocalVariableGen[] locals = null;
+            ArrayList allVarsEverDeclared = new ArrayList();
+
+            if (includeRemoved) {
+                int slotCount = allVarsEverDeclared.size();
+
+                for (int i = 0; i < slotCount; i++) {
+                    Object slotEntries = _variables.get(i);
+                    if (slotEntries != null) {
+                        if (slotEntries instanceof ArrayList) {
+                            ArrayList slotList = (ArrayList) slotEntries;
+
+                            for (int j = 0; j < slotList.size(); j++) {
+                                allVarsEverDeclared.add(slotList.get(i));
+                            }
+                        } else {
+                            allVarsEverDeclared.add(slotEntries);
+                        }
+                    }
+                }
+            } else {
+                Iterator nameVarsPairsIter = _nameToLVGMap.entrySet().iterator();
+
+                while (nameVarsPairsIter.hasNext()) {
+                    Map.Entry nameVarsPair =
+                                  (Map.Entry) nameVarsPairsIter.next();
+                    Object vars = nameVarsPair.getValue();
+                    if (vars != null) {
+                        if (vars instanceof ArrayList) {
+                            ArrayList varsList = (ArrayList) vars;
+                            for (int i = 0; i < varsList.size(); i++) {
+                                allVarsEverDeclared.add(varsList.get(i));
+                            }
+                        } else {
+                            allVarsEverDeclared.add(vars);
+                        }
+                    }
+                }
+            }
+
+            locals = new LocalVariableGen[allVarsEverDeclared.size()];
+            allVarsEverDeclared.toArray(locals);
+
+            return locals;

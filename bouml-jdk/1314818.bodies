@@ -1,0 +1,105 @@
+class NavigateLinkAction
+!!!10956034.java!!!	NavigateLinkAction(inout actionName : String)
+            super(actionName);
+            focusBack = "previous-link-action".equals(actionName);
+!!!10956162.java!!!	caretUpdate(inout e : CaretEvent) : void
+            Object src = e.getSource();
+            if (src instanceof JTextComponent) {
+                JTextComponent comp = (JTextComponent) src;
+                HTMLEditorKit kit = getHTMLEditorKit(comp);
+                if (kit != null && kit.foundLink) {
+                    kit.foundLink = false;
+                    // TODO: The AccessibleContext for the editor should register
+                    // as a listener for CaretEvents and forward the events to
+                    // assistive technologies listening for such events.
+                    comp.getAccessibleContext().firePropertyChange(
+                        AccessibleContext.ACCESSIBLE_HYPERTEXT_OFFSET,
+                        Integer.valueOf(kit.prevHypertextOffset),
+                        Integer.valueOf(e.getDot()));
+                }
+            }
+!!!10956290.java!!!	actionPerformed(inout e : ActionEvent) : void
+            JTextComponent comp = getTextComponent(e);
+            if (comp == null || comp.isEditable()) {
+                return;
+            }
+
+            Document doc = comp.getDocument();
+            HTMLEditorKit kit = getHTMLEditorKit(comp);
+            if (doc == null || kit == null) {
+                return;
+            }
+
+            // TODO: Should start successive iterations from the
+            // current caret position.
+            ElementIterator ei = new ElementIterator(doc);
+            int currentOffset = comp.getCaretPosition();
+            int prevStartOffset = -1;
+            int prevEndOffset = -1;
+
+            // highlight the next link or object after the current caret position
+            Element nextElement;
+            while ((nextElement = ei.next()) != null) {
+                String name = nextElement.getName();
+                AttributeSet attr = nextElement.getAttributes();
+
+                Object href = getAttrValue(attr, HTML.Attribute.HREF);
+                if (!(name.equals(HTML.Tag.OBJECT.toString())) && href == null) {
+                    continue;
+                }
+
+                int elementOffset = nextElement.getStartOffset();
+                if (focusBack) {
+                    if (elementOffset >= currentOffset &&
+                        prevStartOffset >= 0) {
+
+                        kit.foundLink = true;
+                        comp.setCaretPosition(prevStartOffset);
+                        moveCaretPosition(comp, kit, prevStartOffset,
+                                          prevEndOffset);
+                        kit.prevHypertextOffset = prevStartOffset;
+                        return;
+                    }
+                } else { // focus forward
+                    if (elementOffset > currentOffset) {
+
+                        kit.foundLink = true;
+                        comp.setCaretPosition(elementOffset);
+                        moveCaretPosition(comp, kit, elementOffset,
+                                          nextElement.getEndOffset());
+                        kit.prevHypertextOffset = elementOffset;
+                        return;
+                    }
+                }
+                prevStartOffset = nextElement.getStartOffset();
+                prevEndOffset = nextElement.getEndOffset();
+            }
+            if (focusBack && prevStartOffset >= 0) {
+                kit.foundLink = true;
+                comp.setCaretPosition(prevStartOffset);
+                moveCaretPosition(comp, kit, prevStartOffset, prevEndOffset);
+                kit.prevHypertextOffset = prevStartOffset;
+            }
+!!!10956418.java!!!	moveCaretPosition(inout comp : JTextComponent, inout kit : HTMLEditorKit, in mark : int, in dot : int) : void
+            Highlighter h = comp.getHighlighter();
+            if (h != null) {
+                int p0 = Math.min(dot, mark);
+                int p1 = Math.max(dot, mark);
+                try {
+                    if (kit.linkNavigationTag != null) {
+                        h.changeHighlight(kit.linkNavigationTag, p0, p1);
+                    } else {
+                        kit.linkNavigationTag =
+                                h.addHighlight(p0, p1, focusPainter);
+                    }
+                } catch (BadLocationException e) {
+                }
+            }
+!!!10956546.java!!!	getHTMLEditorKit(inout comp : JTextComponent) : HTMLEditorKit
+            if (comp instanceof JEditorPane) {
+                EditorKit kit = ((JEditorPane) comp).getEditorKit();
+                if (kit instanceof HTMLEditorKit) {
+                    return (HTMLEditorKit) kit;
+                }
+            }
+            return null;

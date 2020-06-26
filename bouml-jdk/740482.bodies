@@ -1,0 +1,276 @@
+class ElementSchemePointer
+!!!5166338.java!!!	ElementSchemePointer(inout symbolTable : SymbolTable)
+        fSymbolTable = symbolTable;
+!!!5166466.java!!!	ElementSchemePointer(inout symbolTable : SymbolTable, inout errorReporter : XMLErrorReporter)
+        fSymbolTable = symbolTable;
+        fErrorReporter = errorReporter;
+!!!5166594.java!!!	parseXPointer(inout xpointer : String) : void
+
+        //
+        init();
+
+        // tokens
+        final Tokens tokens = new Tokens(fSymbolTable);
+
+        // scanner
+        Scanner scanner = new Scanner(fSymbolTable) {
+            protected void addToken(Tokens tokens, int token)
+                    throws XNIException {
+                if (token == Tokens.XPTRTOKEN_ELEM_CHILD
+                        || token == Tokens.XPTRTOKEN_ELEM_NCNAME) {
+                    super.addToken(tokens, token);
+                    return;
+                }
+                reportError("InvalidElementSchemeToken", new Object[] { tokens
+                        .getTokenString(token) });
+            }
+        };
+
+        // scan the element() XPointer expression
+        int length = xpointer.length();
+        boolean success = scanner.scanExpr(fSymbolTable, tokens, xpointer, 0,
+                length);
+
+        if (!success) {
+            reportError("InvalidElementSchemeXPointer",
+                    new Object[] { xpointer });
+        }
+
+        // Initialize a temp arrays to the size of token count which should
+        // be atleast twice the size of child sequence, to hold the ChildSequence.
+        int tmpChildSequence[] = new int[tokens.getTokenCount() / 2 + 1];
+
+        // the element depth
+        int i = 0;
+
+        // Traverse the scanned tokens
+        while (tokens.hasMore()) {
+            int token = tokens.nextToken();
+
+            switch (token) {
+            case Tokens.XPTRTOKEN_ELEM_NCNAME: {
+                // Note:  Only a single ShortHand pointer can be present
+
+                // The shortHand name
+                token = tokens.nextToken();
+                fShortHandPointerName = tokens.getTokenString(token);
+
+                // Create a new ShortHandPointer
+                fShortHandPointer = new ShortHandPointer(fSymbolTable);
+                fShortHandPointer.setSchemeName(fShortHandPointerName);
+
+                break;
+            }
+            case Tokens.XPTRTOKEN_ELEM_CHILD: {
+                tmpChildSequence[i] = tokens.nextToken();
+                i++;
+
+                break;
+            }
+            default:
+                reportError("InvalidElementSchemeXPointer",
+                        new Object[] { xpointer });
+            }
+        }
+
+        // Initialize the arrays to the number of elements in the ChildSequence.
+        fChildSequence = new int[i];
+        fCurrentChildSequence = new int[i];
+        System.arraycopy(tmpChildSequence, 0, fChildSequence, 0, i);
+
+!!!5166722.java!!!	getSchemeName() : String
+        return fSchemeName;
+!!!5166850.java!!!	getSchemeData() : String
+        return fSchemeData;
+!!!5166978.java!!!	setSchemeName(inout schemeName : String) : void
+        fSchemeName = schemeName;
+
+!!!5167106.java!!!	setSchemeData(inout schemeData : String) : void
+        fSchemeData = schemeData;
+!!!5167234.java!!!	resolveXPointer(inout element : QName, inout attributes : XMLAttributes, inout augs : Augmentations, in event : int) : boolean
+
+        boolean isShortHandPointerResolved = false;
+
+        // if a ChildSequence exisits, resolve child elements
+
+        // if an element name exists
+        if (fShortHandPointerName != null) {
+            // resolve ShortHand Pointer
+            isShortHandPointerResolved = fShortHandPointer.resolveXPointer(
+                    element, attributes, augs, event);
+            if (isShortHandPointerResolved) {
+                fIsResolveElement = true;
+                fIsShortHand = true;
+            } else {
+                fIsResolveElement = false;
+            }
+        } else {
+            fIsResolveElement = true;
+        }
+
+        // Added here to skip the ShortHand pointer corresponding to
+        // an element if one exisits and start searching from its child
+        if (fChildSequence.length > 0) {
+            fIsFragmentResolved = matchChildSequence(element, event);
+        } else if (isShortHandPointerResolved && fChildSequence.length <= 0) {
+            // if only a resolved shorthand pointer exists
+            fIsFragmentResolved = isShortHandPointerResolved;
+        } else {
+            fIsFragmentResolved = false;
+        }
+
+        return fIsFragmentResolved;
+!!!5167362.java!!!	matchChildSequence(inout element : QName, in event : int) : boolean
+
+        // need to resize fCurrentChildSequence
+        if (fCurrentChildDepth >= fCurrentChildSequence.length) {
+            int tmpCurrentChildSequence[] = new int[fCurrentChildSequence.length];
+            System.arraycopy(fCurrentChildSequence, 0, tmpCurrentChildSequence,
+                    0, fCurrentChildSequence.length);
+
+            // Increase the size by a factor of 2 (?)
+            fCurrentChildSequence = new int[fCurrentChildDepth * 2];
+            System.arraycopy(tmpCurrentChildSequence, 0, fCurrentChildSequence,
+                    0, tmpCurrentChildSequence.length);
+        }
+
+        //
+        if (fIsResolveElement) {
+            // start
+            fWasOnlyEmptyElementFound = false;
+            if (event == XPointerPart.EVENT_ELEMENT_START) {
+                fCurrentChildSequence[fCurrentChildDepth] = fCurrentChildPosition;
+                fCurrentChildDepth++;
+
+                // reset the current child position
+                fCurrentChildPosition = 1;
+
+                //if (!fSchemeNameFound) {
+                if ((fCurrentChildDepth <= fFoundDepth) || (fFoundDepth == 0)) {
+                    if (checkMatch()) {
+                        fIsElementFound = true;
+                        fFoundDepth = fCurrentChildDepth;
+                    } else {
+                        fIsElementFound = false;
+                        fFoundDepth = 0;
+                    }
+                }
+
+            } else if (event == XPointerPart.EVENT_ELEMENT_END) {
+                if (fCurrentChildDepth == fFoundDepth) {
+                    fIsElementFound = true;
+                } else if (((fCurrentChildDepth < fFoundDepth) && (fFoundDepth != 0))
+                        || ((fCurrentChildDepth > fFoundDepth) // or empty element found
+                        && (fFoundDepth == 0))) {
+                    fIsElementFound = false;
+                }
+
+                // reset array position of last child
+                fCurrentChildSequence[fCurrentChildDepth] = 0;
+
+                fCurrentChildDepth--;
+                fCurrentChildPosition = fCurrentChildSequence[fCurrentChildDepth] + 1;
+
+            } else if (event == XPointerPart.EVENT_ELEMENT_EMPTY) {
+
+                fCurrentChildSequence[fCurrentChildDepth] = fCurrentChildPosition;
+                fCurrentChildPosition++;
+
+                // Donot check for empty elements if the empty element is
+                // a child of a found parent element
+                //if (!fIsElementFound) {
+                    if (checkMatch()) {
+                        fIsElementFound = true;
+                        fWasOnlyEmptyElementFound = true;
+                    } else {
+                        fIsElementFound = false;
+                    }
+                //}
+
+            }
+        }
+
+        return fIsElementFound;
+!!!5167490.java!!!	checkMatch() : boolean
+        // If the number of elements in the ChildSequence is greater than the
+        // current child depth, there is not point in checking further
+        if (!fIsShortHand) {
+            // If a shorthand pointer is not present traverse the children
+            // and compare
+            if (fChildSequence.length <= fCurrentChildDepth + 1) {
+
+                for (int i = 0; i < fChildSequence.length; i++) {
+                    if (fChildSequence[i] != fCurrentChildSequence[i]) {
+                        return false;
+                    }
+                }
+            } else {
+                return false;
+            }
+        } else {
+            // If a shorthand pointer is present traverse the children
+            // ignoring the first element of the CurrenChildSequence which
+            // contains the ShortHand pointer element and compare
+            if (fChildSequence.length <= fCurrentChildDepth + 1) {
+
+                for (int i = 0; i < fChildSequence.length; i++) {
+                    // ensure fCurrentChildSequence is large enough
+                    if (fCurrentChildSequence.length < i + 2) {
+                        return false;
+                    }
+
+                    // ignore the first element of fCurrentChildSequence
+                    if (fChildSequence[i] != fCurrentChildSequence[i + 1]) {
+                        return false;
+                    }
+                }
+            } else {
+                return false;
+            }
+
+        }
+
+        return true;
+!!!5167618.java!!!	isFragmentResolved() : boolean
+        // Return true if the Fragment was resolved and the current Node depth
+        // is greater than or equal to the depth at which the element was found
+        return fIsFragmentResolved ;
+!!!5167746.java!!!	isChildFragmentResolved() : boolean
+        // if only a shorthand pointer was present
+        if (fIsShortHand && fShortHandPointer != null && fChildSequence.length <= 0) {
+                return fShortHandPointer.isChildFragmentResolved();
+        } else {
+                return fWasOnlyEmptyElementFound ? !fWasOnlyEmptyElementFound
+                                : (fIsFragmentResolved && (fCurrentChildDepth >= fFoundDepth));
+        }
+!!!5167874.java!!!	reportError(inout key : String, inout arguments : Object [[]]) : void
+        /*fErrorReporter.reportError(XPointerMessageFormatter.XPOINTER_DOMAIN,
+         key, arguments, XMLErrorReporter.SEVERITY_ERROR);
+         */
+        throw new XNIException((fErrorReporter
+                        .getMessageFormatter(XPointerMessageFormatter.XPOINTER_DOMAIN))
+                                .formatMessage(fErrorReporter.getLocale(), key, arguments));
+!!!5168002.java!!!	initErrorReporter() : void
+        if (fErrorReporter == null) {
+            fErrorReporter = new XMLErrorReporter();
+        }
+        if (fErrorHandler == null) {
+            fErrorHandler = new XPointerErrorHandler();
+        }
+        fErrorReporter.putMessageFormatter(
+                XPointerMessageFormatter.XPOINTER_DOMAIN,
+                new XPointerMessageFormatter());
+!!!5168130.java!!!	init() : void
+        fSchemeName = null;
+        fSchemeData = null;
+        fShortHandPointerName = null;
+        fIsResolveElement = false;
+        fIsElementFound = false;
+        fWasOnlyEmptyElementFound = false;
+        fFoundDepth = 0;
+        fCurrentChildPosition = 1;
+        fCurrentChildDepth = 0;
+        fIsFragmentResolved = false;
+        fShortHandPointer = null;
+
+        initErrorReporter();

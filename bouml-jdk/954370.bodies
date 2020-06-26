@@ -1,0 +1,195 @@
+class ManagementFactory
+!!!7303938.java!!!	getClassLoadingMXBean() : ClassLoadingMXBean
+        return ManagementFactoryHelper.getClassLoadingMXBean();
+!!!7304066.java!!!	getMemoryMXBean() : MemoryMXBean
+        return ManagementFactoryHelper.getMemoryMXBean();
+!!!7304194.java!!!	getThreadMXBean() : ThreadMXBean
+        return ManagementFactoryHelper.getThreadMXBean();
+!!!7304322.java!!!	getRuntimeMXBean() : RuntimeMXBean
+        return ManagementFactoryHelper.getRuntimeMXBean();
+!!!7304450.java!!!	getCompilationMXBean() : CompilationMXBean
+        return ManagementFactoryHelper.getCompilationMXBean();
+!!!7304578.java!!!	getOperatingSystemMXBean() : OperatingSystemMXBean
+        return ManagementFactoryHelper.getOperatingSystemMXBean();
+!!!7304706.java!!!	getMemoryPoolMXBeans() : List
+        return ManagementFactoryHelper.getMemoryPoolMXBeans();
+!!!7304834.java!!!	getMemoryManagerMXBeans() : List
+        return ManagementFactoryHelper.getMemoryManagerMXBeans();
+!!!7304962.java!!!	getGarbageCollectorMXBeans() : List
+        return ManagementFactoryHelper.getGarbageCollectorMXBeans();
+!!!7305090.java!!!	getPlatformMBeanServer() : MBeanServer
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            Permission perm = new MBeanServerPermission("createMBeanServer");
+            sm.checkPermission(perm);
+        }
+
+        if (platformMBeanServer == null) {
+            platformMBeanServer = MBeanServerFactory.createMBeanServer();
+            for (PlatformComponent pc : PlatformComponent.values()) {
+                List<? extends PlatformManagedObject> list =
+                    pc.getMXBeans(pc.getMXBeanInterface());
+                for (PlatformManagedObject o : list) {
+                    // Each PlatformComponent represents one management
+                    // interface. Some MXBean may extend another one.
+                    // The MXBean instances for one platform component
+                    // (returned by pc.getMXBeans()) might be also
+                    // the MXBean instances for another platform component.
+                    // e.g. com.sun.management.GarbageCollectorMXBean
+                    //
+                    // So need to check if an MXBean instance is registered
+                    // before registering into the platform MBeanServer
+                    if (!platformMBeanServer.isRegistered(o.getObjectName())) {
+                        addMXBean(platformMBeanServer, o);
+                    }
+                }
+            }
+            HashMap<ObjectName, DynamicMBean> dynmbeans =
+                    ManagementFactoryHelper.getPlatformDynamicMBeans();
+            for (Map.Entry<ObjectName, DynamicMBean> e : dynmbeans.entrySet()) {
+                addDynamicMBean(platformMBeanServer, e.getValue(), e.getKey());
+            }
+            for (final PlatformManagedObject o :
+                                       ExtendedPlatformComponent.getMXBeans()) {
+                if (!platformMBeanServer.isRegistered(o.getObjectName())) {
+                    addMXBean(platformMBeanServer, o);
+                }
+            }
+        }
+        return platformMBeanServer;
+!!!7305218.java!!!	newPlatformMXBeanProxy(inout connection : MBeanServerConnection, inout mxbeanName : String, inout mxbeanInterface : Class) : T
+
+        // Only allow MXBean interfaces from rt.jar loaded by the
+        // bootstrap class loader
+        final Class<?> cls = mxbeanInterface;
+        ClassLoader loader =
+            AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
+                public ClassLoader run() {
+                    return cls.getClassLoader();
+                }
+            });
+        if (!sun.misc.VM.isSystemDomainLoader(loader)) {
+            throw new IllegalArgumentException(mxbeanName +
+                " is not a platform MXBean");
+        }
+
+        try {
+            final ObjectName objName = new ObjectName(mxbeanName);
+            // skip the isInstanceOf check for LoggingMXBean
+            String intfName = mxbeanInterface.getName();
+            if (!connection.isInstanceOf(objName, intfName)) {
+                throw new IllegalArgumentException(mxbeanName +
+                    " is not an instance of " + mxbeanInterface);
+            }
+
+            final Class[] interfaces;
+            // check if the registered MBean is a notification emitter
+            boolean emitter = connection.isInstanceOf(objName, NOTIF_EMITTER);
+
+            // create an MXBean proxy
+            return JMX.newMXBeanProxy(connection, objName, mxbeanInterface,
+                                      emitter);
+        } catch (InstanceNotFoundException|MalformedObjectNameException e) {
+            throw new IllegalArgumentException(e);
+        }
+!!!7305346.java!!!	getPlatformMXBean(inout mxbeanInterface : Class) : T
+        PlatformComponent pc = PlatformComponent.getPlatformComponent(mxbeanInterface);
+        if (pc == null) {
+            T mbean = ExtendedPlatformComponent.getMXBean(mxbeanInterface);
+            if (mbean != null) {
+                return mbean;
+            }
+            throw new IllegalArgumentException(mxbeanInterface.getName() +
+                " is not a platform management interface");
+        }
+        if (!pc.isSingleton())
+            throw new IllegalArgumentException(mxbeanInterface.getName() +
+                " can have zero or more than one instances");
+
+        return pc.getSingletonMXBean(mxbeanInterface);
+!!!7305474.java!!!	getPlatformMXBeans(inout mxbeanInterface : Class) : List
+        PlatformComponent pc = PlatformComponent.getPlatformComponent(mxbeanInterface);
+        if (pc == null) {
+            T mbean = ExtendedPlatformComponent.getMXBean(mxbeanInterface);
+            if (mbean != null) {
+                return Collections.singletonList(mbean);
+            }
+            throw new IllegalArgumentException(mxbeanInterface.getName() +
+                " is not a platform management interface");
+        }
+        return Collections.unmodifiableList(pc.getMXBeans(mxbeanInterface));
+!!!7305602.java!!!	getPlatformMXBean(inout connection : MBeanServerConnection, inout mxbeanInterface : Class) : T
+        PlatformComponent pc = PlatformComponent.getPlatformComponent(mxbeanInterface);
+        if (pc == null) {
+            T mbean = ExtendedPlatformComponent.getMXBean(mxbeanInterface);
+            if (mbean != null) {
+                ObjectName on = mbean.getObjectName();
+                return ManagementFactory.newPlatformMXBeanProxy(connection,
+                                                                on.getCanonicalName(),
+                                                                mxbeanInterface);
+            }
+            throw new IllegalArgumentException(mxbeanInterface.getName() +
+                " is not a platform management interface");
+        }
+        if (!pc.isSingleton())
+            throw new IllegalArgumentException(mxbeanInterface.getName() +
+                " can have zero or more than one instances");
+        return pc.getSingletonMXBean(connection, mxbeanInterface);
+!!!7305730.java!!!	getPlatformMXBeans(inout connection : MBeanServerConnection, inout mxbeanInterface : Class) : List
+        PlatformComponent pc = PlatformComponent.getPlatformComponent(mxbeanInterface);
+        if (pc == null) {
+            T mbean = ExtendedPlatformComponent.getMXBean(mxbeanInterface);
+            if (mbean != null) {
+                ObjectName on = mbean.getObjectName();
+                T proxy = ManagementFactory.newPlatformMXBeanProxy(connection,
+                            on.getCanonicalName(), mxbeanInterface);
+                return Collections.singletonList(proxy);
+            }
+            throw new IllegalArgumentException(mxbeanInterface.getName() +
+                " is not a platform management interface");
+        }
+        return Collections.unmodifiableList(pc.getMXBeans(connection, mxbeanInterface));
+!!!7305858.java!!!	getPlatformManagementInterfaces() : Set
+        Set<Class<? extends PlatformManagedObject>> result =
+            new HashSet<>();
+        for (PlatformComponent component: PlatformComponent.values()) {
+            result.add(component.getMXBeanInterface());
+        }
+        return Collections.unmodifiableSet(result);
+!!!7305986.java!!!	addMXBean(in mbs : MBeanServer, in pmo : PlatformManagedObject) : void
+        // Make DynamicMBean out of MXBean by wrapping it with a StandardMBean
+        try {
+            AccessController.doPrivileged(new PrivilegedExceptionAction<Void>() {
+                public Void run() throws InstanceAlreadyExistsException,
+                                         MBeanRegistrationException,
+                                         NotCompliantMBeanException {
+                    final DynamicMBean dmbean;
+                    if (pmo instanceof DynamicMBean) {
+                        dmbean = DynamicMBean.class.cast(pmo);
+                    } else if (pmo instanceof NotificationEmitter) {
+                        dmbean = new StandardEmitterMBean(pmo, null, true, (NotificationEmitter) pmo);
+                    } else {
+                        dmbean = new StandardMBean(pmo, null, true);
+                    }
+
+                    mbs.registerMBean(dmbean, pmo.getObjectName());
+                    return null;
+                }
+            });
+        } catch (PrivilegedActionException e) {
+            throw new RuntimeException(e.getException());
+        }
+!!!7306114.java!!!	addDynamicMBean(in mbs : MBeanServer, in dmbean : DynamicMBean, in on : ObjectName) : void
+        try {
+            AccessController.doPrivileged(new PrivilegedExceptionAction<Void>() {
+                @Override
+                public Void run() throws InstanceAlreadyExistsException,
+                                         MBeanRegistrationException,
+                                         NotCompliantMBeanException {
+                    mbs.registerMBean(dmbean, on);
+                    return null;
+                }
+            });
+        } catch (PrivilegedActionException e) {
+            throw new RuntimeException(e.getException());
+        }

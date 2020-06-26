@@ -1,0 +1,390 @@
+class NumericShaper
+!!!6467586.java!!!	getContextKey(in c : char) : int
+        if (c < contexts[ctCache]) {
+            while (ctCache > 0 && c < contexts[ctCache]) --ctCache;
+        } else if (c >= contexts[ctCache + 1]) {
+            while (ctCache < ctCacheLimit && c >= contexts[ctCache + 1]) ++ctCache;
+        }
+
+        // if we're not in a known range, then return EUROPEAN as the range key
+        return (ctCache & 0x1) == 0 ? (ctCache / 2) : EUROPEAN_KEY;
+!!!6467714.java!!!	rangeForCodePoint(in codepoint : int) : NumericShaper::Range
+        if (currentRange.inRange(codepoint)) {
+            return currentRange;
+        }
+
+        final Range[] ranges = rangeArray;
+        if (ranges.length > BSEARCH_THRESHOLD) {
+            int lo = 0;
+            int hi = ranges.length - 1;
+            while (lo <= hi) {
+                int mid = (lo + hi) / 2;
+                Range range = ranges[mid];
+                if (codepoint < range.start) {
+                    hi = mid - 1;
+                } else if (codepoint >= range.end) {
+                    lo = mid + 1;
+                } else {
+                    currentRange = range;
+                    return range;
+                }
+            }
+        } else {
+            for (int i = 0; i < ranges.length; i++) {
+                if (ranges[i].inRange(codepoint)) {
+                    return ranges[i];
+                }
+            }
+        }
+        return Range.EUROPEAN;
+!!!6467842.java!!!	isStrongDirectional(in c : char) : boolean
+        int cachedIndex = stCache;
+        if (c < strongTable[cachedIndex]) {
+            cachedIndex = search(c, strongTable, 0, cachedIndex);
+        } else if (c >= strongTable[cachedIndex + 1]) {
+            cachedIndex = search(c, strongTable, cachedIndex + 1,
+                                 strongTable.length - cachedIndex - 1);
+        }
+        boolean val = (cachedIndex & 0x1) == 1;
+        stCache = cachedIndex;
+        return val;
+!!!6467970.java!!!	getKeyFromMask(in mask : int) : int
+        int key = 0;
+        while (key < NUM_KEYS && ((mask & (1<<key)) == 0)) {
+            ++key;
+        }
+        if (key == NUM_KEYS || ((mask & ~(1<<key)) != 0)) {
+            throw new IllegalArgumentException("invalid shaper: " + Integer.toHexString(mask));
+        }
+        return key;
+!!!6468098.java!!!	getShaper(in singleRange : int) : NumericShaper
+        int key = getKeyFromMask(singleRange);
+        return new NumericShaper(key, singleRange);
+!!!6468226.java!!!	getShaper(inout singleRange : NumericShaper::Range) : NumericShaper
+        return new NumericShaper(singleRange, EnumSet.of(singleRange));
+!!!6468354.java!!!	getContextualShaper(in ranges : int) : NumericShaper
+        ranges |= CONTEXTUAL_MASK;
+        return new NumericShaper(EUROPEAN_KEY, ranges);
+!!!6468482.java!!!	getContextualShaper(inout ranges : Set) : NumericShaper
+        NumericShaper shaper = new NumericShaper(Range.EUROPEAN, ranges);
+        shaper.mask = CONTEXTUAL_MASK;
+        return shaper;
+!!!6468610.java!!!	getContextualShaper(in ranges : int, in defaultContext : int) : NumericShaper
+        int key = getKeyFromMask(defaultContext);
+        ranges |= CONTEXTUAL_MASK;
+        return new NumericShaper(key, ranges);
+!!!6468738.java!!!	getContextualShaper(inout ranges : Set, inout defaultContext : NumericShaper::Range) : NumericShaper
+        if (defaultContext == null) {
+            throw new NullPointerException();
+        }
+        NumericShaper shaper = new NumericShaper(defaultContext, ranges);
+        shaper.mask = CONTEXTUAL_MASK;
+        return shaper;
+!!!6468866.java!!!	NumericShaper(in key : int, in mask : int)
+        this.key = key;
+        this.mask = mask;
+!!!6468994.java!!!	NumericShaper(inout defaultContext : NumericShaper::Range, inout ranges : Set)
+        shapingRange = defaultContext;
+        rangeSet = EnumSet.copyOf(ranges); // throws NPE if ranges is null.
+
+        // Give precedance to EASTERN_ARABIC if both ARABIC and
+        // EASTERN_ARABIC are specified.
+        if (rangeSet.contains(Range.EASTERN_ARABIC)
+            && rangeSet.contains(Range.ARABIC)) {
+            rangeSet.remove(Range.ARABIC);
+        }
+
+        // As well as the above case, give precedance to TAI_THAM_THAM if both
+        // TAI_THAM_HORA and TAI_THAM_THAM are specified.
+        if (rangeSet.contains(Range.TAI_THAM_THAM)
+            && rangeSet.contains(Range.TAI_THAM_HORA)) {
+            rangeSet.remove(Range.TAI_THAM_HORA);
+        }
+
+        rangeArray = rangeSet.toArray(new Range[rangeSet.size()]);
+        if (rangeArray.length > BSEARCH_THRESHOLD) {
+            // sort rangeArray for binary search
+            Arrays.sort(rangeArray,
+                        new Comparator<Range>() {
+                            public int compare(Range s1, Range s2) {
+                                return s1.base > s2.base ? 1 : s1.base == s2.base ? 0 : -1;
+                            }
+                        });
+        }
+!!!6469122.java!!!	shape(inout text : char [[]], in start : int, in count : int) : void
+        checkParams(text, start, count);
+        if (isContextual()) {
+            if (rangeSet == null) {
+                shapeContextually(text, start, count, key);
+            } else {
+                shapeContextually(text, start, count, shapingRange);
+            }
+        } else {
+            shapeNonContextually(text, start, count);
+        }
+!!!6469250.java!!!	shape(inout text : char [[]], in start : int, in count : int, in context : int) : void
+        checkParams(text, start, count);
+        if (isContextual()) {
+            int ctxKey = getKeyFromMask(context);
+            if (rangeSet == null) {
+                shapeContextually(text, start, count, ctxKey);
+            } else {
+                shapeContextually(text, start, count, Range.values()[ctxKey]);
+            }
+        } else {
+            shapeNonContextually(text, start, count);
+        }
+!!!6469378.java!!!	shape(inout text : char [[]], in start : int, in count : int, inout context : NumericShaper::Range) : void
+        checkParams(text, start, count);
+        if (context == null) {
+            throw new NullPointerException("context is null");
+        }
+
+        if (isContextual()) {
+            if (rangeSet != null) {
+                shapeContextually(text, start, count, context);
+            } else {
+                int key = Range.toRangeIndex(context);
+                if (key >= 0) {
+                    shapeContextually(text, start, count, key);
+                } else {
+                    shapeContextually(text, start, count, shapingRange);
+                }
+            }
+        } else {
+            shapeNonContextually(text, start, count);
+        }
+!!!6469506.java!!!	checkParams(inout text : char [[]], in start : int, in count : int) : void
+        if (text == null) {
+            throw new NullPointerException("text is null");
+        }
+        if ((start < 0)
+            || (start > text.length)
+            || ((start + count) < 0)
+            || ((start + count) > text.length)) {
+            throw new IndexOutOfBoundsException(
+                "bad start or count for text of length " + text.length);
+        }
+!!!6469634.java!!!	isContextual() : boolean
+        return (mask & CONTEXTUAL_MASK) != 0;
+!!!6469762.java!!!	getRanges() : int
+        return mask & ~CONTEXTUAL_MASK;
+!!!6469890.java!!!	getRangeSet() : Set
+        if (rangeSet != null) {
+            return EnumSet.copyOf(rangeSet);
+        }
+        return Range.maskToRangeSet(mask);
+!!!6470018.java!!!	shapeNonContextually(inout text : char [[]], in start : int, in count : int) : void
+        int base;
+        char minDigit = '0';
+        if (shapingRange != null) {
+            base = shapingRange.getDigitBase();
+            minDigit += shapingRange.getNumericBase();
+        } else {
+            base = bases[key];
+            if (key == ETHIOPIC_KEY) {
+                minDigit++; // Ethiopic doesn't use decimal zero
+            }
+        }
+        for (int i = start, e = start + count; i < e; ++i) {
+            char c = text[i];
+            if (c >= minDigit && c <= '\u0039') {
+                text[i] = (char)(c + base);
+            }
+        }
+!!!6470146.java!!!	shapeContextually(inout text : char [[]], in start : int, in count : int, in ctxKey : int) : void
+
+        // if we don't support this context, then don't shape
+        if ((mask & (1<<ctxKey)) == 0) {
+            ctxKey = EUROPEAN_KEY;
+        }
+        int lastkey = ctxKey;
+
+        int base = bases[ctxKey];
+        char minDigit = ctxKey == ETHIOPIC_KEY ? '1' : '0'; // Ethiopic doesn't use decimal zero
+
+        synchronized (NumericShaper.class) {
+            for (int i = start, e = start + count; i < e; ++i) {
+                char c = text[i];
+                if (c >= minDigit && c <= '\u0039') {
+                    text[i] = (char)(c + base);
+                }
+
+                if (isStrongDirectional(c)) {
+                    int newkey = getContextKey(c);
+                    if (newkey != lastkey) {
+                        lastkey = newkey;
+
+                        ctxKey = newkey;
+                        if (((mask & EASTERN_ARABIC) != 0) &&
+                             (ctxKey == ARABIC_KEY ||
+                              ctxKey == EASTERN_ARABIC_KEY)) {
+                            ctxKey = EASTERN_ARABIC_KEY;
+                        } else if (((mask & ARABIC) != 0) &&
+                             (ctxKey == ARABIC_KEY ||
+                              ctxKey == EASTERN_ARABIC_KEY)) {
+                            ctxKey = ARABIC_KEY;
+                        } else if ((mask & (1<<ctxKey)) == 0) {
+                            ctxKey = EUROPEAN_KEY;
+                        }
+
+                        base = bases[ctxKey];
+
+                        minDigit = ctxKey == ETHIOPIC_KEY ? '1' : '0'; // Ethiopic doesn't use decimal zero
+                    }
+                }
+            }
+        }
+!!!6470274.java!!!	shapeContextually(inout text : char [[]], in start : int, in count : int, inout ctxKey : NumericShaper::Range) : void
+        // if we don't support the specified context, then don't shape.
+        if (ctxKey == null || !rangeSet.contains(ctxKey)) {
+            ctxKey = Range.EUROPEAN;
+        }
+
+        Range lastKey = ctxKey;
+        int base = ctxKey.getDigitBase();
+        char minDigit = (char)('0' + ctxKey.getNumericBase());
+        final int end = start + count;
+        for (int i = start; i < end; ++i) {
+            char c = text[i];
+            if (c >= minDigit && c <= '9') {
+                text[i] = (char)(c + base);
+                continue;
+            }
+            if (isStrongDirectional(c)) {
+                ctxKey = rangeForCodePoint(c);
+                if (ctxKey != lastKey) {
+                    lastKey = ctxKey;
+                    base = ctxKey.getDigitBase();
+                    minDigit = (char)('0' + ctxKey.getNumericBase());
+                }
+            }
+        }
+!!!6470402.java!!!	hashCode() : int
+        int hash = mask;
+        if (rangeSet != null) {
+            // Use the CONTEXTUAL_MASK bit only for the enum-based
+            // NumericShaper. A deserialized NumericShaper might have
+            // bit masks.
+            hash &= CONTEXTUAL_MASK;
+            hash ^= rangeSet.hashCode();
+        }
+        return hash;
+!!!6470530.java!!!	equals(inout o : Object) : boolean
+        if (o != null) {
+            try {
+                NumericShaper rhs = (NumericShaper)o;
+                if (rangeSet != null) {
+                    if (rhs.rangeSet != null) {
+                        return isContextual() == rhs.isContextual()
+                            && rangeSet.equals(rhs.rangeSet)
+                            && shapingRange == rhs.shapingRange;
+                    }
+                    return isContextual() == rhs.isContextual()
+                        && rangeSet.equals(Range.maskToRangeSet(rhs.mask))
+                        && shapingRange == Range.indexToRange(rhs.key);
+                } else if (rhs.rangeSet != null) {
+                    Set<Range> rset = Range.maskToRangeSet(mask);
+                    Range srange = Range.indexToRange(key);
+                    return isContextual() == rhs.isContextual()
+                        && rset.equals(rhs.rangeSet)
+                        && srange == rhs.shapingRange;
+                }
+                return rhs.mask == mask && rhs.key == key;
+            }
+            catch (ClassCastException e) {
+            }
+        }
+        return false;
+!!!6470658.java!!!	toString() : String
+        StringBuilder buf = new StringBuilder(super.toString());
+
+        buf.append("[contextual:").append(isContextual());
+
+        String[] keyNames = null;
+        if (isContextual()) {
+            buf.append(", context:");
+            buf.append(shapingRange == null ? Range.values()[key] : shapingRange);
+        }
+
+        if (rangeSet == null) {
+            buf.append(", range(s): ");
+            boolean first = true;
+            for (int i = 0; i < NUM_KEYS; ++i) {
+                if ((mask & (1 << i)) != 0) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        buf.append(", ");
+                    }
+                    buf.append(Range.values()[i]);
+                }
+            }
+        } else {
+            buf.append(", range set: ").append(rangeSet);
+        }
+        buf.append(']');
+
+        return buf.toString();
+!!!6470786.java!!!	getHighBit(in value : int) : int
+        if (value <= 0) {
+            return -32;
+        }
+
+        int bit = 0;
+
+        if (value >= 1 << 16) {
+            value >>= 16;
+            bit += 16;
+        }
+
+        if (value >= 1 << 8) {
+            value >>= 8;
+            bit += 8;
+        }
+
+        if (value >= 1 << 4) {
+            value >>= 4;
+            bit += 4;
+        }
+
+        if (value >= 1 << 2) {
+            value >>= 2;
+            bit += 2;
+        }
+
+        if (value >= 1 << 1) {
+            bit += 1;
+        }
+
+        return bit;
+!!!6470914.java!!!	search(in value : int, inout array : int [[]], in start : int, in length : int) : int
+        int power = 1 << getHighBit(length);
+        int extra = length - power;
+        int probe = power;
+        int index = start;
+
+        if (value >= array[index + extra]) {
+            index += extra;
+        }
+
+        while (probe > 1) {
+            probe >>= 1;
+
+            if (value >= array[index + probe]) {
+                index += probe;
+            }
+        }
+
+        return index;
+!!!6471042.java!!!	writeObject(inout stream : ObjectOutputStream) : void
+        if (shapingRange != null) {
+            int index = Range.toRangeIndex(shapingRange);
+            if (index >= 0) {
+                key = index;
+            }
+        }
+        if (rangeSet != null) {
+            mask |= Range.toRangeMask(rangeSet);
+        }
+        stream.defaultWriteObject();

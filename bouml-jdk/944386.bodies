@@ -1,0 +1,192 @@
+class MethodHandle
+!!!7153026.java!!!	type() : MethodType
+        return type;
+!!!7153154.java!!!	MethodHandle(inout type : MethodType, inout form : LambdaForm)
+        type.getClass();  // explicit NPE
+        form.getClass();  // explicit NPE
+        this.type = type;
+        this.form = form.uncustomize();
+
+        this.form.prepare();  // TO DO:  Try to delay this step until just before invocation.
+!!!7154178.java!!!	invokeWithArguments(inout  : Object...arguments) : Object
+        MethodType invocationType = MethodType.genericMethodType(arguments == null ? 0 : arguments.length);
+        return invocationType.invokers().spreadInvoker(0).invokeExact(asType(invocationType), arguments);
+!!!7154306.java!!!	invokeWithArguments(inout arguments : List) : Object
+        return invokeWithArguments(arguments.toArray());
+!!!7154434.java!!!	asType(inout newType : MethodType) : MethodHandle
+        // Fast path alternative to a heavyweight {@code asType} call.
+        // Return 'this' if the conversion will be a no-op.
+        if (newType == type) {
+            return this;
+        }
+        // Return 'this.asTypeCache' if the conversion is already memoized.
+        MethodHandle atc = asTypeCached(newType);
+        if (atc != null) {
+            return atc;
+        }
+        return asTypeUncached(newType);
+!!!7154562.java!!!	asTypeCached(inout newType : MethodType) : MethodHandle
+        MethodHandle atc = asTypeCache;
+        if (atc != null && newType == atc.type) {
+            return atc;
+        }
+        return null;
+!!!7154690.java!!!	asTypeUncached(inout newType : MethodType) : MethodHandle
+        if (!type.isConvertibleTo(newType))
+            throw new WrongMethodTypeException("cannot convert "+this+" to "+newType);
+        return asTypeCache = MethodHandleImpl.makePairwiseConvert(this, newType, true);
+!!!7154818.java!!!	asSpreader(inout arrayType : Class, in arrayLength : int) : MethodHandle
+        MethodType postSpreadType = asSpreaderChecks(arrayType, arrayLength);
+        int arity = type().parameterCount();
+        int spreadArgPos = arity - arrayLength;
+        MethodHandle afterSpread = this.asType(postSpreadType);
+        BoundMethodHandle mh = afterSpread.rebind();
+        LambdaForm lform = mh.editor().spreadArgumentsForm(1 + spreadArgPos, arrayType, arrayLength);
+        MethodType preSpreadType = postSpreadType.replaceParameterTypes(spreadArgPos, arity, arrayType);
+        return mh.copyWith(preSpreadType, lform);
+!!!7154946.java!!!	asSpreaderChecks(inout arrayType : Class, in arrayLength : int) : MethodType
+        spreadArrayChecks(arrayType, arrayLength);
+        int nargs = type().parameterCount();
+        if (nargs < arrayLength || arrayLength < 0)
+            throw newIllegalArgumentException("bad spread array length");
+        Class<?> arrayElement = arrayType.getComponentType();
+        MethodType mtype = type();
+        boolean match = true, fail = false;
+        for (int i = nargs - arrayLength; i < nargs; i++) {
+            Class<?> ptype = mtype.parameterType(i);
+            if (ptype != arrayElement) {
+                match = false;
+                if (!MethodType.canConvert(arrayElement, ptype)) {
+                    fail = true;
+                    break;
+                }
+            }
+        }
+        if (match)  return mtype;
+        MethodType needType = mtype.asSpreaderType(arrayType, arrayLength);
+        if (!fail)  return needType;
+        // elicit an error:
+        this.asType(needType);
+        throw newInternalError("should not return", null);
+!!!7155074.java!!!	spreadArrayChecks(inout arrayType : Class, in arrayLength : int) : void
+        Class<?> arrayElement = arrayType.getComponentType();
+        if (arrayElement == null)
+            throw newIllegalArgumentException("not an array type", arrayType);
+        if ((arrayLength & 0x7F) != arrayLength) {
+            if ((arrayLength & 0xFF) != arrayLength)
+                throw newIllegalArgumentException("array length is not legal", arrayLength);
+            assert(arrayLength >= 128);
+            if (arrayElement == long.class ||
+                arrayElement == double.class)
+                throw newIllegalArgumentException("array length is not legal for long[] or double[]", arrayLength);
+        }
+!!!7155202.java!!!	asCollector(inout arrayType : Class, in arrayLength : int) : MethodHandle
+        asCollectorChecks(arrayType, arrayLength);
+        int collectArgPos = type().parameterCount() - 1;
+        BoundMethodHandle mh = rebind();
+        MethodType resultType = type().asCollectorType(arrayType, arrayLength);
+        MethodHandle newArray = MethodHandleImpl.varargsArray(arrayType, arrayLength);
+        LambdaForm lform = mh.editor().collectArgumentArrayForm(1 + collectArgPos, newArray);
+        if (lform != null) {
+            return mh.copyWith(resultType, lform);
+        }
+        lform = mh.editor().collectArgumentsForm(1 + collectArgPos, newArray.type().basicType());
+        return mh.copyWithExtendL(resultType, lform, newArray);
+!!!7155330.java!!!	asCollectorChecks(inout arrayType : Class, in arrayLength : int) : boolean
+        spreadArrayChecks(arrayType, arrayLength);
+        int nargs = type().parameterCount();
+        if (nargs != 0) {
+            Class<?> lastParam = type().parameterType(nargs-1);
+            if (lastParam == arrayType)  return true;
+            if (lastParam.isAssignableFrom(arrayType))  return false;
+        }
+        throw newIllegalArgumentException("array type not assignable to trailing argument", this, arrayType);
+!!!7155458.java!!!	asVarargsCollector(inout arrayType : Class) : MethodHandle
+        arrayType.getClass(); // explicit NPE
+        boolean lastMatch = asCollectorChecks(arrayType, 0);
+        if (isVarargsCollector() && lastMatch)
+            return this;
+        return MethodHandleImpl.makeVarargsCollector(this, arrayType);
+!!!7155586.java!!!	isVarargsCollector() : boolean
+        return false;
+!!!7155714.java!!!	asFixedArity() : MethodHandle
+        assert(!isVarargsCollector());
+        return this;
+!!!7155842.java!!!	bindTo(inout x : Object) : MethodHandle
+        x = type.leadingReferenceParameter().cast(x);  // throw CCE if needed
+        return bindArgumentL(0, x);
+!!!7155970.java!!!	toString() : String
+        if (DEBUG_METHOD_HANDLE_NAMES)  return "MethodHandle"+debugString();
+        return standardString();
+!!!7156098.java!!!	standardString() : String
+        return "MethodHandle"+type;
+!!!7156226.java!!!	debugString() : String
+        return type+" : "+internalForm()+internalProperties();
+!!!7156354.java!!!	bindArgumentL(in pos : int, inout value : Object) : BoundMethodHandle
+        return rebind().bindArgumentL(pos, value);
+!!!7156482.java!!!	setVarargs(inout member : MemberName) : MethodHandle
+        if (!member.isVarargs())  return this;
+        Class<?> arrayType = type().lastParameterType();
+        if (arrayType.isArray()) {
+            return MethodHandleImpl.makeVarargsCollector(this, arrayType);
+        }
+        throw member.makeAccessException("cannot make variable arity", null);
+!!!7156610.java!!!	viewAsType(inout newType : MethodType, inout strict : boolean) : MethodHandle
+        // No actual conversions, just a new view of the same method.
+        // Note that this operation must not produce a DirectMethodHandle,
+        // because retyped DMHs, like any transformed MHs,
+        // cannot be cracked into MethodHandleInfo.
+        assert viewAsTypeChecks(newType, strict);
+        BoundMethodHandle mh = rebind();
+        assert(!((MethodHandle)mh instanceof DirectMethodHandle));
+        return mh.copyWith(newType, mh.form);
+!!!7156738.java!!!	viewAsTypeChecks(inout newType : MethodType, inout strict : boolean) : boolean
+        if (strict) {
+            assert(type().isViewableAs(newType, true))
+                : Arrays.asList(this, newType);
+        } else {
+            assert(type().basicType().isViewableAs(newType.basicType(), true))
+                : Arrays.asList(this, newType);
+        }
+        return true;
+!!!7156866.java!!!	internalForm() : LambdaForm
+        return form;
+!!!7156994.java!!!	internalMemberName() : MemberName
+        return null;  // DMH returns DMH.member
+!!!7157122.java!!!	internalCallerClass() : Class
+        return null;  // caller-bound MH for @CallerSensitive method returns caller
+!!!7157250.java!!!	intrinsicName() : MethodHandleImpl::Intrinsic
+        // no special intrinsic meaning to most MHs
+        return MethodHandleImpl.Intrinsic.NONE;
+!!!7157378.java!!!	withInternalMemberName(inout member : MemberName, inout isInvokeSpecial : boolean) : MethodHandle
+        if (member != null) {
+            return MethodHandleImpl.makeWrappedMember(this, member, isInvokeSpecial);
+        } else if (internalMemberName() == null) {
+            // The required internaMemberName is null, and this MH (like most) doesn't have one.
+            return this;
+        } else {
+            // The following case is rare. Mask the internalMemberName by wrapping the MH in a BMH.
+            MethodHandle result = rebind();
+            assert (result.internalMemberName() == null);
+            return result;
+        }
+!!!7157506.java!!!	isInvokeSpecial() : boolean
+        return false;  // DMH.Special returns true
+!!!7157634.java!!!	internalValues() : Object
+        return null;
+!!!7157762.java!!!	internalProperties() : Object
+        // Override to something to follow this.form, like "\n& FOO=bar"
+        return "";
+!!!7158146.java!!!	updateForm(inout newForm : LambdaForm) : void
+        assert(newForm.customized == null || newForm.customized == this);
+        if (form == newForm)  return;
+        newForm.prepare();  // as in MethodHandle.<init>
+        UNSAFE.putObject(this, FORM_OFFSET, newForm);
+        UNSAFE.fullFence();
+!!!7158274.java!!!	customize() : void
+        if (form.customized == null) {
+            LambdaForm newForm = form.customize(this);
+            updateForm(newForm);
+        } else {
+            assert(form.customized == this);
+        }

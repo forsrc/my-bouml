@@ -1,0 +1,38 @@
+class PrivilegedCallableUsingCurrentClassLoader
+!!!9169922.java!!!	PrivilegedCallableUsingCurrentClassLoader(inout task : Callable)
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) {
+                // Calls to getContextClassLoader from this class
+                // never trigger a security check, but we check
+                // whether our callers have this permission anyways.
+                sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
+
+                // Whether setContextClassLoader turns out to be necessary
+                // or not, we fail fast if permission is not available.
+                sm.checkPermission(new RuntimePermission("setContextClassLoader"));
+            }
+            this.task = task;
+            this.acc = AccessController.getContext();
+            this.ccl = Thread.currentThread().getContextClassLoader();
+!!!9170050.java!!!	call() : T
+            try {
+                return AccessController.doPrivileged(
+                    new PrivilegedExceptionAction<T>() {
+                        public T run() throws Exception {
+                            Thread t = Thread.currentThread();
+                            ClassLoader cl = t.getContextClassLoader();
+                            if (ccl == cl) {
+                                return task.call();
+                            } else {
+                                t.setContextClassLoader(ccl);
+                                try {
+                                    return task.call();
+                                } finally {
+                                    t.setContextClassLoader(cl);
+                                }
+                            }
+                        }
+                    }, acc);
+            } catch (PrivilegedActionException e) {
+                throw e.getException();
+            }

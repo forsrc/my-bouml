@@ -1,0 +1,112 @@
+class ConvertingMethod
+!!!2940290.java!!!	from(inout m : Method) : ConvertingMethod
+        try {
+            return new ConvertingMethod(m);
+        } catch (OpenDataException ode) {
+            final String msg = "Method " + m.getDeclaringClass().getName() +
+                "." + m.getName() + " has parameter or return type that " +
+                "cannot be translated into an open type";
+            throw new IllegalArgumentException(msg, ode);
+        }
+!!!2940418.java!!!	getMethod() : Method
+        return method;
+!!!2940546.java!!!	getDescriptor() : Descriptor
+        return Introspector.descriptorForElement(method);
+!!!2940674.java!!!	getGenericReturnType() : Type
+        return method.getGenericReturnType();
+!!!2940802.java!!!	getGenericParameterTypes() : Type
+        return method.getGenericParameterTypes();
+!!!2940930.java!!!	getName() : String
+        return method.getName();
+!!!2941058.java!!!	getOpenReturnType() : OpenType
+        return returnMapping.getOpenType();
+!!!2941186.java!!!	getOpenParameterTypes() : OpenType
+        final OpenType<?>[] types = new OpenType<?>[paramMappings.length];
+        for (int i = 0; i < paramMappings.length; i++)
+            types[i] = paramMappings[i].getOpenType();
+        return types;
+!!!2941314.java!!!	checkCallFromOpen() : void
+        try {
+            for (MXBeanMapping paramConverter : paramMappings)
+                paramConverter.checkReconstructible();
+        } catch (InvalidObjectException e) {
+            throw new IllegalArgumentException(e);
+        }
+!!!2941442.java!!!	checkCallToOpen() : void
+        try {
+            returnMapping.checkReconstructible();
+        } catch (InvalidObjectException e) {
+            throw new IllegalArgumentException(e);
+        }
+!!!2941570.java!!!	getOpenSignature() : String
+        if (paramMappings.length == 0)
+            return noStrings;
+
+        String[] sig = new String[paramMappings.length];
+        for (int i = 0; i < paramMappings.length; i++)
+            sig[i] = paramMappings[i].getOpenClass().getName();
+        return sig;
+!!!2941698.java!!!	toOpenReturnValue(inout lookup : MXBeanLookup, inout ret : Object) : Object
+        return returnMapping.toOpenValue(ret);
+!!!2941826.java!!!	fromOpenReturnValue(inout lookup : MXBeanLookup, inout ret : Object) : Object
+        return returnMapping.fromOpenValue(ret);
+!!!2941954.java!!!	toOpenParameters(inout lookup : MXBeanLookup, inout params : Object [[]]) : Object
+        if (paramConversionIsIdentity || params == null)
+            return params;
+        final Object[] oparams = new Object[params.length];
+        for (int i = 0; i < params.length; i++)
+            oparams[i] = paramMappings[i].toOpenValue(params[i]);
+        return oparams;
+!!!2942082.java!!!	fromOpenParameters(inout params : Object [[]]) : Object
+        if (paramConversionIsIdentity || params == null)
+            return params;
+        final Object[] jparams = new Object[params.length];
+        for (int i = 0; i < params.length; i++)
+            jparams[i] = paramMappings[i].fromOpenValue(params[i]);
+        return jparams;
+!!!2942210.java!!!	toOpenParameter(inout lookup : MXBeanLookup, inout param : Object, in paramNo : int) : Object
+        return paramMappings[paramNo].toOpenValue(param);
+!!!2942338.java!!!	fromOpenParameter(inout lookup : MXBeanLookup, inout param : Object, in paramNo : int) : Object
+        return paramMappings[paramNo].fromOpenValue(param);
+!!!2942466.java!!!	invokeWithOpenReturn(inout lookup : MXBeanLookup, inout obj : Object, inout params : Object [[]]) : Object
+        MXBeanLookup old = MXBeanLookup.getLookup();
+        try {
+            MXBeanLookup.setLookup(lookup);
+            return invokeWithOpenReturn(obj, params);
+        } finally {
+            MXBeanLookup.setLookup(old);
+        }
+!!!2942594.java!!!	invokeWithOpenReturn(inout obj : Object, inout params : Object [[]]) : Object
+        final Object[] javaParams;
+        try {
+            javaParams = fromOpenParameters(params);
+        } catch (InvalidObjectException e) {
+            // probably can't happen
+            final String msg = methodName() + ": cannot convert parameters " +
+                "from open values: " + e;
+            throw new MBeanException(e, msg);
+        }
+        final Object javaReturn = MethodUtil.invoke(method, obj, javaParams);
+        try {
+            return returnMapping.toOpenValue(javaReturn);
+        } catch (OpenDataException e) {
+            // probably can't happen
+            final String msg = methodName() + ": cannot convert return " +
+                "value to open value: " + e;
+            throw new MBeanException(e, msg);
+        }
+!!!2942722.java!!!	methodName() : String
+        return method.getDeclaringClass() + "." + method.getName();
+!!!2942850.java!!!	ConvertingMethod(inout m : Method)
+        this.method = m;
+        MXBeanMappingFactory mappingFactory = MXBeanMappingFactory.DEFAULT;
+        returnMapping =
+                mappingFactory.mappingForType(m.getGenericReturnType(), mappingFactory);
+        Type[] params = m.getGenericParameterTypes();
+        paramMappings = new MXBeanMapping[params.length];
+        boolean identity = true;
+        for (int i = 0; i < params.length; i++) {
+            paramMappings[i] = mappingFactory.mappingForType(params[i], mappingFactory);
+            identity &= DefaultMXBeanMappingFactory.isIdentity(paramMappings[i]);
+        }
+        paramConversionIsIdentity = identity;

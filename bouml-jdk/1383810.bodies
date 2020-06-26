@@ -1,0 +1,173 @@
+class TextLayoutStrategy
+!!!11697282.java!!!	TextLayoutStrategy()
+        text = new AttributedSegment();
+!!!11697410.java!!!	insertUpdate(inout fv : FlowView, inout e : DocumentEvent, inout alloc : Rectangle) : void
+        sync(fv);
+        super.insertUpdate(fv, e, alloc);
+!!!11697538.java!!!	removeUpdate(inout fv : FlowView, inout e : DocumentEvent, inout alloc : Rectangle) : void
+        sync(fv);
+        super.removeUpdate(fv, e, alloc);
+!!!11697666.java!!!	changedUpdate(inout fv : FlowView, inout e : DocumentEvent, inout alloc : Rectangle) : void
+        sync(fv);
+        super.changedUpdate(fv, e, alloc);
+!!!11697794.java!!!	layout(inout fv : FlowView) : void
+        super.layout(fv);
+!!!11697922.java!!!	layoutRow(inout fv : FlowView, in rowIndex : int, in p0 : int) : int
+        int p1 = super.layoutRow(fv, rowIndex, p0);
+        View row = fv.getView(rowIndex);
+        Document doc = fv.getDocument();
+        Object i18nFlag = doc.getProperty(AbstractDocument.I18NProperty);
+        if ((i18nFlag != null) && i18nFlag.equals(Boolean.TRUE)) {
+            int n = row.getViewCount();
+            if (n > 1) {
+                AbstractDocument d = (AbstractDocument)fv.getDocument();
+                Element bidiRoot = d.getBidiRootElement();
+                byte[] levels = new byte[n];
+                View[] reorder = new View[n];
+
+                for( int i=0; i<n; i++ ) {
+                    View v = row.getView(i);
+                    int bidiIndex =bidiRoot.getElementIndex(v.getStartOffset());
+                    Element bidiElem = bidiRoot.getElement( bidiIndex );
+                    levels[i] = (byte)StyleConstants.getBidiLevel(bidiElem.getAttributes());
+                    reorder[i] = v;
+                }
+
+                BidiUtils.reorderVisually( levels, reorder );
+                row.replace(0, n, reorder);
+            }
+        }
+        return p1;
+!!!11698178.java!!!	createView(inout fv : FlowView, in startOffset : int, in spanLeft : int, in rowIndex : int) : View
+        // Get the child view that contains the given starting position
+        View lv = getLogicalView(fv);
+        View row = fv.getView(rowIndex);
+        boolean requireNextWord = (viewBuffer.size() == 0) ? false : true;
+        int childIndex = lv.getViewIndex(startOffset, Position.Bias.Forward);
+        View v = lv.getView(childIndex);
+
+        int endOffset = getLimitingOffset(v, startOffset, spanLeft, requireNextWord);
+        if (endOffset == startOffset) {
+            return null;
+        }
+
+        View frag;
+        if ((startOffset==v.getStartOffset()) && (endOffset == v.getEndOffset())) {
+            // return the entire view
+            frag = v;
+        } else {
+            // return a unidirectional fragment.
+            frag = v.createFragment(startOffset, endOffset);
+        }
+
+        if ((frag instanceof GlyphView) && (measurer != null)) {
+            // install a TextLayout based renderer if the view is responsible
+            // for glyphs.  If the view represents a tab, the default
+            // glyph painter is used (may want to handle tabs differently).
+            boolean isTab = false;
+            int p0 = frag.getStartOffset();
+            int p1 = frag.getEndOffset();
+            if ((p1 - p0) == 1) {
+                // check for tab
+                Segment s = ((GlyphView)frag).getText(p0, p1);
+                char ch = s.first();
+                if (ch == '\t') {
+                    isTab = true;
+                }
+            }
+            TextLayout tl = (isTab) ? null :
+                measurer.nextLayout(spanLeft, text.toIteratorIndex(endOffset),
+                                    requireNextWord);
+            if (tl != null) {
+                ((GlyphView)frag).setGlyphPainter(new GlyphPainter2(tl));
+            }
+        }
+        return frag;
+!!!11698306.java!!!	getLimitingOffset(inout v : View, in startOffset : int, in spanLeft : int, inout requireNextWord : boolean) : int
+        int endOffset = v.getEndOffset();
+
+        // check for direction change
+        Document doc = v.getDocument();
+        if (doc instanceof AbstractDocument) {
+            AbstractDocument d = (AbstractDocument) doc;
+            Element bidiRoot = d.getBidiRootElement();
+            if( bidiRoot.getElementCount() > 1 ) {
+                int bidiIndex = bidiRoot.getElementIndex( startOffset );
+                Element bidiElem = bidiRoot.getElement( bidiIndex );
+                endOffset = Math.min( bidiElem.getEndOffset(), endOffset );
+            }
+        }
+
+        // check for tab
+        if (v instanceof GlyphView) {
+            Segment s = ((GlyphView)v).getText(startOffset, endOffset);
+            char ch = s.first();
+            if (ch == '\t') {
+                // if the first character is a tab, create a dedicated
+                // view for just the tab
+                endOffset = startOffset + 1;
+            } else {
+                for (ch = s.next(); ch != Segment.DONE; ch = s.next()) {
+                    if (ch == '\t') {
+                        // found a tab, don't include it in the text
+                        endOffset = startOffset + s.getIndex() - s.getBeginIndex();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // determine limit from LineBreakMeasurer
+        int limitIndex = text.toIteratorIndex(endOffset);
+        if (measurer != null) {
+            int index = text.toIteratorIndex(startOffset);
+            if (measurer.getPosition() != index) {
+                measurer.setPosition(index);
+            }
+            limitIndex = measurer.nextOffset(spanLeft, limitIndex, requireNextWord);
+        }
+        int pos = text.toModelPosition(limitIndex);
+        return pos;
+!!!11698434.java!!!	sync(inout fv : FlowView) : void
+        View lv = getLogicalView(fv);
+        text.setView(lv);
+
+        Container container = fv.getContainer();
+        FontRenderContext frc = sun.swing.SwingUtilities2.
+                                    getFontRenderContext(container);
+        BreakIterator iter;
+        Container c = fv.getContainer();
+        if (c != null) {
+            iter = BreakIterator.getLineInstance(c.getLocale());
+        } else {
+            iter = BreakIterator.getLineInstance();
+        }
+
+        Object shaper = null;
+        if (c instanceof JComponent) {
+            shaper = ((JComponent) c).getClientProperty(
+                                            TextAttribute.NUMERIC_SHAPING);
+        }
+        text.setShaper(shaper);
+
+        measurer = new LineBreakMeasurer(text, iter, frc);
+
+        // If the children of the FlowView's logical view are GlyphViews, they
+        // need to have their painters updated.
+        int n = lv.getViewCount();
+        for( int i=0; i<n; i++ ) {
+            View child = lv.getView(i);
+            if( child instanceof GlyphView ) {
+                int p0 = child.getStartOffset();
+                int p1 = child.getEndOffset();
+                measurer.setPosition(text.toIteratorIndex(p0));
+                TextLayout layout
+                    = measurer.nextLayout( Float.MAX_VALUE,
+                                           text.toIteratorIndex(p1), false );
+                ((GlyphView)child).setGlyphPainter(new GlyphPainter2(layout));
+            }
+        }
+
+        // Reset measurer.
+        measurer.setPosition(text.getBeginIndex());
+

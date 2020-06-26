@@ -1,0 +1,177 @@
+class DestroyThread
+!!!1123586.java!!!	DestroyThread(inout etherealize : boolean, inout debug : boolean)
+            this.etherealize = etherealize ;
+            this.debug = debug ;
+!!!1123714.java!!!	doIt(inout thePoa : POAImpl, inout wait : boolean) : void
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling DestroyThread.doIt(thePOA=" + thePoa +
+                    " wait=" + wait + " etherealize=" + etherealize ) ;
+            }
+
+            this.thePoa = thePoa ;
+            this.wait = wait ;
+
+            if (wait) {
+                run() ;
+            } else {
+                // Catch exceptions since setDaemon can cause a
+                // security exception to be thrown under netscape
+                // in the Applet mode
+                try { setDaemon(true); } catch (Exception e) {}
+                start() ;
+            }
+!!!1123842.java!!!	run() : void
+            Set destroyedPOATemplates = new HashSet() ;
+
+            performDestroy( thePoa, destroyedPOATemplates );
+
+            Iterator iter = destroyedPOATemplates.iterator() ;
+            ObjectReferenceTemplate[] orts = new ObjectReferenceTemplate[
+                destroyedPOATemplates.size() ] ;
+            int index = 0 ;
+            while (iter.hasNext())
+                orts[ index++ ] = (ObjectReferenceTemplate)iter.next();
+
+            thePoa.getORB().getPIHandler().adapterStateChanged( orts,
+                NON_EXISTENT.value ) ;
+!!!1123970.java!!!	prepareForDestruction(inout poa : POAImpl, inout destroyedPOATemplates : Set) : boolean
+            POAImpl[] childPoas = null ;
+
+            // Note that we do not synchronize on this, since this is
+            // the PerformDestroy instance, not the POA.
+            try {
+                poa.lock() ;
+
+                if (debug) {
+                    ORBUtility.dprint( this,
+                        "Calling performDestroy on poa " + poa ) ;
+                }
+
+                if (poa.state <= STATE_RUN) {
+                    poa.state = STATE_DESTROYING ;
+                } else {
+                    // destroy may be called multiple times, and each call
+                    // is allowed to proceed with its own setting of the wait
+                    // flag, but the etherealize value is used from the first
+                    // call to destroy.  Also all children should be destroyed
+                    // before the parent POA.  If the poa is already destroyed,
+                    // we can just return.  If the poa has started destruction,
+                    // but not completed, and wait is true, we need to wait
+                    // until destruction is complete, then just return.
+                    if (wait)
+                        while (poa.state != STATE_DESTROYED) {
+                            try {
+                                poa.beingDestroyedCV.await() ;
+                            } catch (InterruptedException exc) {
+                                // NO-OP
+                            }
+                        }
+
+                    return false ;
+                }
+
+                poa.isDestroying.set(Boolean.TRUE);
+
+                // Make a copy since we can't hold the lock while destroying
+                // the children, and an iterator is not deletion-safe.
+                childPoas = (POAImpl[])poa.children.values().toArray(
+                    new POAImpl[0] );
+            } finally {
+                poa.unlock() ;
+            }
+
+            // We are not holding the POA mutex here to avoid holding it
+            // while destroying the POA's children, since this may involve
+            // upcalls to etherealize methods.
+
+            for (int ctr=0; ctr<childPoas.length; ctr++ ) {
+                performDestroy( childPoas[ctr], destroyedPOATemplates ) ;
+            }
+
+            return true ;
+!!!1124098.java!!!	performDestroy(inout poa : POAImpl, inout destroyedPOATemplates : Set) : void
+            if (!prepareForDestruction( poa, destroyedPOATemplates ))
+                return ;
+
+            // NOTE: If we are here, poa is in STATE_DESTROYING state. All
+            // other state checks are taken care of in prepareForDestruction.
+            // No other threads may either be starting new invocations
+            // by calling enter or starting to destroy poa.  There may
+            // still be pending invocations.
+
+            POAImpl parent = poa.parent ;
+            boolean isRoot = parent == null ;
+
+            try {
+                // Note that we must lock the parent before the child.
+                // The parent lock is required (if poa is not the root)
+                // to safely remove poa from parent's children Map.
+                if (!isRoot)
+                    parent.lock() ;
+
+                try {
+                    poa.lock() ;
+
+                    completeDestruction( poa, parent,
+                        destroyedPOATemplates ) ;
+                } finally {
+                    poa.unlock() ;
+
+                    if (isRoot)
+                        // We have just destroyed the root POA, so we need to
+                        // make sure that the next call to
+                        // resolve_initial_reference( "RootPOA" )
+                        // will recreate a valid root POA.
+                        poa.manager.getFactory().registerRootPOA() ;
+                }
+            } finally {
+                if (!isRoot) {
+                    parent.unlock() ;
+                    poa.parent = null ;
+                }
+            }
+!!!1124226.java!!!	completeDestruction(inout poa : POAImpl, inout parent : POAImpl, inout destroyedPOATemplates : Set) : void
+            if (debug) {
+                ORBUtility.dprint( this,
+                    "Calling completeDestruction on poa " + poa ) ;
+            }
+
+            try {
+                while (poa.invocationCount != 0) {
+                    try {
+                        poa.invokeCV.await() ;
+                    } catch (InterruptedException ex) {
+                        // NO-OP
+                    }
+                }
+
+                if (poa.mediator != null) {
+                    if (etherealize)
+                        poa.mediator.etherealizeAll();
+
+                    poa.mediator.clearAOM() ;
+                }
+
+                if (poa.manager != null)
+                    poa.manager.removePOA(poa);
+
+                if (parent != null)
+                    parent.children.remove( poa.name ) ;
+
+                destroyedPOATemplates.add( poa.getAdapterTemplate() ) ;
+            } catch (Throwable thr) {
+                if (thr instanceof ThreadDeath)
+                    throw (ThreadDeath)thr ;
+
+                poa.lifecycleWrapper().unexpectedException( thr, poa.toString() ) ;
+            } finally {
+                poa.state = STATE_DESTROYED ;
+                poa.beingDestroyedCV.broadcast();
+                poa.isDestroying.set(Boolean.FALSE);
+
+                if (debug) {
+                    ORBUtility.dprint( this,
+                        "Exiting completeDestruction on poa " + poa ) ;
+                }
+            }

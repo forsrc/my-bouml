@@ -1,0 +1,1585 @@
+format 222
+"oa" // jdk1.8::com::sun::corba::se::spi::oa
+  revision 3
+  modified_by 2 "forsrc"
+  // class settings
+  
+  classdiagramsettings member_max_width 0 end
+  
+  classcompositediagramsettings end
+  
+  usecasediagramsettings end
+  
+  sequencediagramsettings end
+  
+  collaborationdiagramsettings end
+  
+  objectdiagramsettings end
+  
+  objectcompositediagramsettings end
+  
+  componentdiagramsettings
+   end
+  
+  deploymentdiagramsettings
+   end
+  
+  statediagramsettings
+   end
+  
+  activitydiagramsettings
+   end
+  
+  java_dir "/Volumes/My/My/git/MyGit/my-bouml/jdk1.8/com/sun/corba/se/spi/oa/"
+  java_package "com.sun.corba.se.spi.oa"
+  classview 134786 "oa"
+    
+    classdiagramsettings member_max_width 0 end
+    
+    classcompositediagramsettings end
+    
+    collaborationdiagramsettings end
+    
+    objectdiagramsettings end
+    
+    objectcompositediagramsettings end
+    
+    sequencediagramsettings end
+    
+    statediagramsettings
+     end
+    
+    
+    activitydiagramsettings
+     end
+    class 179970 "ObjectAdapter"
+      visibility public stereotype "interface"
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}interface ${name}${extends} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment " REVISIT: What should the order be?  enter/push...pop/exit?
+ ObjectAdapter represents the abstract model of an object
+adapter that was introduced by ORT.  This means that all
+object adapters must:
+<UL>
+<LI>Have an ORB</LI>
+<LI>Have a name</LI>
+<LI>Have an adapter manager (represented by an ID)</LI>
+<LI>Have an adapter template</LI>
+<LI>Support getting and setting their ObjectReferenceFactory</LI>
+<LI>Provide access to their current state</LI>
+<LI>Support adding components to their profiles expressed in the adapter template</LI>
+</UL>
+Other requirements:
+<UL>
+<LI>All object adapters must invoke ORB.AdapterCreated when they are created.
+</LI>
+<LI>All adapter managers must invoke ORB.AdapterManagerStateChanged when
+their state changes, mapping the internal state to an ORT state.</LI>
+<LI>AdapterStateChanged must be invoked (from somewhere) whenever
+an adapter state changes that is not due to an adapter manager state change.</LI>
+</UL>
+<P>
+Object adapters must also provide mechanisms for:
+<UL>
+<LI>Managing object reference lifecycle</LI>
+<LI>Controlling how servants are associated with object references</LI>
+<LI>Manage the state of the adapter, if the adapter desires to implement such mechanisms</LI>
+</UL>
+Such mechanisms are all object adapter specific, and so we do not attempt to
+create general APIs for these functions here.  The object adapter itself
+must provide these APIs directly to the user, and they do not affect the rest of the
+ORB.  This interface basically makes it possible to plug any object adapter into the
+ORB and have the OA work propertly with portable interceptors, and also have requests
+dispatched properly to the object adapter.
+<P>
+The basic function of an ObjectAdapter is to map object IDs to servants and to support
+the dispatch operation of the subcontract, which dispatches requests to servants.
+This is the purpose of the getInvocationServant method.  In addition, ObjectAdapters must be
+able to change state gracefully in the presence of executing methods.  This
+requires the use of the enter/exit methods.  Finally, ObjectAdapters often
+require access to information about requests.  This is accomodated through the
+OAInvocationInfo class and the thread local stack maintained by push/pop/peekInvocationInfo
+on the ORB.
+<P>
+To be useful, this dispatch cycle must be extremely efficient.  There are several
+scenarios that matter:
+<ol>
+<li>A remote invocation, where the dispatch is handled in the server subcontract.</li>
+<li>A local invocation, where the dispatch is handled in the client subcontract.</li>
+<li>A cached local invocation, where the servant is cached when the IOR is established
+for the client subcontract, and the dispatch is handled in the client subcontract
+to the cached subcontract.<li>
+</ol>
+<p>
+Each of these 3 cases is handled a bit differently.  On each request, assume as known
+ObjectId and ObjectAdapterId, which can be obtained from the object key.
+The ObjectAdaptorFactory is available in the subcontract registry, where it is
+registered under the subcontract ID.  The Subcontract ID is also available in the
+object key.
+<ol>
+<li>The remote pattern:
+  <ol>
+  <li>oa = oaf.find( oaid )</li>
+  <li>oa.enter()</li>
+  <li>info = oa.makeInvocationInfo( oid )</li>
+  <li>info.setOperation( operation )</li>
+  <li>push info</li>
+  <li>oa.getInvocationServant( info )</li>
+  <li>sreq.setExecuteReturnServantInResponseConstructor( true )</li>
+  <li>dispatch to servant</li>
+  <li>oa.returnServant()</li>
+  <li>oa.exit()</li>
+  <li>pop info</li>
+  <ol>
+</li>
+REVISIT: Is this the required order for exit/pop?  Cna they be nested instead?
+Note that getInvocationServant and returnServant may throw exceptions.  In such cases,
+returnServant, exit, and pop must be called in the correct order.
+<li>The local pattern:
+  <ol>
+  <li>oa = oaf.find( oaid )</li>
+  <li>oa.enter()</li>
+  <li>info = oa.makeInvocationInfo( oid )</li>
+  <li>info.setOperation( operation )</li>
+  <li>push info</li>
+  <li>oa.getInvocationServant( info )</li>
+  <li>dispatch to servant</li>
+  <li>oa.returnServant()</li>
+  <li>oa.exit()</li>
+  <li>pop info</li>
+  <ol>
+</li>
+This is the same as the remote case, except that setExecuteReturnServantInResponseConstructor
+is not needed (or possible, since there is no server request).
+<li>The fast local pattern: When delegate is constructed,
+   first extract ObjectKey from IOR in delegate,
+   then get ObjectId, ObjectAdapterId, and ObjectAdapterFactory (oaf). Then:
+   <ol>
+   <li>oa = oaf.find( oaid )</li>
+   <li>info = oa.makeInvocationInfo( oid ) (note: no operation!)</li>
+   <li>push info (needed for the correct functioning of getInvocationServant)</li>
+   <li>oa.getInvocationServant( info )</li>
+   <li>pop info
+   </ol>
+   The info instance (which includes the Servant) is cached in the client subcontract.
+   <p>Then, on each invocation:</p>
+   <ol>
+   <li>newinfo = copy of info (clone)</li>
+   <li>info.setOperation( operation )</li>
+   <li>push newinfo</li>
+   <li>oa.enter()</li>
+   <li>dispatch to servant</li>
+   <li>oa.returnServant()</li>  // XXX This is probably wrong: remove it.
+   <li>oa.exit()</li>
+   <li>pop info</li>
+   </ol>
+</li>
+</ol>
+XXX fast local should not call returnServant: what is correct here?
+"
+      operation 1112578 "getORB"
+	public return_type class_ref 131842 // ORB
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment "//////////////////////////////////////////////////////////////////////////
+ Basic methods for supporting interceptors
+//////////////////////////////////////////////////////////////////////////
+ Returns the ORB associated with this adapter.
+"
+      end
+
+      operation 1112706 "getEffectivePolicy"
+	public return_type class_ref 134274 // Policy
+	nparams 1
+	  param in name "type" explicit_type "int"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1112834 "getIORTemplate"
+	public return_type class_ref 199554 // IORTemplate
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Returns the IOR template of this adapter.  The profiles
+in this template may be updated only during the AdapterCreated call.
+After that call completes, the IOR template must be made immutable.
+Note that the server ID, ORB ID, and adapter name are all available
+from the IOR template.
+"
+      end
+
+      operation 1112962 "getManagerId"
+	public explicit_return_type "int"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment "//////////////////////////////////////////////////////////////////////////
+ Methods needed to support ORT.
+//////////////////////////////////////////////////////////////////////////
+ Return the ID of the AdapterManager for this object adapter.
+"
+      end
+
+      operation 1113090 "getState"
+	public explicit_return_type "short"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Return the current state of this object adapter (see
+org.omg.PortableInterceptors for states.
+"
+      end
+
+      operation 1113218 "getAdapterTemplate"
+	public return_type class_ref 180098 // ObjectReferenceTemplate
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1113346 "getCurrentFactory"
+	public return_type class_ref 180994 // ObjectReferenceFactory
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1113474 "setCurrentFactory"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "factory" type class_ref 180994 // ObjectReferenceFactory
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Change the current factory.  This may only be called during the
+AdapterCreated call.
+"
+      end
+
+      operation 1113602 "getLocalServant"
+	public return_type class_ref 133378 // Object
+	nparams 1
+	  param inout name "objectId" explicit_type "byte"
+	multiplicity "[]"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0}[] ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment "//////////////////////////////////////////////////////////////////////////
+ Methods required for dispatching to servants
+//////////////////////////////////////////////////////////////////////////
+ Get the servant corresponding to the given objectId, if this is supported.
+This method is only used for models where the servant is an ObjectImpl,
+which allows the servant to be used directly as the stub.  This allows an object
+reference to be replaced by its servant when it is unmarshalled locally.
+Such objects are not ORB mediated.
+"
+      end
+
+      operation 1113730 "getInvocationServant"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "info" type class_ref 233090 // OAInvocationInfo
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Get the servant for the request given by the parameters.
+info must contain a valid objectId in this call.
+The servant is set in the InvocationInfo argument that is passed into
+this call.
+@param info is the InvocationInfo object for the object reference
+@exception ForwardException (a runtime exception) is thrown if the request
+is to be handled by a different object reference.
+"
+      end
+
+      operation 1113858 "enter"
+	public explicit_return_type "void"
+	nparams 0
+	nexceptions 1
+	  exception class_ref 233602 // OADestroyed
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " enter must be called before each request is invoked on a servant.
+@exception OADestroyed is thrown when an OA has been destroyed, which
+requires a retry in the case where an AdapterActivator is present.
+"
+      end
+
+      operation 1113986 "exit"
+	public explicit_return_type "void"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " exit must be called after each request has been completed.  If enter
+is called, there must always be a corresponding exit.
+"
+      end
+
+      operation 1114114 "returnServant"
+	public explicit_return_type "void"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Must be called every time getInvocationServant is called after
+the request has completed.
+"
+      end
+
+      operation 1114242 "makeInvocationInfo"
+	public return_type class_ref 233090 // OAInvocationInfo
+	nparams 1
+	  param inout name "objectId" explicit_type "byte"
+	multiplicity "[]"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0}[] ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Create an instance of InvocationInfo that is appropriate for this
+Object adapter.
+"
+      end
+
+      operation 1114370 "getInterfaces"
+	public return_type class_ref 128130 // String
+	nparams 2
+	  param inout name "servant" type class_ref 129538 // Object
+	  param inout name "objectId" explicit_type "byte"
+	multiplicity "[]"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type}[] ${name}${(}${t0} ${p0}, ${t1}[] ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Return the most derived interface for the given servant and objectId.
+"
+      end
+    end
+
+    class 227202 "NullServant"
+      visibility public stereotype "interface"
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}interface ${name}${extends} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment " NullServant is used to represent a null servant returned
+OAInvocationInfo after a
+ObjectAdapter.getInvocationServant( OAInvocationInfo ) call.
+If the getInvocationServant call could not locate a servant
+for the ObjectId in the OAInvocationInfo, getServantContainer
+will contain a NullServant.  Later stages of the request
+dispatch may choose either to throw the exception or perform
+some other action in response to the NullServant result.
+"
+      operation 1093634 "getException"
+	public return_type class_ref 136962 // SystemException
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Obtain the exception that is associated with this
+NullServant instance.
+"
+      end
+    end
+
+    class 233090 "OAInvocationInfo"
+      visibility public 
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment " This class is a holder for the information required to implement POACurrent.
+It is also used for the ServantObject that is returned by _servant_preinvoke calls.
+This allows us to avoid allocating an extra object on each collocated invocation.
+"
+      classrelation 506242 // <generalisation>
+	relation 506242 ---|>
+	  a public
+	    java "${type}"
+	    classrelation_ref 506242 // <generalisation>
+	  b parent class_ref 134786 // ServantObject
+      end
+
+      classrelation 506370 // servantContainer (<unidirectional association>)
+	relation 506370 --->
+	  a role_name "servantContainer" private
+	    comment " This is the container object for the servant.
+ In the RMI-IIOP case, it is the RMI-IIOP Tie, and the servant is the
+ target of the Tie.
+ In all other cases, it is the same as the Servant.
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 506370 // servantContainer (<unidirectional association>)
+	  b parent class_ref 129538 // Object
+      end
+
+      classrelation 506498 // oa (<unidirectional association>)
+	relation 506498 --->
+	  a role_name "oa" private
+	    comment " These fields are to support standard OMG APIs.
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 506498 // oa (<unidirectional association>)
+	  b parent class_ref 179970 // ObjectAdapter
+      end
+
+      attribute 343938 "oid"
+	private explicit_type "byte"
+	multiplicity "[]"
+	cpp_decl ""
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type}${multiplicity} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl ""
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      classrelation 506626 // cookieHolder (<unidirectional association>)
+	relation 506626 --->
+	  a role_name "cookieHolder" private
+	    comment " These fields are to support the Object adapter implementation.
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 506626 // cookieHolder (<unidirectional association>)
+	  b parent class_ref 226562 // CookieHolder
+      end
+
+      classrelation 506754 // operation (<unidirectional association>)
+	relation 506754 --->
+	  a role_name "operation" private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 506754 // operation (<unidirectional association>)
+	  b parent class_ref 128130 // String
+      end
+
+      classrelation 506882 // factory (<unidirectional association>)
+	relation 506882 --->
+	  a role_name "factory" private
+	    comment " This is the copier to be used by javax.rmi.CORBA.Util.copyObject(s)
+ For the current request.
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 506882 // factory (<unidirectional association>)
+	  b parent class_ref 143490 // ObjectCopierFactory
+      end
+
+      operation 1619586 "OAInvocationInfo"
+	public explicit_return_type ""
+	nparams 2
+	  param inout name "oa" type class_ref 179970 // ObjectAdapter
+	  param inout name "id" explicit_type "byte"
+	multiplicity "[]"
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1}[] ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1619714 "OAInvocationInfo"
+	public explicit_return_type ""
+	nparams 2
+	  param inout name "info" type class_ref 233090 // OAInvocationInfo
+	  param inout name "operation" type class_ref 128130 // String
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Copy constructor of sorts; used in local optimization path"
+      end
+
+      operation 1619842 "oa"
+	public return_type class_ref 179970 // ObjectAdapter
+	nparams 0
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment "getters"
+      end
+
+      operation 1619970 "id"
+	public explicit_return_type "byte"
+	nparams 0
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type}[] ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1620098 "getServantContainer"
+	public return_type class_ref 129538 // Object
+	nparams 0
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1620226 "getCookieHolder"
+	public return_type class_ref 226562 // CookieHolder
+	nparams 0
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Create CookieHolder on demand.  This is only called by a single
+ thread, so no synchronization is needed."
+      end
+
+      operation 1620354 "getOperation"
+	public return_type class_ref 128130 // String
+	nparams 0
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1620482 "getCopierFactory"
+	public return_type class_ref 143490 // ObjectCopierFactory
+	nparams 0
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1620610 "setOperation"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "operation" type class_ref 128130 // String
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment "setters"
+      end
+
+      operation 1620738 "setCopierFactory"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "factory" type class_ref 143490 // ObjectCopierFactory
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1620866 "setServant"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "servant" type class_ref 129538 // Object
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+    end
+
+    class 233218 "ObjectAdapterFactory"
+      visibility public stereotype "interface"
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}interface ${name}${extends} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      operation 1110018 "init"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "orb" type class_ref 131842 // ORB
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Initialize this object adapter factory instance.
+"
+      end
+
+      operation 1110146 "shutdown"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "waitForCompletion" explicit_type "boolean"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Shutdown all object adapters and other state associated
+with this factory.
+"
+      end
+
+      operation 1110274 "find"
+	public return_type class_ref 179970 // ObjectAdapter
+	nparams 1
+	  param inout name "oaid" type class_ref 200578 // ObjectAdapterId
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Find the ObjectAdapter instance that corresponds to the
+given ObjectAdapterId.
+"
+      end
+
+      operation 1110402 "getORB"
+	public return_type class_ref 131842 // ORB
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+    end
+
+    class 233474 "ObjectAdapterBase"
+      abstract visibility public 
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      classrelation 303362 // <generalisation>
+	relation 303362 ---|>
+	  a public
+	    java "${type}"
+	    classrelation_ref 303362 // <generalisation>
+	  b parent class_ref 156546 // LocalObject
+      end
+
+      classrelation 303490 // <realization>
+	relation 303490 -_-|>
+	  a public
+	    java "${type}"
+	    classrelation_ref 303490 // <realization>
+	  b parent class_ref 179970 // ObjectAdapter
+      end
+
+      classrelation 303618 // orb (<unidirectional association>)
+	relation 303618 --->
+	  a role_name "orb" private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 303618 // orb (<unidirectional association>)
+	  b parent class_ref 131842 // ORB
+      end
+
+      classrelation 303746 // _iorWrapper (<unidirectional association>)
+	relation 303746 --->
+	  a role_name "_iorWrapper" const_relation private
+	    comment " Exception wrappers
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 303746 // _iorWrapper (<unidirectional association>)
+	  b parent class_ref 217986 // POASystemException
+      end
+
+      classrelation 303874 // _invocationWrapper (<unidirectional association>)
+	relation 303874 --->
+	  a role_name "_invocationWrapper" const_relation private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 303874 // _invocationWrapper (<unidirectional association>)
+	  b parent class_ref 217986 // POASystemException
+      end
+
+      classrelation 304002 // _lifecycleWrapper (<unidirectional association>)
+	relation 304002 --->
+	  a role_name "_lifecycleWrapper" const_relation private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 304002 // _lifecycleWrapper (<unidirectional association>)
+	  b parent class_ref 217986 // POASystemException
+      end
+
+      classrelation 304130 // _omgInvocationWrapper (<unidirectional association>)
+	relation 304130 --->
+	  a role_name "_omgInvocationWrapper" const_relation private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 304130 // _omgInvocationWrapper (<unidirectional association>)
+	  b parent class_ref 164738 // OMGSystemException
+      end
+
+      classrelation 304258 // _omgLifecycleWrapper (<unidirectional association>)
+	relation 304258 --->
+	  a role_name "_omgLifecycleWrapper" const_relation private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 304258 // _omgLifecycleWrapper (<unidirectional association>)
+	  b parent class_ref 164738 // OMGSystemException
+      end
+
+      classrelation 304386 // iortemp (<unidirectional association>)
+	relation 304386 --->
+	  a role_name "iortemp" private
+	    comment " Data related to the construction of object references and
+ supporting the Object Reference Template.
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 304386 // iortemp (<unidirectional association>)
+	  b parent class_ref 199554 // IORTemplate
+      end
+
+      attribute 283266 "adapterId"
+	private explicit_type "byte"
+	multiplicity "[]"
+	cpp_decl ""
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type}${multiplicity} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl ""
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      classrelation 304514 // adapterTemplate (<unidirectional association>)
+	relation 304514 --->
+	  a role_name "adapterTemplate" private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 304514 // adapterTemplate (<unidirectional association>)
+	  b parent class_ref 180098 // ObjectReferenceTemplate
+      end
+
+      classrelation 304642 // currentFactory (<unidirectional association>)
+	relation 304642 --->
+	  a role_name "currentFactory" private
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    classrelation_ref 304642 // currentFactory (<unidirectional association>)
+	  b parent class_ref 180994 // ObjectReferenceFactory
+      end
+
+      operation 1114498 "ObjectAdapterBase"
+	public explicit_return_type ""
+	nparams 1
+	  param inout name "orb" type class_ref 131842 // ORB
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1114626 "iorWrapper"
+	public return_type class_ref 217986 // POASystemException
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1114754 "lifecycleWrapper"
+	public return_type class_ref 217986 // POASystemException
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1114882 "omgLifecycleWrapper"
+	public return_type class_ref 164738 // OMGSystemException
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115010 "invocationWrapper"
+	public return_type class_ref 217986 // POASystemException
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115138 "omgInvocationWrapper"
+	public return_type class_ref 164738 // OMGSystemException
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115266 "initializeTemplate"
+	public explicit_return_type "void"
+	nparams 6
+	  param inout name "oktemp" type class_ref 183554 // ObjectKeyTemplate
+	  param inout name "notifyORB" explicit_type "boolean"
+	  param inout name "policies" type class_ref 211458 // Policies
+	  param inout name "codebase" type class_ref 128130 // String
+	  param inout name "objectAdapterManagerId" type class_ref 128130 // String
+	  param inout name "objectAdapterId" type class_ref 200578 // ObjectAdapterId
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}, ${t3} ${p3}, ${t4} ${p4}, ${t5} ${p5}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment "This creates the complete template.
+When it is done, reference creation can proceed.
+"
+      end
+
+      operation 1115394 "makeObject"
+	public return_type class_ref 133378 // Object
+	nparams 2
+	  param inout name "repId" type class_ref 128130 // String
+	  param inout name "oid" explicit_type "byte"
+	multiplicity "[]"
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1}[] ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115522 "getAdapterId"
+	public explicit_return_type "byte"
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type}[] ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115650 "getORB"
+	public return_type class_ref 131842 // ORB
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115778 "getEffectivePolicy"
+	abstract public return_type class_ref 134274 // Policy
+	nparams 1
+	  param in name "type" explicit_type "int"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1115906 "getIORTemplate"
+	public return_type class_ref 199554 // IORTemplate
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116034 "getManagerId"
+	abstract public explicit_return_type "int"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116162 "getState"
+	abstract public explicit_return_type "short"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116290 "getAdapterTemplate"
+	public return_type class_ref 180098 // ObjectReferenceTemplate
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116418 "getCurrentFactory"
+	public return_type class_ref 180994 // ObjectReferenceFactory
+	nparams 0
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116546 "setCurrentFactory"
+	public explicit_return_type "void"
+	nparams 1
+	  param inout name "factory" type class_ref 180994 // ObjectReferenceFactory
+	
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116674 "getLocalServant"
+	abstract public return_type class_ref 133378 // Object
+	nparams 1
+	  param inout name "objectId" explicit_type "byte"
+	multiplicity "[]"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0}[] ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116802 "getInvocationServant"
+	abstract public explicit_return_type "void"
+	nparams 1
+	  param inout name "info" type class_ref 233090 // OAInvocationInfo
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1116930 "returnServant"
+	abstract public explicit_return_type "void"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1117058 "enter"
+	abstract public explicit_return_type "void"
+	nparams 0
+	nexceptions 1
+	  exception class_ref 233602 // OADestroyed
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1117186 "exit"
+	abstract public explicit_return_type "void"
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1117314 "getObjectCopierFactory"
+	abstract protected return_type class_ref 143490 // ObjectCopierFactory
+	nparams 0
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1117442 "makeInvocationInfo"
+	public return_type class_ref 233090 // OAInvocationInfo
+	nparams 1
+	  param inout name "objectId" explicit_type "byte"
+	multiplicity "[]"
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0}[] ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+	comment " Note that all current subclasses share the same implementation of this method,
+ but overriding it would make sense for OAs that use a different InvocationInfo."
+      end
+
+      operation 1117570 "getInterfaces"
+	abstract public return_type class_ref 128130 // String
+	nparams 2
+	  param inout name "servant" type class_ref 129538 // Object
+	  param inout name "objectId" explicit_type "byte"
+	multiplicity "[]"
+	
+	java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type}[] ${name}${(}${t0} ${p0}, ${t1}[] ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+    end
+
+    class 233602 "OADestroyed"
+      visibility public 
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment " This exception is thrown when an operation on an ObjectAdapter
+fails because the ObjectAdapter was destroyed during the operation.
+"
+      classrelation 505986 // <generalisation>
+	relation 505986 ---|>
+	  a public
+	    java "${type}"
+	    classrelation_ref 505986 // <generalisation>
+	  b parent class_ref 132226 // Exception
+      end
+    end
+
+    class 304002 "OADefault"
+      visibility public 
+      cpp_decl ""
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl ""
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment " OADefault provides methods to create the standard ObjectAdapterFactory
+instances for this version of the ORB.  These methods are generally
+used in ORBConfigurator instances to construct an ORB instance.
+"
+      operation 1619330 "makePOAFactory"
+	class_operation public return_type class_ref 233218 // ObjectAdapterFactory
+	nparams 1
+	  param inout name "orb" type class_ref 131842 // ORB
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+
+      operation 1619458 "makeTOAFactory"
+	class_operation public return_type class_ref 233218 // ObjectAdapterFactory
+	nparams 1
+	  param inout name "orb" type class_ref 131842 // ORB
+	
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	
+      end
+    end
+  end
+
+  deploymentview 133890 "oa"
+    //deployment diagram settings
+    deploymentdiagramsettings
+     end
+    artifact 181250 "NullServant"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+import org.omg.CORBA.SystemException;
+${definition}"
+      associated_elems
+	class_ref 227202 // NullServant
+      end
+      comment "Copyright (c) 2003, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+
+    artifact 184834 "ObjectAdapterFactory"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+import com.sun.corba.se.spi.oa.ObjectAdapter;
+import com.sun.corba.se.spi.orb.ORB;
+import com.sun.corba.se.spi.ior.ObjectAdapterId;
+${definition}"
+      associated_elems
+	class_ref 233218 // ObjectAdapterFactory
+      end
+      comment "Copyright (c) 2001, 2003, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+
+    artifact 185090 "ObjectAdapter"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+import org.omg.CORBA.Policy;
+import org.omg.PortableInterceptor.ObjectReferenceTemplate;
+import org.omg.PortableInterceptor.ObjectReferenceFactory;
+import com.sun.corba.se.spi.orb.ORB;
+import com.sun.corba.se.spi.oa.OADestroyed;
+import com.sun.corba.se.spi.ior.IORTemplate;
+${definition}"
+      associated_elems
+	class_ref 179970 // ObjectAdapter
+      end
+      comment "Copyright (c) 2001, 2003, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+
+    artifact 185218 "ObjectAdapterBase"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+import org.omg.PortableInterceptor.ObjectReferenceTemplate;
+import org.omg.PortableInterceptor.ObjectReferenceFactory;
+import org.omg.CORBA.Policy;
+import org.omg.PortableInterceptor.ACTIVE;
+import com.sun.corba.se.spi.copyobject.ObjectCopierFactory;
+import com.sun.corba.se.spi.ior.IORFactories;
+import com.sun.corba.se.spi.ior.IORTemplate;
+import com.sun.corba.se.spi.ior.ObjectAdapterId;
+import com.sun.corba.se.spi.ior.ObjectKeyTemplate;
+import com.sun.corba.se.spi.logging.CORBALogDomains;
+import com.sun.corba.se.spi.oa.OADestroyed;
+import com.sun.corba.se.spi.oa.ObjectAdapter;
+import com.sun.corba.se.spi.orb.ORB;
+import com.sun.corba.se.spi.protocol.PIHandler;
+import com.sun.corba.se.impl.logging.POASystemException;
+import com.sun.corba.se.impl.logging.OMGSystemException;
+import com.sun.corba.se.impl.oa.poa.Policies;
+${definition}"
+      associated_elems
+	class_ref 233474 // ObjectAdapterBase
+      end
+      comment "Copyright (c) 2001, 2003, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+
+    artifact 249602 "OADefault"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+import com.sun.corba.se.impl.oa.poa.POAFactory;
+import com.sun.corba.se.impl.oa.toa.TOAFactory;
+import com.sun.corba.se.spi.orb.ORB;
+${definition}"
+      associated_elems
+	class_ref 304002 // OADefault
+      end
+      comment "Copyright (c) 2002, 2003, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+
+    artifact 249730 "OADestroyed"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+${definition}"
+      associated_elems
+	class_ref 233602 // OADestroyed
+      end
+      comment "Copyright (c) 1997, 2002, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+
+    artifact 249986 "OAInvocationInfo"
+      stereotype "source"
+      java_src "${comment}
+${package}
+${imports}
+import javax.rmi.CORBA.Tie;
+import org.omg.CORBA.portable.ServantObject;
+import org.omg.PortableServer.Servant;
+import org.omg.PortableServer.ServantLocatorPackage.CookieHolder;
+import com.sun.corba.se.spi.oa.ObjectAdapter;
+import com.sun.corba.se.spi.copyobject.ObjectCopierFactory;
+${definition}"
+      associated_elems
+	class_ref 233090 // OAInvocationInfo
+      end
+      comment "Copyright (c) 1999, 2003, Oracle and/or its affiliates. All rights reserved.
+ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+    end
+  end
+end

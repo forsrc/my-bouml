@@ -1,0 +1,87 @@
+class SpeciesData
+!!!7162754.java!!!	fieldCount() : int
+            return typeCodes.length;
+!!!7162882.java!!!	fieldType(in i : int) : BasicType
+            return typeCodes[i];
+!!!7163010.java!!!	fieldTypeChar(in i : int) : char
+            return typeChars.charAt(i);
+!!!7163138.java!!!	fieldSignature() : Object
+            return typeChars;
+!!!7163266.java!!!	fieldHolder() : Class
+            return clazz;
+!!!7163394.java!!!	toString() : String
+            return "SpeciesData<"+fieldSignature()+">";
+!!!7163522.java!!!	getterFunction(in i : int) : LambdaForm::NamedFunction
+            NamedFunction nf = nominalGetters[i];
+            assert(nf.memberDeclaringClassOrNull() == fieldHolder());
+            assert(nf.returnType() == fieldType(i));
+            return nf;
+!!!7163650.java!!!	getterFunctions() : LambdaForm::NamedFunction
+            return nominalGetters;
+!!!7163778.java!!!	getterHandles() : MethodHandle
+ return getters;
+!!!7163906.java!!!	constructor() : MethodHandle
+            return constructor[0];
+!!!7164034.java!!!	SpeciesData(inout types : String, inout clazz : Class)
+            this.typeChars = types;
+            this.typeCodes = basicTypes(types);
+            this.clazz = clazz;
+            if (!INIT_DONE) {
+                this.constructor = new MethodHandle[1];  // only one ctor
+                this.getters = new MethodHandle[types.length()];
+                this.nominalGetters = new NamedFunction[types.length()];
+            } else {
+                this.constructor = Factory.makeCtors(clazz, types, null);
+                this.getters = Factory.makeGetters(clazz, types, null);
+                this.nominalGetters = Factory.makeNominalGetters(types, null, this.getters);
+            }
+            this.extensions = new SpeciesData[ARG_TYPE_LIMIT];
+!!!7164162.java!!!	initForBootstrap() : void
+            assert(!INIT_DONE);
+            if (constructor() == null) {
+                String types = typeChars;
+                CACHE.put(types, this);
+                Factory.makeCtors(clazz, types, this.constructor);
+                Factory.makeGetters(clazz, types, this.getters);
+                Factory.makeNominalGetters(types, this.nominalGetters, this.getters);
+            }
+!!!7164290.java!!!	extendWith(in type : byte) : BoundMethodHandle::SpeciesData
+            return extendWith(BasicType.basicType(type));
+!!!7164418.java!!!	extendWith(inout type : BasicType) : BoundMethodHandle::SpeciesData
+            int ord = type.ordinal();
+            SpeciesData d = extensions[ord];
+            if (d != null)  return d;
+            extensions[ord] = d = get(typeChars+type.basicTypeChar());
+            return d;
+!!!7164546.java!!!	get(inout types : String) : BoundMethodHandle::SpeciesData
+            return CACHE.computeIfAbsent(types, new Function<String, SpeciesData>() {
+                @Override
+                public SpeciesData apply(String types) {
+                    Class<? extends BoundMethodHandle> bmhcl = Factory.getConcreteBMHClass(types);
+                    // SpeciesData instantiation may throw VirtualMachineError because of
+                    // code cache overflow...
+                    SpeciesData speciesData = new SpeciesData(types, bmhcl);
+                    // CHM.computeIfAbsent ensures only one SpeciesData will be set
+                    // successfully on the concrete BMH class if ever
+                    Factory.setSpeciesDataToConcreteBMHClass(bmhcl, speciesData);
+                    // the concrete BMH class is published via SpeciesData instance
+                    // returned here only after it's SPECIES_DATA field is set
+                    return speciesData;
+                }
+            });
+!!!7164674.java!!!	speciesDataCachePopulated() : boolean
+            Class<BoundMethodHandle> rootCls = BoundMethodHandle.class;
+            try {
+                for (Class<?> c : rootCls.getDeclaredClasses()) {
+                    if (rootCls.isAssignableFrom(c)) {
+                        final Class<? extends BoundMethodHandle> cbmh = c.asSubclass(BoundMethodHandle.class);
+                        SpeciesData d = Factory.getSpeciesDataFromConcreteBMHClass(cbmh);
+                        assert(d != null) : cbmh.getName();
+                        assert(d.clazz == cbmh);
+                        assert(CACHE.get(d.typeChars) == d);
+                    }
+                }
+            } catch (Throwable e) {
+                throw newInternalError(e);
+            }
+            return true;

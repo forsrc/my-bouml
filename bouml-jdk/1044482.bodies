@@ -1,0 +1,226 @@
+class AttributedStringIterator
+!!!8234242.java!!!	AttributedStringIterator(inout attributes : AttributedCharacterIterator::Attribute [[]], in beginIndex : int, in endIndex : int)
+
+            if (beginIndex < 0 || beginIndex > endIndex || endIndex > length()) {
+                throw new IllegalArgumentException("Invalid substring range");
+            }
+
+            this.beginIndex = beginIndex;
+            this.endIndex = endIndex;
+            this.currentIndex = beginIndex;
+            updateRunInfo();
+            if (attributes != null) {
+                relevantAttributes = attributes.clone();
+            }
+!!!8234370.java!!!	equals(inout obj : Object) : boolean
+            if (this == obj) {
+                return true;
+            }
+            if (!(obj instanceof AttributedStringIterator)) {
+                return false;
+            }
+
+            AttributedStringIterator that = (AttributedStringIterator) obj;
+
+            if (AttributedString.this != that.getString())
+                return false;
+            if (currentIndex != that.currentIndex || beginIndex != that.beginIndex || endIndex != that.endIndex)
+                return false;
+            return true;
+!!!8234498.java!!!	hashCode() : int
+            return text.hashCode() ^ currentIndex ^ beginIndex ^ endIndex;
+!!!8234626.java!!!	clone() : Object
+            try {
+                AttributedStringIterator other = (AttributedStringIterator) super.clone();
+                return other;
+            }
+            catch (CloneNotSupportedException e) {
+                throw new InternalError(e);
+            }
+!!!8234754.java!!!	first() : char
+            return internalSetIndex(beginIndex);
+!!!8234882.java!!!	last() : char
+            if (endIndex == beginIndex) {
+                return internalSetIndex(endIndex);
+            } else {
+                return internalSetIndex(endIndex - 1);
+            }
+!!!8235010.java!!!	current() : char
+            if (currentIndex == endIndex) {
+                return DONE;
+            } else {
+                return charAt(currentIndex);
+            }
+!!!8235138.java!!!	next() : char
+            if (currentIndex < endIndex) {
+                return internalSetIndex(currentIndex + 1);
+            }
+            else {
+                return DONE;
+            }
+!!!8235266.java!!!	previous() : char
+            if (currentIndex > beginIndex) {
+                return internalSetIndex(currentIndex - 1);
+            }
+            else {
+                return DONE;
+            }
+!!!8235394.java!!!	setIndex(in position : int) : char
+            if (position < beginIndex || position > endIndex)
+                throw new IllegalArgumentException("Invalid index");
+            return internalSetIndex(position);
+!!!8235522.java!!!	getBeginIndex() : int
+            return beginIndex;
+!!!8235650.java!!!	getEndIndex() : int
+            return endIndex;
+!!!8235778.java!!!	getIndex() : int
+            return currentIndex;
+!!!8235906.java!!!	getRunStart() : int
+            return currentRunStart;
+!!!8236034.java!!!	getRunStart(inout attribute : AttributedCharacterIterator::Attribute) : int
+            if (currentRunStart == beginIndex || currentRunIndex == -1) {
+                return currentRunStart;
+            } else {
+                Object value = getAttribute(attribute);
+                int runStart = currentRunStart;
+                int runIndex = currentRunIndex;
+                while (runStart > beginIndex &&
+                        valuesMatch(value, AttributedString.this.getAttribute(attribute, runIndex - 1))) {
+                    runIndex--;
+                    runStart = runStarts[runIndex];
+                }
+                if (runStart < beginIndex) {
+                    runStart = beginIndex;
+                }
+                return runStart;
+            }
+!!!8236162.java!!!	getRunStart(inout attributes : Set) : int
+            if (currentRunStart == beginIndex || currentRunIndex == -1) {
+                return currentRunStart;
+            } else {
+                int runStart = currentRunStart;
+                int runIndex = currentRunIndex;
+                while (runStart > beginIndex &&
+                        AttributedString.this.attributeValuesMatch(attributes, currentRunIndex, runIndex - 1)) {
+                    runIndex--;
+                    runStart = runStarts[runIndex];
+                }
+                if (runStart < beginIndex) {
+                    runStart = beginIndex;
+                }
+                return runStart;
+            }
+!!!8236290.java!!!	getRunLimit() : int
+            return currentRunLimit;
+!!!8236418.java!!!	getRunLimit(inout attribute : AttributedCharacterIterator::Attribute) : int
+            if (currentRunLimit == endIndex || currentRunIndex == -1) {
+                return currentRunLimit;
+            } else {
+                Object value = getAttribute(attribute);
+                int runLimit = currentRunLimit;
+                int runIndex = currentRunIndex;
+                while (runLimit < endIndex &&
+                        valuesMatch(value, AttributedString.this.getAttribute(attribute, runIndex + 1))) {
+                    runIndex++;
+                    runLimit = runIndex < runCount - 1 ? runStarts[runIndex + 1] : endIndex;
+                }
+                if (runLimit > endIndex) {
+                    runLimit = endIndex;
+                }
+                return runLimit;
+            }
+!!!8236546.java!!!	getRunLimit(inout attributes : Set) : int
+            if (currentRunLimit == endIndex || currentRunIndex == -1) {
+                return currentRunLimit;
+            } else {
+                int runLimit = currentRunLimit;
+                int runIndex = currentRunIndex;
+                while (runLimit < endIndex &&
+                        AttributedString.this.attributeValuesMatch(attributes, currentRunIndex, runIndex + 1)) {
+                    runIndex++;
+                    runLimit = runIndex < runCount - 1 ? runStarts[runIndex + 1] : endIndex;
+                }
+                if (runLimit > endIndex) {
+                    runLimit = endIndex;
+                }
+                return runLimit;
+            }
+!!!8236674.java!!!	getAttributes() : Map
+            if (runAttributes == null || currentRunIndex == -1 || runAttributes[currentRunIndex] == null) {
+                // ??? would be nice to return null, but current spec doesn't allow it
+                // returning Hashtable saves AttributeMap from dealing with emptiness
+                return new Hashtable<>();
+            }
+            return new AttributeMap(currentRunIndex, beginIndex, endIndex);
+!!!8236802.java!!!	getAllAttributeKeys() : Set
+            // ??? This should screen out attribute keys that aren't relevant to the client
+            if (runAttributes == null) {
+                // ??? would be nice to return null, but current spec doesn't allow it
+                // returning HashSet saves us from dealing with emptiness
+                return new HashSet<>();
+            }
+            synchronized (AttributedString.this) {
+                // ??? should try to create this only once, then update if necessary,
+                // and give callers read-only view
+                Set<Attribute> keys = new HashSet<>();
+                int i = 0;
+                while (i < runCount) {
+                    if (runStarts[i] < endIndex && (i == runCount - 1 || runStarts[i + 1] > beginIndex)) {
+                        Vector<Attribute> currentRunAttributes = runAttributes[i];
+                        if (currentRunAttributes != null) {
+                            int j = currentRunAttributes.size();
+                            while (j-- > 0) {
+                                keys.add(currentRunAttributes.get(j));
+                            }
+                        }
+                    }
+                    i++;
+                }
+                return keys;
+            }
+!!!8236930.java!!!	getAttribute(inout attribute : AttributedCharacterIterator::Attribute) : Object
+            int runIndex = currentRunIndex;
+            if (runIndex < 0) {
+                return null;
+            }
+            return AttributedString.this.getAttributeCheckRange(attribute, runIndex, beginIndex, endIndex);
+!!!8237058.java!!!	getString() : AttributedString
+            return AttributedString.this;
+!!!8237186.java!!!	internalSetIndex(in position : int) : char
+            currentIndex = position;
+            if (position < currentRunStart || position >= currentRunLimit) {
+                updateRunInfo();
+            }
+            if (currentIndex == endIndex) {
+                return DONE;
+            } else {
+                return charAt(position);
+            }
+!!!8237314.java!!!	updateRunInfo() : void
+            if (currentIndex == endIndex) {
+                currentRunStart = currentRunLimit = endIndex;
+                currentRunIndex = -1;
+            } else {
+                synchronized (AttributedString.this) {
+                    int runIndex = -1;
+                    while (runIndex < runCount - 1 && runStarts[runIndex + 1] <= currentIndex)
+                        runIndex++;
+                    currentRunIndex = runIndex;
+                    if (runIndex >= 0) {
+                        currentRunStart = runStarts[runIndex];
+                        if (currentRunStart < beginIndex)
+                            currentRunStart = beginIndex;
+                    }
+                    else {
+                        currentRunStart = beginIndex;
+                    }
+                    if (runIndex < runCount - 1) {
+                        currentRunLimit = runStarts[runIndex + 1];
+                        if (currentRunLimit > endIndex)
+                            currentRunLimit = endIndex;
+                    }
+                    else {
+                        currentRunLimit = endIndex;
+                    }
+                }
+            }

@@ -1,0 +1,1145 @@
+class XMLSerializer
+!!!5548674.java!!!	XMLSerializer()
+        super( new OutputFormat( Method.XML, null, false ) );
+!!!5548802.java!!!	XMLSerializer(inout format : OutputFormat)
+        super( format != null ? format : new OutputFormat( Method.XML, null, false ) );
+        _format.setMethod( Method.XML );
+!!!5548930.java!!!	XMLSerializer(inout writer : Writer, inout format : OutputFormat)
+        super( format != null ? format : new OutputFormat( Method.XML, null, false ) );
+        _format.setMethod( Method.XML );
+        setOutputCharStream( writer );
+!!!5549058.java!!!	XMLSerializer(inout output : OutputStream, inout format : OutputFormat)
+        super( format != null ? format : new OutputFormat( Method.XML, null, false ) );
+        _format.setMethod( Method.XML );
+        setOutputByteStream( output );
+!!!5549186.java!!!	setOutputFormat(inout format : OutputFormat) : void
+        super.setOutputFormat( format != null ? format : new OutputFormat( Method.XML, null, false ) );
+!!!5549314.java!!!	setNamespaces(inout namespaces : boolean) : void
+        fNamespaces = namespaces;
+        if (fNSBinder == null) {
+            fNSBinder = new NamespaceSupport();
+            fLocalNSBinder = new NamespaceSupport();
+            fSymbolTable = new SymbolTable();
+        }
+!!!5549442.java!!!	startElement(inout namespaceURI : String, inout localName : String, inout rawName : String, inout attrs : Attributes) : void
+        int          i;
+        boolean      preserveSpace;
+        ElementState state;
+        String       name;
+        String       value;
+        boolean      addNSAttr = false;
+
+        if (DEBUG) {
+            System.out.println("==>startElement("+namespaceURI+","+localName+
+                               ","+rawName+")");
+        }
+
+        try {
+            if (_printer == null) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.SERIALIZER_DOMAIN, "NoWriterSupplied", null);
+                throw new IllegalStateException(msg);
+            }
+
+            state = getElementState();
+            if (isDocumentState()) {
+                // If this is the root element handle it differently.
+                // If the first root element in the document, serialize
+                // the document's DOCTYPE. Space preserving defaults
+                // to that of the output format.
+                if (! _started)
+                    startDocument( ( localName == null || localName.length() == 0 ) ? rawName : localName );
+            } else {
+                // For any other element, if first in parent, then
+                // close parent's opening tag and use the parnet's
+                // space preserving.
+                if (state.empty)
+                    _printer.printText( '>' );
+                // Must leave CData section first
+                if (state.inCData) {
+                    _printer.printText( "]]>" );
+                    state.inCData = false;
+                }
+                // Indent this element on a new line if the first
+                // content of the parent element or immediately
+                // following an element or a comment
+                if (_indenting && ! state.preserveSpace &&
+                    ( state.empty || state.afterElement || state.afterComment))
+                    _printer.breakLine();
+            }
+            preserveSpace = state.preserveSpace;
+
+            //We remove the namespaces from the attributes list so that they will
+            //be in _prefixes
+            attrs = extractNamespaces(attrs);
+
+            // Do not change the current element state yet.
+            // This only happens in endElement().
+            if (rawName == null || rawName.length() == 0) {
+                if (localName == null) {
+                    String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.SERIALIZER_DOMAIN, "NoName", null);
+                    throw new SAXException(msg);
+                }
+                if (namespaceURI != null && ! namespaceURI.equals( "" )) {
+                    String prefix;
+                    prefix = getPrefix( namespaceURI );
+                    if (prefix != null && prefix.length() > 0)
+                        rawName = prefix + ":" + localName;
+                    else
+                        rawName = localName;
+                } else
+                    rawName = localName;
+                addNSAttr = true;
+            }
+
+            _printer.printText( '<' );
+            _printer.printText( rawName );
+            _printer.indent();
+
+            // For each attribute print it's name and value as one part,
+            // separated with a space so the element can be broken on
+            // multiple lines.
+            if (attrs != null) {
+                for (i = 0 ; i < attrs.getLength() ; ++i) {
+                    _printer.printSpace();
+
+                    name = attrs.getQName( i );
+                    if (name != null && name.length() == 0) {
+                        String prefix;
+                        String attrURI;
+
+                        name = attrs.getLocalName( i );
+                        attrURI = attrs.getURI( i );
+                        if (( attrURI != null && attrURI.length() != 0 ) &&
+                            ( namespaceURI == null || namespaceURI.length() == 0 ||
+                              ! attrURI.equals( namespaceURI ) )) {
+                            prefix = getPrefix( attrURI );
+                            if (prefix != null && prefix.length() > 0)
+                                name = prefix + ":" + name;
+                        }
+                    }
+
+                    value = attrs.getValue( i );
+                    if (value == null)
+                        value = "";
+                    _printer.printText( name );
+                    _printer.printText( "=\"" );
+                    printEscaped( value );
+                    _printer.printText( '"' );
+
+                    // If the attribute xml:space exists, determine whether
+                    // to preserve spaces in this and child nodes based on
+                    // its value.
+                    if (name.equals( "xml:space" )) {
+                        if (value.equals( "preserve" ))
+                            preserveSpace = true;
+                        else
+                            preserveSpace = _format.getPreserveSpace();
+                    }
+                }
+            }
+
+            if (_prefixes != null) {
+                for (Map.Entry<String, String> entry : _prefixes.entrySet()) {
+                    _printer.printSpace();
+                    value = entry.getKey(); //The prefixes map uses the URI value as key.
+                    name = entry.getValue(); //and prefix name as value
+                    if (name.length() == 0) {
+                        _printer.printText( "xmlns=\"" );
+                        printEscaped( value );
+                        _printer.printText( '"' );
+                    } else {
+                        _printer.printText( "xmlns:" );
+                        _printer.printText( name );
+                        _printer.printText( "=\"" );
+                        printEscaped( value );
+                        _printer.printText( '"' );
+                    }
+                }
+            }
+
+            // Now it's time to enter a new element state
+            // with the tag name and space preserving.
+            // We still do not change the curent element state.
+            state = enterElementState( namespaceURI, localName, rawName, preserveSpace );
+            name = ( localName == null || localName.length() == 0 ) ? rawName : namespaceURI + "^" + localName;
+            state.doCData = _format.isCDataElement( name );
+            state.unescaped = _format.isNonEscapingElement( name );
+        } catch (IOException except) {
+            throw new SAXException( except );
+        }
+!!!5549570.java!!!	endElement(inout namespaceURI : String, inout localName : String, inout rawName : String) : void
+        try {
+            endElementIO( namespaceURI, localName, rawName );
+        } catch (IOException except) {
+            throw new SAXException( except );
+        }
+!!!5549698.java!!!	endElementIO(inout namespaceURI : String, inout localName : String, inout rawName : String) : void
+        ElementState state;
+        if (DEBUG) {
+            System.out.println("==>endElement: " +rawName);
+        }
+        // Works much like content() with additions for closing
+        // an element. Note the different checks for the closed
+        // element's state and the parent element's state.
+        _printer.unindent();
+        state = getElementState();
+        if (state.empty) {
+            _printer.printText( "/>" );
+        } else {
+            // Must leave CData section first
+            if (state.inCData)
+                _printer.printText( "]]>" );
+            // This element is not empty and that last content was
+            // another element, so print a line break before that
+            // last element and this element's closing tag.
+            if (_indenting && ! state.preserveSpace && (state.afterElement || state.afterComment))
+                _printer.breakLine();
+            _printer.printText( "</" );
+            _printer.printText( state.rawName );
+            _printer.printText( '>' );
+        }
+        // Leave the element state and update that of the parent
+        // (if we're not root) to not empty and after element.
+        state = leaveElementState();
+        state.afterElement = true;
+        state.afterComment = false;
+        state.empty = false;
+        if (isDocumentState())
+            _printer.flush();
+!!!5549826.java!!!	startElement(inout tagName : String, inout attrs : AttributeList) : void
+        int          i;
+        boolean      preserveSpace;
+        ElementState state;
+        String       name;
+        String       value;
+
+
+        if (DEBUG) {
+            System.out.println("==>startElement("+tagName+")");
+        }
+
+        try {
+            if (_printer == null) {
+                String msg = DOMMessageFormatter.formatMessage(DOMMessageFormatter.SERIALIZER_DOMAIN, "NoWriterSupplied", null);
+                throw new IllegalStateException(msg);
+            }
+
+            state = getElementState();
+            if (isDocumentState()) {
+                // If this is the root element handle it differently.
+                // If the first root element in the document, serialize
+                // the document's DOCTYPE. Space preserving defaults
+                // to that of the output format.
+                if (! _started)
+                    startDocument( tagName );
+            } else {
+                // For any other element, if first in parent, then
+                // close parent's opening tag and use the parnet's
+                // space preserving.
+                if (state.empty)
+                    _printer.printText( '>' );
+                // Must leave CData section first
+                if (state.inCData) {
+                    _printer.printText( "]]>" );
+                    state.inCData = false;
+                }
+                // Indent this element on a new line if the first
+                // content of the parent element or immediately
+                // following an element.
+                if (_indenting && ! state.preserveSpace &&
+                    ( state.empty || state.afterElement || state.afterComment))
+                    _printer.breakLine();
+            }
+            preserveSpace = state.preserveSpace;
+
+            // Do not change the current element state yet.
+            // This only happens in endElement().
+
+            _printer.printText( '<' );
+            _printer.printText( tagName );
+            _printer.indent();
+
+            // For each attribute print it's name and value as one part,
+            // separated with a space so the element can be broken on
+            // multiple lines.
+            if (attrs != null) {
+                for (i = 0 ; i < attrs.getLength() ; ++i) {
+                    _printer.printSpace();
+                    name = attrs.getName( i );
+                    value = attrs.getValue( i );
+                    if (value != null) {
+                        _printer.printText( name );
+                        _printer.printText( "=\"" );
+                        printEscaped( value );
+                        _printer.printText( '"' );
+                    }
+
+                    // If the attribute xml:space exists, determine whether
+                    // to preserve spaces in this and child nodes based on
+                    // its value.
+                    if (name.equals( "xml:space" )) {
+                        if (value.equals( "preserve" ))
+                            preserveSpace = true;
+                        else
+                            preserveSpace = _format.getPreserveSpace();
+                    }
+                }
+            }
+            // Now it's time to enter a new element state
+            // with the tag name and space preserving.
+            // We still do not change the curent element state.
+            state = enterElementState( null, null, tagName, preserveSpace );
+            state.doCData = _format.isCDataElement( tagName );
+            state.unescaped = _format.isNonEscapingElement( tagName );
+        } catch (IOException except) {
+            throw new SAXException( except );
+        }
+
+!!!5549954.java!!!	endElement(inout tagName : String) : void
+        endElement( null, null, tagName );
+!!!5550082.java!!!	startDocument(inout rootTagName : String) : void
+        int    i;
+        String dtd;
+
+        dtd = _printer.leaveDTD();
+        if (! _started) {
+
+            if (! _format.getOmitXMLDeclaration()) {
+                StringBuffer    buffer;
+
+                // Serialize the document declaration appreaing at the head
+                // of very XML document (unless asked not to).
+                buffer = new StringBuffer( "<?xml version=\"" );
+                if (_format.getVersion() != null)
+                    buffer.append( _format.getVersion() );
+                else
+                    buffer.append( "1.0" );
+                buffer.append( '"' );
+                String format_encoding =  _format.getEncoding();
+                if (format_encoding != null) {
+                    buffer.append( " encoding=\"" );
+                    buffer.append( format_encoding );
+                    buffer.append( '"' );
+                }
+                if (_format.getStandalone() && _docTypeSystemId == null &&
+                    _docTypePublicId == null)
+                    buffer.append( " standalone=\"yes\"" );
+                buffer.append( "?>" );
+                _printer.printText( buffer );
+                _printer.breakLine();
+            }
+
+            if (! _format.getOmitDocumentType()) {
+                if (_docTypeSystemId != null) {
+                    // System identifier must be specified to print DOCTYPE.
+                    // If public identifier is specified print 'PUBLIC
+                    // <public> <system>', if not, print 'SYSTEM <system>'.
+                    _printer.printText( "<!DOCTYPE " );
+                    _printer.printText( rootTagName );
+                    if (_docTypePublicId != null) {
+                        _printer.printText( " PUBLIC " );
+                        printDoctypeURL( _docTypePublicId );
+                        if (_indenting) {
+                            _printer.breakLine();
+                            for (i = 0 ; i < 18 + rootTagName.length() ; ++i)
+                                _printer.printText( " " );
+                        } else
+                            _printer.printText( " " );
+                        printDoctypeURL( _docTypeSystemId );
+                    } else {
+                        _printer.printText( " SYSTEM " );
+                        printDoctypeURL( _docTypeSystemId );
+                    }
+
+                    // If we accumulated any DTD contents while printing.
+                    // this would be the place to print it.
+                    if (dtd != null && dtd.length() > 0) {
+                        _printer.printText( " [" );
+                        printText( dtd, true, true );
+                        _printer.printText( ']' );
+                    }
+
+                    _printer.printText( ">" );
+                    _printer.breakLine();
+                } else if (dtd != null && dtd.length() > 0) {
+                    _printer.printText( "<!DOCTYPE " );
+                    _printer.printText( rootTagName );
+                    _printer.printText( " [" );
+                    printText( dtd, true, true );
+                    _printer.printText( "]>" );
+                    _printer.breakLine();
+                }
+            }
+        }
+        _started = true;
+        // Always serialize these, even if not te first root element.
+        serializePreRoot();
+!!!5550210.java!!!	serializeElement(inout elem : Element) : void
+        Attr         attr;
+        NamedNodeMap attrMap;
+        int          i;
+        Node         child;
+        ElementState state;
+        String       name;
+        String       value;
+        String       tagName;
+
+        String prefix, localUri;
+        String uri;
+        if (fNamespaces) {
+            // local binder stores namespace declaration
+            // that has been printed out during namespace fixup of
+            // the current element
+            fLocalNSBinder.reset();
+
+            // add new namespace context
+            fNSBinder.pushContext();
+        }
+
+        if (DEBUG) {
+            System.out.println("==>startElement: " +elem.getNodeName() +" ns="+elem.getNamespaceURI());
+        }
+        tagName = elem.getTagName();
+        state = getElementState();
+        if (isDocumentState()) {
+            // If this is the root element handle it differently.
+            // If the first root element in the document, serialize
+            // the document's DOCTYPE. Space preserving defaults
+            // to that of the output format.
+
+            if (! _started) {
+                startDocument( tagName);
+            }
+        } else {
+            // For any other element, if first in parent, then
+            // close parent's opening tag and use the parent's
+            // space preserving.
+            if (state.empty)
+                _printer.printText( '>' );
+            // Must leave CData section first
+            if (state.inCData) {
+                _printer.printText( "]]>" );
+                state.inCData = false;
+            }
+            // Indent this element on a new line if the first
+            // content of the parent element or immediately
+            // following an element.
+            if (_indenting && ! state.preserveSpace &&
+                ( state.empty || state.afterElement || state.afterComment))
+                _printer.breakLine();
+        }
+
+        // Do not change the current element state yet.
+        // This only happens in endElement().
+        fPreserveSpace = state.preserveSpace;
+
+
+        int length = 0;
+        attrMap = null;
+        // retrieve attributes
+        if (elem.hasAttributes()) {
+            attrMap = elem.getAttributes();
+            length = attrMap.getLength();
+        }
+
+        if (!fNamespaces) { // no namespace fixup should be performed
+
+            // serialize element name
+            _printer.printText( '<' );
+            _printer.printText( tagName );
+            _printer.indent();
+
+            // For each attribute print it's name and value as one part,
+            // separated with a space so the element can be broken on
+            // multiple lines.
+            for ( i = 0 ; i < length ; ++i ) {
+                attr = (Attr) attrMap.item( i );
+                name = attr.getName();
+                value = attr.getValue();
+                if ( value == null )
+                    value = "";
+                printAttribute (name, value, attr.getSpecified(), attr);
+            }
+        } else { // do namespace fixup
+
+            // REVISIT: some optimization could probably be done to avoid traversing
+            //          attributes twice.
+            //
+
+            // ---------------------------------------
+            // record all valid namespace declarations
+            // before attempting to fix element's namespace
+            // ---------------------------------------
+
+            for (i = 0;i < length;i++) {
+
+                attr = (Attr) attrMap.item( i );
+                uri = attr.getNamespaceURI();
+                // check if attribute is a namespace decl
+                if (uri != null && uri.equals(NamespaceContext.XMLNS_URI)) {
+
+                    value = attr.getNodeValue();
+                    if (value == null) {
+                        value=XMLSymbols.EMPTY_STRING;
+                    }
+
+                    if (value.equals(NamespaceContext.XMLNS_URI)) {
+                        if (fDOMErrorHandler != null) {
+                            String msg = DOMMessageFormatter.formatMessage(
+                                DOMMessageFormatter.XML_DOMAIN,"CantBindXMLNS",null );
+                            modifyDOMError(msg,  DOMError.SEVERITY_ERROR, null, attr);
+                            boolean continueProcess = fDOMErrorHandler.handleError(fDOMError);
+                            if (!continueProcess) {
+                                // stop the namespace fixup and validation
+                                throw new RuntimeException(
+                                    DOMMessageFormatter.formatMessage(
+                                    DOMMessageFormatter.SERIALIZER_DOMAIN,
+                                    "SerializationStopped", null));
+                            }
+                        }
+                    } else {
+                        prefix = attr.getPrefix();
+                        prefix = (prefix == null ||
+                                  prefix.length() == 0) ? XMLSymbols.EMPTY_STRING :fSymbolTable.addSymbol(prefix);
+                        String localpart = fSymbolTable.addSymbol( attr.getLocalName());
+                        if (prefix == XMLSymbols.PREFIX_XMLNS) { //xmlns:prefix
+                            value = fSymbolTable.addSymbol(value);
+                            // record valid decl
+                            if (value.length() != 0) {
+                                fNSBinder.declarePrefix(localpart, value);
+                            } else {
+                                // REVISIT: issue error on invalid declarations
+                                //          xmlns:foo = ""
+                            }
+                            continue;
+                        } else { // xmlns
+                            // empty prefix is always bound ("" or some string)
+
+                            value = fSymbolTable.addSymbol(value);
+                            fNSBinder.declarePrefix(XMLSymbols.EMPTY_STRING, value);
+                            continue;
+                        }
+                    }  // end-else: valid declaration
+                } // end-if: namespace declaration
+            }  // end-for
+
+            //-----------------------
+            // get element uri/prefix
+            //-----------------------
+            uri = elem.getNamespaceURI();
+            prefix = elem.getPrefix();
+
+            //----------------------
+            // output element name
+            //----------------------
+            // REVISIT: this could be removed if we always convert empty string to null
+            //          for the namespaces.
+            if ((uri !=null && prefix !=null ) && uri.length() == 0 && prefix.length()!=0) {
+                // uri is an empty string and element has some prefix
+                // the namespace alg later will fix up the namespace attributes
+                // remove element prefix
+                prefix = null;
+                _printer.printText( '<' );
+                _printer.printText( elem.getLocalName() );
+                _printer.indent();
+            } else {
+                _printer.printText( '<' );
+                _printer.printText( tagName );
+                _printer.indent();
+            }
+
+
+            // ---------------------------------------------------------
+            // Fix up namespaces for element: per DOM L3
+            // Need to consider the following cases:
+            //
+            // case 1: <foo:elem xmlns:ns1="myURI" xmlns="default"/>
+            // Assume "foo", "ns1" are declared on the parent. We should not miss
+            // redeclaration for both "ns1" and default namespace. To solve this
+            // we add a local binder that stores declaration only for current element.
+            // This way we avoid outputing duplicate declarations for the same element
+            // as well as we are not omitting redeclarations.
+            //
+            // case 2: <elem xmlns="" xmlns="default"/>
+            // We need to bind default namespace to empty string, to be able to
+            // omit duplicate declarations for the same element
+            //
+            // case 3: <xsl:stylesheet xmlns:xsl="http://xsl">
+            // We create another element body bound to the "http://xsl" namespace
+            // as well as namespace attribute rebounding xsl to another namespace.
+            // <xsl:body xmlns:xsl="http://another">
+            // Need to make sure that the new namespace decl value is changed to
+            // "http://xsl"
+            //
+            // ---------------------------------------------------------
+            // check if prefix/namespace is correct for current element
+            // ---------------------------------------------------------
+
+
+            if (uri != null) {  // Element has a namespace
+                uri = fSymbolTable.addSymbol(uri);
+                prefix = (prefix == null ||
+                          prefix.length() == 0) ? XMLSymbols.EMPTY_STRING :fSymbolTable.addSymbol(prefix);
+                if (fNSBinder.getURI(prefix) == uri) {
+                    // The xmlns:prefix=namespace or xmlns="default" was declared at parent.
+                    // The binder always stores mapping of empty prefix to "".
+                    // (NOTE: local binder does not store this kind of binding!)
+                    // Thus the case where element was declared with uri="" (with or without a prefix)
+                    // will be covered here.
+
+                } else {
+                    // the prefix is either undeclared
+                    // or
+                    // conflict: the prefix is bound to another URI
+                    if (fNamespacePrefixes) {
+                        printNamespaceAttr(prefix, uri);
+                    }
+                    fLocalNSBinder.declarePrefix(prefix, uri);
+                    fNSBinder.declarePrefix(prefix, uri);
+                }
+            } else { // Element has no namespace
+                if (elem.getLocalName() == null) {
+                    //  DOM Level 1 node!
+                    if (fDOMErrorHandler != null) {
+                        String msg = DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN, "NullLocalElementName",
+                            new Object[]{elem.getNodeName()});
+                        modifyDOMError(msg,DOMError.SEVERITY_ERROR, null, elem);
+                        boolean continueProcess = fDOMErrorHandler.handleError(fDOMError);
+                        // REVISIT: should we terminate upon request?
+                        if (!continueProcess) {
+                           throw new RuntimeException(
+                               DOMMessageFormatter.formatMessage(
+                               DOMMessageFormatter.SERIALIZER_DOMAIN,
+                               "SerializationStopped", null));
+                        }
+                    }
+                } else { // uri=null and no colon (DOM L2 node)
+                    uri = fNSBinder.getURI(XMLSymbols.EMPTY_STRING);
+
+                    if (uri !=null && uri.length() > 0) {
+                        // there is a default namespace decl that is bound to
+                        // non-zero length uri, output xmlns=""
+                        if (fNamespacePrefixes) {
+                            printNamespaceAttr(XMLSymbols.EMPTY_STRING, XMLSymbols.EMPTY_STRING);
+                        }
+                        fLocalNSBinder.declarePrefix(XMLSymbols.EMPTY_STRING, XMLSymbols.EMPTY_STRING);
+                        fNSBinder.declarePrefix(XMLSymbols.EMPTY_STRING, XMLSymbols.EMPTY_STRING);
+                    }
+                }
+            }
+
+
+            // -----------------------------------------
+            // Fix up namespaces for attributes: per DOM L3
+            // check if prefix/namespace is correct the attributes
+            // -----------------------------------------
+
+            for (i = 0; i < length; i++) {
+
+                attr = (Attr) attrMap.item( i );
+                value = attr.getValue();
+                name = attr.getNodeName();
+
+                uri = attr.getNamespaceURI();
+
+                // Fix attribute that was declared with a prefix and namespace=""
+                if (uri !=null && uri.length() == 0) {
+                    uri=null;
+                    // we must remove prefix for this attribute
+                    name=attr.getLocalName();
+                }
+
+                if (DEBUG) {
+                    System.out.println("==>process attribute: "+attr.getNodeName());
+                }
+                // make sure that value is never null.
+                if (value == null) {
+                    value=XMLSymbols.EMPTY_STRING;
+                }
+
+                if (uri != null) {  // attribute has namespace !=null
+                    prefix = attr.getPrefix();
+                    prefix = prefix == null ? XMLSymbols.EMPTY_STRING :fSymbolTable.addSymbol(prefix);
+                    String localpart = fSymbolTable.addSymbol( attr.getLocalName());
+
+
+
+                    // ---------------------------------------------------
+                    // print namespace declarations namespace declarations
+                    // ---------------------------------------------------
+                    if (uri != null && uri.equals(NamespaceContext.XMLNS_URI)) {
+                        // check if we need to output this declaration
+                        prefix = attr.getPrefix();
+                        prefix = (prefix == null ||
+                                  prefix.length() == 0) ? XMLSymbols.EMPTY_STRING : fSymbolTable.addSymbol(prefix);
+                        localpart = fSymbolTable.addSymbol( attr.getLocalName());
+                        if (prefix == XMLSymbols.PREFIX_XMLNS) { //xmlns:prefix
+                            localUri = fLocalNSBinder.getURI(localpart);  // local prefix mapping
+                            value = fSymbolTable.addSymbol(value);
+                            if (value.length() != 0 ) {
+                                if (localUri == null) {
+                                    // declaration was not printed while fixing element namespace binding
+
+                                    // If the DOM Level 3 namespace-prefixes feature is set to false
+                                    // do not print xmlns attributes
+                                    if (fNamespacePrefixes) {
+                                        printNamespaceAttr(localpart, value);
+                                    }
+
+                                    // case 4: <elem xmlns:xx="foo" xx:attr=""/>
+                                    // where attribute is bound to "bar".
+                                    // If the xmlns:xx is output here first, later we should not
+                                    // redeclare "xx" prefix. Instead we would pick up different prefix
+                                    // for the attribute.
+                                    // final: <elem xmlns:xx="foo" NS1:attr="" xmlns:NS1="bar"/>
+                                    fLocalNSBinder.declarePrefix(localpart, value);
+                                }
+                            } else {
+                                // REVISIT: issue error on invalid declarations
+                                //          xmlns:foo = ""
+                            }
+                            continue;
+                        } else { // xmlns
+                            // empty prefix is always bound ("" or some string)
+
+                            uri = fNSBinder.getURI(XMLSymbols.EMPTY_STRING);
+                            localUri=fLocalNSBinder.getURI(XMLSymbols.EMPTY_STRING);
+                            value = fSymbolTable.addSymbol(value);
+                            if (localUri == null ){
+                                // declaration was not printed while fixing element namespace binding
+                                if (fNamespacePrefixes) {
+                                    printNamespaceAttr(XMLSymbols.EMPTY_STRING, value);
+                                }
+                                // case 4 does not apply here since attributes can't use
+                                // default namespace
+                            }
+                            continue;
+                        }
+
+                    }
+                    uri = fSymbolTable.addSymbol(uri);
+
+                    // find if for this prefix a URI was already declared
+                    String declaredURI =  fNSBinder.getURI(prefix);
+
+                    if (prefix == XMLSymbols.EMPTY_STRING || declaredURI != uri) {
+                        // attribute has no prefix (default namespace decl does not apply to attributes)
+                        // OR
+                        // attribute prefix is not declared
+                        // OR
+                        // conflict: attr URI does not match the prefix in scope
+
+                        name  = attr.getNodeName();
+                        // Find if any prefix for attributes namespace URI is available
+                        // in the scope
+                        String declaredPrefix = fNSBinder.getPrefix(uri);
+
+                        if (declaredPrefix !=null && declaredPrefix !=XMLSymbols.EMPTY_STRING) {
+                            // use the prefix that was found
+                            prefix = declaredPrefix;
+                            name=prefix+":"+localpart;
+                        } else {
+                            if (DEBUG) {
+                                System.out.println("==> cound not find prefix for the attribute: " +prefix);
+                            }
+
+                            if (prefix != XMLSymbols.EMPTY_STRING && fLocalNSBinder.getURI(prefix) == null) {
+                                // the current prefix is not null and it has no in scope declaration
+
+                                // use this prefix
+                            } else {
+                                // find a prefix following the pattern "NS" +index (starting at 1)
+                                // make sure this prefix is not declared in the current scope.
+                                int counter = 1;
+                                prefix = fSymbolTable.addSymbol(PREFIX + counter++);
+                                while (fLocalNSBinder.getURI(prefix)!=null) {
+                                    prefix = fSymbolTable.addSymbol(PREFIX +counter++);
+                                }
+                                name=prefix+":"+localpart;
+                            }
+                            // add declaration for the new prefix
+                            if (fNamespacePrefixes) {
+                                printNamespaceAttr(prefix, uri);
+                            }
+                            value = fSymbolTable.addSymbol(value);
+                            fLocalNSBinder.declarePrefix(prefix, value);
+                            fNSBinder.declarePrefix(prefix, uri);
+                        }
+
+                        // change prefix for this attribute
+                    }
+
+                    printAttribute (name, (value==null)?XMLSymbols.EMPTY_STRING:value, attr.getSpecified(), attr);
+                } else { // attribute uri == null
+                    if (attr.getLocalName() == null) {
+                        if (fDOMErrorHandler != null) {
+                            String msg = DOMMessageFormatter.formatMessage(
+                                DOMMessageFormatter.DOM_DOMAIN,
+                                "NullLocalAttrName", new Object[]{attr.getNodeName()});
+                            modifyDOMError(msg, DOMError.SEVERITY_ERROR, null, attr);
+                            boolean continueProcess = fDOMErrorHandler.handleError(fDOMError);
+                            if (!continueProcess) {
+                                // stop the namespace fixup and validation
+                                throw new RuntimeException(
+                                   DOMMessageFormatter.formatMessage(
+                                   DOMMessageFormatter.SERIALIZER_DOMAIN,
+                                   "SerializationStopped", null));
+                            }
+                        }
+                        printAttribute (name, value, attr.getSpecified(), attr);
+                    } else { // uri=null and no colon
+
+                        // no fix up is needed: default namespace decl does not
+                        // apply to attributes
+                        printAttribute (name, value, attr.getSpecified(), attr);
+                    }
+                }
+            } // end loop for attributes
+
+        }// end namespace fixup algorithm
+
+
+        // If element has children, then serialize them, otherwise
+        // serialize en empty tag.
+        if (elem.hasChildNodes()) {
+            // Enter an element state, and serialize the children
+            // one by one. Finally, end the element.
+            state = enterElementState( null, null, tagName, fPreserveSpace );
+            state.doCData = _format.isCDataElement( tagName );
+            state.unescaped = _format.isNonEscapingElement( tagName );
+            child = elem.getFirstChild();
+            while (child != null) {
+                serializeNode( child );
+                child = child.getNextSibling();
+            }
+            if (fNamespaces) {
+                fNSBinder.popContext();
+            }
+            endElementIO( null, null, tagName );
+        } else {
+            if (DEBUG) {
+                System.out.println("==>endElement: " +elem.getNodeName());
+            }
+            if (fNamespaces) {
+                fNSBinder.popContext();
+            }
+            _printer.unindent();
+            _printer.printText( "/>" );
+            // After element but parent element is no longer empty.
+            state.afterElement = true;
+            state.afterComment = false;
+            state.empty = false;
+            if (isDocumentState())
+                _printer.flush();
+        }
+!!!5550338.java!!!	printNamespaceAttr(inout prefix : String, inout uri : String) : void
+        _printer.printSpace();
+        if (prefix == XMLSymbols.EMPTY_STRING) {
+            if (DEBUG) {
+                System.out.println("=>add xmlns=\""+uri+"\" declaration");
+            }
+            _printer.printText( XMLSymbols.PREFIX_XMLNS );
+        } else {
+            if (DEBUG) {
+                System.out.println("=>add xmlns:"+prefix+"=\""+uri+"\" declaration");
+            }
+            _printer.printText( "xmlns:"+prefix );
+        }
+        _printer.printText( "=\"" );
+        printEscaped( uri );
+        _printer.printText( '"' );
+!!!5550466.java!!!	printAttribute(inout name : String, inout value : String, inout isSpecified : boolean, inout attr : Attr) : void
+
+        if (isSpecified || (features & DOMSerializerImpl.DISCARDDEFAULT) == 0) {
+            if (fDOMFilter !=null &&
+                (fDOMFilter.getWhatToShow() & NodeFilter.SHOW_ATTRIBUTE)!= 0) {
+                short code = fDOMFilter.acceptNode(attr);
+                switch (code) {
+                    case NodeFilter.FILTER_REJECT:
+                    case NodeFilter.FILTER_SKIP: {
+                        return;
+                    }
+                    default: {
+                        // fall through
+                    }
+                }
+            }
+            _printer.printSpace();
+            _printer.printText( name );
+            _printer.printText( "=\"" );
+            printEscaped( value );
+            _printer.printText( '"' );
+        }
+
+        // If the attribute xml:space exists, determine whether
+        // to preserve spaces in this and child nodes based on
+        // its value.
+        if (name.equals( "xml:space" )) {
+            if (value.equals( "preserve" ))
+                fPreserveSpace = true;
+            else
+                fPreserveSpace = _format.getPreserveSpace();
+        }
+!!!5550594.java!!!	getEntityRef(in ch : int) : String
+        // Encode special XML characters into the equivalent character references.
+        // These five are defined by default for all XML documents.
+        switch (ch) {
+        case '<':
+            return "lt";
+        case '>':
+            return "gt";
+        case '"':
+            return "quot";
+        case '\'':
+            return "apos";
+        case '&':
+            return "amp";
+        }
+        return null;
+!!!5550722.java!!!	extractNamespaces(inout attrs : Attributes) : Attributes
+        AttributesImpl attrsOnly;
+        String         rawName;
+        int            i;
+        int            indexColon;
+        String         prefix;
+        int            length;
+
+        if (attrs == null) {
+            return null;
+        }
+        length = attrs.getLength();
+        attrsOnly = new AttributesImpl( attrs );
+
+        for (i = length - 1 ; i >= 0 ; --i) {
+            rawName = attrsOnly.getQName( i );
+
+            //We have to exclude the namespaces declarations from the attributes
+            //Append only when the feature http://xml.org/sax/features/namespace-prefixes"
+            //is TRUE
+            if (rawName.startsWith( "xmlns" )) {
+                if (rawName.length() == 5) {
+                    startPrefixMapping( "", attrs.getValue( i ) );
+                    attrsOnly.removeAttribute( i );
+                } else if (rawName.charAt(5) == ':') {
+                    startPrefixMapping(rawName.substring(6), attrs.getValue(i));
+                    attrsOnly.removeAttribute( i );
+                }
+            }
+        }
+        return attrsOnly;
+!!!5550850.java!!!	printEscaped(inout source : String) : void
+        int length = source.length();
+        for (int i = 0; i < length; ++i) {
+            int ch = source.charAt(i);
+            if (!XMLChar.isValid(ch)) {
+                if (++i < length) {
+                    surrogates(ch, source.charAt(i));
+                } else {
+                    fatalError("The character '" + (char) ch + "' is an invalid XML character");
+                }
+                continue;
+            }
+            // escape NL, CR, TAB
+            if (ch == '\n' || ch == '\r' || ch == '\t') {
+                printHex(ch);
+            } else if (ch == '<') {
+                _printer.printText("&lt;");
+            } else if (ch == '&') {
+                _printer.printText("&amp;");
+            } else if (ch == '"') {
+                _printer.printText("&quot;");
+            } else if ((ch >= ' ' && _encodingInfo.isPrintable((char) ch))) {
+                _printer.printText((char) ch);
+            } else {
+                printHex(ch);
+            }
+        }
+!!!5550978.java!!!	printXMLChar(in ch : int) : void
+        if (ch == '\r') {
+                        printHex(ch);
+        } else if ( ch == '<') {
+            _printer.printText("&lt;");
+        } else if (ch == '&') {
+            _printer.printText("&amp;");
+        } else if (ch == '>'){
+                // character sequence "]]>" can't appear in content, therefore
+                // we should escape '>'
+                        _printer.printText("&gt;");
+        } else if ( ch == '\n' ||  ch == '\t' ||
+                    ( ch >= ' ' && _encodingInfo.isPrintable((char)ch))) {
+            _printer.printText((char)ch);
+        } else {
+                        printHex(ch);
+        }
+!!!5551106.java!!!	printText(inout text : String, inout preserveSpace : boolean, inout unescaped : boolean) : void
+        int index;
+        char ch;
+        int length = text.length();
+        if ( preserveSpace ) {
+            // Preserving spaces: the text must print exactly as it is,
+            // without breaking when spaces appear in the text and without
+            // consolidating spaces. If a line terminator is used, a line
+            // break will occur.
+            for ( index = 0 ; index < length ; ++index ) {
+                ch = text.charAt( index );
+                if (!XMLChar.isValid(ch)) {
+                    // check if it is surrogate
+                    if (++index <length) {
+                        surrogates(ch, text.charAt(index));
+                    } else {
+                        fatalError("The character '"+(char)ch+"' is an invalid XML character");
+                    }
+                    continue;
+                }
+                if ( unescaped ) {
+                    _printer.printText( ch );
+                } else
+                    printXMLChar( ch );
+            }
+        } else {
+            // Not preserving spaces: print one part at a time, and
+            // use spaces between parts to break them into different
+            // lines. Spaces at beginning of line will be stripped
+            // by printing mechanism. Line terminator is treated
+            // no different than other text part.
+            for ( index = 0 ; index < length ; ++index ) {
+                ch = text.charAt( index );
+                if (!XMLChar.isValid(ch)) {
+                    // check if it is surrogate
+                    if (++index <length) {
+                        surrogates(ch, text.charAt(index));
+                    } else {
+                        fatalError("The character '"+(char)ch+"' is an invalid XML character");
+                    }
+                    continue;
+                }
+
+                                if ( unescaped )
+                    _printer.printText( ch );
+                else
+                    printXMLChar( ch);
+            }
+        }
+!!!5551234.java!!!	printText(inout chars : char [[]], in start : int, in length : int, inout preserveSpace : boolean, inout unescaped : boolean) : void
+        int index;
+        char ch;
+
+        if ( preserveSpace ) {
+            // Preserving spaces: the text must print exactly as it is,
+            // without breaking when spaces appear in the text and without
+            // consolidating spaces. If a line terminator is used, a line
+            // break will occur.
+            while ( length-- > 0 ) {
+                ch = chars[start++];
+                if (!XMLChar.isValid(ch)) {
+                    // check if it is surrogate
+                    if ( length-- > 0 ) {
+                        surrogates(ch, chars[start++]);
+                    } else {
+                        fatalError("The character '"+(char)ch+"' is an invalid XML character");
+                    }
+                    continue;
+                }
+                if ( unescaped )
+                    _printer.printText( ch );
+                else
+                    printXMLChar( ch );
+            }
+        } else {
+            // Not preserving spaces: print one part at a time, and
+            // use spaces between parts to break them into different
+            // lines. Spaces at beginning of line will be stripped
+            // by printing mechanism. Line terminator is treated
+            // no different than other text part.
+            while ( length-- > 0 ) {
+                ch = chars[start++];
+                if (!XMLChar.isValid(ch)) {
+                    // check if it is surrogate
+                    if ( length-- > 0 ) {
+                        surrogates(ch, chars[start++]);
+                    } else {
+                        fatalError("The character '"+(char)ch+"' is an invalid XML character");
+                    }
+                    continue;
+                }
+                if ( unescaped )
+                    _printer.printText( ch );
+                else
+                    printXMLChar( ch );
+            }
+        }
+!!!5551362.java!!!	checkUnboundNamespacePrefixedNode(inout node : Node) : void
+
+                if (fNamespaces) {
+
+                        if (DEBUG) {
+                            System.out.println("==>serializeNode("+node.getNodeName()+") [Entity Reference - Namespaces on]");
+                                System.out.println("==>Declared Prefix Count: " + fNSBinder.getDeclaredPrefixCount());
+                                System.out.println("==>Node Name: " + node.getNodeName());
+                                System.out.println("==>First Child Node Name: " + node.getFirstChild().getNodeName());
+                                System.out.println("==>First Child Node Prefix: " + node.getFirstChild().getPrefix());
+                                System.out.println("==>First Child Node NamespaceURI: " + node.getFirstChild().getNamespaceURI());
+                        }
+
+
+                        Node child, next;
+                for (child = node.getFirstChild(); child != null; child = next) {
+                    next = child.getNextSibling();
+                            if (DEBUG) {
+                                System.out.println("==>serializeNode("+child.getNodeName()+") [Child Node]");
+                                System.out.println("==>serializeNode("+child.getPrefix()+") [Child Node Prefix]");
+                    }
+
+                            //If a NamespaceURI is not declared for the current
+                            //node's prefix, raise a fatal error.
+                            String prefix = child.getPrefix();
+                prefix = (prefix == null ||
+                        prefix.length() == 0) ? XMLSymbols.EMPTY_STRING : fSymbolTable.addSymbol(prefix);
+                            if (fNSBinder.getURI(prefix) == null && prefix != null) {
+                                        fatalError("The replacement text of the entity node '"
+                                                                + node.getNodeName()
+                                                                + "' contains an element node '"
+                                                                + child.getNodeName()
+                                                                + "' with an undeclared prefix '"
+                                                                + prefix + "'.");
+                            }
+
+                                if (child.getNodeType() == Node.ELEMENT_NODE) {
+
+                                        NamedNodeMap attrs = child.getAttributes();
+
+                                        for (int i = 0; i< attrs.getLength(); i++ ) {
+
+                                            String attrPrefix = attrs.item(i).getPrefix();
+                        attrPrefix = (attrPrefix == null ||
+                                attrPrefix.length() == 0) ? XMLSymbols.EMPTY_STRING : fSymbolTable.addSymbol(attrPrefix);
+                                            if (fNSBinder.getURI(attrPrefix) == null && attrPrefix != null) {
+                                                        fatalError("The replacement text of the entity node '"
+                                                                                + node.getNodeName()
+                                                                                + "' contains an element node '"
+                                                                                + child.getNodeName()
+                                                                                + "' with an attribute '"
+                                                                                + attrs.item(i).getNodeName()
+                                                                                + "' an undeclared prefix '"
+                                                                                + attrPrefix + "'.");
+                                            }
+
+                                        }
+
+                                }
+
+                                if (child.hasChildNodes()) {
+                                        checkUnboundNamespacePrefixedNode(child);
+                                }
+                }
+                }
+!!!5551490.java!!!	reset() : boolean
+        super.reset();
+        if (fNSBinder != null){
+            fNSBinder.reset();
+            // during serialization always have a mapping to empty string
+            // so we assume there is a declaration.
+            fNSBinder.declarePrefix(XMLSymbols.EMPTY_STRING, XMLSymbols.EMPTY_STRING);
+        }
+        return true;

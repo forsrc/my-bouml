@@ -1,0 +1,191 @@
+class FlatteningPathIterator
+!!!6538114.java!!!	FlatteningPathIterator(inout src : PathIterator, in flatness : double)
+        this(src, flatness, 10);
+!!!6538242.java!!!	FlatteningPathIterator(inout src : PathIterator, in flatness : double, in limit : int)
+        if (flatness < 0.0) {
+            throw new IllegalArgumentException("flatness must be >= 0");
+        }
+        if (limit < 0) {
+            throw new IllegalArgumentException("limit must be >= 0");
+        }
+        this.src = src;
+        this.squareflat = flatness * flatness;
+        this.limit = limit;
+        this.levels = new int[limit + 1];
+        // prime the first path segment
+        next(false);
+!!!6538370.java!!!	getFlatness() : double
+        return Math.sqrt(squareflat);
+!!!6538498.java!!!	getRecursionLimit() : int
+        return limit;
+!!!6538626.java!!!	getWindingRule() : int
+        return src.getWindingRule();
+!!!6538754.java!!!	isDone() : boolean
+        return done;
+!!!6538882.java!!!	ensureHoldCapacity(in want : int) : void
+        if (holdIndex - want < 0) {
+            int have = hold.length - holdIndex;
+            int newsize = hold.length + GROW_SIZE;
+            double newhold[] = new double[newsize];
+            System.arraycopy(hold, holdIndex,
+                             newhold, holdIndex + GROW_SIZE,
+                             have);
+            hold = newhold;
+            holdIndex += GROW_SIZE;
+            holdEnd += GROW_SIZE;
+        }
+!!!6539010.java!!!	next() : void
+        next(true);
+!!!6539138.java!!!	next(inout doNext : boolean) : void
+        int level;
+
+        if (holdIndex >= holdEnd) {
+            if (doNext) {
+                src.next();
+            }
+            if (src.isDone()) {
+                done = true;
+                return;
+            }
+            holdType = src.currentSegment(hold);
+            levelIndex = 0;
+            levels[0] = 0;
+        }
+
+        switch (holdType) {
+        case SEG_MOVETO:
+        case SEG_LINETO:
+            curx = hold[0];
+            cury = hold[1];
+            if (holdType == SEG_MOVETO) {
+                movx = curx;
+                movy = cury;
+            }
+            holdIndex = 0;
+            holdEnd = 0;
+            break;
+        case SEG_CLOSE:
+            curx = movx;
+            cury = movy;
+            holdIndex = 0;
+            holdEnd = 0;
+            break;
+        case SEG_QUADTO:
+            if (holdIndex >= holdEnd) {
+                // Move the coordinates to the end of the array.
+                holdIndex = hold.length - 6;
+                holdEnd = hold.length - 2;
+                hold[holdIndex + 0] = curx;
+                hold[holdIndex + 1] = cury;
+                hold[holdIndex + 2] = hold[0];
+                hold[holdIndex + 3] = hold[1];
+                hold[holdIndex + 4] = curx = hold[2];
+                hold[holdIndex + 5] = cury = hold[3];
+            }
+
+            level = levels[levelIndex];
+            while (level < limit) {
+                if (QuadCurve2D.getFlatnessSq(hold, holdIndex) < squareflat) {
+                    break;
+                }
+
+                ensureHoldCapacity(4);
+                QuadCurve2D.subdivide(hold, holdIndex,
+                                      hold, holdIndex - 4,
+                                      hold, holdIndex);
+                holdIndex -= 4;
+
+                // Now that we have subdivided, we have constructed
+                // two curves of one depth lower than the original
+                // curve.  One of those curves is in the place of
+                // the former curve and one of them is in the next
+                // set of held coordinate slots.  We now set both
+                // curves level values to the next higher level.
+                level++;
+                levels[levelIndex] = level;
+                levelIndex++;
+                levels[levelIndex] = level;
+            }
+
+            // This curve segment is flat enough, or it is too deep
+            // in recursion levels to try to flatten any more.  The
+            // two coordinates at holdIndex+4 and holdIndex+5 now
+            // contain the endpoint of the curve which can be the
+            // endpoint of an approximating line segment.
+            holdIndex += 4;
+            levelIndex--;
+            break;
+        case SEG_CUBICTO:
+            if (holdIndex >= holdEnd) {
+                // Move the coordinates to the end of the array.
+                holdIndex = hold.length - 8;
+                holdEnd = hold.length - 2;
+                hold[holdIndex + 0] = curx;
+                hold[holdIndex + 1] = cury;
+                hold[holdIndex + 2] = hold[0];
+                hold[holdIndex + 3] = hold[1];
+                hold[holdIndex + 4] = hold[2];
+                hold[holdIndex + 5] = hold[3];
+                hold[holdIndex + 6] = curx = hold[4];
+                hold[holdIndex + 7] = cury = hold[5];
+            }
+
+            level = levels[levelIndex];
+            while (level < limit) {
+                if (CubicCurve2D.getFlatnessSq(hold, holdIndex) < squareflat) {
+                    break;
+                }
+
+                ensureHoldCapacity(6);
+                CubicCurve2D.subdivide(hold, holdIndex,
+                                       hold, holdIndex - 6,
+                                       hold, holdIndex);
+                holdIndex -= 6;
+
+                // Now that we have subdivided, we have constructed
+                // two curves of one depth lower than the original
+                // curve.  One of those curves is in the place of
+                // the former curve and one of them is in the next
+                // set of held coordinate slots.  We now set both
+                // curves level values to the next higher level.
+                level++;
+                levels[levelIndex] = level;
+                levelIndex++;
+                levels[levelIndex] = level;
+            }
+
+            // This curve segment is flat enough, or it is too deep
+            // in recursion levels to try to flatten any more.  The
+            // two coordinates at holdIndex+6 and holdIndex+7 now
+            // contain the endpoint of the curve which can be the
+            // endpoint of an approximating line segment.
+            holdIndex += 6;
+            levelIndex--;
+            break;
+        }
+!!!6539266.java!!!	currentSegment(inout coords : float [[]]) : int
+        if (isDone()) {
+            throw new NoSuchElementException("flattening iterator out of bounds");
+        }
+        int type = holdType;
+        if (type != SEG_CLOSE) {
+            coords[0] = (float) hold[holdIndex + 0];
+            coords[1] = (float) hold[holdIndex + 1];
+            if (type != SEG_MOVETO) {
+                type = SEG_LINETO;
+            }
+        }
+        return type;
+!!!6539394.java!!!	currentSegment(inout coords : double [[]]) : int
+        if (isDone()) {
+            throw new NoSuchElementException("flattening iterator out of bounds");
+        }
+        int type = holdType;
+        if (type != SEG_CLOSE) {
+            coords[0] = hold[holdIndex + 0];
+            coords[1] = hold[holdIndex + 1];
+            if (type != SEG_MOVETO) {
+                type = SEG_LINETO;
+            }
+        }
+        return type;

@@ -1,0 +1,36 @@
+class ConcurrentWeakInternSet
+!!!7289858.java!!!	ConcurrentWeakInternSet()
+            this.map = new ConcurrentHashMap<>();
+            this.stale = new ReferenceQueue<>();
+!!!7289986.java!!!	get(inout elem : T) : T
+            if (elem == null) throw new NullPointerException();
+            expungeStaleElements();
+
+            WeakEntry<T> value = map.get(new WeakEntry<>(elem));
+            if (value != null) {
+                T res = value.get();
+                if (res != null) {
+                    return res;
+                }
+            }
+            return null;
+!!!7290114.java!!!	add(inout elem : T) : T
+            if (elem == null) throw new NullPointerException();
+
+            // Playing double race here, and so spinloop is required.
+            // First race is with two concurrent updaters.
+            // Second race is with GC purging weak ref under our feet.
+            // Hopefully, we almost always end up with a single pass.
+            T interned;
+            WeakEntry<T> e = new WeakEntry<>(elem, stale);
+            do {
+                expungeStaleElements();
+                WeakEntry<T> exist = map.putIfAbsent(e, e);
+                interned = (exist == null) ? elem : exist.get();
+            } while (interned == null);
+            return interned;
+!!!7290242.java!!!	expungeStaleElements() : void
+            Reference<? extends T> reference;
+            while ((reference = stale.poll()) != null) {
+                map.remove(reference);
+            }

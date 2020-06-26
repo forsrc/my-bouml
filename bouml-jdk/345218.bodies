@@ -1,0 +1,150 @@
+class BltBufferStrategy
+!!!1905154.java!!!	BltBufferStrategy(in numBuffers : int, inout caps : BufferCapabilities)
+            this.caps = caps;
+            createBackBuffers(numBuffers - 1);
+!!!1905282.java!!!	dispose() : void
+            if (backBuffers != null) {
+                for (int counter = backBuffers.length - 1; counter >= 0;
+                     counter--) {
+                    if (backBuffers[counter] != null) {
+                        backBuffers[counter].flush();
+                        backBuffers[counter] = null;
+                    }
+                }
+            }
+            if (Component.this.bufferStrategy == this) {
+                Component.this.bufferStrategy = null;
+            }
+!!!1905410.java!!!	createBackBuffers(in numBuffers : int) : void
+            if (numBuffers == 0) {
+                backBuffers = null;
+            } else {
+                // save the current bounds
+                width = getWidth();
+                height = getHeight();
+                insets = getInsets_NoClientCode();
+                int iWidth = width - insets.left - insets.right;
+                int iHeight = height - insets.top - insets.bottom;
+
+                // It is possible for the component's width and/or height
+                // to be 0 here.  Force the size of the backbuffers to
+                // be > 0 so that creating the image won't fail.
+                iWidth = Math.max(1, iWidth);
+                iHeight = Math.max(1, iHeight);
+                if (backBuffers == null) {
+                    backBuffers = new VolatileImage[numBuffers];
+                } else {
+                    // flush any existing backbuffers
+                    for (int i = 0; i < numBuffers; i++) {
+                        if (backBuffers[i] != null) {
+                            backBuffers[i].flush();
+                            backBuffers[i] = null;
+                        }
+                    }
+                }
+
+                // create the backbuffers
+                for (int i = 0; i < numBuffers; i++) {
+                    backBuffers[i] = createVolatileImage(iWidth, iHeight);
+                }
+            }
+!!!1905538.java!!!	getCapabilities() : BufferCapabilities
+            return caps;
+!!!1905666.java!!!	getDrawGraphics() : Graphics
+            revalidate();
+            Image backBuffer = getBackBuffer();
+            if (backBuffer == null) {
+                return getGraphics();
+            }
+            SunGraphics2D g = (SunGraphics2D)backBuffer.getGraphics();
+            g.constrain(-insets.left, -insets.top,
+                        backBuffer.getWidth(null) + insets.left,
+                        backBuffer.getHeight(null) + insets.top);
+            return g;
+!!!1905794.java!!!	getBackBuffer() : Image
+            if (backBuffers != null) {
+                return backBuffers[backBuffers.length - 1];
+            } else {
+                return null;
+            }
+!!!1905922.java!!!	show() : void
+            showSubRegion(insets.left, insets.top,
+                          width - insets.right,
+                          height - insets.bottom);
+!!!1906050.java!!!	showSubRegion(in x1 : int, in y1 : int, in x2 : int, in y2 : int) : void
+            if (backBuffers == null) {
+                return;
+            }
+            // Adjust location to be relative to client area.
+            x1 -= insets.left;
+            x2 -= insets.left;
+            y1 -= insets.top;
+            y2 -= insets.top;
+            Graphics g = getGraphics_NoClientCode();
+            if (g == null) {
+                // Not showing, bail
+                return;
+            }
+            try {
+                // First image copy is in terms of Frame's coordinates, need
+                // to translate to client area.
+                g.translate(insets.left, insets.top);
+                for (int i = 0; i < backBuffers.length; i++) {
+                    g.drawImage(backBuffers[i],
+                                x1, y1, x2, y2,
+                                x1, y1, x2, y2,
+                                null);
+                    g.dispose();
+                    g = null;
+                    g = backBuffers[i].getGraphics();
+                }
+            } finally {
+                if (g != null) {
+                    g.dispose();
+                }
+            }
+!!!1906178.java!!!	revalidate() : void
+            revalidate(true);
+!!!1906306.java!!!	revalidate(inout checkSize : boolean) : void
+            validatedContents = false;
+
+            if (backBuffers == null) {
+                return;
+            }
+
+            if (checkSize) {
+                Insets insets = getInsets_NoClientCode();
+                if (getWidth() != width || getHeight() != height ||
+                    !insets.equals(this.insets)) {
+                    // component has been resized; recreate the backbuffers
+                    createBackBuffers(backBuffers.length);
+                    validatedContents = true;
+                }
+            }
+
+            // now validate the backbuffer
+            GraphicsConfiguration gc = getGraphicsConfiguration_NoClientCode();
+            int returnCode =
+                backBuffers[backBuffers.length - 1].validate(gc);
+            if (returnCode == VolatileImage.IMAGE_INCOMPATIBLE) {
+                if (checkSize) {
+                    createBackBuffers(backBuffers.length);
+                    // backbuffers were recreated, so validate again
+                    backBuffers[backBuffers.length - 1].validate(gc);
+                }
+                // else case means we're called from Swing on the toolkit
+                // thread, don't recreate buffers as that'll deadlock
+                // (creating VolatileImages invokes getting GraphicsConfig
+                // which grabs treelock).
+                validatedContents = true;
+            } else if (returnCode == VolatileImage.IMAGE_RESTORED) {
+                validatedContents = true;
+            }
+!!!1906434.java!!!	contentsLost() : boolean
+            if (backBuffers == null) {
+                return false;
+            } else {
+                return backBuffers[backBuffers.length - 1].contentsLost();
+            }
+!!!1906562.java!!!	contentsRestored() : boolean
+            return validatedContents;

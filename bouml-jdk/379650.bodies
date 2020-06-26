@@ -1,0 +1,97 @@
+class Privileged
+!!!2152450.java!!!	doPrivileged(in type : int, inout arg : Object) : Object
+            this.type = type;
+            this.arg = arg;
+            return AccessController.doPrivileged(this);
+!!!2152578.java!!!	run() : Object
+            if (type == GET_THEME_DIR) {
+                String sep = File.separator;
+                String[] dirs = new String[] {
+                    userHome + sep + ".themes",
+                    System.getProperty("swing.metacitythemedir"),
+                    "/usr/X11R6/share/themes",
+                    "/usr/X11R6/share/gnome/themes",
+                    "/usr/local/share/themes",
+                    "/usr/local/share/gnome/themes",
+                    "/usr/share/themes",
+                    "/usr/gnome/share/themes",  // Debian/Redhat/Solaris
+                    "/opt/gnome2/share/themes"  // SuSE
+                };
+
+                URL themeDir = null;
+                for (int i = 0; i < dirs.length; i++) {
+                    // System property may not be set so skip null directories.
+                    if (dirs[i] == null) {
+                        continue;
+                    }
+                    File dir =
+                        new File(dirs[i] + sep + arg + sep + "metacity-1");
+                    if (new File(dir, "metacity-theme-1.xml").canRead()) {
+                        try {
+                            themeDir = dir.toURI().toURL();
+                        } catch (MalformedURLException ex) {
+                            themeDir = null;
+                        }
+                        break;
+                    }
+                }
+                if (themeDir == null) {
+                    String filename = "resources/metacity/" + arg +
+                        "/metacity-1/metacity-theme-1.xml";
+                    URL url = getClass().getResource(filename);
+                    if (url != null) {
+                        String str = url.toString();
+                        try {
+                            themeDir = new URL(str.substring(0, str.lastIndexOf('/'))+"/");
+                        } catch (MalformedURLException ex) {
+                            themeDir = null;
+                        }
+                    }
+                }
+                return themeDir;
+            } else if (type == GET_USER_THEME) {
+                try {
+                    // Set userHome here because we need the privilege
+                    userHome = System.getProperty("user.home");
+
+                    String theme = System.getProperty("swing.metacitythemename");
+                    if (theme != null) {
+                        return theme;
+                    }
+                    // Note: this is a small file (< 1024 bytes) so it's not worth
+                    // starting an XML parser or even to use a buffered reader.
+                    URL url = new URL(new File(userHome).toURI().toURL(),
+                                      ".gconf/apps/metacity/general/%25gconf.xml");
+                    // Pending: verify character encoding spec for gconf
+                    Reader reader = new InputStreamReader(url.openStream(), "ISO-8859-1");
+                    char[] buf = new char[1024];
+                    StringBuffer strBuf = new StringBuffer();
+                    int n;
+                    while ((n = reader.read(buf)) >= 0) {
+                        strBuf.append(buf, 0, n);
+                    }
+                    reader.close();
+                    String str = strBuf.toString();
+                    if (str != null) {
+                        String strLowerCase = str.toLowerCase();
+                        int i = strLowerCase.indexOf("<entry name=\"theme\"");
+                        if (i >= 0) {
+                            i = strLowerCase.indexOf("<stringvalue>", i);
+                            if (i > 0) {
+                                i += "<stringvalue>".length();
+                                int i2 = str.indexOf("<", i);
+                                return str.substring(i, i2);
+                            }
+                        }
+                    }
+                } catch (MalformedURLException ex) {
+                    // OK to just ignore. We'll use a fallback theme.
+                } catch (IOException ex) {
+                    // OK to just ignore. We'll use a fallback theme.
+                }
+                return null;
+            } else if (type == GET_IMAGE) {
+                return new ImageIcon((URL)arg).getImage();
+            } else {
+                return null;
+            }

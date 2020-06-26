@@ -1,0 +1,441 @@
+class AbstractPreferences
+!!!9416066.java!!!	AbstractPreferences(inout parent : AbstractPreferences, inout name : String)
+        if (parent==null) {
+            if (!name.equals(""))
+                throw new IllegalArgumentException("Root name '"+name+
+                                                   "' must be \"\"");
+            this.absolutePath = "/";
+            root = this;
+        } else {
+            if (name.indexOf('/') != -1)
+                throw new IllegalArgumentException("Name '" + name +
+                                                 "' contains '/'");
+            if (name.equals(""))
+              throw new IllegalArgumentException("Illegal name: empty string");
+
+            root = parent.root;
+            absolutePath = (parent==root ? "/" + name
+                                         : parent.absolutePath() + "/" + name);
+        }
+        this.name = name;
+        this.parent = parent;
+!!!9416194.java!!!	put(inout key : String, inout value : String) : void
+        if (key==null || value==null)
+            throw new NullPointerException();
+        if (key.length() > MAX_KEY_LENGTH)
+            throw new IllegalArgumentException("Key too long: "+key);
+        if (value.length() > MAX_VALUE_LENGTH)
+            throw new IllegalArgumentException("Value too long: "+value);
+
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            putSpi(key, value);
+            enqueuePreferenceChangeEvent(key, value);
+        }
+!!!9416322.java!!!	get(inout key : String, inout def : String) : String
+        if (key==null)
+            throw new NullPointerException("Null key");
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            String result = null;
+            try {
+                result = getSpi(key);
+            } catch (Exception e) {
+                // Ignoring exception causes default to be returned
+            }
+            return (result==null ? def : result);
+        }
+!!!9416450.java!!!	remove(inout key : String) : void
+        Objects.requireNonNull(key, "Specified key cannot be null");
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            removeSpi(key);
+            enqueuePreferenceChangeEvent(key, null);
+        }
+!!!9416578.java!!!	clear() : void
+        synchronized(lock) {
+            String[] keys = keys();
+            for (int i=0; i<keys.length; i++)
+                remove(keys[i]);
+        }
+!!!9416706.java!!!	putInt(inout key : String, in value : int) : void
+        put(key, Integer.toString(value));
+!!!9416834.java!!!	getInt(inout key : String, in def : int) : int
+        int result = def;
+        try {
+            String value = get(key, null);
+            if (value != null)
+                result = Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            // Ignoring exception causes specified default to be returned
+        }
+
+        return result;
+!!!9416962.java!!!	putLong(inout key : String, in value : long) : void
+        put(key, Long.toString(value));
+!!!9417090.java!!!	getLong(inout key : String, in def : long) : long
+        long result = def;
+        try {
+            String value = get(key, null);
+            if (value != null)
+                result = Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            // Ignoring exception causes specified default to be returned
+        }
+
+        return result;
+!!!9417218.java!!!	putBoolean(inout key : String, inout value : boolean) : void
+        put(key, String.valueOf(value));
+!!!9417346.java!!!	getBoolean(inout key : String, inout def : boolean) : boolean
+        boolean result = def;
+        String value = get(key, null);
+        if (value != null) {
+            if (value.equalsIgnoreCase("true"))
+                result = true;
+            else if (value.equalsIgnoreCase("false"))
+                result = false;
+        }
+
+        return result;
+!!!9417474.java!!!	putFloat(inout key : String, in value : float) : void
+        put(key, Float.toString(value));
+!!!9417602.java!!!	getFloat(inout key : String, in def : float) : float
+        float result = def;
+        try {
+            String value = get(key, null);
+            if (value != null)
+                result = Float.parseFloat(value);
+        } catch (NumberFormatException e) {
+            // Ignoring exception causes specified default to be returned
+        }
+
+        return result;
+!!!9417730.java!!!	putDouble(inout key : String, in value : double) : void
+        put(key, Double.toString(value));
+!!!9417858.java!!!	getDouble(inout key : String, in def : double) : double
+        double result = def;
+        try {
+            String value = get(key, null);
+            if (value != null)
+                result = Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            // Ignoring exception causes specified default to be returned
+        }
+
+        return result;
+!!!9417986.java!!!	putByteArray(inout key : String, inout value : byte [[]]) : void
+        put(key, Base64.byteArrayToBase64(value));
+!!!9418114.java!!!	getByteArray(inout key : String, inout def : byte [[]]) : byte
+        byte[] result = def;
+        String value = get(key, null);
+        try {
+            if (value != null)
+                result = Base64.base64ToByteArray(value);
+        }
+        catch (RuntimeException e) {
+            // Ignoring exception causes specified default to be returned
+        }
+
+        return result;
+!!!9418242.java!!!	keys() : String
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            return keysSpi();
+        }
+!!!9418370.java!!!	childrenNames() : String
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            Set<String> s = new TreeSet<>(kidCache.keySet());
+            for (String kid : childrenNamesSpi())
+                s.add(kid);
+            return s.toArray(EMPTY_STRING_ARRAY);
+        }
+!!!9418498.java!!!	cachedChildren() : AbstractPreferences
+        return kidCache.values().toArray(EMPTY_ABSTRACT_PREFS_ARRAY);
+!!!9418626.java!!!	parent() : Preferences
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            return parent;
+        }
+!!!9418754.java!!!	node(inout path : String) : Preferences
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+            if (path.equals(""))
+                return this;
+            if (path.equals("/"))
+                return root;
+            if (path.charAt(0) != '/')
+                return node(new StringTokenizer(path, "/", true));
+        }
+
+        // Absolute path.  Note that we've dropped our lock to avoid deadlock
+        return root.node(new StringTokenizer(path.substring(1), "/", true));
+!!!9418882.java!!!	node(inout path : StringTokenizer) : Preferences
+        String token = path.nextToken();
+        if (token.equals("/"))  // Check for consecutive slashes
+            throw new IllegalArgumentException("Consecutive slashes in path");
+        synchronized(lock) {
+            AbstractPreferences child = kidCache.get(token);
+            if (child == null) {
+                if (token.length() > MAX_NAME_LENGTH)
+                    throw new IllegalArgumentException(
+                        "Node name " + token + " too long");
+                child = childSpi(token);
+                if (child.newNode)
+                    enqueueNodeAddedEvent(child);
+                kidCache.put(token, child);
+            }
+            if (!path.hasMoreTokens())
+                return child;
+            path.nextToken();  // Consume slash
+            if (!path.hasMoreTokens())
+                throw new IllegalArgumentException("Path ends with slash");
+            return child.node(path);
+        }
+!!!9419010.java!!!	nodeExists(inout path : String) : boolean
+        synchronized(lock) {
+            if (path.equals(""))
+                return !removed;
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+            if (path.equals("/"))
+                return true;
+            if (path.charAt(0) != '/')
+                return nodeExists(new StringTokenizer(path, "/", true));
+        }
+
+        // Absolute path.  Note that we've dropped our lock to avoid deadlock
+        return root.nodeExists(new StringTokenizer(path.substring(1), "/",
+                                                   true));
+!!!9419138.java!!!	nodeExists(inout path : StringTokenizer) : boolean
+        String token = path.nextToken();
+        if (token.equals("/"))  // Check for consecutive slashes
+            throw new IllegalArgumentException("Consecutive slashes in path");
+        synchronized(lock) {
+            AbstractPreferences child = kidCache.get(token);
+            if (child == null)
+                child = getChild(token);
+            if (child==null)
+                return false;
+            if (!path.hasMoreTokens())
+                return true;
+            path.nextToken();  // Consume slash
+            if (!path.hasMoreTokens())
+                throw new IllegalArgumentException("Path ends with slash");
+            return child.nodeExists(path);
+        }
+!!!9419266.java!!!	removeNode() : void
+        if (this==root)
+            throw new UnsupportedOperationException("Can't remove the root!");
+        synchronized(parent.lock) {
+            removeNode2();
+            parent.kidCache.remove(name);
+        }
+!!!9419394.java!!!	removeNode2() : void
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node already removed.");
+
+            // Ensure that all children are cached
+            String[] kidNames = childrenNamesSpi();
+            for (int i=0; i<kidNames.length; i++)
+                if (!kidCache.containsKey(kidNames[i]))
+                    kidCache.put(kidNames[i], childSpi(kidNames[i]));
+
+            // Recursively remove all cached children
+            for (Iterator<AbstractPreferences> i = kidCache.values().iterator();
+                 i.hasNext();) {
+                try {
+                    i.next().removeNode2();
+                    i.remove();
+                } catch (BackingStoreException x) { }
+            }
+
+            // Now we have no descendants - it's time to die!
+            removeNodeSpi();
+            removed = true;
+            parent.enqueueNodeRemovedEvent(this);
+        }
+!!!9419522.java!!!	name() : String
+        return name;
+!!!9419650.java!!!	absolutePath() : String
+        return absolutePath;
+!!!9419778.java!!!	isUserNode() : boolean
+        return AccessController.doPrivileged(
+            new PrivilegedAction<Boolean>() {
+                public Boolean run() {
+                    return root == Preferences.userRoot();
+            }
+            }).booleanValue();
+!!!9419906.java!!!	addPreferenceChangeListener(inout pcl : PreferenceChangeListener) : void
+        if (pcl==null)
+            throw new NullPointerException("Change listener is null.");
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            // Copy-on-write
+            PreferenceChangeListener[] old = prefListeners;
+            prefListeners = new PreferenceChangeListener[old.length + 1];
+            System.arraycopy(old, 0, prefListeners, 0, old.length);
+            prefListeners[old.length] = pcl;
+        }
+        startEventDispatchThreadIfNecessary();
+!!!9420034.java!!!	removePreferenceChangeListener(inout pcl : PreferenceChangeListener) : void
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+            if ((prefListeners == null) || (prefListeners.length == 0))
+                throw new IllegalArgumentException("Listener not registered.");
+
+            // Copy-on-write
+            PreferenceChangeListener[] newPl =
+                new PreferenceChangeListener[prefListeners.length - 1];
+            int i = 0;
+            while (i < newPl.length && prefListeners[i] != pcl)
+                newPl[i] = prefListeners[i++];
+
+            if (i == newPl.length &&  prefListeners[i] != pcl)
+                throw new IllegalArgumentException("Listener not registered.");
+            while (i < newPl.length)
+                newPl[i] = prefListeners[++i];
+            prefListeners = newPl;
+        }
+!!!9420162.java!!!	addNodeChangeListener(inout ncl : NodeChangeListener) : void
+        if (ncl==null)
+            throw new NullPointerException("Change listener is null.");
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+
+            // Copy-on-write
+            if (nodeListeners == null) {
+                nodeListeners = new NodeChangeListener[1];
+                nodeListeners[0] = ncl;
+            } else {
+                NodeChangeListener[] old = nodeListeners;
+                nodeListeners = new NodeChangeListener[old.length + 1];
+                System.arraycopy(old, 0, nodeListeners, 0, old.length);
+                nodeListeners[old.length] = ncl;
+            }
+        }
+        startEventDispatchThreadIfNecessary();
+!!!9420290.java!!!	removeNodeChangeListener(inout ncl : NodeChangeListener) : void
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed.");
+            if ((nodeListeners == null) || (nodeListeners.length == 0))
+                throw new IllegalArgumentException("Listener not registered.");
+
+            // Copy-on-write
+            int i = 0;
+            while (i < nodeListeners.length && nodeListeners[i] != ncl)
+                i++;
+            if (i == nodeListeners.length)
+                throw new IllegalArgumentException("Listener not registered.");
+            NodeChangeListener[] newNl =
+                new NodeChangeListener[nodeListeners.length - 1];
+            if (i != 0)
+                System.arraycopy(nodeListeners, 0, newNl, 0, i);
+            if (i != newNl.length)
+                System.arraycopy(nodeListeners, i + 1,
+                                 newNl, i, newNl.length - i);
+            nodeListeners = newNl;
+        }
+!!!9421186.java!!!	getChild(inout nodeName : String) : AbstractPreferences
+        synchronized(lock) {
+            // assert kidCache.get(nodeName)==null;
+            String[] kidNames = childrenNames();
+            for (int i=0; i<kidNames.length; i++)
+                if (kidNames[i].equals(nodeName))
+                    return childSpi(kidNames[i]);
+        }
+        return null;
+!!!9421442.java!!!	toString() : String
+        return (this.isUserNode() ? "User" : "System") +
+               " Preference Node: " + this.absolutePath();
+!!!9421570.java!!!	sync() : void
+        sync2();
+!!!9421698.java!!!	sync2() : void
+        AbstractPreferences[] cachedKids;
+
+        synchronized(lock) {
+            if (removed)
+                throw new IllegalStateException("Node has been removed");
+            syncSpi();
+            cachedKids = cachedChildren();
+        }
+
+        for (int i=0; i<cachedKids.length; i++)
+            cachedKids[i].sync2();
+!!!9421954.java!!!	flush() : void
+        flush2();
+!!!9422082.java!!!	flush2() : void
+        AbstractPreferences[] cachedKids;
+
+        synchronized(lock) {
+            flushSpi();
+            if(removed)
+                return;
+            cachedKids = cachedChildren();
+        }
+
+        for (int i = 0; i < cachedKids.length; i++)
+            cachedKids[i].flush2();
+!!!9422338.java!!!	isRemoved() : boolean
+        synchronized(lock) {
+            return removed;
+        }
+!!!9423490.java!!!	startEventDispatchThreadIfNecessary() : void
+        if (eventDispatchThread == null) {
+            // XXX Log "Starting event dispatch thread"
+            eventDispatchThread = new EventDispatchThread();
+            eventDispatchThread.setDaemon(true);
+            eventDispatchThread.start();
+        }
+!!!9423618.java!!!	prefListeners() : PreferenceChangeListener
+        synchronized(lock) {
+            return prefListeners;
+        }
+!!!9423746.java!!!	nodeListeners() : NodeChangeListener
+        synchronized(lock) {
+            return nodeListeners;
+        }
+!!!9423874.java!!!	enqueuePreferenceChangeEvent(inout key : String, inout newValue : String) : void
+        if (prefListeners.length != 0) {
+            synchronized(eventQueue) {
+                eventQueue.add(new PreferenceChangeEvent(this, key, newValue));
+                eventQueue.notify();
+            }
+        }
+!!!9424002.java!!!	enqueueNodeAddedEvent(inout child : Preferences) : void
+        if (nodeListeners.length != 0) {
+            synchronized(eventQueue) {
+                eventQueue.add(new NodeAddedEvent(this, child));
+                eventQueue.notify();
+            }
+        }
+!!!9424130.java!!!	enqueueNodeRemovedEvent(inout child : Preferences) : void
+        if (nodeListeners.length != 0) {
+            synchronized(eventQueue) {
+                eventQueue.add(new NodeRemovedEvent(this, child));
+                eventQueue.notify();
+            }
+        }
+!!!9424258.java!!!	exportNode(inout os : OutputStream) : void
+        XmlSupport.export(os, this, false);
+!!!9424386.java!!!	exportSubtree(inout os : OutputStream) : void
+        XmlSupport.export(os, this, true);

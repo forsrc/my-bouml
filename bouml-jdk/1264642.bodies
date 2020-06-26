@@ -1,0 +1,432 @@
+class BufferStrategyPaintManager
+!!!10435714.java!!!	getGetBufferStrategyMethod() : Method
+        if (COMPONENT_GET_BUFFER_STRATEGY_METHOD == null) {
+            getMethods();
+        }
+        return COMPONENT_GET_BUFFER_STRATEGY_METHOD;
+!!!10435842.java!!!	getCreateBufferStrategyMethod() : Method
+        if (COMPONENT_CREATE_BUFFER_STRATEGY_METHOD == null) {
+            getMethods();
+        }
+        return COMPONENT_CREATE_BUFFER_STRATEGY_METHOD;
+!!!10435970.java!!!	getMethods() : void
+        java.security.AccessController.doPrivileged(
+                            new java.security.PrivilegedAction<Object>() {
+            public Object run() {
+                try {
+                    COMPONENT_CREATE_BUFFER_STRATEGY_METHOD = Component.class.
+                              getDeclaredMethod("createBufferStrategy",
+                                                new Class[] { int.class,
+                                                BufferCapabilities.class });
+                    COMPONENT_CREATE_BUFFER_STRATEGY_METHOD.
+                                            setAccessible(true);
+                    COMPONENT_GET_BUFFER_STRATEGY_METHOD = Component.class.
+                              getDeclaredMethod("getBufferStrategy");
+                    COMPONENT_GET_BUFFER_STRATEGY_METHOD.setAccessible(true);
+                } catch (SecurityException e) {
+                    assert false;
+                } catch (NoSuchMethodException nsme) {
+                    assert false;
+                }
+                return null;
+            }
+        });
+!!!10436098.java!!!	BufferStrategyPaintManager()
+        bufferInfos = new ArrayList<BufferInfo>(1);
+!!!10436226.java!!!	dispose() : void
+        // dipose can be invoked at any random time. To avoid
+        // threading dependancies we do the actual diposing via an
+        // invokeLater.
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                java.util.List<BufferInfo> bufferInfos;
+                synchronized(BufferStrategyPaintManager.this) {
+                    while (showing) {
+                        try {
+                            BufferStrategyPaintManager.this.wait();
+                        } catch (InterruptedException ie) {
+                        }
+                    }
+                    bufferInfos = BufferStrategyPaintManager.this.bufferInfos;
+                    BufferStrategyPaintManager.this.bufferInfos = null;
+                }
+                dispose(bufferInfos);
+            }
+        });
+!!!10436354.java!!!	dispose(inout bufferInfos : List) : void
+        if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+            LOGGER.finer("BufferStrategyPaintManager disposed",
+                         new RuntimeException());
+        }
+        if (bufferInfos != null) {
+            for (BufferInfo bufferInfo : bufferInfos) {
+                bufferInfo.dispose();
+            }
+        }
+!!!10436482.java!!!	show(inout c : Container, in x : int, in y : int, in w : int, in h : int) : boolean
+        synchronized(this) {
+            if (painting) {
+                // Don't show from backbuffer while in the process of
+                // painting.
+                return false;
+            }
+            showing = true;
+        }
+        try {
+            BufferInfo info = getBufferInfo(c);
+            BufferStrategy bufferStrategy;
+            if (info != null && info.isInSync() &&
+                (bufferStrategy = info.getBufferStrategy(false)) != null) {
+                SubRegionShowable bsSubRegion =
+                        (SubRegionShowable)bufferStrategy;
+                boolean paintAllOnExpose = info.getPaintAllOnExpose();
+                info.setPaintAllOnExpose(false);
+                if (bsSubRegion.showIfNotLost(x, y, (x + w), (y + h))) {
+                    return !paintAllOnExpose;
+                }
+                // Mark the buffer as needing to be repainted.  We don't
+                // immediately do a repaint as this method will return false
+                // indicating a PaintEvent should be generated which will
+                // trigger a complete repaint.
+                bufferInfo.setContentsLostDuringExpose(true);
+            }
+        }
+        finally {
+            synchronized(this) {
+                showing = false;
+                notifyAll();
+            }
+        }
+        return false;
+!!!10436610.java!!!	paint(inout paintingComponent : JComponent, inout bufferComponent : JComponent, inout g : Graphics, in x : int, in y : int, in w : int, in h : int) : boolean
+        Container root = fetchRoot(paintingComponent);
+
+        if (prepare(paintingComponent, root, true, x, y, w, h)) {
+            if ((g instanceof SunGraphics2D) &&
+                    ((SunGraphics2D)g).getDestination() == root) {
+                // BufferStrategy may have already constrained the Graphics. To
+                // account for that we revert the constrain, then apply a
+                // constrain for Swing on top of that.
+                int cx = ((SunGraphics2D)bsg).constrainX;
+                int cy = ((SunGraphics2D)bsg).constrainY;
+                if (cx != 0 || cy != 0) {
+                    bsg.translate(-cx, -cy);
+                }
+                ((SunGraphics2D)bsg).constrain(xOffset + cx, yOffset + cy,
+                                               x + w, y + h);
+                bsg.setClip(x, y, w, h);
+                paintingComponent.paintToOffscreen(bsg, x, y, w, h,
+                                                   x + w, y + h);
+                accumulate(xOffset + x, yOffset + y, w, h);
+                return true;
+            } else {
+                // Assume they are going to eventually render to the screen.
+                // This disables showing from backbuffer until a complete
+                // repaint occurs.
+                bufferInfo.setInSync(false);
+                // Fall through to old rendering.
+            }
+        }
+        // Invalid root, do what Swing has always done.
+        if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+            LOGGER.finer("prepare failed");
+        }
+        return super.paint(paintingComponent, bufferComponent, g, x, y, w, h);
+!!!10436738.java!!!	copyArea(inout c : JComponent, inout g : Graphics, in x : int, in y : int, in w : int, in h : int, in deltaX : int, in deltaY : int, inout clip : boolean) : void
+        // Note: this method is only called internally and we know that
+        // g is from a heavyweight Component, so no check is necessary as
+        // it is in paint() above.
+        //
+        // If the buffer isn't in sync there is no point in doing a copyArea,
+        // it has garbage.
+        Container root = fetchRoot(c);
+
+        if (prepare(c, root, false, 0, 0, 0, 0) && bufferInfo.isInSync()) {
+            if (clip) {
+                Rectangle cBounds = c.getVisibleRect();
+                int relX = xOffset + x;
+                int relY = yOffset + y;
+                bsg.clipRect(xOffset + cBounds.x,
+                             yOffset + cBounds.y,
+                             cBounds.width, cBounds.height);
+                bsg.copyArea(relX, relY, w, h, deltaX, deltaY);
+            }
+            else {
+                bsg.copyArea(xOffset + x, yOffset + y, w, h, deltaX,
+                             deltaY);
+            }
+            accumulate(x + xOffset + deltaX, y + yOffset + deltaY, w, h);
+        } else {
+            if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                LOGGER.finer("copyArea: prepare failed or not in sync");
+            }
+            // Prepare failed, or not in sync. By calling super.copyArea
+            // we'll copy on screen. We need to flush any pending paint to
+            // the screen otherwise we'll do a copyArea on the wrong thing.
+            if (!flushAccumulatedRegion()) {
+                // Flush failed, copyArea will be copying garbage,
+                // force repaint of all.
+                rootJ.repaint();
+            } else {
+                super.copyArea(c, g, x, y, w, h, deltaX, deltaY, clip);
+            }
+        }
+!!!10436866.java!!!	beginPaint() : void
+        synchronized(this) {
+            painting = true;
+            // Make sure another thread isn't attempting to show from
+            // the back buffer.
+            while(showing) {
+                try {
+                    wait();
+                } catch (InterruptedException ie) {
+                }
+            }
+        }
+        if (LOGGER.isLoggable(PlatformLogger.Level.FINEST)) {
+            LOGGER.finest("beginPaint");
+        }
+        // Reset the area that needs to be painted.
+        resetAccumulated();
+!!!10436994.java!!!	endPaint() : void
+        if (LOGGER.isLoggable(PlatformLogger.Level.FINEST)) {
+            LOGGER.finest("endPaint: region " + accumulatedX + " " +
+                       accumulatedY + " " +  accumulatedMaxX + " " +
+                       accumulatedMaxY);
+        }
+        if (painting) {
+            if (!flushAccumulatedRegion()) {
+                if (!isRepaintingRoot()) {
+                    repaintRoot(rootJ);
+                }
+                else {
+                    // Contents lost twice in a row, punt.
+                    resetDoubleBufferPerWindow();
+                    // In case we've left junk on the screen, force a repaint.
+                    rootJ.repaint();
+                }
+            }
+        }
+
+        BufferInfo toDispose = null;
+        synchronized(this) {
+            painting = false;
+            if (disposeBufferOnEnd) {
+                disposeBufferOnEnd = false;
+                toDispose = bufferInfo;
+                bufferInfos.remove(toDispose);
+            }
+        }
+        if (toDispose != null) {
+            toDispose.dispose();
+        }
+!!!10437122.java!!!	flushAccumulatedRegion() : boolean
+        boolean success = true;
+        if (accumulatedX != Integer.MAX_VALUE) {
+            SubRegionShowable bsSubRegion = (SubRegionShowable)bufferStrategy;
+            boolean contentsLost = bufferStrategy.contentsLost();
+            if (!contentsLost) {
+                bsSubRegion.show(accumulatedX, accumulatedY,
+                                 accumulatedMaxX, accumulatedMaxY);
+                contentsLost = bufferStrategy.contentsLost();
+            }
+            if (contentsLost) {
+                if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                    LOGGER.finer("endPaint: contents lost");
+                }
+                // Shown region was bogus, mark buffer as out of sync.
+                bufferInfo.setInSync(false);
+                success = false;
+            }
+        }
+        resetAccumulated();
+        return success;
+!!!10437250.java!!!	resetAccumulated() : void
+        accumulatedX = Integer.MAX_VALUE;
+        accumulatedY = Integer.MAX_VALUE;
+        accumulatedMaxX = 0;
+        accumulatedMaxY = 0;
+!!!10437378.java!!!	doubleBufferingChanged(in rootPane : JRootPane) : void
+        if ((!rootPane.isDoubleBuffered() ||
+                !rootPane.getUseTrueDoubleBuffering()) &&
+                rootPane.getParent() != null) {
+            if (!SwingUtilities.isEventDispatchThread()) {
+                Runnable updater = new Runnable() {
+                    public void run() {
+                        doubleBufferingChanged0(rootPane);
+                    }
+                };
+                SwingUtilities.invokeLater(updater);
+            }
+            else {
+                doubleBufferingChanged0(rootPane);
+            }
+        }
+!!!10437506.java!!!	doubleBufferingChanged0(inout rootPane : JRootPane) : void
+        // This will only happen on the EDT.
+        BufferInfo info;
+        synchronized(this) {
+            // Make sure another thread isn't attempting to show from
+            // the back buffer.
+            while(showing) {
+                try {
+                    wait();
+                } catch (InterruptedException ie) {
+                }
+            }
+            info = getBufferInfo(rootPane.getParent());
+            if (painting && bufferInfo == info) {
+                // We're in the process of painting and the user grabbed
+                // the Graphics. If we dispose now, endPaint will attempt
+                // to show a bogus BufferStrategy. Set a flag so that
+                // endPaint knows it needs to dispose this buffer.
+                disposeBufferOnEnd = true;
+                info = null;
+            } else if (info != null) {
+                bufferInfos.remove(info);
+            }
+        }
+        if (info != null) {
+            info.dispose();
+        }
+!!!10437634.java!!!	prepare(inout c : JComponent, inout root : Container, inout isPaint : boolean, in x : int, in y : int, in w : int, in h : int) : boolean
+        if (bsg != null) {
+            bsg.dispose();
+            bsg = null;
+        }
+        bufferStrategy = null;
+        if (root != null) {
+            boolean contentsLost = false;
+            BufferInfo bufferInfo = getBufferInfo(root);
+            if (bufferInfo == null) {
+                contentsLost = true;
+                bufferInfo = new BufferInfo(root);
+                bufferInfos.add(bufferInfo);
+                if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                    LOGGER.finer("prepare: new BufferInfo: " + root);
+                }
+            }
+            this.bufferInfo = bufferInfo;
+            if (!bufferInfo.hasBufferStrategyChanged()) {
+                bufferStrategy = bufferInfo.getBufferStrategy(true);
+                if (bufferStrategy != null) {
+                    bsg = bufferStrategy.getDrawGraphics();
+                    if (bufferStrategy.contentsRestored()) {
+                        contentsLost = true;
+                        if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                            LOGGER.finer("prepare: contents restored in prepare");
+                        }
+                    }
+                }
+                else {
+                    // Couldn't create BufferStrategy, fallback to normal
+                    // painting.
+                    return false;
+                }
+                if (bufferInfo.getContentsLostDuringExpose()) {
+                    contentsLost = true;
+                    bufferInfo.setContentsLostDuringExpose(false);
+                    if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                        LOGGER.finer("prepare: contents lost on expose");
+                    }
+                }
+                if (isPaint && c == rootJ && x == 0 && y == 0 &&
+                      c.getWidth() == w && c.getHeight() == h) {
+                    bufferInfo.setInSync(true);
+                }
+                else if (contentsLost) {
+                    // We either recreated the BufferStrategy, or the contents
+                    // of the buffer strategy were restored.  We need to
+                    // repaint the root pane so that the back buffer is in sync
+                    // again.
+                    bufferInfo.setInSync(false);
+                    if (!isRepaintingRoot()) {
+                        repaintRoot(rootJ);
+                    }
+                    else {
+                        // Contents lost twice in a row, punt
+                        resetDoubleBufferPerWindow();
+                    }
+                }
+                return (bufferInfos != null);
+            }
+        }
+        return false;
+!!!10437762.java!!!	fetchRoot(inout c : JComponent) : Container
+        boolean encounteredHW = false;
+        rootJ = c;
+        Container root = c;
+        xOffset = yOffset = 0;
+        while (root != null &&
+               (!(root instanceof Window) &&
+                !SunToolkit.isInstanceOf(root, "java.applet.Applet"))) {
+            xOffset += root.getX();
+            yOffset += root.getY();
+            root = root.getParent();
+            if (root != null) {
+                if (root instanceof JComponent) {
+                    rootJ = (JComponent)root;
+                }
+                else if (!root.isLightweight()) {
+                    if (!encounteredHW) {
+                        encounteredHW = true;
+                    }
+                    else {
+                        // We've encountered two hws now and may have
+                        // a containment hierarchy with lightweights containing
+                        // heavyweights containing other lightweights.
+                        // Heavyweights poke holes in lightweight
+                        // rendering so that if we call show on the BS
+                        // (which is associated with the Window) you will
+                        // not see the contents over any child
+                        // heavyweights.  If we didn't do this when we
+                        // went to show the descendants of the nested hw
+                        // you would see nothing, so, we bail out here.
+                        return null;
+                    }
+                }
+            }
+        }
+        if ((root instanceof RootPaneContainer) &&
+            (rootJ instanceof JRootPane)) {
+            // We're in a Swing heavyeight (JFrame/JWindow...), use double
+            // buffering if double buffering enabled on the JRootPane and
+            // the JRootPane wants true double buffering.
+            if (rootJ.isDoubleBuffered() &&
+                    ((JRootPane)rootJ).getUseTrueDoubleBuffering()) {
+                // Whether or not a component is double buffered is a
+                // bit tricky with Swing. This gives a good approximation
+                // of the various ways to turn on double buffering for
+                // components.
+                return root;
+            }
+        }
+        // Don't do true double buffering.
+        return null;
+!!!10437890.java!!!	resetDoubleBufferPerWindow() : void
+        if (bufferInfos != null) {
+            dispose(bufferInfos);
+            bufferInfos = null;
+            repaintManager.setPaintManager(null);
+        }
+!!!10438018.java!!!	getBufferInfo(inout root : Container) : BufferStrategyPaintManager::BufferInfo
+        for (int counter = bufferInfos.size() - 1; counter >= 0; counter--) {
+            BufferInfo bufferInfo = bufferInfos.get(counter);
+            Container biRoot = bufferInfo.getRoot();
+            if (biRoot == null) {
+                // Window gc'ed
+                bufferInfos.remove(counter);
+                if (LOGGER.isLoggable(PlatformLogger.Level.FINER)) {
+                    LOGGER.finer("BufferInfo pruned, root null");
+                }
+            }
+            else if (biRoot == root) {
+                return bufferInfo;
+            }
+        }
+        return null;
+!!!10438146.java!!!	accumulate(in x : int, in y : int, in w : int, in h : int) : void
+        accumulatedX = Math.min(x, accumulatedX);
+        accumulatedY = Math.min(y, accumulatedY);
+        accumulatedMaxX = Math.max(accumulatedMaxX, x + w);
+        accumulatedMaxY = Math.max(accumulatedMaxY, y + h);

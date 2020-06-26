@@ -1,0 +1,538 @@
+class CopyOnWriteArrayList
+!!!9141122.java!!!	getArray() : Object
+        return array;
+!!!9141250.java!!!	setArray(inout a : Object [[]]) : void
+        array = a;
+!!!9141378.java!!!	CopyOnWriteArrayList()
+        setArray(new Object[0]);
+!!!9141506.java!!!	CopyOnWriteArrayList(inout c : Collection)
+        Object[] elements;
+        if (c.getClass() == CopyOnWriteArrayList.class)
+            elements = ((CopyOnWriteArrayList<?>)c).getArray();
+        else {
+            elements = c.toArray();
+            // c.toArray might (incorrectly) not return Object[] (see 6260652)
+            if (elements.getClass() != Object[].class)
+                elements = Arrays.copyOf(elements, elements.length, Object[].class);
+        }
+        setArray(elements);
+!!!9141634.java!!!	CopyOnWriteArrayList(inout toCopyIn : E [[]])
+        setArray(Arrays.copyOf(toCopyIn, toCopyIn.length, Object[].class));
+!!!9141762.java!!!	size() : int
+        return getArray().length;
+!!!9141890.java!!!	isEmpty() : boolean
+        return size() == 0;
+!!!9142018.java!!!	eq(inout o1 : Object, inout o2 : Object) : boolean
+        return (o1 == null) ? o2 == null : o1.equals(o2);
+!!!9142146.java!!!	indexOf(inout o : Object, inout elements : Object [[]], in index : int, in fence : int) : int
+        if (o == null) {
+            for (int i = index; i < fence; i++)
+                if (elements[i] == null)
+                    return i;
+        } else {
+            for (int i = index; i < fence; i++)
+                if (o.equals(elements[i]))
+                    return i;
+        }
+        return -1;
+!!!9142274.java!!!	lastIndexOf(inout o : Object, inout elements : Object [[]], in index : int) : int
+        if (o == null) {
+            for (int i = index; i >= 0; i--)
+                if (elements[i] == null)
+                    return i;
+        } else {
+            for (int i = index; i >= 0; i--)
+                if (o.equals(elements[i]))
+                    return i;
+        }
+        return -1;
+!!!9142402.java!!!	contains(inout o : Object) : boolean
+        Object[] elements = getArray();
+        return indexOf(o, elements, 0, elements.length) >= 0;
+!!!9142530.java!!!	indexOf(inout o : Object) : int
+        Object[] elements = getArray();
+        return indexOf(o, elements, 0, elements.length);
+!!!9142658.java!!!	indexOf(inout e : E, in index : int) : int
+        Object[] elements = getArray();
+        return indexOf(e, elements, index, elements.length);
+!!!9142786.java!!!	lastIndexOf(inout o : Object) : int
+        Object[] elements = getArray();
+        return lastIndexOf(o, elements, elements.length - 1);
+!!!9142914.java!!!	lastIndexOf(inout e : E, in index : int) : int
+        Object[] elements = getArray();
+        return lastIndexOf(e, elements, index);
+!!!9143042.java!!!	clone() : Object
+        try {
+            @SuppressWarnings("unchecked")
+            CopyOnWriteArrayList<E> clone =
+                (CopyOnWriteArrayList<E>) super.clone();
+            clone.resetLock();
+            return clone;
+        } catch (CloneNotSupportedException e) {
+            // this shouldn't happen, since we are Cloneable
+            throw new InternalError();
+        }
+!!!9143170.java!!!	toArray() : Object
+        Object[] elements = getArray();
+        return Arrays.copyOf(elements, elements.length);
+!!!9143298.java!!!	toArray(inout a : T [[]]) : T
+        Object[] elements = getArray();
+        int len = elements.length;
+        if (a.length < len)
+            return (T[]) Arrays.copyOf(elements, len, a.getClass());
+        else {
+            System.arraycopy(elements, 0, a, 0, len);
+            if (a.length > len)
+                a[len] = null;
+            return a;
+        }
+!!!9143426.java!!!	get(inout a : Object [[]], in index : int) : E
+        return (E) a[index];
+!!!9143554.java!!!	get(in index : int) : E
+        return get(getArray(), index);
+!!!9143682.java!!!	set(in index : int, inout element : E) : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            E oldValue = get(elements, index);
+
+            if (oldValue != element) {
+                int len = elements.length;
+                Object[] newElements = Arrays.copyOf(elements, len);
+                newElements[index] = element;
+                setArray(newElements);
+            } else {
+                // Not quite a no-op; ensures volatile write semantics
+                setArray(elements);
+            }
+            return oldValue;
+        } finally {
+            lock.unlock();
+        }
+!!!9143810.java!!!	add(inout e : E) : boolean
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            Object[] newElements = Arrays.copyOf(elements, len + 1);
+            newElements[len] = e;
+            setArray(newElements);
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9143938.java!!!	add(in index : int, inout element : E) : void
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (index > len || index < 0)
+                throw new IndexOutOfBoundsException("Index: "+index+
+                                                    ", Size: "+len);
+            Object[] newElements;
+            int numMoved = len - index;
+            if (numMoved == 0)
+                newElements = Arrays.copyOf(elements, len + 1);
+            else {
+                newElements = new Object[len + 1];
+                System.arraycopy(elements, 0, newElements, 0, index);
+                System.arraycopy(elements, index, newElements, index + 1,
+                                 numMoved);
+            }
+            newElements[index] = element;
+            setArray(newElements);
+        } finally {
+            lock.unlock();
+        }
+!!!9144066.java!!!	remove(in index : int) : E
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            E oldValue = get(elements, index);
+            int numMoved = len - index - 1;
+            if (numMoved == 0)
+                setArray(Arrays.copyOf(elements, len - 1));
+            else {
+                Object[] newElements = new Object[len - 1];
+                System.arraycopy(elements, 0, newElements, 0, index);
+                System.arraycopy(elements, index + 1, newElements, index,
+                                 numMoved);
+                setArray(newElements);
+            }
+            return oldValue;
+        } finally {
+            lock.unlock();
+        }
+!!!9144194.java!!!	remove(inout o : Object) : boolean
+        Object[] snapshot = getArray();
+        int index = indexOf(o, snapshot, 0, snapshot.length);
+        return (index < 0) ? false : remove(o, snapshot, index);
+!!!9144322.java!!!	remove(inout o : Object, inout snapshot : Object [[]], in index : int) : boolean
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] current = getArray();
+            int len = current.length;
+            if (snapshot != current) findIndex: {
+                int prefix = Math.min(index, len);
+                for (int i = 0; i < prefix; i++) {
+                    if (current[i] != snapshot[i] && eq(o, current[i])) {
+                        index = i;
+                        break findIndex;
+                    }
+                }
+                if (index >= len)
+                    return false;
+                if (current[index] == o)
+                    break findIndex;
+                index = indexOf(o, current, index, len);
+                if (index < 0)
+                    return false;
+            }
+            Object[] newElements = new Object[len - 1];
+            System.arraycopy(current, 0, newElements, 0, index);
+            System.arraycopy(current, index + 1,
+                             newElements, index,
+                             len - index - 1);
+            setArray(newElements);
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9144450.java!!!	removeRange(in fromIndex : int, in toIndex : int) : void
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+
+            if (fromIndex < 0 || toIndex > len || toIndex < fromIndex)
+                throw new IndexOutOfBoundsException();
+            int newlen = len - (toIndex - fromIndex);
+            int numMoved = len - toIndex;
+            if (numMoved == 0)
+                setArray(Arrays.copyOf(elements, newlen));
+            else {
+                Object[] newElements = new Object[newlen];
+                System.arraycopy(elements, 0, newElements, 0, fromIndex);
+                System.arraycopy(elements, toIndex, newElements,
+                                 fromIndex, numMoved);
+                setArray(newElements);
+            }
+        } finally {
+            lock.unlock();
+        }
+!!!9144578.java!!!	addIfAbsent(inout e : E) : boolean
+        Object[] snapshot = getArray();
+        return indexOf(e, snapshot, 0, snapshot.length) >= 0 ? false :
+            addIfAbsent(e, snapshot);
+!!!9144706.java!!!	addIfAbsent(inout e : E, inout snapshot : Object [[]]) : boolean
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] current = getArray();
+            int len = current.length;
+            if (snapshot != current) {
+                // Optimize for lost race to another addXXX operation
+                int common = Math.min(snapshot.length, len);
+                for (int i = 0; i < common; i++)
+                    if (current[i] != snapshot[i] && eq(e, current[i]))
+                        return false;
+                if (indexOf(e, current, common, len) >= 0)
+                        return false;
+            }
+            Object[] newElements = Arrays.copyOf(current, len + 1);
+            newElements[len] = e;
+            setArray(newElements);
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9144834.java!!!	containsAll(inout c : Collection) : boolean
+        Object[] elements = getArray();
+        int len = elements.length;
+        for (Object e : c) {
+            if (indexOf(e, elements, 0, len) < 0)
+                return false;
+        }
+        return true;
+!!!9144962.java!!!	removeAll(inout c : Collection) : boolean
+        if (c == null) throw new NullPointerException();
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (len != 0) {
+                // temp array holds those elements we know we want to keep
+                int newlen = 0;
+                Object[] temp = new Object[len];
+                for (int i = 0; i < len; ++i) {
+                    Object element = elements[i];
+                    if (!c.contains(element))
+                        temp[newlen++] = element;
+                }
+                if (newlen != len) {
+                    setArray(Arrays.copyOf(temp, newlen));
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            lock.unlock();
+        }
+!!!9145090.java!!!	retainAll(inout c : Collection) : boolean
+        if (c == null) throw new NullPointerException();
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (len != 0) {
+                // temp array holds those elements we know we want to keep
+                int newlen = 0;
+                Object[] temp = new Object[len];
+                for (int i = 0; i < len; ++i) {
+                    Object element = elements[i];
+                    if (c.contains(element))
+                        temp[newlen++] = element;
+                }
+                if (newlen != len) {
+                    setArray(Arrays.copyOf(temp, newlen));
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            lock.unlock();
+        }
+!!!9145218.java!!!	addAllAbsent(inout c : Collection) : int
+        Object[] cs = c.toArray();
+        if (cs.length == 0)
+            return 0;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            int added = 0;
+            // uniquify and compact elements in cs
+            for (int i = 0; i < cs.length; ++i) {
+                Object e = cs[i];
+                if (indexOf(e, elements, 0, len) < 0 &&
+                    indexOf(e, cs, 0, added) < 0)
+                    cs[added++] = e;
+            }
+            if (added > 0) {
+                Object[] newElements = Arrays.copyOf(elements, len + added);
+                System.arraycopy(cs, 0, newElements, len, added);
+                setArray(newElements);
+            }
+            return added;
+        } finally {
+            lock.unlock();
+        }
+!!!9145346.java!!!	clear() : void
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            setArray(new Object[0]);
+        } finally {
+            lock.unlock();
+        }
+!!!9145474.java!!!	addAll(inout c : Collection) : boolean
+        Object[] cs = (c.getClass() == CopyOnWriteArrayList.class) ?
+            ((CopyOnWriteArrayList<?>)c).getArray() : c.toArray();
+        if (cs.length == 0)
+            return false;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (len == 0 && cs.getClass() == Object[].class)
+                setArray(cs);
+            else {
+                Object[] newElements = Arrays.copyOf(elements, len + cs.length);
+                System.arraycopy(cs, 0, newElements, len, cs.length);
+                setArray(newElements);
+            }
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9145602.java!!!	addAll(in index : int, inout c : Collection) : boolean
+        Object[] cs = c.toArray();
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (index > len || index < 0)
+                throw new IndexOutOfBoundsException("Index: "+index+
+                                                    ", Size: "+len);
+            if (cs.length == 0)
+                return false;
+            int numMoved = len - index;
+            Object[] newElements;
+            if (numMoved == 0)
+                newElements = Arrays.copyOf(elements, len + cs.length);
+            else {
+                newElements = new Object[len + cs.length];
+                System.arraycopy(elements, 0, newElements, 0, index);
+                System.arraycopy(elements, index,
+                                 newElements, index + cs.length,
+                                 numMoved);
+            }
+            System.arraycopy(cs, 0, newElements, index, cs.length);
+            setArray(newElements);
+            return true;
+        } finally {
+            lock.unlock();
+        }
+!!!9145730.java!!!	forEach(inout action : Consumer) : void
+        if (action == null) throw new NullPointerException();
+        Object[] elements = getArray();
+        int len = elements.length;
+        for (int i = 0; i < len; ++i) {
+            @SuppressWarnings("unchecked") E e = (E) elements[i];
+            action.accept(e);
+        }
+!!!9145858.java!!!	removeIf(inout filter : Predicate) : boolean
+        if (filter == null) throw new NullPointerException();
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (len != 0) {
+                int newlen = 0;
+                Object[] temp = new Object[len];
+                for (int i = 0; i < len; ++i) {
+                    @SuppressWarnings("unchecked") E e = (E) elements[i];
+                    if (!filter.test(e))
+                        temp[newlen++] = e;
+                }
+                if (newlen != len) {
+                    setArray(Arrays.copyOf(temp, newlen));
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            lock.unlock();
+        }
+!!!9145986.java!!!	replaceAll(inout operator : UnaryOperator) : void
+        if (operator == null) throw new NullPointerException();
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            Object[] newElements = Arrays.copyOf(elements, len);
+            for (int i = 0; i < len; ++i) {
+                @SuppressWarnings("unchecked") E e = (E) elements[i];
+                newElements[i] = operator.apply(e);
+            }
+            setArray(newElements);
+        } finally {
+            lock.unlock();
+        }
+!!!9146114.java!!!	sort(inout c : Comparator) : void
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            Object[] newElements = Arrays.copyOf(elements, elements.length);
+            @SuppressWarnings("unchecked") E[] es = (E[])newElements;
+            Arrays.sort(es, c);
+            setArray(newElements);
+        } finally {
+            lock.unlock();
+        }
+!!!9146242.java!!!	writeObject(inout s : ObjectOutputStream) : void
+
+        s.defaultWriteObject();
+
+        Object[] elements = getArray();
+        // Write out array length
+        s.writeInt(elements.length);
+
+        // Write out all elements in the proper order.
+        for (Object element : elements)
+            s.writeObject(element);
+!!!9146370.java!!!	readObject(inout s : ObjectInputStream) : void
+
+        s.defaultReadObject();
+
+        // bind to new lock
+        resetLock();
+
+        // Read in array length and allocate array
+        int len = s.readInt();
+        Object[] elements = new Object[len];
+
+        // Read in all elements in the proper order.
+        for (int i = 0; i < len; i++)
+            elements[i] = s.readObject();
+        setArray(elements);
+!!!9146498.java!!!	toString() : String
+        return Arrays.toString(getArray());
+!!!9146626.java!!!	equals(inout o : Object) : boolean
+        if (o == this)
+            return true;
+        if (!(o instanceof List))
+            return false;
+
+        List<?> list = (List<?>)(o);
+        Iterator<?> it = list.iterator();
+        Object[] elements = getArray();
+        int len = elements.length;
+        for (int i = 0; i < len; ++i)
+            if (!it.hasNext() || !eq(elements[i], it.next()))
+                return false;
+        if (it.hasNext())
+            return false;
+        return true;
+!!!9146754.java!!!	hashCode() : int
+        int hashCode = 1;
+        Object[] elements = getArray();
+        int len = elements.length;
+        for (int i = 0; i < len; ++i) {
+            Object obj = elements[i];
+            hashCode = 31*hashCode + (obj==null ? 0 : obj.hashCode());
+        }
+        return hashCode;
+!!!9146882.java!!!	iterator() : Iterator
+        return new COWIterator<E>(getArray(), 0);
+!!!9147010.java!!!	listIterator() : ListIterator
+        return new COWIterator<E>(getArray(), 0);
+!!!9147138.java!!!	listIterator(in index : int) : ListIterator
+        Object[] elements = getArray();
+        int len = elements.length;
+        if (index < 0 || index > len)
+            throw new IndexOutOfBoundsException("Index: "+index);
+
+        return new COWIterator<E>(elements, index);
+!!!9147266.java!!!	spliterator() : Spliterator
+        return Spliterators.spliterator
+            (getArray(), Spliterator.IMMUTABLE | Spliterator.ORDERED);
+!!!9148802.java!!!	subList(in fromIndex : int, in toIndex : int) : List
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            Object[] elements = getArray();
+            int len = elements.length;
+            if (fromIndex < 0 || toIndex > len || fromIndex > toIndex)
+                throw new IndexOutOfBoundsException();
+            return new COWSubList<E>(this, fromIndex, toIndex);
+        } finally {
+            lock.unlock();
+        }
+!!!9152898.java!!!	resetLock() : void
+        UNSAFE.putObjectVolatile(this, lockOffset, new ReentrantLock());

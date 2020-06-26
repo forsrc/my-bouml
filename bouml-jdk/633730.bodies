@@ -1,0 +1,699 @@
+class FastStringBuffer
+!!!5669634.java!!!	FastStringBuffer(in initChunkBits : int, in maxChunkBits : int, in rebundleBits : int)
+    if(DEBUG_FORCE_INIT_BITS!=0) initChunkBits=DEBUG_FORCE_INIT_BITS;
+
+    // %REVIEW%
+    // Should this force to larger value, or smaller? Smaller less efficient, but if
+    // someone requested variable mode it's because they care about storage space.
+    // On the other hand, given the other changes I'm making, odds are that we should
+    // adopt the larger size. Dither, dither, dither... This is just stopgap workaround
+    // anyway; we need a permanant solution.
+    //
+    if(DEBUG_FORCE_FIXED_CHUNKSIZE) maxChunkBits=initChunkBits;
+    //if(DEBUG_FORCE_FIXED_CHUNKSIZE) initChunkBits=maxChunkBits;
+
+    m_array = new char[16][];
+
+    // Don't bite off more than we're prepared to swallow!
+    if (initChunkBits > maxChunkBits)
+      initChunkBits = maxChunkBits;
+
+    m_chunkBits = initChunkBits;
+    m_maxChunkBits = maxChunkBits;
+    m_rebundleBits = rebundleBits;
+    m_chunkSize = 1 << (initChunkBits);
+    m_chunkMask = m_chunkSize - 1;
+    m_array[0] = new char[m_chunkSize];
+!!!5669762.java!!!	FastStringBuffer(in initChunkBits : int, in maxChunkBits : int)
+    this(initChunkBits, maxChunkBits, 2);
+!!!5669890.java!!!	FastStringBuffer(in initChunkBits : int)
+    this(initChunkBits, 15, 2);
+!!!5670018.java!!!	FastStringBuffer()
+
+    // 10 bits is 1K. 15 bits is 32K. Remember that these are character
+    // counts, so actual memory allocation unit is doubled for UTF-16 chars.
+    //
+    // For reference: In the original FastStringBuffer, we simply
+    // overallocated by blocksize (default 1KB) on each buffer-growth.
+    this(10, 15, 2);
+!!!5670146.java!!!	size() : int
+    return (m_lastChunk << m_chunkBits) + m_firstFree;
+!!!5670274.java!!!	length() : int
+    return (m_lastChunk << m_chunkBits) + m_firstFree;
+!!!5670402.java!!!	reset() : void
+
+    m_lastChunk = 0;
+    m_firstFree = 0;
+
+    // Recover the original chunk size
+    FastStringBuffer innermost = this;
+
+    while (innermost.m_innerFSB != null)
+    {
+      innermost = innermost.m_innerFSB;
+    }
+
+    m_chunkBits = innermost.m_chunkBits;
+    m_chunkSize = innermost.m_chunkSize;
+    m_chunkMask = innermost.m_chunkMask;
+
+    // Discard the hierarchy
+    m_innerFSB = null;
+    m_array = new char[16][0];
+    m_array[0] = new char[m_chunkSize];
+!!!5670530.java!!!	setLength(in l : int) : void
+    m_lastChunk = l >>> m_chunkBits;
+
+    if (m_lastChunk == 0 && m_innerFSB != null)
+    {
+      // Replace this FSB with the appropriate inner FSB, truncated
+      m_innerFSB.setLength(l, this);
+    }
+    else
+    {
+      m_firstFree = l & m_chunkMask;
+
+          // There's an edge case if l is an exact multiple of m_chunkBits, which risks leaving
+          // us pointing at the start of a chunk which has not yet been allocated. Rather than
+          // pay the cost of dealing with that in the append loops (more scattered and more
+          // inner-loop), we correct it here by moving to the safe side of that
+          // line -- as we would have left the indexes had we appended up to that point.
+      if(m_firstFree==0 && m_lastChunk>0)
+      {
+        --m_lastChunk;
+        m_firstFree=m_chunkSize;
+      }
+    }
+!!!5670658.java!!!	setLength(in l : int, inout rootFSB : FastStringBuffer) : void
+
+    m_lastChunk = l >>> m_chunkBits;
+
+    if (m_lastChunk == 0 && m_innerFSB != null)
+    {
+      m_innerFSB.setLength(l, rootFSB);
+    }
+    else
+    {
+
+      // Undo encapsulation -- pop the innerFSB data back up to root.
+      // Inefficient, but attempts to keep the code simple.
+      rootFSB.m_chunkBits = m_chunkBits;
+      rootFSB.m_maxChunkBits = m_maxChunkBits;
+      rootFSB.m_rebundleBits = m_rebundleBits;
+      rootFSB.m_chunkSize = m_chunkSize;
+      rootFSB.m_chunkMask = m_chunkMask;
+      rootFSB.m_array = m_array;
+      rootFSB.m_innerFSB = m_innerFSB;
+      rootFSB.m_lastChunk = m_lastChunk;
+
+      // Finally, truncate this sucker.
+      rootFSB.m_firstFree = l & m_chunkMask;
+    }
+!!!5670786.java!!!	toString() : String
+
+    int length = (m_lastChunk << m_chunkBits) + m_firstFree;
+
+    return getString(new StringBuffer(length), 0, 0, length).toString();
+!!!5670914.java!!!	append(in value : char) : void
+
+    char[] chunk;
+
+    // We may have preallocated chunks. If so, all but last should
+    // be at full size.
+    boolean lastchunk = (m_lastChunk + 1 == m_array.length);
+
+    if (m_firstFree < m_chunkSize)  // Simplified test single-character-fits
+      chunk = m_array[m_lastChunk];
+    else
+    {
+
+      // Extend array?
+      int i = m_array.length;
+
+      if (m_lastChunk + 1 == i)
+      {
+        char[][] newarray = new char[i + 16][];
+
+        System.arraycopy(m_array, 0, newarray, 0, i);
+
+        m_array = newarray;
+      }
+
+      // Advance one chunk
+      chunk = m_array[++m_lastChunk];
+
+      if (chunk == null)
+      {
+
+        // Hierarchical encapsulation
+        if (m_lastChunk == 1 << m_rebundleBits
+                && m_chunkBits < m_maxChunkBits)
+        {
+
+          // Should do all the work of both encapsulating
+          // existing data and establishing new sizes/offsets
+          m_innerFSB = new FastStringBuffer(this);
+        }
+
+        // Add a chunk.
+        chunk = m_array[m_lastChunk] = new char[m_chunkSize];
+      }
+
+      m_firstFree = 0;
+    }
+
+    // Space exists in the chunk. Append the character.
+    chunk[m_firstFree++] = value;
+!!!5671042.java!!!	append(inout value : String) : void
+
+    if (value == null)
+      return;
+    int strlen = value.length();
+
+    if (0 == strlen)
+      return;
+
+    int copyfrom = 0;
+    char[] chunk = m_array[m_lastChunk];
+    int available = m_chunkSize - m_firstFree;
+
+    // Repeat while data remains to be copied
+    while (strlen > 0)
+    {
+
+      // Copy what fits
+      if (available > strlen)
+        available = strlen;
+
+      value.getChars(copyfrom, copyfrom + available, m_array[m_lastChunk],
+                     m_firstFree);
+
+      strlen -= available;
+      copyfrom += available;
+
+      // If there's more left, allocate another chunk and continue
+      if (strlen > 0)
+      {
+
+        // Extend array?
+        int i = m_array.length;
+
+        if (m_lastChunk + 1 == i)
+        {
+          char[][] newarray = new char[i + 16][];
+
+          System.arraycopy(m_array, 0, newarray, 0, i);
+
+          m_array = newarray;
+        }
+
+        // Advance one chunk
+        chunk = m_array[++m_lastChunk];
+
+        if (chunk == null)
+        {
+
+          // Hierarchical encapsulation
+          if (m_lastChunk == 1 << m_rebundleBits
+                  && m_chunkBits < m_maxChunkBits)
+          {
+
+            // Should do all the work of both encapsulating
+            // existing data and establishing new sizes/offsets
+            m_innerFSB = new FastStringBuffer(this);
+          }
+
+          // Add a chunk.
+          chunk = m_array[m_lastChunk] = new char[m_chunkSize];
+        }
+
+        available = m_chunkSize;
+        m_firstFree = 0;
+      }
+    }
+
+    // Adjust the insert point in the last chunk, when we've reached it.
+    m_firstFree += available;
+!!!5671170.java!!!	append(inout value : StringBuffer) : void
+
+    if (value == null)
+      return;
+    int strlen = value.length();
+
+    if (0 == strlen)
+      return;
+
+    int copyfrom = 0;
+    char[] chunk = m_array[m_lastChunk];
+    int available = m_chunkSize - m_firstFree;
+
+    // Repeat while data remains to be copied
+    while (strlen > 0)
+    {
+
+      // Copy what fits
+      if (available > strlen)
+        available = strlen;
+
+      value.getChars(copyfrom, copyfrom + available, m_array[m_lastChunk],
+                     m_firstFree);
+
+      strlen -= available;
+      copyfrom += available;
+
+      // If there's more left, allocate another chunk and continue
+      if (strlen > 0)
+      {
+
+        // Extend array?
+        int i = m_array.length;
+
+        if (m_lastChunk + 1 == i)
+        {
+          char[][] newarray = new char[i + 16][];
+
+          System.arraycopy(m_array, 0, newarray, 0, i);
+
+          m_array = newarray;
+        }
+
+        // Advance one chunk
+        chunk = m_array[++m_lastChunk];
+
+        if (chunk == null)
+        {
+
+          // Hierarchical encapsulation
+          if (m_lastChunk == 1 << m_rebundleBits
+                  && m_chunkBits < m_maxChunkBits)
+          {
+
+            // Should do all the work of both encapsulating
+            // existing data and establishing new sizes/offsets
+            m_innerFSB = new FastStringBuffer(this);
+          }
+
+          // Add a chunk.
+          chunk = m_array[m_lastChunk] = new char[m_chunkSize];
+        }
+
+        available = m_chunkSize;
+        m_firstFree = 0;
+      }
+    }
+
+    // Adjust the insert point in the last chunk, when we've reached it.
+    m_firstFree += available;
+!!!5671298.java!!!	append(inout chars : char [[]], in start : int, in length : int) : void
+
+    int strlen = length;
+
+    if (0 == strlen)
+      return;
+
+    int copyfrom = start;
+    char[] chunk = m_array[m_lastChunk];
+    int available = m_chunkSize - m_firstFree;
+
+    // Repeat while data remains to be copied
+    while (strlen > 0)
+    {
+
+      // Copy what fits
+      if (available > strlen)
+        available = strlen;
+
+      System.arraycopy(chars, copyfrom, m_array[m_lastChunk], m_firstFree,
+                       available);
+
+      strlen -= available;
+      copyfrom += available;
+
+      // If there's more left, allocate another chunk and continue
+      if (strlen > 0)
+      {
+
+        // Extend array?
+        int i = m_array.length;
+
+        if (m_lastChunk + 1 == i)
+        {
+          char[][] newarray = new char[i + 16][];
+
+          System.arraycopy(m_array, 0, newarray, 0, i);
+
+          m_array = newarray;
+        }
+
+        // Advance one chunk
+        chunk = m_array[++m_lastChunk];
+
+        if (chunk == null)
+        {
+
+          // Hierarchical encapsulation
+          if (m_lastChunk == 1 << m_rebundleBits
+                  && m_chunkBits < m_maxChunkBits)
+          {
+
+            // Should do all the work of both encapsulating
+            // existing data and establishing new sizes/offsets
+            m_innerFSB = new FastStringBuffer(this);
+          }
+
+          // Add a chunk.
+          chunk = m_array[m_lastChunk] = new char[m_chunkSize];
+        }
+
+        available = m_chunkSize;
+        m_firstFree = 0;
+      }
+    }
+
+    // Adjust the insert point in the last chunk, when we've reached it.
+    m_firstFree += available;
+!!!5671426.java!!!	append(inout value : FastStringBuffer) : void
+
+    // Complicating factor here is that the two buffers may use
+    // different chunk sizes, and even if they're the same we're
+    // probably on a different alignment due to previously appended
+    // data. We have to work through the source in bite-sized chunks.
+    if (value == null)
+      return;
+    int strlen = value.length();
+
+    if (0 == strlen)
+      return;
+
+    int copyfrom = 0;
+    char[] chunk = m_array[m_lastChunk];
+    int available = m_chunkSize - m_firstFree;
+
+    // Repeat while data remains to be copied
+    while (strlen > 0)
+    {
+
+      // Copy what fits
+      if (available > strlen)
+        available = strlen;
+
+      int sourcechunk = (copyfrom + value.m_chunkSize - 1)
+                        >>> value.m_chunkBits;
+      int sourcecolumn = copyfrom & value.m_chunkMask;
+      int runlength = value.m_chunkSize - sourcecolumn;
+
+      if (runlength > available)
+        runlength = available;
+
+      System.arraycopy(value.m_array[sourcechunk], sourcecolumn,
+                       m_array[m_lastChunk], m_firstFree, runlength);
+
+      if (runlength != available)
+        System.arraycopy(value.m_array[sourcechunk + 1], 0,
+                         m_array[m_lastChunk], m_firstFree + runlength,
+                         available - runlength);
+
+      strlen -= available;
+      copyfrom += available;
+
+      // If there's more left, allocate another chunk and continue
+      if (strlen > 0)
+      {
+
+        // Extend array?
+        int i = m_array.length;
+
+        if (m_lastChunk + 1 == i)
+        {
+          char[][] newarray = new char[i + 16][];
+
+          System.arraycopy(m_array, 0, newarray, 0, i);
+
+          m_array = newarray;
+        }
+
+        // Advance one chunk
+        chunk = m_array[++m_lastChunk];
+
+        if (chunk == null)
+        {
+
+          // Hierarchical encapsulation
+          if (m_lastChunk == 1 << m_rebundleBits
+                  && m_chunkBits < m_maxChunkBits)
+          {
+
+            // Should do all the work of both encapsulating
+            // existing data and establishing new sizes/offsets
+            m_innerFSB = new FastStringBuffer(this);
+          }
+
+          // Add a chunk.
+          chunk = m_array[m_lastChunk] = new char[m_chunkSize];
+        }
+
+        available = m_chunkSize;
+        m_firstFree = 0;
+      }
+    }
+
+    // Adjust the insert point in the last chunk, when we've reached it.
+    m_firstFree += available;
+!!!5671554.java!!!	isWhitespace(in start : int, in length : int) : boolean
+
+    int sourcechunk = start >>> m_chunkBits;
+    int sourcecolumn = start & m_chunkMask;
+    int available = m_chunkSize - sourcecolumn;
+    boolean chunkOK;
+
+    while (length > 0)
+    {
+      int runlength = (length <= available) ? length : available;
+
+      if (sourcechunk == 0 && m_innerFSB != null)
+        chunkOK = m_innerFSB.isWhitespace(sourcecolumn, runlength);
+      else
+        chunkOK = com.sun.org.apache.xml.internal.utils.XMLCharacterRecognizer.isWhiteSpace(
+          m_array[sourcechunk], sourcecolumn, runlength);
+
+      if (!chunkOK)
+        return false;
+
+      length -= runlength;
+
+      ++sourcechunk;
+
+      sourcecolumn = 0;
+      available = m_chunkSize;
+    }
+
+    return true;
+!!!5671682.java!!!	getString(in start : int, in length : int) : String
+    int startColumn = start & m_chunkMask;
+    int startChunk = start >>> m_chunkBits;
+    if (startColumn + length < m_chunkMask && m_innerFSB == null) {
+      return getOneChunkString(startChunk, startColumn, length);
+    }
+    return getString(new StringBuffer(length), startChunk, startColumn,
+                     length).toString();
+!!!5671810.java!!!	getOneChunkString(in startChunk : int, in startColumn : int, in length : int) : String
+    return new String(m_array[startChunk], startColumn, length);
+!!!5671938.java!!!	getString(inout sb : StringBuffer, in start : int, in length : int) : StringBuffer
+    return getString(sb, start >>> m_chunkBits, start & m_chunkMask, length);
+!!!5672066.java!!!	getString(inout sb : StringBuffer, in startChunk : int, in startColumn : int, in length : int) : StringBuffer
+
+    int stop = (startChunk << m_chunkBits) + startColumn + length;
+    int stopChunk = stop >>> m_chunkBits;
+    int stopColumn = stop & m_chunkMask;
+
+    // Factored out
+    //StringBuffer sb=new StringBuffer(length);
+    for (int i = startChunk; i < stopChunk; ++i)
+    {
+      if (i == 0 && m_innerFSB != null)
+        m_innerFSB.getString(sb, startColumn, m_chunkSize - startColumn);
+      else
+        sb.append(m_array[i], startColumn, m_chunkSize - startColumn);
+
+      startColumn = 0;  // after first chunk
+    }
+
+    if (stopChunk == 0 && m_innerFSB != null)
+      m_innerFSB.getString(sb, startColumn, stopColumn - startColumn);
+    else if (stopColumn > startColumn)
+      sb.append(m_array[stopChunk], startColumn, stopColumn - startColumn);
+
+    return sb;
+!!!5672194.java!!!	charAt(in pos : int) : char
+    int startChunk = pos >>> m_chunkBits;
+
+    if (startChunk == 0 && m_innerFSB != null)
+      return m_innerFSB.charAt(pos & m_chunkMask);
+    else
+      return m_array[startChunk][pos & m_chunkMask];
+!!!5672322.java!!!	sendSAXcharacters(inout ch : ContentHandler, in start : int, in length : int) : void
+
+    int startChunk = start >>> m_chunkBits;
+    int startColumn = start & m_chunkMask;
+    if (startColumn + length < m_chunkMask && m_innerFSB == null) {
+        ch.characters(m_array[startChunk], startColumn, length);
+        return;
+    }
+
+    int stop = start + length;
+    int stopChunk = stop >>> m_chunkBits;
+    int stopColumn = stop & m_chunkMask;
+
+    for (int i = startChunk; i < stopChunk; ++i)
+    {
+      if (i == 0 && m_innerFSB != null)
+        m_innerFSB.sendSAXcharacters(ch, startColumn,
+                                     m_chunkSize - startColumn);
+      else
+        ch.characters(m_array[i], startColumn, m_chunkSize - startColumn);
+
+      startColumn = 0;  // after first chunk
+    }
+
+    // Last, or only, chunk
+    if (stopChunk == 0 && m_innerFSB != null)
+      m_innerFSB.sendSAXcharacters(ch, startColumn, stopColumn - startColumn);
+    else if (stopColumn > startColumn)
+    {
+      ch.characters(m_array[stopChunk], startColumn,
+                    stopColumn - startColumn);
+    }
+!!!5672450.java!!!	sendNormalizedSAXcharacters(inout ch : ContentHandler, in start : int, in length : int) : int
+        // This call always starts at the beginning of the
+    // string being written out, either because it was called directly or
+    // because it was an m_innerFSB recursion. This is important since
+        // it gives us a well-known initial state for this flag:
+        int stateForNextChunk=SUPPRESS_LEADING_WS;
+
+    int stop = start + length;
+    int startChunk = start >>> m_chunkBits;
+    int startColumn = start & m_chunkMask;
+    int stopChunk = stop >>> m_chunkBits;
+    int stopColumn = stop & m_chunkMask;
+
+    for (int i = startChunk; i < stopChunk; ++i)
+    {
+      if (i == 0 && m_innerFSB != null)
+                                stateForNextChunk=
+        m_innerFSB.sendNormalizedSAXcharacters(ch, startColumn,
+                                     m_chunkSize - startColumn);
+      else
+                                stateForNextChunk=
+        sendNormalizedSAXcharacters(m_array[i], startColumn,
+                                    m_chunkSize - startColumn,
+                                                                                                                                                ch,stateForNextChunk);
+
+      startColumn = 0;  // after first chunk
+    }
+
+    // Last, or only, chunk
+    if (stopChunk == 0 && m_innerFSB != null)
+                        stateForNextChunk= // %REVIEW% Is this update really needed?
+      m_innerFSB.sendNormalizedSAXcharacters(ch, startColumn, stopColumn - startColumn);
+    else if (stopColumn > startColumn)
+    {
+                        stateForNextChunk= // %REVIEW% Is this update really needed?
+      sendNormalizedSAXcharacters(m_array[stopChunk],
+                                                                                                                                        startColumn, stopColumn - startColumn,
+                                                                                                                                        ch, stateForNextChunk | SUPPRESS_TRAILING_WS);
+    }
+                return stateForNextChunk;
+!!!5672578.java!!!	sendNormalizedSAXcharacters(inout ch : char [[]], in start : int, in length : int, inout handler : ContentHandler, in edgeTreatmentFlags : int) : int
+     boolean processingLeadingWhitespace =
+                       ((edgeTreatmentFlags & SUPPRESS_LEADING_WS) != 0);
+     boolean seenWhitespace = ((edgeTreatmentFlags & CARRY_WS) != 0);
+     boolean suppressTrailingWhitespace =
+                       ((edgeTreatmentFlags & SUPPRESS_TRAILING_WS) != 0);
+     int currPos = start;
+     int limit = start+length;
+
+     // Strip any leading spaces first, if required
+     if (processingLeadingWhitespace) {
+         for (; currPos < limit
+                && XMLCharacterRecognizer.isWhiteSpace(ch[currPos]);
+              currPos++) { }
+
+         // If we've only encountered leading spaces, the
+         // current state remains unchanged
+         if (currPos == limit) {
+             return edgeTreatmentFlags;
+         }
+     }
+
+     // If we get here, there are no more leading spaces to strip
+     while (currPos < limit) {
+         int startNonWhitespace = currPos;
+
+         // Grab a chunk of non-whitespace characters
+         for (; currPos < limit
+                && !XMLCharacterRecognizer.isWhiteSpace(ch[currPos]);
+              currPos++) { }
+
+         // Non-whitespace seen - emit them, along with a single
+         // space for any preceding whitespace characters
+         if (startNonWhitespace != currPos) {
+             if (seenWhitespace) {
+                 handler.characters(SINGLE_SPACE, 0, 1);
+                 seenWhitespace = false;
+             }
+             handler.characters(ch, startNonWhitespace,
+                                currPos - startNonWhitespace);
+         }
+
+         int startWhitespace = currPos;
+
+         // Consume any whitespace characters
+         for (; currPos < limit
+                && XMLCharacterRecognizer.isWhiteSpace(ch[currPos]);
+              currPos++) { }
+
+         if (startWhitespace != currPos) {
+             seenWhitespace = true;
+         }
+     }
+
+     return (seenWhitespace ? CARRY_WS : 0)
+            | (edgeTreatmentFlags & SUPPRESS_TRAILING_WS);
+!!!5672706.java!!!	sendNormalizedSAXcharacters(inout ch : char [[]], in start : int, in length : int, inout handler : ContentHandler) : void
+                sendNormalizedSAXcharacters(ch, start, length,
+             handler, SUPPRESS_BOTH);
+!!!5672834.java!!!	sendSAXComment(inout ch : LexicalHandler, in start : int, in length : int) : void
+
+    // %OPT% Do it this way for now...
+    String comment = getString(start, length);
+    ch.comment(comment.toCharArray(), 0, length);
+!!!5672962.java!!!	getChars(in srcBegin : int, in srcEnd : int, inout dst : char [[]], in dstBegin : int) : void
+    // %TBD% Joe needs to write this function.  Make public when implemented.
+!!!5673090.java!!!	FastStringBuffer(inout source : FastStringBuffer)
+
+    // Copy existing information into new encapsulation
+    m_chunkBits = source.m_chunkBits;
+    m_maxChunkBits = source.m_maxChunkBits;
+    m_rebundleBits = source.m_rebundleBits;
+    m_chunkSize = source.m_chunkSize;
+    m_chunkMask = source.m_chunkMask;
+    m_array = source.m_array;
+    m_innerFSB = source.m_innerFSB;
+
+    // These have to be adjusted because we're calling just at the time
+    // when we would be about to allocate another chunk
+    m_lastChunk = source.m_lastChunk - 1;
+    m_firstFree = source.m_chunkSize;
+
+    // Establish capsule as the Inner FSB, reset chunk sizes/addressing
+    source.m_array = new char[16][];
+    source.m_innerFSB = this;
+
+    // Since we encapsulated just as we were about to append another
+    // chunk, return ready to create the chunk after the innerFSB
+    // -- 1, not 0.
+    source.m_lastChunk = 1;
+    source.m_firstFree = 0;
+    source.m_chunkBits += m_rebundleBits;
+    source.m_chunkSize = 1 << (source.m_chunkBits);
+    source.m_chunkMask = source.m_chunkSize - 1;

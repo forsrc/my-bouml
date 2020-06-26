@@ -1,0 +1,419 @@
+class ORBUtility
+!!!1265538.java!!!	systemExceptionMembers(inout orb : ORB) : StructMember
+        if (members == null) {
+            members = new StructMember[3];
+            members[0] = new StructMember("id", orb.create_string_tc(0), null);
+            members[1] = new StructMember("minor", orb.get_primitive_tc(TCKind.tk_long), null);
+            members[2] = new StructMember("completed", orb.get_primitive_tc(TCKind.tk_long), null);
+        }
+        return members;
+!!!1265666.java!!!	getSystemExceptionTypeCode(inout orb : ORB, inout repID : String, inout name : String) : TypeCode
+        synchronized (TypeCode.class) {
+            return orb.create_exception_tc(repID, name, systemExceptionMembers(orb));
+        }
+!!!1265794.java!!!	isSystemExceptionTypeCode(inout type : TypeCode, inout orb : ORB) : boolean
+        StructMember[] systemExceptionMembers = systemExceptionMembers(orb);
+        try {
+            return (type.kind().value() == TCKind._tk_except &&
+                    type.member_count() == 3 &&
+                    type.member_type(0).equal(systemExceptionMembers[0].type) &&
+                    type.member_type(1).equal(systemExceptionMembers[1].type) &&
+                    type.member_type(2).equal(systemExceptionMembers[2].type));
+        } catch (BadKind ex) {
+            return false;
+        } catch (org.omg.CORBA.TypeCodePackage.Bounds ex) {
+            return false;
+        }
+!!!1265922.java!!!	insertSystemException(inout ex : SystemException, inout any : Any) : void
+        OutputStream out = any.create_output_stream();
+        ORB orb = (ORB)(out.orb());
+        String name = ex.getClass().getName();
+        String repID = ORBUtility.repositoryIdOf(name);
+        out.write_string(repID);
+        out.write_long(ex.minor);
+        out.write_long(ex.completed.value());
+        any.read_value(out.create_input_stream(),
+            getSystemExceptionTypeCode(orb, repID, name));
+!!!1266050.java!!!	extractSystemException(inout any : Any) : SystemException
+        InputStream in = any.create_input_stream();
+        ORB orb = (ORB)(in.orb());
+        if ( ! isSystemExceptionTypeCode(any.type(), orb)) {
+            throw wrapper.unknownDsiSysex(CompletionStatus.COMPLETED_MAYBE);
+        }
+        return ORBUtility.readSystemException(in);
+!!!1266178.java!!!	createValueHandler() : ValueHandler
+        ValueHandler vh;
+        try {
+            vh = AccessController.doPrivileged(new PrivilegedExceptionAction<ValueHandler>() {
+                public ValueHandler run() throws Exception {
+        return Util.createValueHandler();
+    }
+            });
+        } catch (PrivilegedActionException e) {
+            throw new InternalError(e.getMessage());
+        }
+        return vh;
+!!!1266306.java!!!	isForeignORB(inout orb : ORB) : boolean
+        if (orb == null)
+            return false;
+
+        try {
+            return orb.getORBVersion().equals(ORBVersionFactory.getFOREIGN());
+        } catch (SecurityException se) {
+            return false;
+        }
+!!!1266434.java!!!	bytesToInt(inout array : byte [[]], in offset : int) : int
+        int b1, b2, b3, b4;
+
+        b1 = (array[offset++] << 24) & 0xFF000000;
+        b2 = (array[offset++] << 16) & 0x00FF0000;
+        b3 = (array[offset++] << 8)  & 0x0000FF00;
+        b4 = (array[offset++] << 0)  & 0x000000FF;
+
+        return (b1 | b2 | b3 | b4);
+!!!1266562.java!!!	intToBytes(in value : int, inout array : byte [[]], in offset : int) : void
+        array[offset++] = (byte)((value >>> 24) & 0xFF);
+        array[offset++] = (byte)((value >>> 16) & 0xFF);
+        array[offset++] = (byte)((value >>> 8) & 0xFF);
+        array[offset++] = (byte)((value >>> 0) & 0xFF);
+!!!1266690.java!!!	hexOf(in x : char) : int
+        int val;
+
+        val = x - '0';
+        if (val >=0 && val <= 9)
+            return val;
+
+        val = (x - 'a') + 10;
+        if (val >= 10 && val <= 15)
+            return val;
+
+        val = (x - 'A') + 10;
+        if (val >= 10 && val <= 15)
+            return val;
+
+        throw wrapper.badHexDigit() ;
+!!!1266818.java!!!	writeSystemException(inout ex : SystemException, inout strm : OutputStream) : void
+        String s;
+
+        s = repositoryIdOf(ex.getClass().getName());
+        strm.write_string(s);
+        strm.write_long(ex.minor);
+        strm.write_long(ex.completed.value());
+!!!1266946.java!!!	readSystemException(inout strm : InputStream) : SystemException
+        try {
+            String name = classNameOf(strm.read_string());
+            SystemException ex = (SystemException)SharedSecrets.
+                getJavaCorbaAccess().loadClass(name).newInstance();
+            ex.minor = strm.read_long();
+            ex.completed = CompletionStatus.from_int(strm.read_long());
+            return ex;
+        } catch ( Exception ex ) {
+            throw wrapper.unknownSysex( CompletionStatus.COMPLETED_MAYBE, ex );
+        }
+!!!1267074.java!!!	classNameOf(inout repositoryId : String) : String
+        String className=null;
+
+        className = (String) exceptionClassNames.get(repositoryId);
+        if (className == null)
+            className = "org.omg.CORBA.UNKNOWN";
+
+        return className;
+!!!1267202.java!!!	isSystemException(inout repositoryId : String) : boolean
+        String className=null;
+
+        className = (String) exceptionClassNames.get(repositoryId);
+        if (className == null)
+            return false;
+        else
+            return true;
+!!!1267330.java!!!	getEncodingVersion(inout orb : ORB, inout ior : IOR) : byte
+
+        // Is Java serialization enabled?
+        // Check the JavaSerializationComponent (tagged component)
+        // in the IIOPProfile. If present, the peer ORB's GIOP is capable
+        // of using Java serialization instead of CDR serialization.
+        // In such a case, use Java serialization, iff the java serialization
+        // versions match.
+
+        if (orb.getORBData().isJavaSerializationEnabled()) {
+            IIOPProfile prof = ior.getProfile();
+            IIOPProfileTemplate profTemp =
+                (IIOPProfileTemplate) prof.getTaggedProfileTemplate();
+            java.util.Iterator iter = profTemp.iteratorById(
+                                  ORBConstants.TAG_JAVA_SERIALIZATION_ID);
+            if (iter.hasNext()) {
+                JavaSerializationComponent jc =
+                    (JavaSerializationComponent) iter.next();
+                byte jcVersion = jc.javaSerializationVersion();
+                if (jcVersion >= Message.JAVA_ENC_VERSION) {
+                    return Message.JAVA_ENC_VERSION;
+                } else if (jcVersion > Message.CDR_ENC_VERSION) {
+                    return jc.javaSerializationVersion();
+                } else {
+                    // throw error?
+                    // Since encodingVersion is <= 0 (CDR_ENC_VERSION).
+                }
+            }
+        }
+        return Message.CDR_ENC_VERSION; // default
+!!!1267458.java!!!	repositoryIdOf(inout name : String) : String
+        String id;
+
+        id = (String) exceptionRepositoryIds.get(name);
+        if (id == null)
+            id = "IDL:omg.org/CORBA/UNKNOWN:1.0";
+
+        return id;
+!!!1267586.java!!!	parseVersion(inout version : String) : int
+        if (version == null)
+            return new int[0];
+        char[] s = version.toCharArray();
+        //find the maximum span of the string "n.n.n..." where n is an integer
+        int start = 0;
+        for (; start < s.length  && (s[start] < '0' || s[start] > '9'); ++start)
+            if (start == s.length)      //no digit found
+                return new int[0];
+        int end = start + 1;
+        int size = 1;
+        for (; end < s.length; ++end)
+            if (s[end] == '.')
+                ++size;
+            else if (s[end] < '0' || s[end] > '9')
+                break;
+        int[] val = new int[size];
+        for (int i = 0; i < size; ++i) {
+            int dot = version.indexOf('.', start);
+            if (dot == -1 || dot > end)
+                dot = end;
+            if (start >= dot)   //cases like "n." or "n..m"
+                val[i] = 0;     //convert equivalent to "n.0" or "n.0.m"
+            else
+                val[i] = Integer.parseInt(version.substring(start, dot));
+            start = dot + 1;
+        }
+        return val;
+!!!1267714.java!!!	compareVersion(inout v1 : int [[]], inout v2 : int [[]]) : int
+        if (v1 == null)
+            v1 = new int[0];
+        if (v2 == null)
+            v2 = new int[0];
+        for (int i = 0; i < v1.length; ++i) {
+            if (i >= v2.length || v1[i] > v2[i])        //v1 is longer or greater than v2
+                return 1;
+            if (v1[i] < v2[i])
+                return -1;
+        }
+        return v1.length == v2.length ? 0 : -1;
+!!!1267842.java!!!	compareVersion(inout v1 : String, inout v2 : String) : int
+        return compareVersion(parseVersion(v1), parseVersion(v2));
+!!!1267970.java!!!	compressClassName(inout name : String) : String
+        // Note that this must end in . in order to be renamed correctly.
+        String prefix = "com.sun.corba.se." ;
+        if (name.startsWith( prefix ) ) {
+            return "(ORB)." + name.substring( prefix.length() ) ;
+        } else
+            return name ;
+!!!1268098.java!!!	getThreadName(inout thr : Thread) : String
+        if (thr == null)
+            return "null" ;
+
+        // This depends on the formatting in SelectReaderThread and CorbaConnectionImpl.
+        // Pattern for SelectReaderThreads:
+        // SelectReaderThread CorbaConnectionImpl[ <host> <post> <state>]
+        // Any other pattern in the Thread's name is just returned.
+        String name = thr.getName() ;
+        StringTokenizer st = new StringTokenizer( name ) ;
+        int numTokens = st.countTokens() ;
+        if (numTokens != 5)
+            return name ;
+
+        String[] tokens = new String[numTokens] ;
+        for (int ctr=0; ctr<numTokens; ctr++ )
+            tokens[ctr] = st.nextToken() ;
+
+        if( !tokens[0].equals("SelectReaderThread"))
+            return name ;
+
+        return "SelectReaderThread[" + tokens[2] + ":" + tokens[3] + "]" ;
+!!!1268226.java!!!	formatStackTraceElement(inout ste : StackTraceElement) : String
+        return compressClassName( ste.getClassName() ) + "." + ste.getMethodName() +
+            (ste.isNativeMethod() ? "(Native Method)" :
+             (ste.getFileName() != null && ste.getLineNumber() >= 0 ?
+              "(" + ste.getFileName() + ":" + ste.getLineNumber() + ")" :
+              (ste.getFileName() != null ?  "("+ste.getFileName()+")" : "(Unknown Source)")));
+!!!1268354.java!!!	printStackTrace(inout trace : StackTraceElement [[]]) : void
+        System.out.println( "    Stack Trace:" ) ;
+        // print the stack trace, ommitting the zeroth element, which is
+        // always this method.
+        for ( int ctr = 1; ctr < trace.length; ctr++ ) {
+            System.out.print( "        >" ) ;
+            System.out.println( formatStackTraceElement( trace[ctr] ) ) ;
+        }
+!!!1268482.java!!!	dprint(inout obj : Object, inout msg : String) : void
+        System.out.println(
+            compressClassName( obj.getClass().getName() ) + "("  +
+            getThreadName( Thread.currentThread() ) + "): " + msg);
+!!!1268610.java!!!	dprint(inout className : String, inout msg : String) : void
+        System.out.println(
+            compressClassName( className ) + "("  +
+            getThreadName( Thread.currentThread() ) + "): " + msg);
+!!!1268738.java!!!	dprint(inout msg : String) : void
+        ORBUtility.dprint(this, msg);
+!!!1268866.java!!!	dprintTrace(inout obj : Object, inout msg : String) : void
+        ORBUtility.dprint(obj, msg);
+
+        Throwable thr = new Throwable() ;
+        printStackTrace( thr.getStackTrace() ) ;
+!!!1268994.java!!!	dprint(inout caller : Object, inout msg : String, inout t : Throwable) : void
+        System.out.println(
+            compressClassName( caller.getClass().getName() ) +
+            '(' + Thread.currentThread() + "): " + msg);
+
+        if (t != null)
+            printStackTrace( t.getStackTrace() ) ;
+!!!1269122.java!!!	concatenateStringArrays(inout arr1 : String [[]], inout arr2 : String [[]]) : String
+        String[] result = new String[
+            arr1.length + arr2.length ] ;
+
+        for (int ctr = 0; ctr<arr1.length; ctr++)
+            result[ctr] = arr1[ctr] ;
+
+        for (int ctr = 0; ctr<arr2.length; ctr++)
+            result[ctr + arr1.length] = arr2[ctr] ;
+
+        return result ;
+!!!1269250.java!!!	throwNotSerializableForCorba(inout className : String) : void
+        throw omgWrapper.notSerializable( CompletionStatus.COMPLETED_MAYBE,
+            className ) ;
+!!!1269378.java!!!	getMaxStreamFormatVersion() : byte
+        ValueHandler vh;
+        try {
+            vh = AccessController.doPrivileged(new PrivilegedExceptionAction<ValueHandler>() {
+                public ValueHandler run() throws Exception {
+                    return Util.createValueHandler();
+                }
+            });
+        } catch (PrivilegedActionException e) {
+            throw new InternalError(e.getMessage());
+        }
+
+        if (!(vh instanceof javax.rmi.CORBA.ValueHandlerMultiFormat))
+            return ORBConstants.STREAM_FORMAT_VERSION_1;
+        else
+            return ((ValueHandlerMultiFormat)vh).getMaximumStreamFormatVersion();
+!!!1269506.java!!!	makeClientDelegate(inout ior : IOR) : CorbaClientDelegate
+        ORB orb = ior.getORB() ;
+        CorbaContactInfoList ccil = orb.getCorbaContactInfoListFactory().create( ior ) ;
+        CorbaClientDelegate del = orb.getClientDelegateFactory().create(ccil);
+        return del ;
+!!!1269634.java!!!	makeObjectReference(inout ior : IOR) : Object
+        CorbaClientDelegate del = makeClientDelegate( ior ) ;
+        org.omg.CORBA.Object objectImpl = new CORBAObjectImpl() ;
+        StubAdapter.setDelegate( objectImpl, del ) ;
+        return objectImpl ;
+!!!1269762.java!!!	getIOR(inout obj : Object) : IOR
+        if (obj == null)
+            throw wrapper.nullObjectReference() ;
+
+        IOR ior = null ;
+        if (StubAdapter.isStub(obj)) {
+            org.omg.CORBA.portable.Delegate del = StubAdapter.getDelegate(
+                obj ) ;
+
+            if (del instanceof CorbaClientDelegate) {
+                CorbaClientDelegate cdel = (CorbaClientDelegate)del ;
+                ContactInfoList cil = cdel.getContactInfoList() ;
+
+                if (cil instanceof CorbaContactInfoList) {
+                    CorbaContactInfoList ccil = (CorbaContactInfoList)cil ;
+                    ior = ccil.getTargetIOR() ;
+                    if (ior == null)
+                        throw wrapper.nullIor() ;
+
+                    return ior ;
+                } else {
+                    // This is our code, but the ContactInfoList is not a
+                    // CorbaContactInfoList.  This should not happen, because
+                    // we are in the CORBA application of the DCSA framework.
+                    // This is a coding error, and thus an INTERNAL exception
+                    // should be thrown.
+                    // XXX needs minor code
+                    throw new INTERNAL() ;
+                }
+            }
+
+            // obj is implemented by a foreign ORB, because the Delegate is not a
+            // ClientDelegate.
+            // XXX this case could be handled by marshalling and
+            // unmarshalling.  However, object_to_string cannot be used
+            // here, as it is implemented with getIOR.  Note that this
+            // will require access to an ORB, so that we can create streams
+            // as needed.  The ORB is available simply as io._orb().
+            throw wrapper.objrefFromForeignOrb() ;
+        } else
+            throw wrapper.localObjectNotAllowed() ;
+!!!1269890.java!!!	connectAndGetIOR(inout orb : ORB, inout obj : Object) : IOR
+        IOR result ;
+        try {
+            result = getIOR( obj ) ;
+        } catch (BAD_OPERATION bop) {
+            if (StubAdapter.isStub(obj)) {
+                try {
+                    StubAdapter.connect( obj, orb ) ;
+                } catch (java.rmi.RemoteException exc) {
+                    throw wrapper.connectingServant( exc ) ;
+                }
+            } else {
+                orb.connect( obj ) ;
+            }
+
+            result = getIOR( obj ) ;
+        }
+
+        return result ;
+!!!1270018.java!!!	operationNameAndRequestId(inout m : CorbaMessageMediator) : String
+        return "op/" + m.getOperationName() + " id/" + m.getRequestId();
+!!!1270146.java!!!	isPrintable(in c : char) : boolean
+        if (Character.isJavaIdentifierStart(c)) {
+            // Letters and $ _
+            return true;
+        }
+        if (Character.isDigit(c)) {
+            return true;
+        }
+        switch (Character.getType(c)) {
+        case Character.MODIFIER_SYMBOL : return true; // ` ^
+        case Character.DASH_PUNCTUATION : return true; // -
+        case Character.MATH_SYMBOL : return true; // = ~ + | < >
+        case Character.OTHER_PUNCTUATION : return true; // !@#%&*;':",./?
+        case Character.START_PUNCTUATION : return true; // ( [ {
+        case Character.END_PUNCTUATION : return true; // ) ] }
+        }
+        return false;
+!!!1270274.java!!!	getClassSecurityInfo(in cl : Class) : String
+        // Returns a String which looks similar to:
+        // PermissionCollection java.security.Permissions@1053693 ...
+        // (java.io.FilePermission <<ALL FILES>> ....)
+        // (java.io.FilePermission /export0/sunwappserv/lib/- ...)
+        // ... other permissions ...
+        // Domain ProtectionDomain  (file:/export0/sunwappserv/lib-)
+        // java.security.Permissions@141fedb (
+        // (java.io.FilePermission <<ALL FILES>> ...)
+        // (java.io.FilePermission /var/tmp//- ...)
+
+        String result =
+            (String)AccessController.doPrivileged(new PrivilegedAction() {
+                public java.lang.Object run() {
+                    StringBuffer sb = new StringBuffer(500);
+                    ProtectionDomain pd = cl.getProtectionDomain();
+                    Policy policy = Policy.getPolicy();
+                    PermissionCollection pc = policy.getPermissions(pd);
+                    sb.append("\nPermissionCollection ");
+                    sb.append(pc.toString());
+                    // Don't need to add 'Protection Domain' string, it's
+                    // in ProtectionDomain.toString() already.
+                    sb.append(pd.toString());
+                    return sb.toString();
+                }
+            });
+        return result;

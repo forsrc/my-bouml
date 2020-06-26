@@ -1,0 +1,727 @@
+class ClassLoader
+!!!1720834.java!!!	addClass(inout c : Class) : void
+        classes.addElement(c);
+!!!1720962.java!!!	checkCreateClassLoader() : Void
+        SecurityManager security = System.getSecurityManager();
+        if (security != null) {
+            security.checkCreateClassLoader();
+        }
+        return null;
+!!!1721090.java!!!	ClassLoader(inout unused : Void, inout parent : ClassLoader)
+        this.parent = parent;
+        if (ParallelLoaders.isRegistered(this.getClass())) {
+            parallelLockMap = new ConcurrentHashMap<>();
+            package2certs = new ConcurrentHashMap<>();
+            domains =
+                Collections.synchronizedSet(new HashSet<ProtectionDomain>());
+            assertionLock = new Object();
+        } else {
+            // no finer-grained lock; lock on the classloader instance
+            parallelLockMap = null;
+            package2certs = new Hashtable<>();
+            domains = new HashSet<>();
+            assertionLock = this;
+        }
+!!!1721218.java!!!	ClassLoader(inout parent : ClassLoader)
+        this(checkCreateClassLoader(), parent);
+!!!1721346.java!!!	ClassLoader()
+        this(checkCreateClassLoader(), getSystemClassLoader());
+!!!1721474.java!!!	loadClass(inout name : String) : Class
+        return loadClass(name, false);
+!!!1721602.java!!!	loadClass(inout name : String, inout resolve : boolean) : Class
+        synchronized (getClassLoadingLock(name)) {
+            // First, check if the class has already been loaded
+            Class<?> c = findLoadedClass(name);
+            if (c == null) {
+                long t0 = System.nanoTime();
+                try {
+                    if (parent != null) {
+                        c = parent.loadClass(name, false);
+                    } else {
+                        c = findBootstrapClassOrNull(name);
+                    }
+                } catch (ClassNotFoundException e) {
+                    // ClassNotFoundException thrown if class not found
+                    // from the non-null parent class loader
+                }
+
+                if (c == null) {
+                    // If still not found, then invoke findClass in order
+                    // to find the class.
+                    long t1 = System.nanoTime();
+                    c = findClass(name);
+
+                    // this is the defining class loader; record the stats
+                    sun.misc.PerfCounter.getParentDelegationTime().addTime(t1 - t0);
+                    sun.misc.PerfCounter.getFindClassTime().addElapsedTimeFrom(t1);
+                    sun.misc.PerfCounter.getFindClasses().increment();
+                }
+            }
+            if (resolve) {
+                resolveClass(c);
+            }
+            return c;
+        }
+!!!1721730.java!!!	getClassLoadingLock(inout className : String) : Object
+        Object lock = this;
+        if (parallelLockMap != null) {
+            Object newLock = new Object();
+            lock = parallelLockMap.putIfAbsent(className, newLock);
+            if (lock == null) {
+                lock = newLock;
+            }
+        }
+        return lock;
+!!!1721858.java!!!	loadClassInternal(inout name : String) : Class
+        // For backward compatibility, explicitly lock on 'this' when
+        // the current class loader is not parallel capable.
+        if (parallelLockMap == null) {
+            synchronized (this) {
+                 return loadClass(name);
+            }
+        } else {
+            return loadClass(name);
+        }
+!!!1721986.java!!!	checkPackageAccess(inout cls : Class, inout pd : ProtectionDomain) : void
+        final SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            if (ReflectUtil.isNonPublicProxyClass(cls)) {
+                for (Class<?> intf: cls.getInterfaces()) {
+                    checkPackageAccess(intf, pd);
+                }
+                return;
+            }
+
+            final String name = cls.getName();
+            final int i = name.lastIndexOf('.');
+            if (i != -1) {
+                AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                    public Void run() {
+                        sm.checkPackageAccess(name.substring(0, i));
+                        return null;
+                    }
+                }, new AccessControlContext(new ProtectionDomain[] {pd}));
+            }
+        }
+        domains.add(pd);
+!!!1722114.java!!!	findClass(inout name : String) : Class
+        throw new ClassNotFoundException(name);
+!!!1722242.java!!!	defineClass(inout b : byte [[]], in off : int, in len : int) : Class
+        return defineClass(null, b, off, len, null);
+!!!1722370.java!!!	defineClass(inout name : String, inout b : byte [[]], in off : int, in len : int) : Class
+        return defineClass(name, b, off, len, null);
+!!!1722498.java!!!	preDefineClass(inout name : String, inout pd : ProtectionDomain) : ProtectionDomain
+        if (!checkName(name))
+            throw new NoClassDefFoundError("IllegalName: " + name);
+
+        // Note:  Checking logic in java.lang.invoke.MemberName.checkForTypeAlias
+        // relies on the fact that spoofing is impossible if a class has a name
+        // of the form "java.*"
+        if ((name != null) && name.startsWith("java.")) {
+            throw new SecurityException
+                ("Prohibited package name: " +
+                 name.substring(0, name.lastIndexOf('.')));
+        }
+        if (pd == null) {
+            pd = defaultDomain;
+        }
+
+        if (name != null) checkCerts(name, pd.getCodeSource());
+
+        return pd;
+!!!1722626.java!!!	defineClassSourceLocation(inout pd : ProtectionDomain) : String
+        CodeSource cs = pd.getCodeSource();
+        String source = null;
+        if (cs != null && cs.getLocation() != null) {
+            source = cs.getLocation().toString();
+        }
+        return source;
+!!!1722754.java!!!	postDefineClass(inout c : Class, inout pd : ProtectionDomain) : void
+        if (pd.getCodeSource() != null) {
+            Certificate certs[] = pd.getCodeSource().getCertificates();
+            if (certs != null)
+                setSigners(c, certs);
+        }
+!!!1722882.java!!!	defineClass(inout name : String, inout b : byte [[]], in off : int, in len : int, inout protectionDomain : ProtectionDomain) : Class
+        protectionDomain = preDefineClass(name, protectionDomain);
+        String source = defineClassSourceLocation(protectionDomain);
+        Class<?> c = defineClass1(name, b, off, len, protectionDomain, source);
+        postDefineClass(c, protectionDomain);
+        return c;
+!!!1723010.java!!!	defineClass(inout name : String, inout b : ByteBuffer, inout protectionDomain : ProtectionDomain) : Class
+        int len = b.remaining();
+
+        // Use byte[] if not a direct ByteBufer:
+        if (!b.isDirect()) {
+            if (b.hasArray()) {
+                return defineClass(name, b.array(),
+                                   b.position() + b.arrayOffset(), len,
+                                   protectionDomain);
+            } else {
+                // no array, or read-only array
+                byte[] tb = new byte[len];
+                b.get(tb);  // get bytes out of byte buffer.
+                return defineClass(name, tb, 0, len, protectionDomain);
+            }
+        }
+
+        protectionDomain = preDefineClass(name, protectionDomain);
+        String source = defineClassSourceLocation(protectionDomain);
+        Class<?> c = defineClass2(name, b, b.position(), len, protectionDomain, source);
+        postDefineClass(c, protectionDomain);
+        return c;
+!!!1723522.java!!!	checkName(inout name : String) : boolean
+        if ((name == null) || (name.length() == 0))
+            return true;
+        if ((name.indexOf('/') != -1)
+            || (!VM.allowArraySyntax() && (name.charAt(0) == '[')))
+            return false;
+        return true;
+!!!1723650.java!!!	checkCerts(inout name : String, inout cs : CodeSource) : void
+        int i = name.lastIndexOf('.');
+        String pname = (i == -1) ? "" : name.substring(0, i);
+
+        Certificate[] certs = null;
+        if (cs != null) {
+            certs = cs.getCertificates();
+        }
+        Certificate[] pcerts = null;
+        if (parallelLockMap == null) {
+            synchronized (this) {
+                pcerts = package2certs.get(pname);
+                if (pcerts == null) {
+                    package2certs.put(pname, (certs == null? nocerts:certs));
+                }
+            }
+        } else {
+            pcerts = ((ConcurrentHashMap<String, Certificate[]>)package2certs).
+                putIfAbsent(pname, (certs == null? nocerts:certs));
+        }
+        if (pcerts != null && !compareCerts(pcerts, certs)) {
+            throw new SecurityException("class \""+ name +
+                 "\"'s signer information does not match signer information of other classes in the same package");
+        }
+!!!1723778.java!!!	compareCerts(inout pcerts : Certificate [[]], inout certs : Certificate [[]]) : boolean
+        // certs can be null, indicating no certs.
+        if ((certs == null) || (certs.length == 0)) {
+            return pcerts.length == 0;
+        }
+
+        // the length must be the same at this point
+        if (certs.length != pcerts.length)
+            return false;
+
+        // go through and make sure all the certs in one array
+        // are in the other and vice-versa.
+        boolean match;
+        for (int i = 0; i < certs.length; i++) {
+            match = false;
+            for (int j = 0; j < pcerts.length; j++) {
+                if (certs[i].equals(pcerts[j])) {
+                    match = true;
+                    break;
+                }
+            }
+            if (!match) return false;
+        }
+
+        // now do the same for pcerts
+        for (int i = 0; i < pcerts.length; i++) {
+            match = false;
+            for (int j = 0; j < certs.length; j++) {
+                if (pcerts[i].equals(certs[j])) {
+                    match = true;
+                    break;
+                }
+            }
+            if (!match) return false;
+        }
+
+        return true;
+!!!1723906.java!!!	resolveClass(inout c : Class) : void
+        resolveClass0(c);
+!!!1724162.java!!!	findSystemClass(inout name : String) : Class
+        ClassLoader system = getSystemClassLoader();
+        if (system == null) {
+            if (!checkName(name))
+                throw new ClassNotFoundException(name);
+            Class<?> cls = findBootstrapClass(name);
+            if (cls == null) {
+                throw new ClassNotFoundException(name);
+            }
+            return cls;
+        }
+        return system.loadClass(name);
+!!!1724290.java!!!	findBootstrapClassOrNull(inout name : String) : Class
+        if (!checkName(name)) return null;
+
+        return findBootstrapClass(name);
+!!!1724546.java!!!	findLoadedClass(inout name : String) : Class
+        if (!checkName(name))
+            return null;
+        return findLoadedClass0(name);
+!!!1724802.java!!!	setSigners(inout c : Class, inout signers : Object [[]]) : void
+        c.setSigners(signers);
+!!!1724930.java!!!	getResource(inout name : String) : URL
+        URL url;
+        if (parent != null) {
+            url = parent.getResource(name);
+        } else {
+            url = getBootstrapResource(name);
+        }
+        if (url == null) {
+            url = findResource(name);
+        }
+        return url;
+!!!1725058.java!!!	getResources(inout name : String) : Enumeration
+        @SuppressWarnings("unchecked")
+        Enumeration<URL>[] tmp = (Enumeration<URL>[]) new Enumeration<?>[2];
+        if (parent != null) {
+            tmp[0] = parent.getResources(name);
+        } else {
+            tmp[0] = getBootstrapResources(name);
+        }
+        tmp[1] = findResources(name);
+
+        return new CompoundEnumeration<>(tmp);
+!!!1725186.java!!!	findResource(inout name : String) : URL
+        return null;
+!!!1725314.java!!!	findResources(inout name : String) : Enumeration
+        return java.util.Collections.emptyEnumeration();
+!!!1725442.java!!!	registerAsParallelCapable() : boolean
+        Class<? extends ClassLoader> callerClass =
+            Reflection.getCallerClass().asSubclass(ClassLoader.class);
+        return ParallelLoaders.register(callerClass);
+!!!1725570.java!!!	getSystemResource(inout name : String) : URL
+        ClassLoader system = getSystemClassLoader();
+        if (system == null) {
+            return getBootstrapResource(name);
+        }
+        return system.getResource(name);
+!!!1725698.java!!!	getSystemResources(inout name : String) : Enumeration
+        ClassLoader system = getSystemClassLoader();
+        if (system == null) {
+            return getBootstrapResources(name);
+        }
+        return system.getResources(name);
+!!!1725826.java!!!	getBootstrapResource(inout name : String) : URL
+        URLClassPath ucp = getBootstrapClassPath();
+        Resource res = ucp.getResource(name);
+        return res != null ? res.getURL() : null;
+!!!1725954.java!!!	getBootstrapResources(inout name : String) : Enumeration
+        final Enumeration<Resource> e =
+            getBootstrapClassPath().getResources(name);
+        return new Enumeration<URL> () {
+            public URL nextElement() {
+                return e.nextElement().getURL();
+            }
+            public boolean hasMoreElements() {
+                return e.hasMoreElements();
+            }
+        };
+!!!1726082.java!!!	getBootstrapClassPath() : URLClassPath
+        return sun.misc.Launcher.getBootstrapClassPath();
+!!!1726210.java!!!	getResourceAsStream(inout name : String) : InputStream
+        URL url = getResource(name);
+        try {
+            return url != null ? url.openStream() : null;
+        } catch (IOException e) {
+            return null;
+        }
+!!!1726338.java!!!	getSystemResourceAsStream(inout name : String) : InputStream
+        URL url = getSystemResource(name);
+        try {
+            return url != null ? url.openStream() : null;
+        } catch (IOException e) {
+            return null;
+        }
+!!!1726466.java!!!	getParent() : ClassLoader
+        if (parent == null)
+            return null;
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            // Check access to the parent class loader
+            // If the caller's class loader is same as this class loader,
+            // permission check is performed.
+            checkClassLoaderPermission(parent, Reflection.getCallerClass());
+        }
+        return parent;
+!!!1726594.java!!!	getSystemClassLoader() : ClassLoader
+        initSystemClassLoader();
+        if (scl == null) {
+            return null;
+        }
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            checkClassLoaderPermission(scl, Reflection.getCallerClass());
+        }
+        return scl;
+!!!1726722.java!!!	initSystemClassLoader() : void
+        if (!sclSet) {
+            if (scl != null)
+                throw new IllegalStateException("recursive invocation");
+            sun.misc.Launcher l = sun.misc.Launcher.getLauncher();
+            if (l != null) {
+                Throwable oops = null;
+                scl = l.getClassLoader();
+                try {
+                    scl = AccessController.doPrivileged(
+                        new SystemClassLoaderAction(scl));
+                } catch (PrivilegedActionException pae) {
+                    oops = pae.getCause();
+                    if (oops instanceof InvocationTargetException) {
+                        oops = oops.getCause();
+                    }
+                }
+                if (oops != null) {
+                    if (oops instanceof Error) {
+                        throw (Error) oops;
+                    } else {
+                        // wrap the exception
+                        throw new Error(oops);
+                    }
+                }
+            }
+            sclSet = true;
+        }
+!!!1726850.java!!!	isAncestor(inout cl : ClassLoader) : boolean
+        ClassLoader acl = this;
+        do {
+            acl = acl.parent;
+            if (cl == acl) {
+                return true;
+            }
+        } while (acl != null);
+        return false;
+!!!1726978.java!!!	needsClassLoaderPermissionCheck(inout from : ClassLoader, inout to : ClassLoader) : boolean
+        if (from == to)
+            return false;
+
+        if (from == null)
+            return false;
+
+        return !to.isAncestor(from);
+!!!1727106.java!!!	getClassLoader(inout caller : Class) : ClassLoader
+        // This can be null if the VM is requesting it
+        if (caller == null) {
+            return null;
+        }
+        // Circumvent security check since this is package-private
+        return caller.getClassLoader0();
+!!!1727234.java!!!	checkClassLoaderPermission(inout cl : ClassLoader, inout caller : Class) : void
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            // caller can be null if the VM is requesting it
+            ClassLoader ccl = getClassLoader(caller);
+            if (needsClassLoaderPermissionCheck(ccl, cl)) {
+                sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
+            }
+        }
+!!!1727362.java!!!	definePackage(inout name : String, inout specTitle : String, inout specVersion : String, inout specVendor : String, inout implTitle : String, inout implVersion : String, inout implVendor : String, inout sealBase : URL) : Package
+        synchronized (packages) {
+            Package pkg = getPackage(name);
+            if (pkg != null) {
+                throw new IllegalArgumentException(name);
+            }
+            pkg = new Package(name, specTitle, specVersion, specVendor,
+                              implTitle, implVersion, implVendor,
+                              sealBase, this);
+            packages.put(name, pkg);
+            return pkg;
+        }
+!!!1727490.java!!!	getPackage(inout name : String) : Package
+        Package pkg;
+        synchronized (packages) {
+            pkg = packages.get(name);
+        }
+        if (pkg == null) {
+            if (parent != null) {
+                pkg = parent.getPackage(name);
+            } else {
+                pkg = Package.getSystemPackage(name);
+            }
+            if (pkg != null) {
+                synchronized (packages) {
+                    Package pkg2 = packages.get(name);
+                    if (pkg2 == null) {
+                        packages.put(name, pkg);
+                    } else {
+                        pkg = pkg2;
+                    }
+                }
+            }
+        }
+        return pkg;
+!!!1727618.java!!!	getPackages() : Package
+        Map<String, Package> map;
+        synchronized (packages) {
+            map = new HashMap<>(packages);
+        }
+        Package[] pkgs;
+        if (parent != null) {
+            pkgs = parent.getPackages();
+        } else {
+            pkgs = Package.getSystemPackages();
+        }
+        if (pkgs != null) {
+            for (int i = 0; i < pkgs.length; i++) {
+                String pkgName = pkgs[i].getName();
+                if (map.get(pkgName) == null) {
+                    map.put(pkgName, pkgs[i]);
+                }
+            }
+        }
+        return map.values().toArray(new Package[map.size()]);
+!!!1727746.java!!!	findLibrary(inout libname : String) : String
+        return null;
+!!!1728642.java!!!	initializePath(inout propname : String) : String
+        String ldpath = System.getProperty(propname, "");
+        String ps = File.pathSeparator;
+        int ldlen = ldpath.length();
+        int i, j, n;
+        // Count the separators in the path
+        i = ldpath.indexOf(ps);
+        n = 0;
+        while (i >= 0) {
+            n++;
+            i = ldpath.indexOf(ps, i + 1);
+        }
+
+        // allocate the array of paths - n :'s = n + 1 path elements
+        String[] paths = new String[n + 1];
+
+        // Fill the array with paths from the ldpath
+        n = i = 0;
+        j = ldpath.indexOf(ps);
+        while (j >= 0) {
+            if (j - i > 0) {
+                paths[n++] = ldpath.substring(i, j);
+            } else if (j - i == 0) {
+                paths[n++] = ".";
+            }
+            i = j + 1;
+            j = ldpath.indexOf(ps, i);
+        }
+        paths[n] = ldpath.substring(i, ldlen);
+        return paths;
+!!!1728770.java!!!	loadLibrary(inout fromClass : Class, inout name : String, inout isAbsolute : boolean) : void
+        ClassLoader loader =
+            (fromClass == null) ? null : fromClass.getClassLoader();
+        if (sys_paths == null) {
+            usr_paths = initializePath("java.library.path");
+            sys_paths = initializePath("sun.boot.library.path");
+        }
+        if (isAbsolute) {
+            if (loadLibrary0(fromClass, new File(name))) {
+                return;
+            }
+            throw new UnsatisfiedLinkError("Can't load library: " + name);
+        }
+        if (loader != null) {
+            String libfilename = loader.findLibrary(name);
+            if (libfilename != null) {
+                File libfile = new File(libfilename);
+                if (!libfile.isAbsolute()) {
+                    throw new UnsatisfiedLinkError(
+    "ClassLoader.findLibrary failed to return an absolute path: " + libfilename);
+                }
+                if (loadLibrary0(fromClass, libfile)) {
+                    return;
+                }
+                throw new UnsatisfiedLinkError("Can't load " + libfilename);
+            }
+        }
+        for (int i = 0 ; i < sys_paths.length ; i++) {
+            File libfile = new File(sys_paths[i], System.mapLibraryName(name));
+            if (loadLibrary0(fromClass, libfile)) {
+                return;
+            }
+            libfile = ClassLoaderHelper.mapAlternativeName(libfile);
+            if (libfile != null && loadLibrary0(fromClass, libfile)) {
+                return;
+            }
+        }
+        if (loader != null) {
+            for (int i = 0 ; i < usr_paths.length ; i++) {
+                File libfile = new File(usr_paths[i],
+                                        System.mapLibraryName(name));
+                if (loadLibrary0(fromClass, libfile)) {
+                    return;
+                }
+                libfile = ClassLoaderHelper.mapAlternativeName(libfile);
+                if (libfile != null && loadLibrary0(fromClass, libfile)) {
+                    return;
+                }
+            }
+        }
+        // Oops, it failed
+        throw new UnsatisfiedLinkError("no " + name + " in java.library.path");
+!!!1729026.java!!!	loadLibrary0(inout fromClass : Class, in file : File) : boolean
+        // Check to see if we're attempting to access a static library
+        String name = findBuiltinLib(file.getName());
+        boolean isBuiltin = (name != null);
+        if (!isBuiltin) {
+            boolean exists = AccessController.doPrivileged(
+                new PrivilegedAction<Object>() {
+                    public Object run() {
+                        return file.exists() ? Boolean.TRUE : null;
+                    }})
+                != null;
+            if (!exists) {
+                return false;
+            }
+            try {
+                name = file.getCanonicalPath();
+            } catch (IOException e) {
+                return false;
+            }
+        }
+        ClassLoader loader =
+            (fromClass == null) ? null : fromClass.getClassLoader();
+        Vector<NativeLibrary> libs =
+            loader != null ? loader.nativeLibraries : systemNativeLibraries;
+        synchronized (libs) {
+            int size = libs.size();
+            for (int i = 0; i < size; i++) {
+                NativeLibrary lib = libs.elementAt(i);
+                if (name.equals(lib.name)) {
+                    return true;
+                }
+            }
+
+            synchronized (loadedLibraryNames) {
+                if (loadedLibraryNames.contains(name)) {
+                    throw new UnsatisfiedLinkError
+                        ("Native Library " +
+                         name +
+                         " already loaded in another classloader");
+                }
+                /* If the library is being loaded (must be by the same thread,
+                 * because Runtime.load and Runtime.loadLibrary are
+                 * synchronous). The reason is can occur is that the JNI_OnLoad
+                 * function can cause another loadLibrary invocation.
+                 *
+                 * Thus we can use a static stack to hold the list of libraries
+                 * we are loading.
+                 *
+                 * If there is a pending load operation for the library, we
+                 * immediately return success; otherwise, we raise
+                 * UnsatisfiedLinkError.
+                 */
+                int n = nativeLibraryContext.size();
+                for (int i = 0; i < n; i++) {
+                    NativeLibrary lib = nativeLibraryContext.elementAt(i);
+                    if (name.equals(lib.name)) {
+                        if (loader == lib.fromClass.getClassLoader()) {
+                            return true;
+                        } else {
+                            throw new UnsatisfiedLinkError
+                                ("Native Library " +
+                                 name +
+                                 " is being loaded in another classloader");
+                        }
+                    }
+                }
+                NativeLibrary lib = new NativeLibrary(fromClass, name, isBuiltin);
+                nativeLibraryContext.push(lib);
+                try {
+                    lib.load(name, isBuiltin);
+                } finally {
+                    nativeLibraryContext.pop();
+                }
+                if (lib.loaded) {
+                    loadedLibraryNames.addElement(name);
+                    libs.addElement(lib);
+                    return true;
+                }
+                return false;
+            }
+        }
+!!!1729154.java!!!	findNative(inout loader : ClassLoader, inout name : String) : long
+        Vector<NativeLibrary> libs =
+            loader != null ? loader.nativeLibraries : systemNativeLibraries;
+        synchronized (libs) {
+            int size = libs.size();
+            for (int i = 0; i < size; i++) {
+                NativeLibrary lib = libs.elementAt(i);
+                long entry = lib.find(name);
+                if (entry != 0)
+                    return entry;
+            }
+        }
+        return 0;
+!!!1729282.java!!!	setDefaultAssertionStatus(inout enabled : boolean) : void
+        synchronized (assertionLock) {
+            if (classAssertionStatus == null)
+                initializeJavaAssertionMaps();
+
+            defaultAssertionStatus = enabled;
+        }
+!!!1729410.java!!!	setPackageAssertionStatus(inout packageName : String, inout enabled : boolean) : void
+        synchronized (assertionLock) {
+            if (packageAssertionStatus == null)
+                initializeJavaAssertionMaps();
+
+            packageAssertionStatus.put(packageName, enabled);
+        }
+!!!1729538.java!!!	setClassAssertionStatus(inout className : String, inout enabled : boolean) : void
+        synchronized (assertionLock) {
+            if (classAssertionStatus == null)
+                initializeJavaAssertionMaps();
+
+            classAssertionStatus.put(className, enabled);
+        }
+!!!1729666.java!!!	clearAssertionStatus() : void
+        /*
+         * Whether or not "Java assertion maps" are initialized, set
+         * them to empty maps, effectively ignoring any present settings.
+         */
+        synchronized (assertionLock) {
+            classAssertionStatus = new HashMap<>();
+            packageAssertionStatus = new HashMap<>();
+            defaultAssertionStatus = false;
+        }
+!!!1729794.java!!!	desiredAssertionStatus(inout className : String) : boolean
+        synchronized (assertionLock) {
+            // assert classAssertionStatus   != null;
+            // assert packageAssertionStatus != null;
+
+            // Check for a class entry
+            Boolean result = classAssertionStatus.get(className);
+            if (result != null)
+                return result.booleanValue();
+
+            // Check for most specific package entry
+            int dotIndex = className.lastIndexOf(".");
+            if (dotIndex < 0) { // default package
+                result = packageAssertionStatus.get(null);
+                if (result != null)
+                    return result.booleanValue();
+            }
+            while(dotIndex > 0) {
+                className = className.substring(0, dotIndex);
+                result = packageAssertionStatus.get(className);
+                if (result != null)
+                    return result.booleanValue();
+                dotIndex = className.lastIndexOf(".", dotIndex-1);
+            }
+
+            // Return the classloader default
+            return defaultAssertionStatus;
+        }
+!!!1729922.java!!!	initializeJavaAssertionMaps() : void
+        // assert Thread.holdsLock(assertionLock);
+
+        classAssertionStatus = new HashMap<>();
+        packageAssertionStatus = new HashMap<>();
+        AssertionStatusDirectives directives = retrieveDirectives();
+
+        for(int i = 0; i < directives.classes.length; i++)
+            classAssertionStatus.put(directives.classes[i],
+                                     directives.classEnabled[i]);
+
+        for(int i = 0; i < directives.packages.length; i++)
+            packageAssertionStatus.put(directives.packages[i],
+                                       directives.packageEnabled[i]);
+
+        defaultAssertionStatus = directives.deflt;

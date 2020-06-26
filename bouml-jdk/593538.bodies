@@ -1,0 +1,497 @@
+class XSLTC
+!!!3821826.java!!!	XSLTC(inout useServicesMechanism : boolean, inout featureManager : FeatureManager)
+        _parser = new Parser(this, useServicesMechanism);
+        _featureManager = featureManager;
+        _extensionClassLoader = null;
+        _externalExtensionFunctions = new HashMap<>();
+!!!3821954.java!!!	setSecureProcessing(inout flag : boolean) : void
+        _isSecureProcessing = flag;
+!!!3822082.java!!!	isSecureProcessing() : boolean
+        return _isSecureProcessing;
+!!!3822210.java!!!	useServicesMechnism() : boolean
+        return _useServicesMechanism;
+!!!3822338.java!!!	setServicesMechnism(inout flag : boolean) : void
+        _useServicesMechanism = flag;
+!!!3822466.java!!!	getFeature(inout name : FeatureManager::Feature) : boolean
+        return _featureManager.isFeatureEnabled(name);
+!!!3822594.java!!!	getProperty(inout name : String) : Object
+        if (name.equals(XMLConstants.ACCESS_EXTERNAL_STYLESHEET)) {
+            return _accessExternalStylesheet;
+        }
+        else if (name.equals(XMLConstants.ACCESS_EXTERNAL_DTD)) {
+            return _accessExternalDTD;
+        } else if (name.equals(XalanConstants.SECURITY_MANAGER)) {
+            return _xmlSecurityManager;
+        } else if (name.equals(XalanConstants.JDK_EXTENSION_CLASSLOADER)) {
+            return _extensionClassLoader;
+        }
+        return null;
+!!!3822722.java!!!	setProperty(inout name : String, inout value : Object) : void
+        if (name.equals(XMLConstants.ACCESS_EXTERNAL_STYLESHEET)) {
+            _accessExternalStylesheet = (String)value;
+        }
+        else if (name.equals(XMLConstants.ACCESS_EXTERNAL_DTD)) {
+            _accessExternalDTD = (String)value;
+        } else if (name.equals(XalanConstants.SECURITY_MANAGER)) {
+            _xmlSecurityManager = (XMLSecurityManager)value;
+        } else if (name.equals(XalanConstants.JDK_EXTENSION_CLASSLOADER)) {
+            _extensionClassLoader = (ClassLoader) value;
+            /* Clear the external extension functions HashMap if extension class
+               loader was changed */
+            _externalExtensionFunctions.clear();
+        }
+!!!3822850.java!!!	getParser() : Parser
+        return _parser;
+!!!3822978.java!!!	setOutputType(in type : int) : void
+        _outputType = type;
+!!!3823106.java!!!	getOutputProperties() : Properties
+        return _parser.getOutputProperties();
+!!!3823234.java!!!	init() : void
+        reset();
+        _reader = null;
+        _classes = new Vector();
+        _bcelClasses = new Vector();
+!!!3823362.java!!!	setExternalExtensionFunctions(inout name : String, inout clazz : Class) : void
+        if (_isSecureProcessing && clazz != null && !_externalExtensionFunctions.containsKey(name)) {
+            _externalExtensionFunctions.put(name, clazz);
+        }
+!!!3823490.java!!!	loadExternalFunction(inout name : String) : Class
+        Class loaded = null;
+        //Check if the function is not loaded already
+        if (_externalExtensionFunctions.containsKey(name)) {
+            loaded = _externalExtensionFunctions.get(name);
+        } else if (_extensionClassLoader != null) {
+            loaded = Class.forName(name, true, _extensionClassLoader);
+            setExternalExtensionFunctions(name, loaded);
+        }
+        if (loaded == null) {
+            throw new ClassNotFoundException(name);
+        }
+        //Return loaded class
+        return (Class) loaded;
+!!!3823618.java!!!	getExternalExtensionFunctions() : Map
+        return Collections.unmodifiableMap(_externalExtensionFunctions);
+!!!3823746.java!!!	reset() : void
+        _nextGType      = DTM.NTYPES;
+        _elements       = new HashMap<>();
+        _attributes     = new HashMap<>();
+        _namespaces     = new HashMap<>();
+        _namespaces.put("",new Integer(_nextNSType));
+        _namesIndex     = new Vector(128);
+        _namespaceIndex = new Vector(32);
+        _namespacePrefixes = new HashMap<>();
+        _stylesheet     = null;
+        _parser.init();
+        //_variableSerial     = 1;
+        _modeSerial         = 1;
+        _stylesheetSerial   = 1;
+        _stepPatternSerial  = 1;
+        _helperClassSerial  = 0;
+        _attributeSetSerial = 0;
+        _multiDocument      = false;
+        _hasIdCall          = false;
+        _numberFieldIndexes = new int[] {
+            -1,         // LEVEL_SINGLE
+            -1,         // LEVEL_MULTIPLE
+            -1          // LEVEL_ANY
+        };
+        _externalExtensionFunctions.clear();
+!!!3823874.java!!!	setSourceLoader(inout loader : SourceLoader) : void
+        _loader = loader;
+!!!3824002.java!!!	setTemplateInlining(inout templateInlining : boolean) : void
+        _templateInlining = templateInlining;
+!!!3824130.java!!!	getTemplateInlining() : boolean
+        return _templateInlining;
+!!!3824258.java!!!	setPIParameters(inout media : String, inout title : String, inout charset : String) : void
+        _parser.setPIParameters(media, title, charset);
+!!!3824386.java!!!	compile(inout url : URL) : boolean
+        try {
+            // Open input stream from URL and wrap inside InputSource
+            final InputStream stream = url.openStream();
+            final InputSource input = new InputSource(stream);
+            input.setSystemId(url.toString());
+            return compile(input, _className);
+        }
+        catch (IOException e) {
+            _parser.reportError(Constants.FATAL, new ErrorMsg(ErrorMsg.JAXP_COMPILE_ERR, e));
+            return false;
+        }
+!!!3824514.java!!!	compile(inout url : URL, inout name : String) : boolean
+        try {
+            // Open input stream from URL and wrap inside InputSource
+            final InputStream stream = url.openStream();
+            final InputSource input = new InputSource(stream);
+            input.setSystemId(url.toString());
+            return compile(input, name);
+        }
+        catch (IOException e) {
+            _parser.reportError(Constants.FATAL, new ErrorMsg(ErrorMsg.JAXP_COMPILE_ERR, e));
+            return false;
+        }
+!!!3824642.java!!!	compile(inout stream : InputStream, inout name : String) : boolean
+        final InputSource input = new InputSource(stream);
+        input.setSystemId(name); // We have nothing else!!!
+        return compile(input, name);
+!!!3824770.java!!!	compile(inout input : InputSource, inout name : String) : boolean
+        try {
+            // Reset globals in case we're called by compile(Vector v);
+            reset();
+
+            // The systemId may not be set, so we'll have to check the URL
+            String systemId = null;
+            if (input != null) {
+                systemId = input.getSystemId();
+            }
+
+            // Set the translet class name if not already set
+            if (_className == null) {
+                if (name != null) {
+                    setClassName(name);
+                }
+                else if (systemId != null && !systemId.equals("")) {
+                    setClassName(Util.baseName(systemId));
+                }
+
+                // Ensure we have a non-empty class name at this point
+                if (_className == null || _className.length() == 0) {
+                    setClassName("GregorSamsa"); // default translet name
+                }
+            }
+
+            // Get the root node of the abstract syntax tree
+            SyntaxTreeNode element = null;
+            if (_reader == null) {
+                element = _parser.parse(input);
+            }
+            else {
+                element = _parser.parse(_reader, input);
+            }
+
+            // Compile the translet - this is where the work is done!
+            if ((!_parser.errorsFound()) && (element != null)) {
+                // Create a Stylesheet element from the root node
+                _stylesheet = _parser.makeStylesheet(element);
+                _stylesheet.setSourceLoader(_loader);
+                _stylesheet.setSystemId(systemId);
+                _stylesheet.setParentStylesheet(null);
+                _stylesheet.setTemplateInlining(_templateInlining);
+                _parser.setCurrentStylesheet(_stylesheet);
+
+                // Create AST under the Stylesheet element (parse & type-check)
+                _parser.createAST(_stylesheet);
+            }
+            // Generate the bytecodes and output the translet class(es)
+            if ((!_parser.errorsFound()) && (_stylesheet != null)) {
+                _stylesheet.setCallsNodeset(_callsNodeset);
+                _stylesheet.setMultiDocument(_multiDocument);
+                _stylesheet.setHasIdCall(_hasIdCall);
+
+                // Class synchronization is needed for BCEL
+                synchronized (getClass()) {
+                    _stylesheet.translate();
+                }
+            }
+        }
+        catch (Exception e) {
+            /*if (_debug)*/ e.printStackTrace();
+            _parser.reportError(Constants.FATAL, new ErrorMsg(ErrorMsg.JAXP_COMPILE_ERR, e));
+        }
+        catch (Error e) {
+            if (_debug) e.printStackTrace();
+            _parser.reportError(Constants.FATAL, new ErrorMsg(ErrorMsg.JAXP_COMPILE_ERR, e));
+        }
+        finally {
+            _reader = null; // reset this here to be sure it is not re-used
+        }
+        return !_parser.errorsFound();
+!!!3824898.java!!!	compile(inout stylesheets : Vector) : boolean
+        // Get the number of stylesheets (ie. URLs) in the vector
+        final int count = stylesheets.size();
+
+        // Return straight away if the vector is empty
+        if (count == 0) return true;
+
+        // Special handling needed if the URL count is one, becuase the
+        // _className global must not be reset if it was set explicitly
+        if (count == 1) {
+            final Object url = stylesheets.firstElement();
+            if (url instanceof URL)
+                return compile((URL)url);
+            else
+                return false;
+        }
+        else {
+            // Traverse all elements in the vector and compile
+            final Enumeration urls = stylesheets.elements();
+            while (urls.hasMoreElements()) {
+                _className = null; // reset, so that new name will be computed
+                final Object url = urls.nextElement();
+                if (url instanceof URL) {
+                    if (!compile((URL)url)) return false;
+                }
+            }
+        }
+        return true;
+!!!3825026.java!!!	getBytecodes() : byte
+        final int count = _classes.size();
+        final byte[][] result = new byte[count][1];
+        for (int i = 0; i < count; i++)
+            result[i] = (byte[])_classes.elementAt(i);
+        return result;
+!!!3825154.java!!!	compile(inout name : String, inout input : InputSource, in outputType : int) : byte
+        _outputType = outputType;
+        if (compile(input, name))
+            return getBytecodes();
+        else
+            return null;
+!!!3825282.java!!!	compile(inout name : String, inout input : InputSource) : byte
+        return compile(name, input, BYTEARRAY_OUTPUT);
+!!!3825410.java!!!	setXMLReader(inout reader : XMLReader) : void
+        _reader = reader;
+!!!3825538.java!!!	getXMLReader() : XMLReader
+        return _reader ;
+!!!3825666.java!!!	getErrors() : Vector
+        return _parser.getErrors();
+!!!3825794.java!!!	getWarnings() : Vector
+        return _parser.getWarnings();
+!!!3825922.java!!!	printErrors() : void
+        _parser.printErrors();
+!!!3826050.java!!!	printWarnings() : void
+        _parser.printWarnings();
+!!!3826178.java!!!	setMultiDocument(inout flag : boolean) : void
+        _multiDocument = flag;
+!!!3826306.java!!!	isMultiDocument() : boolean
+        return _multiDocument;
+!!!3826434.java!!!	setCallsNodeset(inout flag : boolean) : void
+        if (flag) setMultiDocument(flag);
+        _callsNodeset = flag;
+!!!3826562.java!!!	callsNodeset() : boolean
+        return _callsNodeset;
+!!!3826690.java!!!	setHasIdCall(inout flag : boolean) : void
+        _hasIdCall = flag;
+!!!3826818.java!!!	hasIdCall() : boolean
+        return _hasIdCall;
+!!!3826946.java!!!	setClassName(inout className : String) : void
+        final String base  = Util.baseName(className);
+        final String noext = Util.noExtName(base);
+        String name  = Util.toJavaName(noext);
+
+        if (_packageName == null)
+            _className = name;
+        else
+            _className = _packageName + '.' + name;
+!!!3827074.java!!!	getClassName() : String
+        return _className;
+!!!3827202.java!!!	classFileName(in className : String) : String
+        return className.replace('.', File.separatorChar) + ".class";
+!!!3827330.java!!!	getOutputFile(inout className : String) : File
+        if (_destDir != null)
+            return new File(_destDir, classFileName(className));
+        else
+            return new File(classFileName(className));
+!!!3827458.java!!!	setDestDirectory(inout dstDirName : String) : boolean
+        final File dir = new File(dstDirName);
+        if (SecuritySupport.getFileExists(dir) || dir.mkdirs()) {
+            _destDir = dir;
+            return true;
+        }
+        else {
+            _destDir = null;
+            return false;
+        }
+!!!3827586.java!!!	setPackageName(inout packageName : String) : void
+        _packageName = packageName;
+        if (_className != null) setClassName(_className);
+!!!3827714.java!!!	setJarFileName(inout jarFileName : String) : void
+        final String JAR_EXT = ".jar";
+        if (jarFileName.endsWith(JAR_EXT))
+            _jarFileName = jarFileName;
+        else
+            _jarFileName = jarFileName + JAR_EXT;
+        _outputType = JAR_OUTPUT;
+!!!3827842.java!!!	getJarFileName() : String
+        return _jarFileName;
+!!!3827970.java!!!	setStylesheet(inout stylesheet : Stylesheet) : void
+        if (_stylesheet == null) _stylesheet = stylesheet;
+!!!3828098.java!!!	getStylesheet() : Stylesheet
+        return _stylesheet;
+!!!3828226.java!!!	registerAttribute(inout name : QName) : int
+        Integer code = _attributes.get(name.toString());
+        if (code == null) {
+            code = _nextGType++;
+            _attributes.put(name.toString(), code);
+            final String uri = name.getNamespace();
+            final String local = "@"+name.getLocalPart();
+            if ((uri != null) && (!uri.equals("")))
+                _namesIndex.addElement(uri+":"+local);
+            else
+                _namesIndex.addElement(local);
+            if (name.getLocalPart().equals("*")) {
+                registerNamespace(name.getNamespace());
+            }
+        }
+        return code.intValue();
+!!!3828354.java!!!	registerElement(inout name : QName) : int
+        // Register element (full QName)
+        Integer code = _elements.get(name.toString());
+        if (code == null) {
+            _elements.put(name.toString(), code = _nextGType++);
+            _namesIndex.addElement(name.toString());
+        }
+        if (name.getLocalPart().equals("*")) {
+            registerNamespace(name.getNamespace());
+        }
+        return code.intValue();
+!!!3828482.java!!!	registerNamespacePrefix(inout name : QName) : int
+
+    Integer code = _namespacePrefixes.get(name.toString());
+    if (code == null) {
+        code = _nextGType++;
+        _namespacePrefixes.put(name.toString(), code);
+        final String uri = name.getNamespace();
+        if ((uri != null) && (!uri.equals(""))){
+            // namespace::ext2:ped2 will be made empty in TypedNamespaceIterator
+            _namesIndex.addElement("?");
+        } else{
+           _namesIndex.addElement("?"+name.getLocalPart());
+        }
+    }
+    return code.intValue();
+!!!3828610.java!!!	registerNamespace(inout namespaceURI : String) : int
+        Integer code = _namespaces.get(namespaceURI);
+        if (code == null) {
+            code = _nextNSType++;
+            _namespaces.put(namespaceURI,code);
+            _namespaceIndex.addElement(namespaceURI);
+        }
+        return code.intValue();
+!!!3828738.java!!!	nextModeSerial() : int
+        return _modeSerial++;
+!!!3828866.java!!!	nextStylesheetSerial() : int
+        return _stylesheetSerial++;
+!!!3828994.java!!!	nextStepPatternSerial() : int
+        return _stepPatternSerial++;
+!!!3829122.java!!!	getNumberFieldIndexes() : int
+        return _numberFieldIndexes;
+!!!3829250.java!!!	nextHelperClassSerial() : int
+        return _helperClassSerial++;
+!!!3829378.java!!!	nextAttributeSetSerial() : int
+        return _attributeSetSerial++;
+!!!3829506.java!!!	getNamesIndex() : Vector
+        return _namesIndex;
+!!!3829634.java!!!	getNamespaceIndex() : Vector
+        return _namespaceIndex;
+!!!3829762.java!!!	getHelperClassName() : String
+        return getClassName() + '$' + _helperClassSerial++;
+!!!3829890.java!!!	dumpClass(inout clazz : JavaClass) : void
+
+        if (_outputType == FILE_OUTPUT ||
+            _outputType == BYTEARRAY_AND_FILE_OUTPUT)
+        {
+            File outFile = getOutputFile(clazz.getClassName());
+            String parentDir = outFile.getParent();
+            if (parentDir != null) {
+                File parentFile = new File(parentDir);
+                if (!SecuritySupport.getFileExists(parentFile))
+                    parentFile.mkdirs();
+            }
+        }
+
+        try {
+            switch (_outputType) {
+            case FILE_OUTPUT:
+                clazz.dump(
+                    new BufferedOutputStream(
+                        new FileOutputStream(
+                            getOutputFile(clazz.getClassName()))));
+                break;
+            case JAR_OUTPUT:
+                _bcelClasses.addElement(clazz);
+                break;
+            case BYTEARRAY_OUTPUT:
+            case BYTEARRAY_AND_FILE_OUTPUT:
+            case BYTEARRAY_AND_JAR_OUTPUT:
+            case CLASSLOADER_OUTPUT:
+                ByteArrayOutputStream out = new ByteArrayOutputStream(2048);
+                clazz.dump(out);
+                _classes.addElement(out.toByteArray());
+
+                if (_outputType == BYTEARRAY_AND_FILE_OUTPUT)
+                  clazz.dump(new BufferedOutputStream(
+                        new FileOutputStream(getOutputFile(clazz.getClassName()))));
+                else if (_outputType == BYTEARRAY_AND_JAR_OUTPUT)
+                  _bcelClasses.addElement(clazz);
+
+                break;
+            }
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+!!!3830018.java!!!	entryName(inout f : File) : String
+        return f.getName().replace(File.separatorChar, '/');
+!!!3830146.java!!!	outputToJar() : void
+        // create the manifest
+        final Manifest manifest = new Manifest();
+        final java.util.jar.Attributes atrs = manifest.getMainAttributes();
+        atrs.put(java.util.jar.Attributes.Name.MANIFEST_VERSION,"1.2");
+
+        final Map map = manifest.getEntries();
+        // create manifest
+        Enumeration classes = _bcelClasses.elements();
+        final String now = (new Date()).toString();
+        final java.util.jar.Attributes.Name dateAttr =
+            new java.util.jar.Attributes.Name("Date");
+        while (classes.hasMoreElements()) {
+            final JavaClass clazz = (JavaClass)classes.nextElement();
+            final String className = clazz.getClassName().replace('.','/');
+            final java.util.jar.Attributes attr = new java.util.jar.Attributes();
+            attr.put(dateAttr, now);
+            map.put(className+".class", attr);
+        }
+
+        final File jarFile = new File(_destDir, _jarFileName);
+        final JarOutputStream jos =
+            new JarOutputStream(new FileOutputStream(jarFile), manifest);
+        classes = _bcelClasses.elements();
+        while (classes.hasMoreElements()) {
+            final JavaClass clazz = (JavaClass)classes.nextElement();
+            final String className = clazz.getClassName().replace('.','/');
+            jos.putNextEntry(new JarEntry(className+".class"));
+            final ByteArrayOutputStream out = new ByteArrayOutputStream(2048);
+            clazz.dump(out); // dump() closes it's output stream
+            out.writeTo(jos);
+        }
+        jos.close();
+!!!3830274.java!!!	setDebug(inout debug : boolean) : void
+        _debug = debug;
+!!!3830402.java!!!	debug() : boolean
+        return _debug;
+!!!3830530.java!!!	getCharacterData(in index : int) : String
+        return ((StringBuffer) m_characterData.elementAt(index)).toString();
+!!!3830658.java!!!	getCharacterDataCount() : int
+        return (m_characterData != null) ? m_characterData.size() : 0;
+!!!3830786.java!!!	addCharacterData(inout newData : String) : int
+        StringBuffer currData;
+        if (m_characterData == null) {
+            m_characterData = new Vector();
+            currData = new StringBuffer();
+            m_characterData.addElement(currData);
+        } else {
+            currData = (StringBuffer) m_characterData
+                                           .elementAt(m_characterData.size()-1);
+        }
+
+        // Character data could take up to three-times as much space when
+        // written to the class file as UTF-8.  The maximum size for a
+        // constant is 65535/3.  If we exceed that,
+        // (We really should use some "bin packing".)
+        if (newData.length() + currData.length() > 21845) {
+            currData = new StringBuffer();
+            m_characterData.addElement(currData);
+        }
+
+        int newDataOffset = currData.length();
+        currData.append(newData);
+
+        return newDataOffset;

@@ -1,0 +1,58 @@
+class BufferManagerWriteStream
+!!!328322.java!!!	BufferManagerWriteStream(inout orb : ORB)
+        super(orb) ;
+!!!328450.java!!!	sentFragment() : boolean
+        return fragmentCount > 0;
+!!!328578.java!!!	getBufferSize() : int
+        return orb.getORBData().getGIOPFragmentSize();
+!!!328706.java!!!	overflow(inout bbwi : ByteBufferWithInfo) : void
+        // Set the fragment's moreFragments field to true
+        MessageBase.setFlag(bbwi.byteBuffer, Message.MORE_FRAGMENTS_BIT);
+
+        try {
+           sendFragment(false);
+        } catch(SystemException se){
+                orb.getPIHandler().invokeClientPIEndingPoint(
+                        ReplyMessage.SYSTEM_EXCEPTION, se);
+                throw se;
+        }
+
+        // Reuse the old buffer
+
+        // REVISIT - need to account for case when needed > available
+        // even after fragmenting.  This is the large array case, so
+        // the caller should retry when it runs out of space.
+        bbwi.position(0);
+        bbwi.buflen = bbwi.byteBuffer.limit();
+        bbwi.fragmented = true;
+
+        // Now we must marshal in the fragment header/GIOP header
+
+        // REVISIT - we can optimize this by not creating the fragment message
+        // each time.
+
+        FragmentMessage header = ((CDROutputObject)outputObject).getMessageHeader().createFragmentMessage();
+
+        header.write(((CDROutputObject)outputObject));
+!!!328834.java!!!	sendFragment(inout isLastFragment : boolean) : void
+        Connection conn = ((OutputObject)outputObject).getMessageMediator().getConnection();
+
+        // REVISIT: need an ORB
+        //System.out.println("sendFragment: last?: " + isLastFragment);
+        conn.writeLock();
+
+        try {
+            // Send the fragment
+            conn.sendWithoutLock(((OutputObject)outputObject));
+
+            fragmentCount++;
+
+        } finally {
+
+            conn.writeUnlock();
+        }
+
+!!!328962.java!!!	sendMessage() : void
+        sendFragment(true);
+
+        sentFullMessage = true;

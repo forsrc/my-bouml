@@ -1,0 +1,62 @@
+class WorkerThread
+!!!1295746.java!!!	WorkerThread(inout tg : ThreadGroup, inout threadPoolName : String)
+            super(tg, "Idle");
+            this.threadId = ThreadPoolImpl.getUniqueThreadId();
+            this.threadPoolName = threadPoolName;
+            setName(composeWorkerThreadName(threadPoolName, "Idle"));
+!!!1295874.java!!!	close() : void
+            closeCalled = true;
+            interrupt();
+!!!1296002.java!!!	resetClassLoader() : void
+
+!!!1296130.java!!!	performWork() : void
+            long start = System.currentTimeMillis();
+            try {
+                currentWork.doWork();
+            } catch (Throwable t) {
+                wrapper.workerThreadDoWorkThrowable(this, t);
+            }
+            long elapsedTime = System.currentTimeMillis() - start;
+            totalTimeTaken.addAndGet(elapsedTime);
+            processedCount.incrementAndGet();
+!!!1296258.java!!!	run() : void
+            try  {
+                while (!closeCalled) {
+                    try {
+                        currentWork = ((WorkQueueImpl)workQueue).requestWork(
+                            inactivityTimeout);
+                        if (currentWork == null)
+                            continue;
+                    } catch (InterruptedException exc) {
+                        wrapper.workQueueThreadInterrupted( exc, getName(),
+                           Boolean.valueOf(closeCalled));
+
+                        continue ;
+                    } catch (Throwable t) {
+                         wrapper.workerThreadThrowableFromRequestWork(this, t,
+                                workQueue.getName());
+
+                        continue;
+                    }
+
+                    performWork();
+
+                    // set currentWork to null so that the work item can be
+                    // garbage collected without waiting for the next work item.
+                    currentWork = null;
+
+                    resetClassLoader();
+                }
+            } catch (Throwable e) {
+                // This should not be possible
+                wrapper.workerThreadCaughtUnexpectedThrowable(this,e);
+            } finally {
+                synchronized (workersLock) {
+                    workers.remove(this);
+                }
+            }
+!!!1296386.java!!!	composeWorkerThreadName(inout poolName : String, inout workerName : String) : String
+            workerThreadName.setLength(0);
+            workerThreadName.append("p: ").append(poolName);
+            workerThreadName.append("; w: ").append(workerName);
+            return workerThreadName.toString();

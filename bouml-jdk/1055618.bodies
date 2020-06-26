@@ -1,0 +1,213 @@
+class HijrahDate
+!!!8471682.java!!!	of(inout chrono : HijrahChronology, in prolepticYear : int, in monthOfYear : int, in dayOfMonth : int) : HijrahDate
+        return new HijrahDate(chrono, prolepticYear, monthOfYear, dayOfMonth);
+!!!8471810.java!!!	ofEpochDay(inout chrono : HijrahChronology, in epochDay : long) : HijrahDate
+        return new HijrahDate(chrono, epochDay);
+!!!8471938.java!!!	now() : HijrahDate
+        return now(Clock.systemDefaultZone());
+!!!8472066.java!!!	now(inout zone : ZoneId) : HijrahDate
+        return now(Clock.system(zone));
+!!!8472194.java!!!	now(inout clock : Clock) : HijrahDate
+        return HijrahDate.ofEpochDay(HijrahChronology.INSTANCE, LocalDate.now(clock).toEpochDay());
+!!!8472322.java!!!	of(in prolepticYear : int, in month : int, in dayOfMonth : int) : HijrahDate
+        return HijrahChronology.INSTANCE.date(prolepticYear, month, dayOfMonth);
+!!!8472450.java!!!	from(inout temporal : TemporalAccessor) : HijrahDate
+        return HijrahChronology.INSTANCE.date(temporal);
+!!!8472578.java!!!	HijrahDate(inout chrono : HijrahChronology, in prolepticYear : int, in monthOfYear : int, in dayOfMonth : int)
+        // Computing the Gregorian day checks the valid ranges
+        chrono.getEpochDay(prolepticYear, monthOfYear, dayOfMonth);
+
+        this.chrono = chrono;
+        this.prolepticYear = prolepticYear;
+        this.monthOfYear = monthOfYear;
+        this.dayOfMonth = dayOfMonth;
+!!!8472706.java!!!	HijrahDate(inout chrono : HijrahChronology, in epochDay : long)
+        int[] dateInfo = chrono.getHijrahDateInfo((int)epochDay);
+
+        this.chrono = chrono;
+        this.prolepticYear = dateInfo[0];
+        this.monthOfYear = dateInfo[1];
+        this.dayOfMonth = dateInfo[2];
+!!!8472834.java!!!	getChronology() : HijrahChronology
+        return chrono;
+!!!8472962.java!!!	getEra() : HijrahEra
+        return HijrahEra.AH;
+!!!8473090.java!!!	lengthOfMonth() : int
+        return chrono.getMonthLength(prolepticYear, monthOfYear);
+!!!8473218.java!!!	lengthOfYear() : int
+        return chrono.getYearLength(prolepticYear);
+!!!8473346.java!!!	range(inout field : TemporalField) : ValueRange
+        if (field instanceof ChronoField) {
+            if (isSupported(field)) {
+                ChronoField f = (ChronoField) field;
+                switch (f) {
+                    case DAY_OF_MONTH: return ValueRange.of(1, lengthOfMonth());
+                    case DAY_OF_YEAR: return ValueRange.of(1, lengthOfYear());
+                    case ALIGNED_WEEK_OF_MONTH: return ValueRange.of(1, 5);  // TODO
+                    // TODO does the limited range of valid years cause years to
+                    // start/end part way through? that would affect range
+                }
+                return getChronology().range(f);
+            }
+            throw new UnsupportedTemporalTypeException("Unsupported field: " + field);
+        }
+        return field.rangeRefinedBy(this);
+!!!8473474.java!!!	getLong(inout field : TemporalField) : long
+        if (field instanceof ChronoField) {
+            switch ((ChronoField) field) {
+                case DAY_OF_WEEK: return getDayOfWeek();
+                case ALIGNED_DAY_OF_WEEK_IN_MONTH: return ((getDayOfWeek() - 1) % 7) + 1;
+                case ALIGNED_DAY_OF_WEEK_IN_YEAR: return ((getDayOfYear() - 1) % 7) + 1;
+                case DAY_OF_MONTH: return this.dayOfMonth;
+                case DAY_OF_YEAR: return this.getDayOfYear();
+                case EPOCH_DAY: return toEpochDay();
+                case ALIGNED_WEEK_OF_MONTH: return ((dayOfMonth - 1) / 7) + 1;
+                case ALIGNED_WEEK_OF_YEAR: return ((getDayOfYear() - 1) / 7) + 1;
+                case MONTH_OF_YEAR: return monthOfYear;
+                case PROLEPTIC_MONTH: return getProlepticMonth();
+                case YEAR_OF_ERA: return prolepticYear;
+                case YEAR: return prolepticYear;
+                case ERA: return getEraValue();
+            }
+            throw new UnsupportedTemporalTypeException("Unsupported field: " + field);
+        }
+        return field.getFrom(this);
+!!!8473602.java!!!	getProlepticMonth() : long
+        return prolepticYear * 12L + monthOfYear - 1;
+!!!8473730.java!!!	with(inout field : TemporalField, in newValue : long) : HijrahDate
+        if (field instanceof ChronoField) {
+            ChronoField f = (ChronoField) field;
+            // not using checkValidIntValue so EPOCH_DAY and PROLEPTIC_MONTH work
+            chrono.range(f).checkValidValue(newValue, f);    // TODO: validate value
+            int nvalue = (int) newValue;
+            switch (f) {
+                case DAY_OF_WEEK: return plusDays(newValue - getDayOfWeek());
+                case ALIGNED_DAY_OF_WEEK_IN_MONTH: return plusDays(newValue - getLong(ALIGNED_DAY_OF_WEEK_IN_MONTH));
+                case ALIGNED_DAY_OF_WEEK_IN_YEAR: return plusDays(newValue - getLong(ALIGNED_DAY_OF_WEEK_IN_YEAR));
+                case DAY_OF_MONTH: return resolvePreviousValid(prolepticYear, monthOfYear, nvalue);
+                case DAY_OF_YEAR: return plusDays(Math.min(nvalue, lengthOfYear()) - getDayOfYear());
+                case EPOCH_DAY: return new HijrahDate(chrono, newValue);
+                case ALIGNED_WEEK_OF_MONTH: return plusDays((newValue - getLong(ALIGNED_WEEK_OF_MONTH)) * 7);
+                case ALIGNED_WEEK_OF_YEAR: return plusDays((newValue - getLong(ALIGNED_WEEK_OF_YEAR)) * 7);
+                case MONTH_OF_YEAR: return resolvePreviousValid(prolepticYear, nvalue, dayOfMonth);
+                case PROLEPTIC_MONTH: return plusMonths(newValue - getProlepticMonth());
+                case YEAR_OF_ERA: return resolvePreviousValid(prolepticYear >= 1 ? nvalue : 1 - nvalue, monthOfYear, dayOfMonth);
+                case YEAR: return resolvePreviousValid(nvalue, monthOfYear, dayOfMonth);
+                case ERA: return resolvePreviousValid(1 - prolepticYear, monthOfYear, dayOfMonth);
+            }
+            throw new UnsupportedTemporalTypeException("Unsupported field: " + field);
+        }
+        return super.with(field, newValue);
+!!!8473858.java!!!	resolvePreviousValid(in prolepticYear : int, in month : int, in day : int) : HijrahDate
+        int monthDays = chrono.getMonthLength(prolepticYear, month);
+        if (day > monthDays) {
+            day = monthDays;
+        }
+        return HijrahDate.of(chrono, prolepticYear, month, day);
+!!!8473986.java!!!	with(inout adjuster : TemporalAdjuster) : HijrahDate
+        return super.with(adjuster);
+!!!8474114.java!!!	withVariant(inout chronology : HijrahChronology) : HijrahDate
+        if (chrono == chronology) {
+            return this;
+        }
+        // Like resolvePreviousValid the day is constrained to stay in the same month
+        int monthDays = chronology.getDayOfYear(prolepticYear, monthOfYear);
+        return HijrahDate.of(chronology, prolepticYear, monthOfYear,(dayOfMonth > monthDays) ? monthDays : dayOfMonth );
+!!!8474242.java!!!	plus(inout amount : TemporalAmount) : HijrahDate
+        return super.plus(amount);
+!!!8474370.java!!!	minus(inout amount : TemporalAmount) : HijrahDate
+        return super.minus(amount);
+!!!8474498.java!!!	toEpochDay() : long
+        return chrono.getEpochDay(prolepticYear, monthOfYear, dayOfMonth);
+!!!8474626.java!!!	getDayOfYear() : int
+        return chrono.getDayOfYear(prolepticYear, monthOfYear) + dayOfMonth;
+!!!8474754.java!!!	getDayOfWeek() : int
+        int dow0 = (int)Math.floorMod(toEpochDay() + 3, 7);
+        return dow0 + 1;
+!!!8474882.java!!!	getEraValue() : int
+        return (prolepticYear > 1 ? 1 : 0);
+!!!8475010.java!!!	isLeapYear() : boolean
+        return chrono.isLeapYear(prolepticYear);
+!!!8475138.java!!!	plusYears(in years : long) : HijrahDate
+        if (years == 0) {
+            return this;
+        }
+        int newYear = Math.addExact(this.prolepticYear, (int)years);
+        return resolvePreviousValid(newYear, monthOfYear, dayOfMonth);
+!!!8475266.java!!!	plusMonths(in monthsToAdd : long) : HijrahDate
+        if (monthsToAdd == 0) {
+            return this;
+        }
+        long monthCount = prolepticYear * 12L + (monthOfYear - 1);
+        long calcMonths = monthCount + monthsToAdd;  // safe overflow
+        int newYear = chrono.checkValidYear(Math.floorDiv(calcMonths, 12L));
+        int newMonth = (int)Math.floorMod(calcMonths, 12L) + 1;
+        return resolvePreviousValid(newYear, newMonth, dayOfMonth);
+!!!8475394.java!!!	plusWeeks(in weeksToAdd : long) : HijrahDate
+        return super.plusWeeks(weeksToAdd);
+!!!8475522.java!!!	plusDays(in days : long) : HijrahDate
+        return new HijrahDate(chrono, toEpochDay() + days);
+!!!8475650.java!!!	plus(in amountToAdd : long, inout unit : TemporalUnit) : HijrahDate
+        return super.plus(amountToAdd, unit);
+!!!8475778.java!!!	minus(in amountToSubtract : long, inout unit : TemporalUnit) : HijrahDate
+        return super.minus(amountToSubtract, unit);
+!!!8475906.java!!!	minusYears(in yearsToSubtract : long) : HijrahDate
+        return super.minusYears(yearsToSubtract);
+!!!8476034.java!!!	minusMonths(in monthsToSubtract : long) : HijrahDate
+        return super.minusMonths(monthsToSubtract);
+!!!8476162.java!!!	minusWeeks(in weeksToSubtract : long) : HijrahDate
+        return super.minusWeeks(weeksToSubtract);
+!!!8476290.java!!!	minusDays(in daysToSubtract : long) : HijrahDate
+        return super.minusDays(daysToSubtract);
+!!!8476418.java!!!	atTime(inout localTime : LocalTime) : ChronoLocalDateTime
+        return (ChronoLocalDateTime<HijrahDate>)super.atTime(localTime);
+!!!8476546.java!!!	until(inout endDate : ChronoLocalDate) : ChronoPeriod
+        // TODO: untested
+        HijrahDate end = getChronology().date(endDate);
+        long totalMonths = (end.prolepticYear - this.prolepticYear) * 12 + (end.monthOfYear - this.monthOfYear);  // safe
+        int days = end.dayOfMonth - this.dayOfMonth;
+        if (totalMonths > 0 && days < 0) {
+            totalMonths--;
+            HijrahDate calcDate = this.plusMonths(totalMonths);
+            days = (int) (end.toEpochDay() - calcDate.toEpochDay());  // safe
+        } else if (totalMonths < 0 && days > 0) {
+            totalMonths++;
+            days -= end.lengthOfMonth();
+        }
+        long years = totalMonths / 12;  // safe
+        int months = (int) (totalMonths % 12);  // safe
+        return getChronology().period(Math.toIntExact(years), months, days);
+!!!8476674.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof HijrahDate) {
+            HijrahDate otherDate = (HijrahDate) obj;
+            return prolepticYear == otherDate.prolepticYear
+                && this.monthOfYear == otherDate.monthOfYear
+                && this.dayOfMonth == otherDate.dayOfMonth
+                && getChronology().equals(otherDate.getChronology());
+        }
+        return false;
+!!!8476802.java!!!	hashCode() : int
+        int yearValue = prolepticYear;
+        int monthValue = monthOfYear;
+        int dayValue = dayOfMonth;
+        return getChronology().getId().hashCode() ^ (yearValue & 0xFFFFF800)
+                ^ ((yearValue << 11) + (monthValue << 6) + (dayValue));
+!!!8476930.java!!!	readObject(inout s : ObjectInputStream) : void
+        throw new InvalidObjectException("Deserialization via serialization delegate");
+!!!8477058.java!!!	writeReplace() : Object
+        return new Ser(Ser.HIJRAH_DATE_TYPE, this);
+!!!8477186.java!!!	writeExternal(inout out : ObjectOutput) : void
+        // HijrahChronology is implicit in the Hijrah_DATE_TYPE
+        out.writeObject(getChronology());
+        out.writeInt(get(YEAR));
+        out.writeByte(get(MONTH_OF_YEAR));
+        out.writeByte(get(DAY_OF_MONTH));
+!!!8477314.java!!!	readExternal(inout in : ObjectInput) : HijrahDate
+        HijrahChronology chrono = (HijrahChronology) in.readObject();
+        int year = in.readInt();
+        int month = in.readByte();
+        int dayOfMonth = in.readByte();
+        return chrono.date(year, month, dayOfMonth);

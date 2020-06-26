@@ -1,0 +1,70 @@
+class MarshalledObject
+!!!7876354.java!!!	MarshalledObject(inout obj : T)
+        if (obj == null) {
+            hash = 13;
+            return;
+        }
+
+        ByteArrayOutputStream bout = new ByteArrayOutputStream();
+        ByteArrayOutputStream lout = new ByteArrayOutputStream();
+        MarshalledObjectOutputStream out =
+            new MarshalledObjectOutputStream(bout, lout);
+        out.writeObject(obj);
+        out.flush();
+        objBytes = bout.toByteArray();
+        // locBytes is null if no annotations
+        locBytes = (out.hadAnnotations() ? lout.toByteArray() : null);
+
+        /*
+         * Calculate hash from the marshalled representation of object
+         * so the hashcode will be comparable when sent between VMs.
+         */
+        int h = 0;
+        for (int i = 0; i < objBytes.length; i++) {
+            h = 31 * h + objBytes[i];
+        }
+        hash = h;
+!!!7876482.java!!!	readObject(inout stream : ObjectInputStream) : void
+        stream.defaultReadObject();     // read in all fields
+        objectInputFilter = ObjectInputFilter.Config.getObjectInputFilter(stream);
+!!!7876610.java!!!	get() : T
+        if (objBytes == null)   // must have been a null object
+            return null;
+
+        ByteArrayInputStream bin = new ByteArrayInputStream(objBytes);
+        // locBytes is null if no annotations
+        ByteArrayInputStream lin =
+            (locBytes == null ? null : new ByteArrayInputStream(locBytes));
+        MarshalledObjectInputStream in =
+            new MarshalledObjectInputStream(bin, lin, objectInputFilter);
+        @SuppressWarnings("unchecked")
+        T obj = (T) in.readObject();
+        in.close();
+        return obj;
+!!!7876738.java!!!	hashCode() : int
+        return hash;
+!!!7876866.java!!!	equals(inout obj : Object) : boolean
+        if (obj == this)
+            return true;
+
+        if (obj != null && obj instanceof MarshalledObject) {
+            MarshalledObject<?> other = (MarshalledObject<?>) obj;
+
+            // if either is a ref to null, both must be
+            if (objBytes == null || other.objBytes == null)
+                return objBytes == other.objBytes;
+
+            // quick, easy test
+            if (objBytes.length != other.objBytes.length)
+                return false;
+
+            //!! There is talk about adding an array comparision method
+            //!! at 1.2 -- if so, this should be rewritten.  -arnold
+            for (int i = 0; i < objBytes.length; ++i) {
+                if (objBytes[i] != other.objBytes[i])
+                    return false;
+            }
+            return true;
+        } else {
+            return false;
+        }

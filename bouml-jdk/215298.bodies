@@ -1,0 +1,721 @@
+class Logger
+!!!9380482.java!!!	getGlobal() : Logger
+        // In order to break a cyclic dependence between the LogManager
+        // and Logger static initializers causing deadlocks, the global
+        // logger is created with a special constructor that does not
+        // initialize its log manager.
+        //
+        // If an application calls Logger.getGlobal() before any logger
+        // has been initialized, it is therefore possible that the
+        // LogManager class has not been initialized yet, and therefore
+        // Logger.global.manager will be null.
+        //
+        // In order to finish the initialization of the global logger, we
+        // will therefore call LogManager.getLogManager() here.
+        //
+        // To prevent race conditions we also need to call
+        // LogManager.getLogManager() unconditionally here.
+        // Indeed we cannot rely on the observed value of global.manager,
+        // because global.manager will become not null somewhere during
+        // the initialization of LogManager.
+        // If two threads are calling getGlobal() concurrently, one thread
+        // will see global.manager null and call LogManager.getLogManager(),
+        // but the other thread could come in at a time when global.manager
+        // is already set although ensureLogManagerInitialized is not finished
+        // yet...
+        // Calling LogManager.getLogManager() unconditionally will fix that.
+
+        LogManager.getLogManager();
+
+        // Now the global LogManager should be initialized,
+        // and the global logger should have been added to
+        // it, unless we were called within the constructor of a LogManager
+        // subclass installed as LogManager, in which case global.manager
+        // would still be null, and global will be lazily initialized later on.
+
+        return global;
+!!!9380610.java!!!	Logger(inout name : String, inout resourceBundleName : String)
+        this(name, resourceBundleName, null, LogManager.getLogManager(), false);
+!!!9380738.java!!!	Logger(inout name : String, inout resourceBundleName : String, inout caller : Class, inout manager : LogManager, inout isSystemLogger : boolean)
+        this.manager = manager;
+        this.isSystemLogger = isSystemLogger;
+        setupResourceInfo(resourceBundleName, caller);
+        this.name = name;
+        levelValue = Level.INFO.intValue();
+!!!9380866.java!!!	setCallersClassLoaderRef(inout caller : Class) : void
+        ClassLoader callersClassLoader = ((caller != null)
+                                         ? caller.getClassLoader()
+                                         : null);
+        if (callersClassLoader != null) {
+            this.callersClassLoaderRef = new WeakReference<>(callersClassLoader);
+        }
+!!!9380994.java!!!	getCallersClassLoader() : ClassLoader
+        return (callersClassLoaderRef != null)
+                ? callersClassLoaderRef.get()
+                : null;
+!!!9381122.java!!!	Logger(inout name : String)
+        // The manager field is not initialized here.
+        this.name = name;
+        this.isSystemLogger = true;
+        levelValue = Level.INFO.intValue();
+!!!9381250.java!!!	setLogManager(inout manager : LogManager) : void
+        this.manager = manager;
+!!!9381378.java!!!	checkPermission() : void
+        if (!anonymous) {
+            if (manager == null) {
+                // Complete initialization of the global Logger.
+                manager = LogManager.getLogManager();
+            }
+            manager.checkPermission();
+        }
+!!!9381634.java!!!	demandLogger(inout name : String, inout resourceBundleName : String, inout caller : Class) : Logger
+        LogManager manager = LogManager.getLogManager();
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null && !SystemLoggerHelper.disableCallerCheck) {
+            if (caller.getClassLoader() == null) {
+                return manager.demandSystemLogger(name, resourceBundleName);
+            }
+        }
+        return manager.demandLogger(name, resourceBundleName, caller);
+        // ends up calling new Logger(name, resourceBundleName, caller)
+        // iff the logger doesn't exist already
+!!!9381762.java!!!	getLogger(inout name : String) : Logger
+        // This method is intentionally not a wrapper around a call
+        // to getLogger(name, resourceBundleName). If it were then
+        // this sequence:
+        //
+        //     getLogger("Foo", "resourceBundleForFoo");
+        //     getLogger("Foo");
+        //
+        // would throw an IllegalArgumentException in the second call
+        // because the wrapper would result in an attempt to replace
+        // the existing "resourceBundleForFoo" with null.
+        return demandLogger(name, null, Reflection.getCallerClass());
+!!!9381890.java!!!	getLogger(inout name : String, inout resourceBundleName : String) : Logger
+        Class<?> callerClass = Reflection.getCallerClass();
+        Logger result = demandLogger(name, resourceBundleName, callerClass);
+
+        // MissingResourceException or IllegalArgumentException can be
+        // thrown by setupResourceInfo().
+        // We have to set the callers ClassLoader here in case demandLogger
+        // above found a previously created Logger.  This can happen, for
+        // example, if Logger.getLogger(name) is called and subsequently
+        // Logger.getLogger(name, resourceBundleName) is called.  In this case
+        // we won't necessarily have the correct classloader saved away, so
+        // we need to set it here, too.
+
+        result.setupResourceInfo(resourceBundleName, callerClass);
+        return result;
+!!!9382018.java!!!	getPlatformLogger(inout name : String) : Logger
+        LogManager manager = LogManager.getLogManager();
+
+        // all loggers in the system context will default to
+        // the system logger's resource bundle
+        Logger result = manager.demandSystemLogger(name, SYSTEM_LOGGER_RB_NAME);
+        return result;
+!!!9382146.java!!!	getAnonymousLogger() : Logger
+        return getAnonymousLogger(null);
+!!!9382274.java!!!	getAnonymousLogger(inout resourceBundleName : String) : Logger
+        LogManager manager = LogManager.getLogManager();
+        // cleanup some Loggers that have been GC'ed
+        manager.drainLoggerRefQueueBounded();
+        Logger result = new Logger(null, resourceBundleName,
+                                   Reflection.getCallerClass(), manager, false);
+        result.anonymous = true;
+        Logger root = manager.getLogger("");
+        result.doSetParent(root);
+        return result;
+!!!9382402.java!!!	getResourceBundle() : ResourceBundle
+        return findResourceBundle(getResourceBundleName(), true);
+!!!9382530.java!!!	getResourceBundleName() : String
+        return loggerBundle.resourceBundleName;
+!!!9382658.java!!!	setFilter(inout newFilter : Filter) : void
+        checkPermission();
+        filter = newFilter;
+!!!9382786.java!!!	getFilter() : Filter
+        return filter;
+!!!9382914.java!!!	log(inout record : LogRecord) : void
+        if (!isLoggable(record.getLevel())) {
+            return;
+        }
+        Filter theFilter = filter;
+        if (theFilter != null && !theFilter.isLoggable(record)) {
+            return;
+        }
+
+        // Post the LogRecord to all our Handlers, and then to
+        // our parents' handlers, all the way up the tree.
+
+        Logger logger = this;
+        while (logger != null) {
+            final Handler[] loggerHandlers = isSystemLogger
+                ? logger.accessCheckedHandlers()
+                : logger.getHandlers();
+
+            for (Handler handler : loggerHandlers) {
+                handler.publish(record);
+            }
+
+            final boolean useParentHdls = isSystemLogger
+                ? logger.useParentHandlers
+                : logger.getUseParentHandlers();
+
+            if (!useParentHdls) {
+                break;
+            }
+
+            logger = isSystemLogger ? logger.parent : logger.getParent();
+        }
+!!!9383042.java!!!	doLog(inout lr : LogRecord) : void
+        lr.setLoggerName(name);
+        final LoggerBundle lb = getEffectiveLoggerBundle();
+        final ResourceBundle  bundle = lb.userBundle;
+        final String ebname = lb.resourceBundleName;
+        if (ebname != null && bundle != null) {
+            lr.setResourceBundleName(ebname);
+            lr.setResourceBundle(bundle);
+        }
+        log(lr);
+!!!9383170.java!!!	log(inout level : Level, inout msg : String) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        doLog(lr);
+!!!9383298.java!!!	log(inout level : Level, inout msgSupplier : Supplier) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msgSupplier.get());
+        doLog(lr);
+!!!9383426.java!!!	log(inout level : Level, inout msg : String, inout param1 : Object) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        Object params[] = { param1 };
+        lr.setParameters(params);
+        doLog(lr);
+!!!9383554.java!!!	log(inout level : Level, inout msg : String, inout params : Object [[]]) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setParameters(params);
+        doLog(lr);
+!!!9383682.java!!!	log(inout level : Level, inout msg : String, inout thrown : Throwable) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setThrown(thrown);
+        doLog(lr);
+!!!9383810.java!!!	log(inout level : Level, inout thrown : Throwable, inout msgSupplier : Supplier) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msgSupplier.get());
+        lr.setThrown(thrown);
+        doLog(lr);
+!!!9383938.java!!!	logp(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout msg : String) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        doLog(lr);
+!!!9384066.java!!!	logp(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout msgSupplier : Supplier) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msgSupplier.get());
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        doLog(lr);
+!!!9384194.java!!!	logp(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout msg : String, inout param1 : Object) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        Object params[] = { param1 };
+        lr.setParameters(params);
+        doLog(lr);
+!!!9384322.java!!!	logp(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout msg : String, inout params : Object [[]]) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setParameters(params);
+        doLog(lr);
+!!!9384450.java!!!	logp(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout msg : String, inout thrown : Throwable) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setThrown(thrown);
+        doLog(lr);
+!!!9384578.java!!!	logp(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout thrown : Throwable, inout msgSupplier : Supplier) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msgSupplier.get());
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setThrown(thrown);
+        doLog(lr);
+!!!9384706.java!!!	doLog(inout lr : LogRecord, inout rbname : String) : void
+        lr.setLoggerName(name);
+        if (rbname != null) {
+            lr.setResourceBundleName(rbname);
+            lr.setResourceBundle(findResourceBundle(rbname, false));
+        }
+        log(lr);
+!!!9384834.java!!!	doLog(inout lr : LogRecord, inout rb : ResourceBundle) : void
+        lr.setLoggerName(name);
+        if (rb != null) {
+            lr.setResourceBundleName(rb.getBaseBundleName());
+            lr.setResourceBundle(rb);
+        }
+        log(lr);
+!!!9384962.java!!!	logrb(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout bundleName : String, inout msg : String) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        doLog(lr, bundleName);
+!!!9385090.java!!!	logrb(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout bundleName : String, inout msg : String, inout param1 : Object) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        Object params[] = { param1 };
+        lr.setParameters(params);
+        doLog(lr, bundleName);
+!!!9385218.java!!!	logrb(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout bundleName : String, inout msg : String, inout params : Object [[]]) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setParameters(params);
+        doLog(lr, bundleName);
+!!!9385346.java!!!	logrb(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout bundle : ResourceBundle, inout msg : String, inout  : Object...params) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        if (params != null && params.length != 0) {
+            lr.setParameters(params);
+        }
+        doLog(lr, bundle);
+!!!9385474.java!!!	logrb(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout bundleName : String, inout msg : String, inout thrown : Throwable) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setThrown(thrown);
+        doLog(lr, bundleName);
+!!!9385602.java!!!	logrb(inout level : Level, inout sourceClass : String, inout sourceMethod : String, inout bundle : ResourceBundle, inout msg : String, inout thrown : Throwable) : void
+        if (!isLoggable(level)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(level, msg);
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setThrown(thrown);
+        doLog(lr, bundle);
+!!!9385730.java!!!	entering(inout sourceClass : String, inout sourceMethod : String) : void
+        logp(Level.FINER, sourceClass, sourceMethod, "ENTRY");
+!!!9385858.java!!!	entering(inout sourceClass : String, inout sourceMethod : String, inout param1 : Object) : void
+        logp(Level.FINER, sourceClass, sourceMethod, "ENTRY {0}", param1);
+!!!9385986.java!!!	entering(inout sourceClass : String, inout sourceMethod : String, inout params : Object [[]]) : void
+        String msg = "ENTRY";
+        if (params == null ) {
+           logp(Level.FINER, sourceClass, sourceMethod, msg);
+           return;
+        }
+        if (!isLoggable(Level.FINER)) return;
+        for (int i = 0; i < params.length; i++) {
+            msg = msg + " {" + i + "}";
+        }
+        logp(Level.FINER, sourceClass, sourceMethod, msg, params);
+!!!9386114.java!!!	exiting(inout sourceClass : String, inout sourceMethod : String) : void
+        logp(Level.FINER, sourceClass, sourceMethod, "RETURN");
+!!!9386242.java!!!	exiting(inout sourceClass : String, inout sourceMethod : String, inout result : Object) : void
+        logp(Level.FINER, sourceClass, sourceMethod, "RETURN {0}", result);
+!!!9386370.java!!!	throwing(inout sourceClass : String, inout sourceMethod : String, inout thrown : Throwable) : void
+        if (!isLoggable(Level.FINER)) {
+            return;
+        }
+        LogRecord lr = new LogRecord(Level.FINER, "THROW");
+        lr.setSourceClassName(sourceClass);
+        lr.setSourceMethodName(sourceMethod);
+        lr.setThrown(thrown);
+        doLog(lr);
+!!!9386498.java!!!	severe(inout msg : String) : void
+        log(Level.SEVERE, msg);
+!!!9386626.java!!!	warning(inout msg : String) : void
+        log(Level.WARNING, msg);
+!!!9386754.java!!!	info(inout msg : String) : void
+        log(Level.INFO, msg);
+!!!9386882.java!!!	config(inout msg : String) : void
+        log(Level.CONFIG, msg);
+!!!9387010.java!!!	fine(inout msg : String) : void
+        log(Level.FINE, msg);
+!!!9387138.java!!!	finer(inout msg : String) : void
+        log(Level.FINER, msg);
+!!!9387266.java!!!	finest(inout msg : String) : void
+        log(Level.FINEST, msg);
+!!!9387394.java!!!	severe(inout msgSupplier : Supplier) : void
+        log(Level.SEVERE, msgSupplier);
+!!!9387522.java!!!	warning(inout msgSupplier : Supplier) : void
+        log(Level.WARNING, msgSupplier);
+!!!9387650.java!!!	info(inout msgSupplier : Supplier) : void
+        log(Level.INFO, msgSupplier);
+!!!9387778.java!!!	config(inout msgSupplier : Supplier) : void
+        log(Level.CONFIG, msgSupplier);
+!!!9387906.java!!!	fine(inout msgSupplier : Supplier) : void
+        log(Level.FINE, msgSupplier);
+!!!9388034.java!!!	finer(inout msgSupplier : Supplier) : void
+        log(Level.FINER, msgSupplier);
+!!!9388162.java!!!	finest(inout msgSupplier : Supplier) : void
+        log(Level.FINEST, msgSupplier);
+!!!9388290.java!!!	setLevel(inout newLevel : Level) : void
+        checkPermission();
+        synchronized (treeLock) {
+            levelObject = newLevel;
+            updateEffectiveLevel();
+        }
+!!!9388418.java!!!	isLevelInitialized() : boolean
+        return levelObject != null;
+!!!9388546.java!!!	getLevel() : Level
+        return levelObject;
+!!!9388674.java!!!	isLoggable(inout level : Level) : boolean
+        if (level.intValue() < levelValue || levelValue == offValue) {
+            return false;
+        }
+        return true;
+!!!9388802.java!!!	getName() : String
+        return name;
+!!!9388930.java!!!	addHandler(inout handler : Handler) : void
+        // Check for null handler
+        handler.getClass();
+        checkPermission();
+        handlers.add(handler);
+!!!9389058.java!!!	removeHandler(inout handler : Handler) : void
+        checkPermission();
+        if (handler == null) {
+            return;
+        }
+        handlers.remove(handler);
+!!!9389186.java!!!	getHandlers() : Handler
+        return accessCheckedHandlers();
+!!!9389314.java!!!	accessCheckedHandlers() : Handler
+        return handlers.toArray(emptyHandlers);
+!!!9389442.java!!!	setUseParentHandlers(inout useParentHandlers : boolean) : void
+        checkPermission();
+        this.useParentHandlers = useParentHandlers;
+!!!9389570.java!!!	getUseParentHandlers() : boolean
+        return useParentHandlers;
+!!!9389698.java!!!	findSystemResourceBundle(in locale : Locale) : ResourceBundle
+        // the resource bundle is in a restricted package
+        return AccessController.doPrivileged(new PrivilegedAction<ResourceBundle>() {
+            @Override
+            public ResourceBundle run() {
+                try {
+                    return ResourceBundle.getBundle(SYSTEM_LOGGER_RB_NAME,
+                                                    locale,
+                                                    ClassLoader.getSystemClassLoader());
+                } catch (MissingResourceException e) {
+                    throw new InternalError(e.toString());
+                }
+            }
+        });
+!!!9389826.java!!!	findResourceBundle(inout name : String, inout useCallersClassLoader : boolean) : ResourceBundle
+        // For all lookups, we first check the thread context class loader
+        // if it is set.  If not, we use the system classloader.  If we
+        // still haven't found it we use the callersClassLoaderRef if it
+        // is set and useCallersClassLoader is true.  We set
+        // callersClassLoaderRef initially upon creating the logger with a
+        // non-null resource bundle name.
+
+        // Return a null bundle for a null name.
+        if (name == null) {
+            return null;
+        }
+
+        Locale currentLocale = Locale.getDefault();
+        final LoggerBundle lb = loggerBundle;
+
+        // Normally we should hit on our simple one entry cache.
+        if (lb.userBundle != null &&
+                name.equals(lb.resourceBundleName)) {
+            return lb.userBundle;
+        } else if (catalog != null && currentLocale.equals(catalogLocale)
+                && name.equals(catalogName)) {
+            return catalog;
+        }
+
+        if (name.equals(SYSTEM_LOGGER_RB_NAME)) {
+            catalog = findSystemResourceBundle(currentLocale);
+            catalogName = name;
+            catalogLocale = currentLocale;
+            return catalog;
+        }
+
+        // Use the thread's context ClassLoader.  If there isn't one, use the
+        // {@linkplain java.lang.ClassLoader#getSystemClassLoader() system ClassLoader}.
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        if (cl == null) {
+            cl = ClassLoader.getSystemClassLoader();
+        }
+        try {
+            catalog = ResourceBundle.getBundle(name, currentLocale, cl);
+            catalogName = name;
+            catalogLocale = currentLocale;
+            return catalog;
+        } catch (MissingResourceException ex) {
+            // We can't find the ResourceBundle in the default
+            // ClassLoader.  Drop through.
+        }
+
+        if (useCallersClassLoader) {
+            // Try with the caller's ClassLoader
+            ClassLoader callersClassLoader = getCallersClassLoader();
+
+            if (callersClassLoader == null || callersClassLoader == cl) {
+                return null;
+            }
+
+            try {
+                catalog = ResourceBundle.getBundle(name, currentLocale,
+                                                   callersClassLoader);
+                catalogName = name;
+                catalogLocale = currentLocale;
+                return catalog;
+            } catch (MissingResourceException ex) {
+                return null; // no luck
+            }
+        } else {
+            return null;
+        }
+!!!9389954.java!!!	setupResourceInfo(inout name : String, inout callersClass : Class) : void
+        final LoggerBundle lb = loggerBundle;
+        if (lb.resourceBundleName != null) {
+            // this Logger already has a ResourceBundle
+
+            if (lb.resourceBundleName.equals(name)) {
+                // the names match so there is nothing more to do
+                return;
+            }
+
+            // cannot change ResourceBundles once they are set
+            throw new IllegalArgumentException(
+                lb.resourceBundleName + " != " + name);
+        }
+
+        if (name == null) {
+            return;
+        }
+
+        setCallersClassLoaderRef(callersClass);
+        if (isSystemLogger && getCallersClassLoader() != null) {
+            checkPermission();
+        }
+        if (findResourceBundle(name, true) == null) {
+            // We've failed to find an expected ResourceBundle.
+            // unset the caller's ClassLoader since we were unable to find the
+            // the bundle using it
+            this.callersClassLoaderRef = null;
+            throw new MissingResourceException("Can't find " + name + " bundle",
+                                                name, "");
+        }
+
+        // if lb.userBundle is not null we won't reach this line.
+        assert lb.userBundle == null;
+        loggerBundle = LoggerBundle.get(name, null);
+!!!9390082.java!!!	setResourceBundle(inout bundle : ResourceBundle) : void
+        checkPermission();
+
+        // Will throw NPE if bundle is null.
+        final String baseName = bundle.getBaseBundleName();
+
+        // bundle must have a name
+        if (baseName == null || baseName.isEmpty()) {
+            throw new IllegalArgumentException("resource bundle must have a name");
+        }
+
+        synchronized (this) {
+            LoggerBundle lb = loggerBundle;
+            final boolean canReplaceResourceBundle = lb.resourceBundleName == null
+                    || lb.resourceBundleName.equals(baseName);
+
+            if (!canReplaceResourceBundle) {
+                throw new IllegalArgumentException("can't replace resource bundle");
+            }
+
+
+            loggerBundle = LoggerBundle.get(baseName, bundle);
+        }
+!!!9390210.java!!!	getParent() : Logger
+        // Note: this used to be synchronized on treeLock.  However, this only
+        // provided memory semantics, as there was no guarantee that the caller
+        // would synchronize on treeLock (in fact, there is no way for external
+        // callers to so synchronize).  Therefore, we have made parent volatile
+        // instead.
+        return parent;
+!!!9390338.java!!!	setParent(inout parent : Logger) : void
+        if (parent == null) {
+            throw new NullPointerException();
+        }
+
+        // check permission for all loggers, including anonymous loggers
+        if (manager == null) {
+            manager = LogManager.getLogManager();
+        }
+        manager.checkPermission();
+
+        doSetParent(parent);
+!!!9390466.java!!!	doSetParent(inout newParent : Logger) : void
+
+        // System.err.println("doSetParent \"" + getName() + "\" \""
+        //                              + newParent.getName() + "\"");
+
+        synchronized (treeLock) {
+
+            // Remove ourself from any previous parent.
+            LogManager.LoggerWeakRef ref = null;
+            if (parent != null) {
+                // assert parent.kids != null;
+                for (Iterator<LogManager.LoggerWeakRef> iter = parent.kids.iterator(); iter.hasNext(); ) {
+                    ref = iter.next();
+                    Logger kid =  ref.get();
+                    if (kid == this) {
+                        // ref is used down below to complete the reparenting
+                        iter.remove();
+                        break;
+                    } else {
+                        ref = null;
+                    }
+                }
+                // We have now removed ourself from our parents' kids.
+            }
+
+            // Set our new parent.
+            parent = newParent;
+            if (parent.kids == null) {
+                parent.kids = new ArrayList<>(2);
+            }
+            if (ref == null) {
+                // we didn't have a previous parent
+                ref = manager.new LoggerWeakRef(this);
+            }
+            ref.setParentRef(new WeakReference<>(parent));
+            parent.kids.add(ref);
+
+            // As a result of the reparenting, the effective level
+            // may have changed for us and our children.
+            updateEffectiveLevel();
+
+        }
+!!!9390594.java!!!	removeChildLogger(inout child : LogManager::LoggerWeakRef) : void
+        synchronized (treeLock) {
+            for (Iterator<LogManager.LoggerWeakRef> iter = kids.iterator(); iter.hasNext(); ) {
+                LogManager.LoggerWeakRef ref = iter.next();
+                if (ref == child) {
+                    iter.remove();
+                    return;
+                }
+            }
+        }
+!!!9390722.java!!!	updateEffectiveLevel() : void
+        // assert Thread.holdsLock(treeLock);
+
+        // Figure out our current effective level.
+        int newLevelValue;
+        if (levelObject != null) {
+            newLevelValue = levelObject.intValue();
+        } else {
+            if (parent != null) {
+                newLevelValue = parent.levelValue;
+            } else {
+                // This may happen during initialization.
+                newLevelValue = Level.INFO.intValue();
+            }
+        }
+
+        // If our effective value hasn't changed, we're done.
+        if (levelValue == newLevelValue) {
+            return;
+        }
+
+        levelValue = newLevelValue;
+
+        // System.err.println("effective level: \"" + getName() + "\" := " + level);
+
+        // Recursively update the level on each of our kids.
+        if (kids != null) {
+            for (int i = 0; i < kids.size(); i++) {
+                LogManager.LoggerWeakRef ref = kids.get(i);
+                Logger kid =  ref.get();
+                if (kid != null) {
+                    kid.updateEffectiveLevel();
+                }
+            }
+        }
+!!!9390850.java!!!	getEffectiveLoggerBundle() : Logger::LoggerBundle
+        final LoggerBundle lb = loggerBundle;
+        if (lb.isSystemBundle()) {
+            return SYSTEM_BUNDLE;
+        }
+
+        // first take care of this logger
+        final ResourceBundle b = getResourceBundle();
+        if (b != null && b == lb.userBundle) {
+            return lb;
+        } else if (b != null) {
+            // either lb.userBundle is null or getResourceBundle() is
+            // overriden
+            final String rbName = getResourceBundleName();
+            return LoggerBundle.get(rbName, b);
+        }
+
+        // no resource bundle was specified on this logger, look up the
+        // parent stack.
+        Logger target = this.parent;
+        while (target != null) {
+            final LoggerBundle trb = target.loggerBundle;
+            if (trb.isSystemBundle()) {
+                return SYSTEM_BUNDLE;
+            }
+            if (trb.userBundle != null) {
+                return trb;
+            }
+            final String rbName = isSystemLogger
+                // ancestor of a system logger is expected to be a system logger.
+                // ignore resource bundle name if it's not.
+                ? (target.isSystemLogger ? trb.resourceBundleName : null)
+                : target.getResourceBundleName();
+            if (rbName != null) {
+                return LoggerBundle.get(rbName,
+                        findResourceBundle(rbName, true));
+            }
+            target = isSystemLogger ? target.parent : target.getParent();
+        }
+        return NO_RESOURCE_BUNDLE;

@@ -1,0 +1,234 @@
+class Row
+!!!2574082.java!!!	Row(inout elem : Element)
+            super(elem, View.X_AXIS);
+!!!2574338.java!!!	getAttributes() : AttributeSet
+            View p = getParent();
+            return (p != null) ? p.getAttributes() : null;
+!!!2574466.java!!!	getAlignment(in axis : int) : float
+            if (axis == View.X_AXIS) {
+                switch (justification) {
+                case StyleConstants.ALIGN_LEFT:
+                    return 0;
+                case StyleConstants.ALIGN_RIGHT:
+                    return 1;
+                case StyleConstants.ALIGN_CENTER:
+                    return 0.5f;
+                case StyleConstants.ALIGN_JUSTIFIED:
+                    float rv = 0.5f;
+                    //if we can justifiy the content always align to
+                    //the left.
+                    if (isJustifiableDocument()) {
+                        rv = 0f;
+                    }
+                    return rv;
+                }
+            }
+            return super.getAlignment(axis);
+!!!2574594.java!!!	modelToView(in pos : int, inout a : Shape, inout b : Position::Bias) : Shape
+            Rectangle r = a.getBounds();
+            View v = getViewAtPosition(pos, r);
+            if ((v != null) && (!v.getElement().isLeaf())) {
+                // Don't adjust the height if the view represents a branch.
+                return super.modelToView(pos, a, b);
+            }
+            r = a.getBounds();
+            int height = r.height;
+            int y = r.y;
+            Shape loc = super.modelToView(pos, a, b);
+            r = loc.getBounds();
+            r.height = height;
+            r.y = y;
+            return r;
+!!!2574722.java!!!	getStartOffset() : int
+            int offs = Integer.MAX_VALUE;
+            int n = getViewCount();
+            for (int i = 0; i < n; i++) {
+                View v = getView(i);
+                offs = Math.min(offs, v.getStartOffset());
+            }
+            return offs;
+!!!2574850.java!!!	getEndOffset() : int
+            int offs = 0;
+            int n = getViewCount();
+            for (int i = 0; i < n; i++) {
+                View v = getView(i);
+                offs = Math.max(offs, v.getEndOffset());
+            }
+            return offs;
+!!!2574978.java!!!	layoutMinorAxis(in targetSpan : int, in axis : int, inout offsets : int [[]], inout spans : int [[]]) : void
+            baselineLayout(targetSpan, axis, offsets, spans);
+!!!2575106.java!!!	calculateMinorAxisRequirements(in axis : int, inout r : SizeRequirements) : SizeRequirements
+            return baselineRequirements(axis, r);
+!!!2575234.java!!!	isLastRow() : boolean
+            View parent;
+            return ((parent = getParent()) == null
+                    || this == parent.getView(parent.getViewCount() - 1));
+!!!2575362.java!!!	isBrokenRow() : boolean
+            boolean rv = false;
+            int viewsCount = getViewCount();
+            if (viewsCount > 0) {
+                View lastView = getView(viewsCount - 1);
+                if (lastView.getBreakWeight(X_AXIS, 0, 0) >=
+                      ForcedBreakWeight) {
+                    rv = true;
+                }
+            }
+            return rv;
+!!!2575490.java!!!	isJustifiableDocument() : boolean
+            return (! Boolean.TRUE.equals(getDocument().getProperty(
+                          AbstractDocument.I18NProperty)));
+!!!2575618.java!!!	isJustifyEnabled() : boolean
+            boolean ret = (justification == StyleConstants.ALIGN_JUSTIFIED);
+
+            //no justification for i18n documents
+            ret = ret && isJustifiableDocument();
+
+            //no justification for the last row
+            ret = ret && ! isLastRow();
+
+            //no justification for the broken rows
+            ret = ret && ! isBrokenRow();
+
+            return ret;
+!!!2575746.java!!!	calculateMajorAxisRequirements(in axis : int, inout r : SizeRequirements) : SizeRequirements
+            int oldJustficationData[] = justificationData;
+            justificationData = null;
+            SizeRequirements ret = super.calculateMajorAxisRequirements(axis, r);
+            if (isJustifyEnabled()) {
+                justificationData = oldJustficationData;
+            }
+            return ret;
+!!!2575874.java!!!	layoutMajorAxis(in targetSpan : int, in axis : int, inout offsets : int [[]], inout spans : int [[]]) : void
+            int oldJustficationData[] = justificationData;
+            justificationData = null;
+            super.layoutMajorAxis(targetSpan, axis, offsets, spans);
+            if (! isJustifyEnabled()) {
+                return;
+            }
+
+            int currentSpan = 0;
+            for (int span : spans) {
+                currentSpan += span;
+            }
+            if (currentSpan == targetSpan) {
+                //no need to justify
+                return;
+            }
+
+            // we justify text by enlarging spaces by the {@code spaceAddon}.
+            // justification is started to the right of the rightmost TAB.
+            // leading and trailing spaces are not extendable.
+            //
+            // GlyphPainter1 uses
+            // justificationData
+            // for all painting and measurement.
+
+            int extendableSpaces = 0;
+            int startJustifiableContent = -1;
+            int endJustifiableContent = -1;
+            int lastLeadingSpaces = 0;
+
+            int rowStartOffset = getStartOffset();
+            int rowEndOffset = getEndOffset();
+            int spaceMap[] = new int[rowEndOffset - rowStartOffset];
+            Arrays.fill(spaceMap, 0);
+            for (int i = getViewCount() - 1; i >= 0 ; i--) {
+                View view = getView(i);
+                if (view instanceof GlyphView) {
+                    GlyphView.JustificationInfo justificationInfo =
+                        ((GlyphView) view).getJustificationInfo(rowStartOffset);
+                    final int viewStartOffset = view.getStartOffset();
+                    final int offset = viewStartOffset - rowStartOffset;
+                    for (int j = 0; j < justificationInfo.spaceMap.length(); j++) {
+                        if (justificationInfo.spaceMap.get(j)) {
+                            spaceMap[j + offset] = 1;
+                        }
+                    }
+                    if (startJustifiableContent > 0) {
+                        if (justificationInfo.end >= 0) {
+                            extendableSpaces += justificationInfo.trailingSpaces;
+                        } else {
+                            lastLeadingSpaces += justificationInfo.trailingSpaces;
+                        }
+                    }
+                    if (justificationInfo.start >= 0) {
+                        startJustifiableContent =
+                            justificationInfo.start + viewStartOffset;
+                        extendableSpaces += lastLeadingSpaces;
+                    }
+                    if (justificationInfo.end >= 0
+                          && endJustifiableContent < 0) {
+                        endJustifiableContent =
+                            justificationInfo.end + viewStartOffset;
+                    }
+                    extendableSpaces += justificationInfo.contentSpaces;
+                    lastLeadingSpaces = justificationInfo.leadingSpaces;
+                    if (justificationInfo.hasTab) {
+                        break;
+                    }
+                }
+            }
+            if (extendableSpaces <= 0) {
+                //there is nothing we can do to justify
+                return;
+            }
+            int adjustment = (targetSpan - currentSpan);
+            int spaceAddon = (extendableSpaces > 0)
+                ?  adjustment / extendableSpaces
+                : 0;
+            int spaceAddonLeftoverEnd = -1;
+            for (int i = startJustifiableContent - rowStartOffset,
+                     leftover = adjustment - spaceAddon * extendableSpaces;
+                     leftover > 0;
+                     leftover -= spaceMap[i],
+                     i++) {
+                spaceAddonLeftoverEnd = i;
+            }
+            if (spaceAddon > 0 || spaceAddonLeftoverEnd >= 0) {
+                justificationData = (oldJustficationData != null)
+                    ? oldJustficationData
+                    : new int[END_JUSTIFIABLE + 1];
+                justificationData[SPACE_ADDON] = spaceAddon;
+                justificationData[SPACE_ADDON_LEFTOVER_END] =
+                    spaceAddonLeftoverEnd;
+                justificationData[START_JUSTIFIABLE] =
+                    startJustifiableContent - rowStartOffset;
+                justificationData[END_JUSTIFIABLE] =
+                    endJustifiableContent - rowStartOffset;
+                super.layoutMajorAxis(targetSpan, axis, offsets, spans);
+            }
+!!!2576002.java!!!	getMaximumSpan(in axis : int) : float
+            float ret;
+            if (View.X_AXIS == axis
+                  && isJustifyEnabled()) {
+                ret = Float.MAX_VALUE;
+            } else {
+              ret = super.getMaximumSpan(axis);
+            }
+            return ret;
+!!!2576130.java!!!	getViewIndexAtPosition(in pos : int) : int
+            // This is expensive, but are views are not necessarily layed
+            // out in model order.
+            if(pos < getStartOffset() || pos >= getEndOffset())
+                return -1;
+            for(int counter = getViewCount() - 1; counter >= 0; counter--) {
+                View v = getView(counter);
+                if(pos >= v.getStartOffset() &&
+                   pos < v.getEndOffset()) {
+                    return counter;
+                }
+            }
+            return -1;
+!!!2576258.java!!!	getLeftInset() : short
+            View parentView;
+            int adjustment = 0;
+            if ((parentView = getParent()) != null) { //use firstLineIdent for the first row
+                if (this == parentView.getView(0)) {
+                    adjustment = firstLineIndent;
+                }
+            }
+            return (short)(super.getLeftInset() + adjustment);
+!!!2576386.java!!!	getBottomInset() : short
+            return (short)(super.getBottomInset() +
+                           ((minorRequest != null) ? minorRequest.preferred : 0) *
+                           lineSpacing);

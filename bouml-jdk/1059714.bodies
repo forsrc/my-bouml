@@ -1,0 +1,263 @@
+class DateTimeTextProvider
+!!!8541058.java!!!	getInstance() : DateTimeTextProvider
+        return new DateTimeTextProvider();
+!!!8541186.java!!!	getText(inout field : TemporalField, in value : long, inout style : TextStyle, inout locale : Locale) : String
+        Object store = findStore(field, locale);
+        if (store instanceof LocaleStore) {
+            return ((LocaleStore) store).getText(value, style);
+        }
+        return null;
+!!!8541314.java!!!	getText(inout chrono : Chronology, inout field : TemporalField, in value : long, inout style : TextStyle, inout locale : Locale) : String
+        if (chrono == IsoChronology.INSTANCE
+                || !(field instanceof ChronoField)) {
+            return getText(field, value, style, locale);
+        }
+
+        int fieldIndex;
+        int fieldValue;
+        if (field == ERA) {
+            fieldIndex = Calendar.ERA;
+            if (chrono == JapaneseChronology.INSTANCE) {
+                if (value == -999) {
+                    fieldValue = 0;
+                } else {
+                    fieldValue = (int) value + 2;
+                }
+            } else {
+                fieldValue = (int) value;
+            }
+        } else if (field == MONTH_OF_YEAR) {
+            fieldIndex = Calendar.MONTH;
+            fieldValue = (int) value - 1;
+        } else if (field == DAY_OF_WEEK) {
+            fieldIndex = Calendar.DAY_OF_WEEK;
+            fieldValue = (int) value + 1;
+            if (fieldValue > 7) {
+                fieldValue = Calendar.SUNDAY;
+            }
+        } else if (field == AMPM_OF_DAY) {
+            fieldIndex = Calendar.AM_PM;
+            fieldValue = (int) value;
+        } else {
+            return null;
+        }
+        return CalendarDataUtility.retrieveJavaTimeFieldValueName(
+                chrono.getCalendarType(), fieldIndex, fieldValue, style.toCalendarStyle(), locale);
+!!!8541442.java!!!	getTextIterator(inout field : TemporalField, inout style : TextStyle, inout locale : Locale) : Iterator
+        Object store = findStore(field, locale);
+        if (store instanceof LocaleStore) {
+            return ((LocaleStore) store).getTextIterator(style);
+        }
+        return null;
+!!!8541570.java!!!	getTextIterator(inout chrono : Chronology, inout field : TemporalField, inout style : TextStyle, inout locale : Locale) : Iterator
+        if (chrono == IsoChronology.INSTANCE
+                || !(field instanceof ChronoField)) {
+            return getTextIterator(field, style, locale);
+        }
+
+        int fieldIndex;
+        switch ((ChronoField)field) {
+        case ERA:
+            fieldIndex = Calendar.ERA;
+            break;
+        case MONTH_OF_YEAR:
+            fieldIndex = Calendar.MONTH;
+            break;
+        case DAY_OF_WEEK:
+            fieldIndex = Calendar.DAY_OF_WEEK;
+            break;
+        case AMPM_OF_DAY:
+            fieldIndex = Calendar.AM_PM;
+            break;
+        default:
+            return null;
+        }
+
+        int calendarStyle = (style == null) ? Calendar.ALL_STYLES : style.toCalendarStyle();
+        Map<String, Integer> map = CalendarDataUtility.retrieveJavaTimeFieldValueNames(
+                chrono.getCalendarType(), fieldIndex, calendarStyle, locale);
+        if (map == null) {
+            return null;
+        }
+        List<Entry<String, Long>> list = new ArrayList<>(map.size());
+        switch (fieldIndex) {
+        case Calendar.ERA:
+            for (Map.Entry<String, Integer> entry : map.entrySet()) {
+                int era = entry.getValue();
+                if (chrono == JapaneseChronology.INSTANCE) {
+                    if (era == 0) {
+                        era = -999;
+                    } else {
+                        era -= 2;
+                    }
+                }
+                list.add(createEntry(entry.getKey(), (long)era));
+            }
+            break;
+        case Calendar.MONTH:
+            for (Map.Entry<String, Integer> entry : map.entrySet()) {
+                list.add(createEntry(entry.getKey(), (long)(entry.getValue() + 1)));
+            }
+            break;
+        case Calendar.DAY_OF_WEEK:
+            for (Map.Entry<String, Integer> entry : map.entrySet()) {
+                list.add(createEntry(entry.getKey(), (long)toWeekDay(entry.getValue())));
+            }
+            break;
+        default:
+            for (Map.Entry<String, Integer> entry : map.entrySet()) {
+                list.add(createEntry(entry.getKey(), (long)entry.getValue()));
+            }
+            break;
+        }
+        return list.iterator();
+!!!8541698.java!!!	findStore(inout field : TemporalField, inout locale : Locale) : Object
+        Entry<TemporalField, Locale> key = createEntry(field, locale);
+        Object store = CACHE.get(key);
+        if (store == null) {
+            store = createStore(field, locale);
+            CACHE.putIfAbsent(key, store);
+            store = CACHE.get(key);
+        }
+        return store;
+!!!8541826.java!!!	toWeekDay(in calWeekDay : int) : int
+        if (calWeekDay == Calendar.SUNDAY) {
+            return 7;
+        } else {
+            return calWeekDay - 1;
+        }
+!!!8541954.java!!!	createStore(inout field : TemporalField, inout locale : Locale) : Object
+        Map<TextStyle, Map<Long, String>> styleMap = new HashMap<>();
+        if (field == ERA) {
+            for (TextStyle textStyle : TextStyle.values()) {
+                if (textStyle.isStandalone()) {
+                    // Stand-alone isn't applicable to era names.
+                    continue;
+                }
+                Map<String, Integer> displayNames = CalendarDataUtility.retrieveJavaTimeFieldValueNames(
+                        "gregory", Calendar.ERA, textStyle.toCalendarStyle(), locale);
+                if (displayNames != null) {
+                    Map<Long, String> map = new HashMap<>();
+                    for (Entry<String, Integer> entry : displayNames.entrySet()) {
+                        map.put((long) entry.getValue(), entry.getKey());
+                    }
+                    if (!map.isEmpty()) {
+                        styleMap.put(textStyle, map);
+                    }
+                }
+            }
+            return new LocaleStore(styleMap);
+        }
+
+        if (field == MONTH_OF_YEAR) {
+            for (TextStyle textStyle : TextStyle.values()) {
+                Map<String, Integer> displayNames = CalendarDataUtility.retrieveJavaTimeFieldValueNames(
+                        "gregory", Calendar.MONTH, textStyle.toCalendarStyle(), locale);
+                Map<Long, String> map = new HashMap<>();
+                if (displayNames != null) {
+                    for (Entry<String, Integer> entry : displayNames.entrySet()) {
+                        map.put((long) (entry.getValue() + 1), entry.getKey());
+                    }
+
+                } else {
+                    // Narrow names may have duplicated names, such as "J" for January, Jun, July.
+                    // Get names one by one in that case.
+                    for (int month = Calendar.JANUARY; month <= Calendar.DECEMBER; month++) {
+                        String name;
+                        name = CalendarDataUtility.retrieveJavaTimeFieldValueName(
+                                "gregory", Calendar.MONTH, month, textStyle.toCalendarStyle(), locale);
+                        if (name == null) {
+                            break;
+                        }
+                        map.put((long) (month + 1), name);
+                    }
+                }
+                if (!map.isEmpty()) {
+                    styleMap.put(textStyle, map);
+                }
+            }
+            return new LocaleStore(styleMap);
+        }
+
+        if (field == DAY_OF_WEEK) {
+            for (TextStyle textStyle : TextStyle.values()) {
+                Map<String, Integer> displayNames = CalendarDataUtility.retrieveJavaTimeFieldValueNames(
+                        "gregory", Calendar.DAY_OF_WEEK, textStyle.toCalendarStyle(), locale);
+                Map<Long, String> map = new HashMap<>();
+                if (displayNames != null) {
+                    for (Entry<String, Integer> entry : displayNames.entrySet()) {
+                        map.put((long)toWeekDay(entry.getValue()), entry.getKey());
+                    }
+
+                } else {
+                    // Narrow names may have duplicated names, such as "S" for Sunday and Saturday.
+                    // Get names one by one in that case.
+                    for (int wday = Calendar.SUNDAY; wday <= Calendar.SATURDAY; wday++) {
+                        String name;
+                        name = CalendarDataUtility.retrieveJavaTimeFieldValueName(
+                            "gregory", Calendar.DAY_OF_WEEK, wday, textStyle.toCalendarStyle(), locale);
+                        if (name == null) {
+                            break;
+                        }
+                        map.put((long)toWeekDay(wday), name);
+                    }
+                }
+                if (!map.isEmpty()) {
+                    styleMap.put(textStyle, map);
+                }
+            }
+            return new LocaleStore(styleMap);
+        }
+
+        if (field == AMPM_OF_DAY) {
+            for (TextStyle textStyle : TextStyle.values()) {
+                if (textStyle.isStandalone()) {
+                    // Stand-alone isn't applicable to AM/PM.
+                    continue;
+                }
+                Map<String, Integer> displayNames = CalendarDataUtility.retrieveJavaTimeFieldValueNames(
+                        "gregory", Calendar.AM_PM, textStyle.toCalendarStyle(), locale);
+                if (displayNames != null) {
+                    Map<Long, String> map = new HashMap<>();
+                    for (Entry<String, Integer> entry : displayNames.entrySet()) {
+                        map.put((long) entry.getValue(), entry.getKey());
+                    }
+                    if (!map.isEmpty()) {
+                        styleMap.put(textStyle, map);
+                    }
+                }
+            }
+            return new LocaleStore(styleMap);
+        }
+
+        if (field == IsoFields.QUARTER_OF_YEAR) {
+            // The order of keys must correspond to the TextStyle.values() order.
+            final String[] keys = {
+                "QuarterNames",
+                "standalone.QuarterNames",
+                "QuarterAbbreviations",
+                "standalone.QuarterAbbreviations",
+                "QuarterNarrows",
+                "standalone.QuarterNarrows",
+            };
+            for (int i = 0; i < keys.length; i++) {
+                String[] names = getLocalizedResource(keys[i], locale);
+                if (names != null) {
+                    Map<Long, String> map = new HashMap<>();
+                    for (int q = 0; q < names.length; q++) {
+                        map.put((long) (q + 1), names[q]);
+                    }
+                    styleMap.put(TextStyle.values()[i], map);
+                }
+            }
+            return new LocaleStore(styleMap);
+        }
+
+        return "";  // null marker for map
+!!!8542082.java!!!	createEntry(inout text : A, inout field : B) : Map::Entry
+        return new SimpleImmutableEntry<>(text, field);
+!!!8542210.java!!!	getLocalizedResource(inout key : String, inout locale : Locale) : T
+        LocaleResources lr = LocaleProviderAdapter.getResourceBundleBased()
+                                    .getLocaleResources(locale);
+        ResourceBundle rb = lr.getJavaTimeFormatData();
+        return rb.containsKey(key) ? (T) rb.getObject(key) : null;

@@ -1,0 +1,170 @@
+class KeyIndexIterator
+!!!3987586.java!!!	KeyIndexIterator(inout keyValue : String, inout isKeyIterator : boolean)
+            _isKeyIterator = isKeyIterator;
+            _keyValue = keyValue;
+!!!3987714.java!!!	KeyIndexIterator(inout keyValues : DTMAxisIterator, inout isKeyIterator : boolean)
+            _keyValueIterator = keyValues;
+            _isKeyIterator = isKeyIterator;
+!!!3987842.java!!!	lookupNodes(in root : int, inout keyValue : String) : IntegerArray
+            IntegerArray result = null;
+
+            // Get mapping from key values/IDs to DTM nodes for this document
+            Map<String, IntegerArray> index = _rootToIndexMap.get(root);
+
+            if (!_isKeyIterator) {
+                // For id function, tokenize argument as whitespace separated
+                // list of values and look up nodes identified by each ID.
+                final StringTokenizer values =
+                        new StringTokenizer(keyValue, " \n\t");
+
+                while (values.hasMoreElements()) {
+                    final String token = (String) values.nextElement();
+                    IntegerArray nodes = null;
+
+                    // Does the ID map to any node in the document?
+                    if (index != null) {
+                        nodes = index.get(token);
+                    }
+
+                    // If input was from W3C DOM, use DOM's getElementById to do
+                    // the look-up.
+                    if (nodes == null && _enhancedDOM != null
+                            && _enhancedDOM.hasDOMSource()) {
+                        nodes = getDOMNodeById(token);
+                    }
+
+                    // If we found any nodes, merge them into the cumulative
+                    // result
+                    if (nodes != null) {
+                        if (result == null) {
+                            result = (IntegerArray)nodes.clone();
+                        } else {
+                            result.merge(nodes);
+                        }
+                    }
+                }
+            } else if (index != null) {
+                // For key function, map key value to nodes
+                result = index.get(keyValue);
+            }
+
+            return result;
+!!!3987970.java!!!	setStartNode(in node : int) : DTMAxisIterator
+            _startNode = node;
+
+            // If the arugment to the function is a node set, set the
+            // context node on it.
+            if (_keyValueIterator != null) {
+                _keyValueIterator = _keyValueIterator.setStartNode(node);
+            }
+
+            init();
+
+            return super.setStartNode(node);
+!!!3988098.java!!!	next() : int
+            int nodeHandle;
+
+            // If at most one key value or at most one string argument to id
+            // resulted in nodes being returned, use the IntegerArray
+            // stored at _nodes directly.  This relies on the fact that the
+            // IntegerArray never includes duplicate nodes and is always stored
+            // in document order.
+            if (_nodes != null) {
+                if (_position < _nodes.cardinality()) {
+                    nodeHandle = returnNode(_nodes.at(_position));
+                } else {
+                    nodeHandle = DTMAxisIterator.END;
+                }
+            } else {
+                nodeHandle = super.next();
+            }
+
+            return nodeHandle;
+!!!3988226.java!!!	reset() : DTMAxisIterator
+            if (_nodes == null) {
+                init();
+            } else {
+                super.reset();
+            }
+
+            return resetPosition();
+!!!3988354.java!!!	init() : void
+            super.init();
+            _position = 0;
+
+            // All nodes retrieved are in the same document
+            int rootHandle = _dom.getAxisIterator(Axis.ROOT)
+                                      .setStartNode(_startNode).next();
+
+            // Is the argument not a node set?
+            if (_keyValueIterator == null) {
+                // Look up nodes returned for the single string argument
+                _nodes = lookupNodes(rootHandle, _keyValue);
+
+                if (_nodes == null) {
+                    _nodes = EMPTY_NODES;
+                }
+            } else {
+                DTMAxisIterator keyValues = _keyValueIterator.reset();
+                int retrievedKeyValueIdx = 0;
+                boolean foundNodes = false;
+
+                _nodes = null;
+
+                // For each node in the node set argument, get the string value
+                // and look up the nodes returned by key or id for that string
+                // value.  If at most one string value has nodes associated,
+                // the nodes will be stored in _nodes; otherwise, the nodes
+                // will be placed in a heap.
+                for (int keyValueNode = keyValues.next();
+                     keyValueNode != DTMAxisIterator.END;
+                     keyValueNode = keyValues.next()) {
+
+                    String keyValue = BasisLibrary.stringF(keyValueNode, _dom);
+
+                    IntegerArray nodes = lookupNodes(rootHandle, keyValue);
+
+                    if (nodes != null) {
+                        if (!foundNodes) {
+                            _nodes = nodes;
+                            foundNodes = true;
+                        } else {
+                            if (_nodes != null) {
+                                addHeapNode(new KeyIndexHeapNode(_nodes));
+                                _nodes = null;
+                            }
+                            addHeapNode(new KeyIndexHeapNode(nodes));
+                        }
+                    }
+                }
+
+                if (!foundNodes) {
+                    _nodes = EMPTY_NODES;
+                }
+            }
+!!!3988482.java!!!	getLast() : int
+            // If nodes are stored in _nodes, take advantage of the fact that
+            // there are no duplicates.  Otherwise, fall back to the base heap
+            // implementaiton and hope it does a good job with this.
+            return (_nodes != null) ? _nodes.cardinality() : super.getLast();
+!!!3988610.java!!!	getNodeByPosition(in position : int) : int
+            int node = DTMAxisIterator.END;
+
+            // If nodes are stored in _nodes, take advantage of the fact that
+            // there are no duplicates and they are stored in document order.
+            // Otherwise, fall back to the base heap implementation to do a
+            // good job with this.
+            if (_nodes != null) {
+                if (position > 0) {
+                    if (position <= _nodes.cardinality()) {
+                        _position = position;
+                        node = _nodes.at(position-1);
+                    } else {
+                        _position = _nodes.cardinality();
+                    }
+                }
+            } else {
+                node = super.getNodeByPosition(position);
+            }
+
+            return node;

@@ -1,0 +1,298 @@
+class COWSubList
+!!!9148930.java!!!	COWSubList(inout list : CopyOnWriteArrayList, in fromIndex : int, in toIndex : int)
+            l = list;
+            expectedArray = l.getArray();
+            offset = fromIndex;
+            size = toIndex - fromIndex;
+!!!9149058.java!!!	checkForComodification() : void
+            if (l.getArray() != expectedArray)
+                throw new ConcurrentModificationException();
+!!!9149186.java!!!	rangeCheck(in index : int) : void
+            if (index < 0 || index >= size)
+                throw new IndexOutOfBoundsException("Index: "+index+
+                                                    ",Size: "+size);
+!!!9149314.java!!!	set(in index : int, inout element : E) : E
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                rangeCheck(index);
+                checkForComodification();
+                E x = l.set(index+offset, element);
+                expectedArray = l.getArray();
+                return x;
+            } finally {
+                lock.unlock();
+            }
+!!!9149442.java!!!	get(in index : int) : E
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                rangeCheck(index);
+                checkForComodification();
+                return l.get(index+offset);
+            } finally {
+                lock.unlock();
+            }
+!!!9149570.java!!!	size() : int
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                checkForComodification();
+                return size;
+            } finally {
+                lock.unlock();
+            }
+!!!9149698.java!!!	add(in index : int, inout element : E) : void
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                checkForComodification();
+                if (index < 0 || index > size)
+                    throw new IndexOutOfBoundsException();
+                l.add(index+offset, element);
+                expectedArray = l.getArray();
+                size++;
+            } finally {
+                lock.unlock();
+            }
+!!!9149826.java!!!	clear() : void
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                checkForComodification();
+                l.removeRange(offset, offset+size);
+                expectedArray = l.getArray();
+                size = 0;
+            } finally {
+                lock.unlock();
+            }
+!!!9149954.java!!!	remove(in index : int) : E
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                rangeCheck(index);
+                checkForComodification();
+                E result = l.remove(index+offset);
+                expectedArray = l.getArray();
+                size--;
+                return result;
+            } finally {
+                lock.unlock();
+            }
+!!!9150082.java!!!	remove(inout o : Object) : boolean
+            int index = indexOf(o);
+            if (index == -1)
+                return false;
+            remove(index);
+            return true;
+!!!9150210.java!!!	iterator() : Iterator
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                checkForComodification();
+                return new COWSubListIterator<E>(l, 0, offset, size);
+            } finally {
+                lock.unlock();
+            }
+!!!9150338.java!!!	listIterator(in index : int) : ListIterator
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                checkForComodification();
+                if (index < 0 || index > size)
+                    throw new IndexOutOfBoundsException("Index: "+index+
+                                                        ", Size: "+size);
+                return new COWSubListIterator<E>(l, index, offset, size);
+            } finally {
+                lock.unlock();
+            }
+!!!9150466.java!!!	subList(in fromIndex : int, in toIndex : int) : List
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                checkForComodification();
+                if (fromIndex < 0 || toIndex > size || fromIndex > toIndex)
+                    throw new IndexOutOfBoundsException();
+                return new COWSubList<E>(l, fromIndex + offset,
+                                         toIndex + offset);
+            } finally {
+                lock.unlock();
+            }
+!!!9150594.java!!!	forEach(inout action : Consumer) : void
+            if (action == null) throw new NullPointerException();
+            int lo = offset;
+            int hi = offset + size;
+            Object[] a = expectedArray;
+            if (l.getArray() != a)
+                throw new ConcurrentModificationException();
+            if (lo < 0 || hi > a.length)
+                throw new IndexOutOfBoundsException();
+            for (int i = lo; i < hi; ++i) {
+                @SuppressWarnings("unchecked") E e = (E) a[i];
+                action.accept(e);
+            }
+!!!9150722.java!!!	replaceAll(inout operator : UnaryOperator) : void
+            if (operator == null) throw new NullPointerException();
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                int lo = offset;
+                int hi = offset + size;
+                Object[] elements = expectedArray;
+                if (l.getArray() != elements)
+                    throw new ConcurrentModificationException();
+                int len = elements.length;
+                if (lo < 0 || hi > len)
+                    throw new IndexOutOfBoundsException();
+                Object[] newElements = Arrays.copyOf(elements, len);
+                for (int i = lo; i < hi; ++i) {
+                    @SuppressWarnings("unchecked") E e = (E) elements[i];
+                    newElements[i] = operator.apply(e);
+                }
+                l.setArray(expectedArray = newElements);
+            } finally {
+                lock.unlock();
+            }
+!!!9150850.java!!!	sort(inout c : Comparator) : void
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                int lo = offset;
+                int hi = offset + size;
+                Object[] elements = expectedArray;
+                if (l.getArray() != elements)
+                    throw new ConcurrentModificationException();
+                int len = elements.length;
+                if (lo < 0 || hi > len)
+                    throw new IndexOutOfBoundsException();
+                Object[] newElements = Arrays.copyOf(elements, len);
+                @SuppressWarnings("unchecked") E[] es = (E[])newElements;
+                Arrays.sort(es, lo, hi, c);
+                l.setArray(expectedArray = newElements);
+            } finally {
+                lock.unlock();
+            }
+!!!9150978.java!!!	removeAll(inout c : Collection) : boolean
+            if (c == null) throw new NullPointerException();
+            boolean removed = false;
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                int n = size;
+                if (n > 0) {
+                    int lo = offset;
+                    int hi = offset + n;
+                    Object[] elements = expectedArray;
+                    if (l.getArray() != elements)
+                        throw new ConcurrentModificationException();
+                    int len = elements.length;
+                    if (lo < 0 || hi > len)
+                        throw new IndexOutOfBoundsException();
+                    int newSize = 0;
+                    Object[] temp = new Object[n];
+                    for (int i = lo; i < hi; ++i) {
+                        Object element = elements[i];
+                        if (!c.contains(element))
+                            temp[newSize++] = element;
+                    }
+                    if (newSize != n) {
+                        Object[] newElements = new Object[len - n + newSize];
+                        System.arraycopy(elements, 0, newElements, 0, lo);
+                        System.arraycopy(temp, 0, newElements, lo, newSize);
+                        System.arraycopy(elements, hi, newElements,
+                                         lo + newSize, len - hi);
+                        size = newSize;
+                        removed = true;
+                        l.setArray(expectedArray = newElements);
+                    }
+                }
+            } finally {
+                lock.unlock();
+            }
+            return removed;
+!!!9151106.java!!!	retainAll(inout c : Collection) : boolean
+            if (c == null) throw new NullPointerException();
+            boolean removed = false;
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                int n = size;
+                if (n > 0) {
+                    int lo = offset;
+                    int hi = offset + n;
+                    Object[] elements = expectedArray;
+                    if (l.getArray() != elements)
+                        throw new ConcurrentModificationException();
+                    int len = elements.length;
+                    if (lo < 0 || hi > len)
+                        throw new IndexOutOfBoundsException();
+                    int newSize = 0;
+                    Object[] temp = new Object[n];
+                    for (int i = lo; i < hi; ++i) {
+                        Object element = elements[i];
+                        if (c.contains(element))
+                            temp[newSize++] = element;
+                    }
+                    if (newSize != n) {
+                        Object[] newElements = new Object[len - n + newSize];
+                        System.arraycopy(elements, 0, newElements, 0, lo);
+                        System.arraycopy(temp, 0, newElements, lo, newSize);
+                        System.arraycopy(elements, hi, newElements,
+                                         lo + newSize, len - hi);
+                        size = newSize;
+                        removed = true;
+                        l.setArray(expectedArray = newElements);
+                    }
+                }
+            } finally {
+                lock.unlock();
+            }
+            return removed;
+!!!9151234.java!!!	removeIf(inout filter : Predicate) : boolean
+            if (filter == null) throw new NullPointerException();
+            boolean removed = false;
+            final ReentrantLock lock = l.lock;
+            lock.lock();
+            try {
+                int n = size;
+                if (n > 0) {
+                    int lo = offset;
+                    int hi = offset + n;
+                    Object[] elements = expectedArray;
+                    if (l.getArray() != elements)
+                        throw new ConcurrentModificationException();
+                    int len = elements.length;
+                    if (lo < 0 || hi > len)
+                        throw new IndexOutOfBoundsException();
+                    int newSize = 0;
+                    Object[] temp = new Object[n];
+                    for (int i = lo; i < hi; ++i) {
+                        @SuppressWarnings("unchecked") E e = (E) elements[i];
+                        if (!filter.test(e))
+                            temp[newSize++] = e;
+                    }
+                    if (newSize != n) {
+                        Object[] newElements = new Object[len - n + newSize];
+                        System.arraycopy(elements, 0, newElements, 0, lo);
+                        System.arraycopy(temp, 0, newElements, lo, newSize);
+                        System.arraycopy(elements, hi, newElements,
+                                         lo + newSize, len - hi);
+                        size = newSize;
+                        removed = true;
+                        l.setArray(expectedArray = newElements);
+                    }
+                }
+            } finally {
+                lock.unlock();
+            }
+            return removed;
+!!!9151362.java!!!	spliterator() : Spliterator
+            int lo = offset;
+            int hi = offset + size;
+            Object[] a = expectedArray;
+            if (l.getArray() != a)
+                throw new ConcurrentModificationException();
+            if (lo < 0 || hi > a.length)
+                throw new IndexOutOfBoundsException();
+            return Spliterators.spliterator
+                (a, lo, hi, Spliterator.IMMUTABLE | Spliterator.ORDERED);

@@ -1,0 +1,199 @@
+class PrologDriver
+!!!4363906.java!!!	next() : int
+            //System.out.println("here in next");
+
+            if(DEBUG_NEXT){
+                System.out.println("NOW IN PrologDriver");
+            }
+            try {
+                do {
+                    switch (fScannerState) {
+                        case SCANNER_STATE_PROLOG: {
+                            fEntityScanner.skipSpaces();
+                            if (fEntityScanner.skipChar('<', null)) {
+                                setScannerState(SCANNER_STATE_START_OF_MARKUP);
+                            } else if (fEntityScanner.skipChar('&', NameType.REFERENCE)) {
+                                setScannerState(SCANNER_STATE_REFERENCE);
+                            } else {
+                                setScannerState(SCANNER_STATE_CONTENT);
+                            }
+                            break;
+                        }
+
+                        case SCANNER_STATE_START_OF_MARKUP: {
+                            fMarkupDepth++;
+                            if (isValidNameStartChar(fEntityScanner.peekChar()) ||
+                                    isValidNameStartHighSurrogate(fEntityScanner.peekChar())) {
+                                setScannerState(SCANNER_STATE_ROOT_ELEMENT);
+                                setDriver(fContentDriver);
+                                //from now onwards this would be handled by fContentDriver,in the same next() call
+                                return fContentDriver.next();
+                            } else if (fEntityScanner.skipChar('!', null)) {
+                                if (fEntityScanner.skipChar('-', null)) {
+                                    if (!fEntityScanner.skipChar('-', null)) {
+                                        reportFatalError("InvalidCommentStart",
+                                                null);
+                                    }
+                                    setScannerState(SCANNER_STATE_COMMENT);
+                                } else if (fEntityScanner.skipString(DOCTYPE)) {
+                                    setScannerState(SCANNER_STATE_DOCTYPE);
+                                    Entity entity = fEntityScanner.getCurrentEntity();
+                                    if(entity instanceof Entity.ScannedEntity){
+                                        fStartPos=((Entity.ScannedEntity)entity).position;
+                                    }
+                                    fReadingDTD=true;
+                                    if(fDTDDecl == null)
+                                        fDTDDecl = new XMLStringBuffer();
+                                    fDTDDecl.append("<!DOCTYPE");
+
+                                } else {
+                                    reportFatalError("MarkupNotRecognizedInProlog",
+                                            null);
+                                }
+                            } else if (fEntityScanner.skipChar('?', null)) {
+                                setScannerState(SCANNER_STATE_PI);
+                            } else {
+                                reportFatalError("MarkupNotRecognizedInProlog",
+                                        null);
+                            }
+                            break;
+                        }
+                    }
+                } while (fScannerState == SCANNER_STATE_PROLOG || fScannerState == SCANNER_STATE_START_OF_MARKUP );
+
+                switch(fScannerState){
+                    /**
+                    //this part is handled by FragmentContentHandler
+                    case SCANNER_STATE_ROOT_ELEMENT: {
+                        //we have read '<' and beginning of reading the start element tag
+                        setScannerState(SCANNER_STATE_START_ELEMENT_TAG);
+                        setDriver(fContentDriver);
+                        //from now onwards this would be handled by fContentDriver,in the same next() call
+                        return fContentDriver.next();
+                    }
+                     */
+                    case SCANNER_STATE_COMMENT: {
+                        //this function fills the data..
+                        scanComment();
+                        setScannerState(SCANNER_STATE_PROLOG);
+                        return XMLEvent.COMMENT;
+                        //setScannerState(SCANNER_STATE_PROLOG);
+                        //break;
+                    }
+                    case SCANNER_STATE_PI: {
+                        fContentBuffer.clear() ;
+                        scanPI(fContentBuffer);
+                        setScannerState(SCANNER_STATE_PROLOG);
+                        return XMLEvent.PROCESSING_INSTRUCTION;
+                    }
+
+                    case SCANNER_STATE_DOCTYPE: {
+                        if (fDisallowDoctype) {
+                            reportFatalError("DoctypeNotAllowed", null);
+                        }
+
+                        if (fSeenDoctypeDecl) {
+                            reportFatalError("AlreadySeenDoctype", null);
+                        }
+                        fSeenDoctypeDecl = true;
+
+                        // scanDoctypeDecl() sends XNI doctypeDecl event that
+                        // in SAX is converted to startDTD() event.
+                        if (scanDoctypeDecl(fSupportDTD)) {
+                            //allow parsing of entity decls to continue in order to stay well-formed
+                            setScannerState(SCANNER_STATE_DTD_INTERNAL_DECLS);
+                            fSeenInternalSubset = true;
+                            if(fDTDDriver == null){
+                                fDTDDriver = new DTDDriver();
+                            }
+                            setDriver(fContentDriver);
+                            //always return DTD event, the event however, will not contain any entities
+                            return fDTDDriver.next();
+                        }
+
+                        if(fSeenDoctypeDecl){
+                            Entity entity = fEntityScanner.getCurrentEntity();
+                            if(entity instanceof Entity.ScannedEntity){
+                                fEndPos = ((Entity.ScannedEntity)entity).position;
+                            }
+                            fReadingDTD = false;
+                        }
+
+                        // handle external subset
+                        if (fDoctypeSystemId != null) {
+                            if (((fValidation || fLoadExternalDTD)
+                                && (fValidationManager == null || !fValidationManager.isCachedDTD()))) {
+                                if (fSupportDTD) {
+                                    setScannerState(SCANNER_STATE_DTD_EXTERNAL);
+                                } else {
+                                    setScannerState(SCANNER_STATE_PROLOG);
+                                }
+
+                                setDriver(fContentDriver);
+                                if(fDTDDriver == null) {
+                                    fDTDDriver = new DTDDriver();
+                                }
+
+                                return fDTDDriver.next();
+                            }
+                        }
+                        else if (fExternalSubsetSource != null) {
+                            if (((fValidation || fLoadExternalDTD)
+                                && (fValidationManager == null || !fValidationManager.isCachedDTD()))) {
+                                // This handles the case of a DOCTYPE that had neither an internal subset or an external subset.
+                                fDTDScanner.setInputSource(fExternalSubsetSource);
+                                fExternalSubsetSource = null;
+                            if (fSupportDTD)
+                                setScannerState(SCANNER_STATE_DTD_EXTERNAL_DECLS);
+                            else
+                                setScannerState(SCANNER_STATE_PROLOG);
+                            setDriver(fContentDriver);
+                            if(fDTDDriver == null)
+                                fDTDDriver = new DTDDriver();
+                            return fDTDDriver.next();
+                            }
+                        }
+
+                        // Send endDTD() call if:
+                        // a) systemId is null or if an external subset resolver could not locate an external subset.
+                        // b) "load-external-dtd" and validation are false
+                        // c) DTD grammar is cached
+
+                        // in XNI this results in 3 events:  doctypeDecl, startDTD, endDTD
+                        // in SAX this results in 2 events: startDTD, endDTD
+                        if (fDTDScanner != null) {
+                            fDTDScanner.setInputSource(null);
+                        }
+                        setScannerState(SCANNER_STATE_PROLOG);
+                        return XMLEvent.DTD;
+                    }
+
+                    case SCANNER_STATE_CONTENT: {
+                        reportFatalError("ContentIllegalInProlog", null);
+                        fEntityScanner.scanChar(null);
+                    }
+                    case SCANNER_STATE_REFERENCE: {
+                        reportFatalError("ReferenceIllegalInProlog", null);
+                    }
+
+                    /**
+                     * if (complete) {
+                     * if (fEntityScanner.scanChar() != '<') {
+                     * reportFatalError("RootElementRequired", null);
+                     * }
+                     * setScannerState(SCANNER_STATE_ROOT_ELEMENT);
+                     * setDriver(fContentDriver);
+                     * }
+                     */
+                }
+            }
+            // premature end of file
+            catch (EOFException e) {
+                reportFatalError("PrematureEOF", null);
+                //xxx  what should be returned here.... ???
+                return -1 ;
+                //throw e;
+            }
+            //xxx  what should be returned here.... ???
+            return -1;
+

@@ -1,0 +1,81 @@
+class SendQ
+!!!3222914.java!!!	SendQ(in initialCapacity : int, in capacityIncr : int)
+        super(initialCapacity , capacityIncr) ;
+!!!3223042.java!!!	notifyClients() : void
+        this.notifyAll() ;
+!!!3223170.java!!!	addRequest(inout req : SnmpInformRequest) : void
+
+        long nextPoll = req.getAbsNextPollTime() ;
+
+        int i ;
+        for (i = size() ; i > 0 ; i--) {
+            if (nextPoll < getRequestAt(i-1).getAbsNextPollTime())
+                break ;
+        }
+        if (i == size()) {
+            addElement(req) ;
+            notifyClients() ;
+        } else
+            insertElementAt(req, i) ;
+!!!3223298.java!!!	waitUntilReady() : boolean
+        while (true) {
+            if (isBeingDestroyed == true)
+                return false;
+            long tmp = 0 ;
+            if (isEmpty() == false) {
+                long currTime = System.currentTimeMillis() ;
+                SnmpInformRequest req = lastElement() ;
+                tmp = req.getAbsNextPollTime() - currTime ;
+                if (tmp <= 0) {
+                    return true ;
+                }
+            }
+            waitOnThisQueue(tmp) ;
+        }
+!!!3223426.java!!!	getAllOutstandingRequest(in margin : long) : Vector
+        int i ;
+        Vector<SnmpInformRequest> outreq = new Vector<>();
+        while (true) {
+            if (waitUntilReady() == true) {
+                long refTime = System.currentTimeMillis() + margin ;
+
+                for (i = size() ; i > 0 ; i--) {
+                    SnmpInformRequest req = getRequestAt(i-1) ;
+                    if (req.getAbsNextPollTime() > refTime)
+                        break ;
+                    outreq.addElement(req) ;
+                }
+
+                if (! outreq.isEmpty()) {
+                    elementCount -= outreq.size() ;
+                    return outreq ;
+                }
+            }
+            else
+                return null;
+        }
+!!!3223554.java!!!	waitOnThisQueue(in time : long) : void
+        if (time == 0 && !isEmpty()) {
+            if (SNMP_ADAPTOR_LOGGER.isLoggable(Level.FINEST)) {
+                SNMP_ADAPTOR_LOGGER.logp(Level.FINEST, SnmpQManager.class.getName(),
+                    "waitOnThisQueue", "[" + Thread.currentThread().toString() + "]:" +
+                    "Fatal BUG :: Blocking on newq permenantly. But size = " + size());
+            }
+        }
+
+        try {
+            this.wait(time) ;
+        } catch (InterruptedException e) {
+        }
+!!!3223682.java!!!	getRequestAt(in idx : int) : SnmpInformRequest
+        return elementAt(idx) ;
+!!!3223810.java!!!	removeRequest(in reqid : long) : SnmpInformRequest
+        int max= size() ;
+        for (int i = 0 ; i < max ; i++) {
+            SnmpInformRequest reqc = getRequestAt(i) ;
+            if (reqid == reqc.getRequestId()) {
+                removeElementAt(i) ;
+                return reqc ;
+            }
+        }
+        return null ;

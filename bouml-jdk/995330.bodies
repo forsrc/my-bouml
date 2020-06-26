@@ -1,0 +1,579 @@
+class Files
+!!!7827586.java!!!	provider(inout path : Path) : FileSystemProvider
+        return path.getFileSystem().provider();
+!!!7827714.java!!!	asUncheckedRunnable(inout c : Closeable) : Runnable
+        return () -> {
+            try {
+                c.close();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        };
+!!!7827842.java!!!	newInputStream(inout path : Path, inout  : OpenOption...options) : InputStream
+        return provider(path).newInputStream(path, options);
+!!!7827970.java!!!	newOutputStream(inout path : Path, inout  : OpenOption...options) : OutputStream
+        return provider(path).newOutputStream(path, options);
+!!!7828098.java!!!	newByteChannel(inout path : Path, inout options : Set, inout attrs : FileAttribute<?>...) : SeekableByteChannel
+        return provider(path).newByteChannel(path, options, attrs);
+!!!7828226.java!!!	newByteChannel(inout path : Path, inout  : OpenOption...options) : SeekableByteChannel
+        Set<OpenOption> set = new HashSet<OpenOption>(options.length);
+        Collections.addAll(set, options);
+        return newByteChannel(path, set);
+!!!7828610.java!!!	newDirectoryStream(inout dir : Path) : DirectoryStream
+        return provider(dir).newDirectoryStream(dir, AcceptAllFilter.FILTER);
+!!!7828738.java!!!	newDirectoryStream(inout dir : Path, inout glob : String) : DirectoryStream
+        // avoid creating a matcher if all entries are required.
+        if (glob.equals("*"))
+            return newDirectoryStream(dir);
+
+        // create a matcher and return a filter that uses it.
+        FileSystem fs = dir.getFileSystem();
+        final PathMatcher matcher = fs.getPathMatcher("glob:" + glob);
+        DirectoryStream.Filter<Path> filter = new DirectoryStream.Filter<Path>() {
+            @Override
+            public boolean accept(Path entry)  {
+                return matcher.matches(entry.getFileName());
+            }
+        };
+        return fs.provider().newDirectoryStream(dir, filter);
+!!!7828866.java!!!	newDirectoryStream(inout dir : Path, inout filter : DirectoryStream::Filter) : DirectoryStream
+        return provider(dir).newDirectoryStream(dir, filter);
+!!!7828994.java!!!	createFile(inout path : Path, inout attrs : FileAttribute<?>...) : Path
+        EnumSet<StandardOpenOption> options =
+            EnumSet.<StandardOpenOption>of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        newByteChannel(path, options, attrs).close();
+        return path;
+!!!7829122.java!!!	createDirectory(inout dir : Path, inout attrs : FileAttribute<?>...) : Path
+        provider(dir).createDirectory(dir, attrs);
+        return dir;
+!!!7829250.java!!!	createDirectories(inout dir : Path, inout attrs : FileAttribute<?>...) : Path
+        // attempt to create the directory
+        try {
+            createAndCheckIsDirectory(dir, attrs);
+            return dir;
+        } catch (FileAlreadyExistsException x) {
+            // file exists and is not a directory
+            throw x;
+        } catch (IOException x) {
+            // parent may not exist or other reason
+        }
+        SecurityException se = null;
+        try {
+            dir = dir.toAbsolutePath();
+        } catch (SecurityException x) {
+            // don't have permission to get absolute path
+            se = x;
+        }
+        // find a decendent that exists
+        Path parent = dir.getParent();
+        while (parent != null) {
+            try {
+                provider(parent).checkAccess(parent);
+                break;
+            } catch (NoSuchFileException x) {
+                // does not exist
+            }
+            parent = parent.getParent();
+        }
+        if (parent == null) {
+            // unable to find existing parent
+            if (se == null) {
+                throw new FileSystemException(dir.toString(), null,
+                    "Unable to determine if root directory exists");
+            } else {
+                throw se;
+            }
+        }
+
+        // create directories
+        Path child = parent;
+        for (Path name: parent.relativize(dir)) {
+            child = child.resolve(name);
+            createAndCheckIsDirectory(child, attrs);
+        }
+        return dir;
+!!!7829378.java!!!	createAndCheckIsDirectory(inout dir : Path, inout attrs : FileAttribute<?>...) : void
+        try {
+            createDirectory(dir, attrs);
+        } catch (FileAlreadyExistsException x) {
+            if (!isDirectory(dir, LinkOption.NOFOLLOW_LINKS))
+                throw x;
+        }
+!!!7829506.java!!!	createTempFile(inout dir : Path, inout prefix : String, inout suffix : String, inout attrs : FileAttribute<?>...) : Path
+        return TempFileHelper.createTempFile(Objects.requireNonNull(dir),
+                                             prefix, suffix, attrs);
+!!!7829634.java!!!	createTempFile(inout prefix : String, inout suffix : String, inout attrs : FileAttribute<?>...) : Path
+        return TempFileHelper.createTempFile(null, prefix, suffix, attrs);
+!!!7829762.java!!!	createTempDirectory(inout dir : Path, inout prefix : String, inout attrs : FileAttribute<?>...) : Path
+        return TempFileHelper.createTempDirectory(Objects.requireNonNull(dir),
+                                                  prefix, attrs);
+!!!7829890.java!!!	createTempDirectory(inout prefix : String, inout attrs : FileAttribute<?>...) : Path
+        return TempFileHelper.createTempDirectory(null, prefix, attrs);
+!!!7830018.java!!!	createSymbolicLink(inout link : Path, inout target : Path, inout attrs : FileAttribute<?>...) : Path
+        provider(link).createSymbolicLink(link, target, attrs);
+        return link;
+!!!7830146.java!!!	createLink(inout link : Path, inout existing : Path) : Path
+        provider(link).createLink(link, existing);
+        return link;
+!!!7830274.java!!!	delete(inout path : Path) : void
+        provider(path).delete(path);
+!!!7830402.java!!!	deleteIfExists(inout path : Path) : boolean
+        return provider(path).deleteIfExists(path);
+!!!7830530.java!!!	copy(inout source : Path, inout target : Path, inout  : CopyOption...options) : Path
+        FileSystemProvider provider = provider(source);
+        if (provider(target) == provider) {
+            // same provider
+            provider.copy(source, target, options);
+        } else {
+            // different providers
+            CopyMoveHelper.copyToForeignTarget(source, target, options);
+        }
+        return target;
+!!!7830658.java!!!	move(inout source : Path, inout target : Path, inout  : CopyOption...options) : Path
+        FileSystemProvider provider = provider(source);
+        if (provider(target) == provider) {
+            // same provider
+            provider.move(source, target, options);
+        } else {
+            // different providers
+            CopyMoveHelper.moveToForeignTarget(source, target, options);
+        }
+        return target;
+!!!7830786.java!!!	readSymbolicLink(inout link : Path) : Path
+        return provider(link).readSymbolicLink(link);
+!!!7830914.java!!!	getFileStore(inout path : Path) : FileStore
+        return provider(path).getFileStore(path);
+!!!7831042.java!!!	isSameFile(inout path : Path, inout path2 : Path) : boolean
+        return provider(path).isSameFile(path, path2);
+!!!7831170.java!!!	isHidden(inout path : Path) : boolean
+        return provider(path).isHidden(path);
+!!!7831554.java!!!	probeContentType(inout path : Path) : String
+        // try installed file type detectors
+        for (FileTypeDetector detector: FileTypeDetectors.installeDetectors) {
+            String result = detector.probeContentType(path);
+            if (result != null)
+                return result;
+        }
+
+        // fallback to default
+        return FileTypeDetectors.defaultFileTypeDetector.probeContentType(path);
+!!!7831682.java!!!	getFileAttributeView(inout path : Path, inout type : Class, inout  : LinkOption...options) : V
+        return provider(path).getFileAttributeView(path, type, options);
+!!!7831810.java!!!	readAttributes(inout path : Path, inout type : Class, inout  : LinkOption...options) : A
+        return provider(path).readAttributes(path, type, options);
+!!!7831938.java!!!	setAttribute(inout path : Path, inout attribute : String, inout value : Object, inout  : LinkOption...options) : Path
+        provider(path).setAttribute(path, attribute, value, options);
+        return path;
+!!!7832066.java!!!	getAttribute(inout path : Path, inout attribute : String, inout  : LinkOption...options) : Object
+        // only one attribute should be read
+        if (attribute.indexOf('*') >= 0 || attribute.indexOf(',') >= 0)
+            throw new IllegalArgumentException(attribute);
+        Map<String,Object> map = readAttributes(path, attribute, options);
+        assert map.size() == 1;
+        String name;
+        int pos = attribute.indexOf(':');
+        if (pos == -1) {
+            name = attribute;
+        } else {
+            name = (pos == attribute.length()) ? "" : attribute.substring(pos+1);
+        }
+        return map.get(name);
+!!!7832194.java!!!	readAttributes(inout path : Path, inout attributes : String, inout  : LinkOption...options) : Map
+        return provider(path).readAttributes(path, attributes, options);
+!!!7832322.java!!!	getPosixFilePermissions(inout path : Path, inout  : LinkOption...options) : Set
+        return readAttributes(path, PosixFileAttributes.class, options).permissions();
+!!!7832450.java!!!	setPosixFilePermissions(inout path : Path, inout perms : Set) : Path
+        PosixFileAttributeView view =
+            getFileAttributeView(path, PosixFileAttributeView.class);
+        if (view == null)
+            throw new UnsupportedOperationException();
+        view.setPermissions(perms);
+        return path;
+!!!7832578.java!!!	getOwner(inout path : Path, inout  : LinkOption...options) : UserPrincipal
+        FileOwnerAttributeView view =
+            getFileAttributeView(path, FileOwnerAttributeView.class, options);
+        if (view == null)
+            throw new UnsupportedOperationException();
+        return view.getOwner();
+!!!7832706.java!!!	setOwner(inout path : Path, inout owner : UserPrincipal) : Path
+        FileOwnerAttributeView view =
+            getFileAttributeView(path, FileOwnerAttributeView.class);
+        if (view == null)
+            throw new UnsupportedOperationException();
+        view.setOwner(owner);
+        return path;
+!!!7832834.java!!!	isSymbolicLink(inout path : Path) : boolean
+        try {
+            return readAttributes(path,
+                                  BasicFileAttributes.class,
+                                  LinkOption.NOFOLLOW_LINKS).isSymbolicLink();
+        } catch (IOException ioe) {
+            return false;
+        }
+!!!7832962.java!!!	isDirectory(inout path : Path, inout  : LinkOption...options) : boolean
+        try {
+            return readAttributes(path, BasicFileAttributes.class, options).isDirectory();
+        } catch (IOException ioe) {
+            return false;
+        }
+!!!7833090.java!!!	isRegularFile(inout path : Path, inout  : LinkOption...options) : boolean
+        try {
+            return readAttributes(path, BasicFileAttributes.class, options).isRegularFile();
+        } catch (IOException ioe) {
+            return false;
+        }
+!!!7833218.java!!!	getLastModifiedTime(inout path : Path, inout  : LinkOption...options) : FileTime
+        return readAttributes(path, BasicFileAttributes.class, options).lastModifiedTime();
+!!!7833346.java!!!	setLastModifiedTime(inout path : Path, inout time : FileTime) : Path
+        getFileAttributeView(path, BasicFileAttributeView.class)
+            .setTimes(time, null, null);
+        return path;
+!!!7833474.java!!!	size(inout path : Path) : long
+        return readAttributes(path, BasicFileAttributes.class).size();
+!!!7833602.java!!!	followLinks(inout  : LinkOption...options) : boolean
+        boolean followLinks = true;
+        for (LinkOption opt: options) {
+            if (opt == LinkOption.NOFOLLOW_LINKS) {
+                followLinks = false;
+                continue;
+            }
+            if (opt == null)
+                throw new NullPointerException();
+            throw new AssertionError("Should not get here");
+        }
+        return followLinks;
+!!!7833730.java!!!	exists(inout path : Path, inout  : LinkOption...options) : boolean
+        try {
+            if (followLinks(options)) {
+                provider(path).checkAccess(path);
+            } else {
+                // attempt to read attributes without following links
+                readAttributes(path, BasicFileAttributes.class,
+                               LinkOption.NOFOLLOW_LINKS);
+            }
+            // file exists
+            return true;
+        } catch (IOException x) {
+            // does not exist or unable to determine if file exists
+            return false;
+        }
+
+!!!7833858.java!!!	notExists(inout path : Path, inout  : LinkOption...options) : boolean
+        try {
+            if (followLinks(options)) {
+                provider(path).checkAccess(path);
+            } else {
+                // attempt to read attributes without following links
+                readAttributes(path, BasicFileAttributes.class,
+                               LinkOption.NOFOLLOW_LINKS);
+            }
+            // file exists
+            return false;
+        } catch (NoSuchFileException x) {
+            // file confirmed not to exist
+            return true;
+        } catch (IOException x) {
+            return false;
+        }
+!!!7833986.java!!!	isAccessible(inout path : Path, inout  : AccessMode...modes) : boolean
+        try {
+            provider(path).checkAccess(path, modes);
+            return true;
+        } catch (IOException x) {
+            return false;
+        }
+!!!7834114.java!!!	isReadable(inout path : Path) : boolean
+        return isAccessible(path, AccessMode.READ);
+!!!7834242.java!!!	isWritable(inout path : Path) : boolean
+        return isAccessible(path, AccessMode.WRITE);
+!!!7834370.java!!!	isExecutable(inout path : Path) : boolean
+        return isAccessible(path, AccessMode.EXECUTE);
+!!!7834498.java!!!	walkFileTree(inout start : Path, inout options : Set, in maxDepth : int, inout visitor : FileVisitor) : Path
+        /**
+         * Create a FileTreeWalker to walk the file tree, invoking the visitor
+         * for each event.
+         */
+        try (FileTreeWalker walker = new FileTreeWalker(options, maxDepth)) {
+            FileTreeWalker.Event ev = walker.walk(start);
+            do {
+                FileVisitResult result;
+                switch (ev.type()) {
+                    case ENTRY :
+                        IOException ioe = ev.ioeException();
+                        if (ioe == null) {
+                            assert ev.attributes() != null;
+                            result = visitor.visitFile(ev.file(), ev.attributes());
+                        } else {
+                            result = visitor.visitFileFailed(ev.file(), ioe);
+                        }
+                        break;
+
+                    case START_DIRECTORY :
+                        result = visitor.preVisitDirectory(ev.file(), ev.attributes());
+
+                        // if SKIP_SIBLINGS and SKIP_SUBTREE is returned then
+                        // there shouldn't be any more events for the current
+                        // directory.
+                        if (result == FileVisitResult.SKIP_SUBTREE ||
+                            result == FileVisitResult.SKIP_SIBLINGS)
+                            walker.pop();
+                        break;
+
+                    case END_DIRECTORY :
+                        result = visitor.postVisitDirectory(ev.file(), ev.ioeException());
+
+                        // SKIP_SIBLINGS is a no-op for postVisitDirectory
+                        if (result == FileVisitResult.SKIP_SIBLINGS)
+                            result = FileVisitResult.CONTINUE;
+                        break;
+
+                    default :
+                        throw new AssertionError("Should not get here");
+                }
+
+                if (Objects.requireNonNull(result) != FileVisitResult.CONTINUE) {
+                    if (result == FileVisitResult.TERMINATE) {
+                        break;
+                    } else if (result == FileVisitResult.SKIP_SIBLINGS) {
+                        walker.skipRemainingSiblings();
+                    }
+                }
+                ev = walker.next();
+            } while (ev != null);
+        }
+
+        return start;
+!!!7834626.java!!!	walkFileTree(inout start : Path, inout visitor : FileVisitor) : Path
+        return walkFileTree(start,
+                            EnumSet.noneOf(FileVisitOption.class),
+                            Integer.MAX_VALUE,
+                            visitor);
+!!!7834754.java!!!	newBufferedReader(inout path : Path, inout cs : Charset) : BufferedReader
+        CharsetDecoder decoder = cs.newDecoder();
+        Reader reader = new InputStreamReader(newInputStream(path), decoder);
+        return new BufferedReader(reader);
+!!!7834882.java!!!	newBufferedReader(inout path : Path) : BufferedReader
+        return newBufferedReader(path, StandardCharsets.UTF_8);
+!!!7835010.java!!!	newBufferedWriter(inout path : Path, inout cs : Charset, inout  : OpenOption...options) : BufferedWriter
+        CharsetEncoder encoder = cs.newEncoder();
+        Writer writer = new OutputStreamWriter(newOutputStream(path, options), encoder);
+        return new BufferedWriter(writer);
+!!!7835138.java!!!	newBufferedWriter(inout path : Path, inout  : OpenOption...options) : BufferedWriter
+        return newBufferedWriter(path, StandardCharsets.UTF_8, options);
+!!!7835266.java!!!	copy(inout source : InputStream, inout sink : OutputStream) : long
+        long nread = 0L;
+        byte[] buf = new byte[BUFFER_SIZE];
+        int n;
+        while ((n = source.read(buf)) > 0) {
+            sink.write(buf, 0, n);
+            nread += n;
+        }
+        return nread;
+!!!7835394.java!!!	copy(inout in : InputStream, inout target : Path, inout  : CopyOption...options) : long
+        // ensure not null before opening file
+        Objects.requireNonNull(in);
+
+        // check for REPLACE_EXISTING
+        boolean replaceExisting = false;
+        for (CopyOption opt: options) {
+            if (opt == StandardCopyOption.REPLACE_EXISTING) {
+                replaceExisting = true;
+            } else {
+                if (opt == null) {
+                    throw new NullPointerException("options contains 'null'");
+                }  else {
+                    throw new UnsupportedOperationException(opt + " not supported");
+                }
+            }
+        }
+
+        // attempt to delete an existing file
+        SecurityException se = null;
+        if (replaceExisting) {
+            try {
+                deleteIfExists(target);
+            } catch (SecurityException x) {
+                se = x;
+            }
+        }
+
+        // attempt to create target file. If it fails with
+        // FileAlreadyExistsException then it may be because the security
+        // manager prevented us from deleting the file, in which case we just
+        // throw the SecurityException.
+        OutputStream ostream;
+        try {
+            ostream = newOutputStream(target, StandardOpenOption.CREATE_NEW,
+                                              StandardOpenOption.WRITE);
+        } catch (FileAlreadyExistsException x) {
+            if (se != null)
+                throw se;
+            // someone else won the race and created the file
+            throw x;
+        }
+
+        // do the copy
+        try (OutputStream out = ostream) {
+            return copy(in, out);
+        }
+!!!7835522.java!!!	copy(inout source : Path, inout out : OutputStream) : long
+        // ensure not null before opening file
+        Objects.requireNonNull(out);
+
+        try (InputStream in = newInputStream(source)) {
+            return copy(in, out);
+        }
+!!!7835650.java!!!	read(inout source : InputStream, in initialSize : int) : byte
+        int capacity = initialSize;
+        byte[] buf = new byte[capacity];
+        int nread = 0;
+        int n;
+        for (;;) {
+            // read to EOF which may read more or less than initialSize (eg: file
+            // is truncated while we are reading)
+            while ((n = source.read(buf, nread, capacity - nread)) > 0)
+                nread += n;
+
+            // if last call to source.read() returned -1, we are done
+            // otherwise, try to read one more byte; if that failed we're done too
+            if (n < 0 || (n = source.read()) < 0)
+                break;
+
+            // one more byte was read; need to allocate a larger buffer
+            if (capacity <= MAX_BUFFER_SIZE - capacity) {
+                capacity = Math.max(capacity << 1, BUFFER_SIZE);
+            } else {
+                if (capacity == MAX_BUFFER_SIZE)
+                    throw new OutOfMemoryError("Required array size too large");
+                capacity = MAX_BUFFER_SIZE;
+            }
+            buf = Arrays.copyOf(buf, capacity);
+            buf[nread++] = (byte)n;
+        }
+        return (capacity == nread) ? buf : Arrays.copyOf(buf, nread);
+!!!7835778.java!!!	readAllBytes(inout path : Path) : byte
+        try (SeekableByteChannel sbc = Files.newByteChannel(path);
+             InputStream in = Channels.newInputStream(sbc)) {
+            long size = sbc.size();
+            if (size > (long)MAX_BUFFER_SIZE)
+                throw new OutOfMemoryError("Required array size too large");
+
+            return read(in, (int)size);
+        }
+!!!7835906.java!!!	readAllLines(inout path : Path, inout cs : Charset) : List
+        try (BufferedReader reader = newBufferedReader(path, cs)) {
+            List<String> result = new ArrayList<>();
+            for (;;) {
+                String line = reader.readLine();
+                if (line == null)
+                    break;
+                result.add(line);
+            }
+            return result;
+        }
+!!!7836034.java!!!	readAllLines(inout path : Path) : List
+        return readAllLines(path, StandardCharsets.UTF_8);
+!!!7836162.java!!!	write(inout path : Path, inout bytes : byte [[]], inout  : OpenOption...options) : Path
+        // ensure bytes is not null before opening file
+        Objects.requireNonNull(bytes);
+
+        try (OutputStream out = Files.newOutputStream(path, options)) {
+            int len = bytes.length;
+            int rem = len;
+            while (rem > 0) {
+                int n = Math.min(rem, BUFFER_SIZE);
+                out.write(bytes, (len-rem), n);
+                rem -= n;
+            }
+        }
+        return path;
+!!!7836290.java!!!	write(inout path : Path, inout lines : Iterable, inout cs : Charset, inout  : OpenOption...options) : Path
+        // ensure lines is not null before opening file
+        Objects.requireNonNull(lines);
+        CharsetEncoder encoder = cs.newEncoder();
+        OutputStream out = newOutputStream(path, options);
+        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out, encoder))) {
+            for (CharSequence line: lines) {
+                writer.append(line);
+                writer.newLine();
+            }
+        }
+        return path;
+!!!7836418.java!!!	write(inout path : Path, inout lines : Iterable, inout  : OpenOption...options) : Path
+        return write(path, lines, StandardCharsets.UTF_8, options);
+!!!7836546.java!!!	list(inout dir : Path) : Stream
+        DirectoryStream<Path> ds = Files.newDirectoryStream(dir);
+        try {
+            final Iterator<Path> delegate = ds.iterator();
+
+            // Re-wrap DirectoryIteratorException to UncheckedIOException
+            Iterator<Path> it = new Iterator<Path>() {
+                @Override
+                public boolean hasNext() {
+                    try {
+                        return delegate.hasNext();
+                    } catch (DirectoryIteratorException e) {
+                        throw new UncheckedIOException(e.getCause());
+                    }
+                }
+                @Override
+                public Path next() {
+                    try {
+                        return delegate.next();
+                    } catch (DirectoryIteratorException e) {
+                        throw new UncheckedIOException(e.getCause());
+                    }
+                }
+            };
+
+            return StreamSupport.stream(Spliterators.spliteratorUnknownSize(it, Spliterator.DISTINCT), false)
+                                .onClose(asUncheckedRunnable(ds));
+        } catch (Error|RuntimeException e) {
+            try {
+                ds.close();
+            } catch (IOException ex) {
+                try {
+                    e.addSuppressed(ex);
+                } catch (Throwable ignore) {}
+            }
+            throw e;
+        }
+!!!7836674.java!!!	walk(inout start : Path, in maxDepth : int, inout  : FileVisitOption...options) : Stream
+        FileTreeIterator iterator = new FileTreeIterator(start, maxDepth, options);
+        try {
+            return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.DISTINCT), false)
+                                .onClose(iterator::close)
+                                .map(entry -> entry.file());
+        } catch (Error|RuntimeException e) {
+            iterator.close();
+            throw e;
+        }
+!!!7836802.java!!!	walk(inout start : Path, inout  : FileVisitOption...options) : Stream
+        return walk(start, Integer.MAX_VALUE, options);
+!!!7836930.java!!!	find(inout start : Path, in maxDepth : int, inout matcher : BiPredicate, inout  : FileVisitOption...options) : Stream
+        FileTreeIterator iterator = new FileTreeIterator(start, maxDepth, options);
+        try {
+            return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.DISTINCT), false)
+                                .onClose(iterator::close)
+                                .filter(entry -> matcher.test(entry.file(), entry.attributes()))
+                                .map(entry -> entry.file());
+        } catch (Error|RuntimeException e) {
+            iterator.close();
+            throw e;
+        }
+!!!7837058.java!!!	lines(inout path : Path, inout cs : Charset) : Stream
+        BufferedReader br = Files.newBufferedReader(path, cs);
+        try {
+            return br.lines().onClose(asUncheckedRunnable(br));
+        } catch (Error|RuntimeException e) {
+            try {
+                br.close();
+            } catch (IOException ex) {
+                try {
+                    e.addSuppressed(ex);
+                } catch (Throwable ignore) {}
+            }
+            throw e;
+        }
+!!!7837186.java!!!	lines(inout path : Path) : Stream
+        return lines(path, StandardCharsets.UTF_8);

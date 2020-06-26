@@ -1,0 +1,99 @@
+class LineReader
+!!!6855682.java!!!	LineReader(inout in : Reader)
+            this.in = in;
+            cb = new char[1024];
+            nextChar = nChars = 0;
+            leftoverLF = false;
+!!!6855938.java!!!	ready() : boolean
+            //in.ready synchronizes on readLock already
+            return in.ready();
+!!!6856066.java!!!	read(inout cbuf : char [[]], in offset : int, in length : int) : int
+            int off = offset;
+            int end = offset + length;
+            if (offset < 0 || offset > cbuf.length || length < 0 ||
+                end < 0 || end > cbuf.length) {
+                throw new IndexOutOfBoundsException();
+            }
+            synchronized(readLock) {
+                boolean eof = false;
+                char c = 0;
+                for (;;) {
+                    if (nextChar >= nChars) {   //fill
+                        int n = 0;
+                        do {
+                            n = in.read(cb, 0, cb.length);
+                        } while (n == 0);
+                        if (n > 0) {
+                            nChars = n;
+                            nextChar = 0;
+                            if (n < cb.length &&
+                                cb[n-1] != '\n' && cb[n-1] != '\r') {
+                                /*
+                                 * we're in canonical mode so each "fill" should
+                                 * come back with an eol. if there no lf or nl at
+                                 * the end of returned bytes we reached an eof.
+                                 */
+                                eof = true;
+                            }
+                        } else { /*EOF*/
+                            if (off - offset == 0)
+                                return -1;
+                            return off - offset;
+                        }
+                    }
+                    if (leftoverLF && cbuf == rcb && cb[nextChar] == '\n') {
+                        /*
+                         * if invoked by our readline, skip the leftover, otherwise
+                         * return the LF.
+                         */
+                        nextChar++;
+                    }
+                    leftoverLF = false;
+                    while (nextChar < nChars) {
+                        c = cbuf[off++] = cb[nextChar];
+                        cb[nextChar++] = 0;
+                        if (c == '\n') {
+                            return off - offset;
+                        } else if (c == '\r') {
+                            if (off == end) {
+                                /* no space left even the next is LF, so return
+                                 * whatever we have if the invoker is not our
+                                 * readLine()
+                                 */
+                                if (cbuf == rcb) {
+                                    cbuf = grow();
+                                    end = cbuf.length;
+                                } else {
+                                    leftoverLF = true;
+                                    return off - offset;
+                                }
+                            }
+                            if (nextChar == nChars && in.ready()) {
+                                /*
+                                 * we have a CR and we reached the end of
+                                 * the read in buffer, fill to make sure we
+                                 * don't miss a LF, if there is one, it's possible
+                                 * that it got cut off during last round reading
+                                 * simply because the read in buffer was full.
+                                 */
+                                nChars = in.read(cb, 0, cb.length);
+                                nextChar = 0;
+                            }
+                            if (nextChar < nChars && cb[nextChar] == '\n') {
+                                cbuf[off++] = '\n';
+                                nextChar++;
+                            }
+                            return off - offset;
+                        } else if (off == end) {
+                           if (cbuf == rcb) {
+                                cbuf = grow();
+                                end = cbuf.length;
+                           } else {
+                               return off - offset;
+                           }
+                        }
+                    }
+                    if (eof)
+                        return off - offset;
+                }
+            }

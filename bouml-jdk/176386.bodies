@@ -1,0 +1,511 @@
+class ClientRequestInfoImpl
+!!!492162.java!!!	reset() : void
+        super.reset();
+
+        // Please keep these in the same order that they're declared above.
+
+        // 6763340
+        retryRequest = RetryType.NONE;
+
+        // Do not reset entryCount because we need to know when to pop this
+        // from the stack.
+
+        request = null;
+        diiInitiate = false;
+        messageMediator = null;
+
+        // Clear cached attributes:
+        cachedTargetObject = null;
+        cachedEffectiveTargetObject = null;
+        cachedArguments = null;
+        cachedExceptions = null;
+        cachedContexts = null;
+        cachedOperationContext = null;
+        cachedReceivedExceptionId = null;
+        cachedResult = null;
+        cachedReceivedException = null;
+        cachedEffectiveProfile = null;
+        cachedRequestServiceContexts = null;
+        cachedReplyServiceContexts = null;
+        cachedEffectiveComponents = null;
+
+        piCurrentPushed = false;
+
+        startingPointCall = CALL_SEND_REQUEST;
+        endingPointCall = CALL_RECEIVE_REPLY;
+
+!!!492290.java!!!	ClientRequestInfoImpl(inout myORB : ORB)
+        super( myORB );
+        startingPointCall = CALL_SEND_REQUEST;
+        endingPointCall = CALL_RECEIVE_REPLY;
+!!!492418.java!!!	target() : Object
+        // access is currently valid for all states:
+        //checkAccess( MID_TARGET );
+        if (cachedTargetObject == null) {
+            CorbaContactInfo corbaContactInfo = (CorbaContactInfo)
+                messageMediator.getContactInfo();
+            cachedTargetObject =
+                iorToObject(corbaContactInfo.getTargetIOR());
+        }
+        return cachedTargetObject;
+!!!492546.java!!!	effective_target() : Object
+        // access is currently valid for all states:
+        //checkAccess( MID_EFFECTIVE_TARGET );
+
+        // Note: This is not necessarily the same as locatedIOR.
+        // Reason: See the way we handle COMM_FAILURES in
+        // ClientRequestDispatcher.createRequest, v1.32
+
+        if (cachedEffectiveTargetObject == null) {
+            CorbaContactInfo corbaContactInfo = (CorbaContactInfo)
+                messageMediator.getContactInfo();
+            // REVISIT - get through chain like getLocatedIOR helper below.
+            cachedEffectiveTargetObject =
+                iorToObject(corbaContactInfo.getEffectiveTargetIOR());
+        }
+        return cachedEffectiveTargetObject;
+!!!492674.java!!!	effective_profile() : TaggedProfile
+        // access is currently valid for all states:
+        //checkAccess( MID_EFFECTIVE_PROFILE );
+
+        if( cachedEffectiveProfile == null ) {
+            CorbaContactInfo corbaContactInfo = (CorbaContactInfo)
+                messageMediator.getContactInfo();
+            cachedEffectiveProfile =
+                corbaContactInfo.getEffectiveProfile().getIOPProfile();
+        }
+
+        // Good citizen: In the interest of efficiency, we assume interceptors
+        // will not modify the returned TaggedProfile in any way so we need
+        // not make a deep copy of it.
+
+        return cachedEffectiveProfile;
+!!!492802.java!!!	received_exception() : Any
+        checkAccess( MID_RECEIVED_EXCEPTION );
+
+        if( cachedReceivedException == null ) {
+            cachedReceivedException = exceptionToAny( exception );
+        }
+
+        // Good citizen: In the interest of efficiency, we assume interceptors
+        // will not modify the returned Any in any way so we need
+        // not make a deep copy of it.
+
+        return cachedReceivedException;
+!!!492930.java!!!	received_exception_id() : String
+        checkAccess( MID_RECEIVED_EXCEPTION_ID );
+
+        if( cachedReceivedExceptionId == null ) {
+            String result = null;
+
+            if( exception == null ) {
+                // Note: exception should never be null here since we will
+                // throw a BAD_INV_ORDER if this is not called from
+                // receive_exception.
+                throw wrapper.exceptionWasNull() ;
+            } else if( exception instanceof SystemException ) {
+                String name = exception.getClass().getName();
+                result = ORBUtility.repositoryIdOf(name);
+            } else if( exception instanceof ApplicationException ) {
+                result = ((ApplicationException)exception).getId();
+            }
+
+            // _REVISIT_ We need to be able to handle a UserException in the
+            // DII case.  How do we extract the ID from a UserException?
+
+            cachedReceivedExceptionId = result;
+        }
+
+        return cachedReceivedExceptionId;
+!!!493058.java!!!	get_effective_component(in id : int) : TaggedComponent
+        checkAccess( MID_GET_EFFECTIVE_COMPONENT );
+
+        return get_effective_components( id )[0];
+!!!493186.java!!!	get_effective_components(in id : int) : TaggedComponent
+        checkAccess( MID_GET_EFFECTIVE_COMPONENTS );
+        Integer integerId = new Integer( id );
+        TaggedComponent[] result = null;
+        boolean justCreatedCache = false;
+
+        if( cachedEffectiveComponents == null ) {
+            cachedEffectiveComponents = new HashMap();
+            justCreatedCache = true;
+        }
+        else {
+            // Look in cache:
+            result = (TaggedComponent[])cachedEffectiveComponents.get(
+                integerId );
+        }
+
+        // null could mean we cached null or not in cache.
+        if( (result == null) &&
+            (justCreatedCache ||
+            !cachedEffectiveComponents.containsKey( integerId ) ) )
+        {
+            // Not in cache.  Get it from the profile:
+            CorbaContactInfo corbaContactInfo = (CorbaContactInfo)
+                messageMediator.getContactInfo();
+            IIOPProfileTemplate ptemp =
+                (IIOPProfileTemplate)corbaContactInfo.getEffectiveProfile().
+                getTaggedProfileTemplate();
+            result = ptemp.getIOPComponents(myORB, id);
+            cachedEffectiveComponents.put( integerId, result );
+        }
+
+        // As per ptc/00-08-06, section 21.3.13.6., If not found, raise
+        // BAD_PARAM with minor code INVALID_COMPONENT_ID.
+        if( (result == null) || (result.length == 0) ) {
+            throw stdWrapper.invalidComponentId( integerId ) ;
+        }
+
+        // Good citizen: In the interest of efficiency, we will assume
+        // interceptors will not modify the returned TaggedCompoent[], or
+        // the TaggedComponents inside of it.  Otherwise, we would need to
+        // clone the array and make a deep copy of its contents.
+
+        return result;
+!!!493314.java!!!	get_request_policy(in type : int) : Policy
+        checkAccess( MID_GET_REQUEST_POLICY );
+        // _REVISIT_ Our ORB is not policy-based at this time.
+        throw wrapper.piOrbNotPolicyBased() ;
+!!!493442.java!!!	add_request_service_context(inout service_context : ServiceContext, inout replace : boolean) : void
+        checkAccess( MID_ADD_REQUEST_SERVICE_CONTEXT );
+
+        if( cachedRequestServiceContexts == null ) {
+            cachedRequestServiceContexts = new HashMap();
+        }
+
+        addServiceContext( cachedRequestServiceContexts,
+                           messageMediator.getRequestServiceContexts(),
+                           service_context, replace );
+!!!493570.java!!!	request_id() : int
+        // access is currently valid for all states:
+        //checkAccess( MID_REQUEST_ID );
+        /*
+         * NOTE: The requestId in client interceptors is the same as the
+         * GIOP request id.  This works because both interceptors and
+         * request ids are scoped by the ORB on the client side.
+         */
+        return messageMediator.getRequestId();
+!!!493698.java!!!	operation() : String
+        // access is currently valid for all states:
+        //checkAccess( MID_OPERATION );
+        return messageMediator.getOperationName();
+!!!493826.java!!!	arguments() : Parameter
+        checkAccess( MID_ARGUMENTS );
+
+        if( cachedArguments == null ) {
+            if( request == null ) {
+                throw stdWrapper.piOperationNotSupported1() ;
+            }
+
+            // If it is DII request then get the arguments from the DII req
+            // and convert that into parameters.
+            cachedArguments = nvListToParameterArray( request.arguments() );
+        }
+
+        // Good citizen: In the interest of efficiency, we assume
+        // interceptors will be "good citizens" in that they will not
+        // modify the contents of the Parameter[] array.  We also assume
+        // they will not change the values of the containing Anys.
+
+        return cachedArguments;
+!!!493954.java!!!	exceptions() : TypeCode
+        checkAccess( MID_EXCEPTIONS );
+
+        if( cachedExceptions == null ) {
+            if( request == null ) {
+               throw stdWrapper.piOperationNotSupported2() ;
+            }
+
+            // Get the list of exceptions from DII request data, If there are
+            // no exceptions raised then this method will return null.
+            ExceptionList excList = request.exceptions( );
+            int count = excList.count();
+            TypeCode[] excTCList = new TypeCode[count];
+            try {
+                for( int i = 0; i < count; i++ ) {
+                    excTCList[i] = excList.item( i );
+                }
+            } catch( Exception e ) {
+                throw wrapper.exceptionInExceptions( e ) ;
+            }
+
+            cachedExceptions = excTCList;
+        }
+
+        // Good citizen: In the interest of efficiency, we assume
+        // interceptors will be "good citizens" in that they will not
+        // modify the contents of the TypeCode[] array.  We also assume
+        // they will not change the values of the containing TypeCodes.
+
+        return cachedExceptions;
+!!!494082.java!!!	contexts() : String
+        checkAccess( MID_CONTEXTS );
+
+        if( cachedContexts == null ) {
+            if( request == null ) {
+                throw stdWrapper.piOperationNotSupported3() ;
+            }
+
+            // Get the list of contexts from DII request data, If there are
+            // no contexts then this method will return null.
+            ContextList ctxList = request.contexts( );
+            int count = ctxList.count();
+            String[] ctxListToReturn = new String[count];
+            try {
+                for( int i = 0; i < count; i++ ) {
+                    ctxListToReturn[i] = ctxList.item( i );
+                }
+            } catch( Exception e ) {
+                throw wrapper.exceptionInContexts( e ) ;
+            }
+
+            cachedContexts = ctxListToReturn;
+        }
+
+        // Good citizen: In the interest of efficiency, we assume
+        // interceptors will be "good citizens" in that they will not
+        // modify the contents of the String[] array.
+
+        return cachedContexts;
+!!!494210.java!!!	operation_context() : String
+        checkAccess( MID_OPERATION_CONTEXT );
+
+        if( cachedOperationContext == null ) {
+            if( request == null ) {
+                throw stdWrapper.piOperationNotSupported4() ;
+            }
+
+            // Get the list of contexts from DII request data, If there are
+            // no contexts then this method will return null.
+            Context ctx = request.ctx( );
+            // _REVISIT_ The API for get_values is not compliant with the spec,
+            // Revisit this code once it's fixed.
+            // _REVISIT_ Our ORB doesn't support Operation Context, This code
+            // will not be excerscised until it's supported.
+            // The first parameter in get_values is the start_scope which
+            // if blank makes it as a global scope.
+            // The second parameter is op_flags which is set to RESTRICT_SCOPE
+            // As there is only one defined in the spec.
+            // The Third param is the pattern which is '*' requiring it to
+            // get all the contexts.
+            NVList nvList = ctx.get_values( "", CTX_RESTRICT_SCOPE.value,"*" );
+            String[] context = new String[(nvList.count() * 2) ];
+            if( ( nvList != null ) &&( nvList.count() != 0 ) ) {
+                // The String[] array will contain Name and Value for each
+                // context and hence double the size in the array.
+                int index = 0;
+                for( int i = 0; i < nvList.count(); i++ ) {
+                    NamedValue nv;
+                    try {
+                        nv = nvList.item( i );
+                    }
+                    catch (Exception e ) {
+                        return (String[]) null;
+                    }
+                    context[index] = nv.name();
+                    index++;
+                    context[index] = nv.value().extract_string();
+                    index++;
+                }
+            }
+
+            cachedOperationContext = context;
+        }
+
+        // Good citizen: In the interest of efficiency, we assume
+        // interceptors will be "good citizens" in that they will not
+        // modify the contents of the String[] array.
+
+        return cachedOperationContext;
+!!!494338.java!!!	result() : Any
+        checkAccess( MID_RESULT );
+
+        if( cachedResult == null ) {
+            if( request == null ) {
+                throw stdWrapper.piOperationNotSupported5() ;
+            }
+            // Get the result from the DII request data.
+            NamedValue nvResult = request.result( );
+
+            if( nvResult == null ) {
+                throw wrapper.piDiiResultIsNull() ;
+            }
+
+            cachedResult = nvResult.value();
+        }
+
+        // Good citizen: In the interest of efficiency, we assume that
+        // interceptors will not modify the contents of the result Any.
+        // Otherwise, we would need to create a deep copy of the Any.
+
+        return cachedResult;
+!!!494466.java!!!	response_expected() : boolean
+        // access is currently valid for all states:
+        //checkAccess( MID_RESPONSE_EXPECTED );
+        return ! messageMediator.isOneWay();
+!!!494594.java!!!	forward_reference() : Object
+        checkAccess( MID_FORWARD_REFERENCE );
+        // Check to make sure we are in LOCATION_FORWARD
+        // state as per ptc/00-08-06, table 21-1
+        // footnote 2.
+        if( replyStatus != LOCATION_FORWARD.value ) {
+            throw stdWrapper.invalidPiCall1() ;
+        }
+
+        // Do not cache this value since if an interceptor raises
+        // forward request then the next interceptor in the
+        // list should see the new value.
+        IOR ior = getLocatedIOR();
+        return iorToObject(ior);
+!!!494722.java!!!	getLocatedIOR() : IOR
+        IOR ior;
+        CorbaContactInfoList contactInfoList = (CorbaContactInfoList)
+            messageMediator.getContactInfo().getContactInfoList();
+        ior = contactInfoList.getEffectiveTargetIOR();
+        return ior;
+!!!494850.java!!!	setLocatedIOR(inout ior : IOR) : void
+        ORB orb = (ORB) messageMediator.getBroker();
+
+        CorbaContactInfoListIterator iterator = (CorbaContactInfoListIterator)
+            ((CorbaInvocationInfo)orb.getInvocationInfo())
+            .getContactInfoListIterator();
+
+        // REVISIT - this most likely causes reportRedirect to happen twice.
+        // Once here and once inside the request dispatcher.
+        iterator.reportRedirect(
+            (CorbaContactInfo)messageMediator.getContactInfo(),
+            ior);
+!!!494978.java!!!	get_request_service_context(in id : int) : ServiceContext
+        checkAccess( MID_GET_REQUEST_SERVICE_CONTEXT );
+
+        if( cachedRequestServiceContexts == null ) {
+            cachedRequestServiceContexts = new HashMap();
+        }
+
+        return  getServiceContext(cachedRequestServiceContexts,
+                                  messageMediator.getRequestServiceContexts(),
+                                  id);
+!!!495106.java!!!	get_reply_service_context(in id : int) : ServiceContext
+        checkAccess( MID_GET_REPLY_SERVICE_CONTEXT );
+
+        if( cachedReplyServiceContexts == null ) {
+            cachedReplyServiceContexts = new HashMap();
+        }
+
+        // In the event this is called from a oneway, we will have no
+        // response object.
+        //
+        // In the event this is called after a IIOPConnection.purgeCalls,
+        // we will have a response object, but that object will
+        // not contain a header (which would hold the service context
+        // container).  See bug 4624102.
+        //
+        // REVISIT: this is the only thing used
+        // from response at this time.  However, a more general solution
+        // would avoid accessing other parts of response's header.
+        //
+        // Instead of throwing a NullPointer, we will
+        // "gracefully" handle these with a BAD_PARAM with minor code 25.
+
+        try {
+            ServiceContexts serviceContexts =
+                messageMediator.getReplyServiceContexts();
+            if (serviceContexts == null) {
+                throw new NullPointerException();
+            }
+            return getServiceContext(cachedReplyServiceContexts,
+                                     serviceContexts, id);
+        } catch (NullPointerException e) {
+            // REVISIT how this is programmed - not what it does.
+            // See purge calls test.  The waiter is woken up by the
+            // call to purge calls - but there is no reply containing
+            // service contexts.
+            throw stdWrapper.invalidServiceContextId( e ) ;
+        }
+!!!495234.java!!!	connection() : Connection
+        return (com.sun.corba.se.spi.legacy.connection.Connection)
+            messageMediator.getConnection();
+!!!495362.java!!!	setInfo(inout messageMediator : MessageMediator) : void
+        this.messageMediator = (CorbaMessageMediator)messageMediator;
+        // REVISIT - so mediator can handle DII in subcontract.
+        this.messageMediator.setDIIInfo(request);
+!!!495490.java!!!	setRetryRequest(inout retryRequest : RetryType) : void
+        this.retryRequest = retryRequest;
+!!!495618.java!!!	getRetryRequest() : RetryType
+        // 6763340
+        return this.retryRequest;
+!!!495746.java!!!	incrementEntryCount() : void
+        this.entryCount++;
+!!!495874.java!!!	decrementEntryCount() : void
+        this.entryCount--;
+!!!496002.java!!!	getEntryCount() : int
+        return this.entryCount;
+!!!496130.java!!!	setReplyStatus(in replyStatus : short) : void
+        super.setReplyStatus( replyStatus );
+        switch( replyStatus ) {
+        case SUCCESSFUL.value:
+            endingPointCall = CALL_RECEIVE_REPLY;
+            break;
+        case SYSTEM_EXCEPTION.value:
+        case USER_EXCEPTION.value:
+            endingPointCall = CALL_RECEIVE_EXCEPTION;
+            break;
+        case LOCATION_FORWARD.value:
+        case TRANSPORT_RETRY.value:
+            endingPointCall = CALL_RECEIVE_OTHER;
+            break;
+        }
+!!!496258.java!!!	setDIIRequest(inout req : Request) : void
+         request = req;
+!!!496386.java!!!	setDIIInitiate(inout diiInitiate : boolean) : void
+        this.diiInitiate = diiInitiate;
+!!!496514.java!!!	isDIIInitiate() : boolean
+        return this.diiInitiate;
+!!!496642.java!!!	setPICurrentPushed(inout piCurrentPushed : boolean) : void
+        this.piCurrentPushed = piCurrentPushed;
+!!!496770.java!!!	isPICurrentPushed() : boolean
+        return this.piCurrentPushed;
+!!!496898.java!!!	setException(inout exception : Exception) : void
+        super.setException( exception );
+
+        // Clear cached values:
+        cachedReceivedException = null;
+        cachedReceivedExceptionId = null;
+!!!497026.java!!!	getIsOneWay() : boolean
+        return ! response_expected();
+!!!497154.java!!!	checkAccess(in methodID : int) : void
+        // Make sure currentPoint matches the appropriate index in the
+        // validCall table:
+        int validCallIndex = 0;
+        switch( currentExecutionPoint ) {
+        case EXECUTION_POINT_STARTING:
+            switch( startingPointCall ) {
+            case CALL_SEND_REQUEST:
+                validCallIndex = 0;
+                break;
+            case CALL_SEND_POLL:
+                validCallIndex = 1;
+                break;
+            }
+            break;
+        case EXECUTION_POINT_ENDING:
+            switch( endingPointCall ) {
+            case CALL_RECEIVE_REPLY:
+                validCallIndex = 2;
+                break;
+            case CALL_RECEIVE_EXCEPTION:
+                validCallIndex = 3;
+                break;
+            case CALL_RECEIVE_OTHER:
+                validCallIndex = 4;
+                break;
+            }
+            break;
+        }
+
+        // Check the validCall table:
+        if( !validCall[methodID][validCallIndex] ) {
+            throw stdWrapper.invalidPiCall2() ;
+        }

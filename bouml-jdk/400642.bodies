@@ -1,0 +1,303 @@
+class JLayeredPane
+!!!10571266.java!!!	JLayeredPane()
+        setLayout(null);
+!!!10571394.java!!!	validateOptimizedDrawing() : void
+        boolean layeredComponentFound = false;
+        synchronized(getTreeLock()) {
+            Integer layer;
+
+            for (Component c : getComponents()) {
+                layer = null;
+
+                if(SunToolkit.isInstanceOf(c, "javax.swing.JInternalFrame") ||
+                       (c instanceof JComponent &&
+                        (layer = (Integer)((JComponent)c).
+                                     getClientProperty(LAYER_PROPERTY)) != null))
+                {
+                    if(layer != null && layer.equals(FRAME_CONTENT_LAYER))
+                        continue;
+                    layeredComponentFound = true;
+                    break;
+                }
+            }
+        }
+
+        if(layeredComponentFound)
+            optimizedDrawingPossible = false;
+        else
+            optimizedDrawingPossible = true;
+!!!10571522.java!!!	addImpl(inout comp : Component, inout constraints : Object, in index : int) : void
+        int layer;
+        int pos;
+
+        if(constraints instanceof Integer) {
+            layer = ((Integer)constraints).intValue();
+            setLayer(comp, layer);
+        } else
+            layer = getLayer(comp);
+
+        pos = insertIndexForLayer(layer, index);
+        super.addImpl(comp, constraints, pos);
+        comp.validate();
+        comp.repaint();
+        validateOptimizedDrawing();
+!!!10571650.java!!!	remove(in index : int) : void
+        Component c = getComponent(index);
+        super.remove(index);
+        if (c != null && !(c instanceof JComponent)) {
+            getComponentToLayer().remove(c);
+        }
+        validateOptimizedDrawing();
+!!!10571778.java!!!	removeAll() : void
+        Component[] children = getComponents();
+        Hashtable<Component, Integer> cToL = getComponentToLayer();
+        for (int counter = children.length - 1; counter >= 0; counter--) {
+            Component c = children[counter];
+            if (c != null && !(c instanceof JComponent)) {
+                cToL.remove(c);
+            }
+        }
+        super.removeAll();
+!!!10571906.java!!!	isOptimizedDrawingEnabled() : boolean
+        return optimizedDrawingPossible;
+!!!10572034.java!!!	putLayer(inout c : JComponent, in layer : int) : void
+        /// MAKE SURE THIS AND setLayer(Component c, int layer, int position)  are SYNCED
+        Integer layerObj;
+
+        layerObj = new Integer(layer);
+        c.putClientProperty(LAYER_PROPERTY, layerObj);
+!!!10572162.java!!!	getLayer(inout c : JComponent) : int
+        Integer i;
+        if((i = (Integer)c.getClientProperty(LAYER_PROPERTY)) != null)
+            return i.intValue();
+        return DEFAULT_LAYER.intValue();
+!!!10572290.java!!!	getLayeredPaneAbove(inout c : Component) : JLayeredPane
+        if(c == null) return null;
+
+        Component parent = c.getParent();
+        while(parent != null && !(parent instanceof JLayeredPane))
+            parent = parent.getParent();
+        return (JLayeredPane)parent;
+!!!10572418.java!!!	setLayer(inout c : Component, in layer : int) : void
+        setLayer(c, layer, -1);
+!!!10572546.java!!!	setLayer(inout c : Component, in layer : int, in position : int) : void
+        Integer layerObj;
+        layerObj = getObjectForLayer(layer);
+
+        if(layer == getLayer(c) && position == getPosition(c)) {
+                repaint(c.getBounds());
+            return;
+        }
+
+        /// MAKE SURE THIS AND putLayer(JComponent c, int layer) are SYNCED
+        if(c instanceof JComponent)
+            ((JComponent)c).putClientProperty(LAYER_PROPERTY, layerObj);
+        else
+            getComponentToLayer().put(c, layerObj);
+
+        if(c.getParent() == null || c.getParent() != this) {
+            repaint(c.getBounds());
+            return;
+        }
+
+        int index = insertIndexForLayer(c, layer, position);
+
+        setComponentZOrder(c, index);
+        repaint(c.getBounds());
+!!!10572674.java!!!	getLayer(inout c : Component) : int
+        Integer i;
+        if(c instanceof JComponent)
+            i = (Integer)((JComponent)c).getClientProperty(LAYER_PROPERTY);
+        else
+            i = getComponentToLayer().get(c);
+
+        if(i == null)
+            return DEFAULT_LAYER.intValue();
+        return i.intValue();
+!!!10572802.java!!!	getIndexOf(inout c : Component) : int
+        int i, count;
+
+        count = getComponentCount();
+        for(i = 0; i < count; i++) {
+            if(c == getComponent(i))
+                return i;
+        }
+        return -1;
+!!!10572930.java!!!	moveToFront(inout c : Component) : void
+        setPosition(c, 0);
+!!!10573058.java!!!	moveToBack(inout c : Component) : void
+        setPosition(c, -1);
+!!!10573186.java!!!	setPosition(inout c : Component, in position : int) : void
+        setLayer(c, getLayer(c), position);
+!!!10573314.java!!!	getPosition(inout c : Component) : int
+        int i, startLayer, curLayer, startLocation, pos = 0;
+
+        getComponentCount();
+        startLocation = getIndexOf(c);
+
+        if(startLocation == -1)
+            return -1;
+
+        startLayer = getLayer(c);
+        for(i = startLocation - 1; i >= 0; i--) {
+            curLayer = getLayer(getComponent(i));
+            if(curLayer == startLayer)
+                pos++;
+            else
+                return pos;
+        }
+        return pos;
+!!!10573442.java!!!	highestLayer() : int
+        if(getComponentCount() > 0)
+            return getLayer(getComponent(0));
+        return 0;
+!!!10573570.java!!!	lowestLayer() : int
+        int count = getComponentCount();
+        if(count > 0)
+            return getLayer(getComponent(count-1));
+        return 0;
+!!!10573698.java!!!	getComponentCountInLayer(in layer : int) : int
+        int i, count, curLayer;
+        int layerCount = 0;
+
+        count = getComponentCount();
+        for(i = 0; i < count; i++) {
+            curLayer = getLayer(getComponent(i));
+            if(curLayer == layer) {
+                layerCount++;
+            /// Short circut the counting when we have them all
+            } else if(layerCount > 0 || curLayer < layer) {
+                break;
+            }
+        }
+
+        return layerCount;
+!!!10573826.java!!!	getComponentsInLayer(in layer : int) : Component
+        int i, count, curLayer;
+        int layerCount = 0;
+        Component[] results;
+
+        results = new Component[getComponentCountInLayer(layer)];
+        count = getComponentCount();
+        for(i = 0; i < count; i++) {
+            curLayer = getLayer(getComponent(i));
+            if(curLayer == layer) {
+                results[layerCount++] = getComponent(i);
+            /// Short circut the counting when we have them all
+            } else if(layerCount > 0 || curLayer < layer) {
+                break;
+            }
+        }
+
+        return results;
+!!!10573954.java!!!	paint(inout g : Graphics) : void
+        if(isOpaque()) {
+            Rectangle r = g.getClipBounds();
+            Color c = getBackground();
+            if(c == null)
+                c = Color.lightGray;
+            g.setColor(c);
+            if (r != null) {
+                g.fillRect(r.x, r.y, r.width, r.height);
+            }
+            else {
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        }
+        super.paint(g);
+!!!10574082.java!!!	getComponentToLayer() : Hashtable
+        if(componentToLayer == null)
+            componentToLayer = new Hashtable<Component,Integer>(4);
+        return componentToLayer;
+!!!10574210.java!!!	getObjectForLayer(in layer : int) : Integer
+        Integer layerObj;
+        switch(layer) {
+        case 0:
+            layerObj = DEFAULT_LAYER;
+            break;
+        case 100:
+            layerObj = PALETTE_LAYER;
+            break;
+        case 200:
+            layerObj = MODAL_LAYER;
+            break;
+        case 300:
+            layerObj = POPUP_LAYER;
+            break;
+        case 400:
+            layerObj = DRAG_LAYER;
+            break;
+        default:
+            layerObj = new Integer(layer);
+        }
+        return layerObj;
+!!!10574338.java!!!	insertIndexForLayer(in layer : int, in position : int) : int
+        return insertIndexForLayer(null, layer, position);
+!!!10574466.java!!!	insertIndexForLayer(inout comp : Component, in layer : int, in position : int) : int
+        int i, count, curLayer;
+        int layerStart = -1;
+        int layerEnd = -1;
+        int componentCount = getComponentCount();
+
+        ArrayList<Component> compList =
+            new ArrayList<Component>(componentCount);
+        for (int index = 0; index < componentCount; index++) {
+            if (getComponent(index) != comp) {
+                compList.add(getComponent(index));
+            }
+        }
+
+        count = compList.size();
+        for (i = 0; i < count; i++) {
+            curLayer = getLayer(compList.get(i));
+            if (layerStart == -1 && curLayer == layer) {
+                layerStart = i;
+            }
+            if (curLayer < layer) {
+                if (i == 0) {
+                    // layer is greater than any current layer
+                    // [ ASSERT(layer > highestLayer()) ]
+                    layerStart = 0;
+                    layerEnd = 0;
+                } else {
+                    layerEnd = i;
+                }
+                break;
+            }
+        }
+
+        // layer requested is lower than any current layer
+        // [ ASSERT(layer < lowestLayer()) ]
+        // put it on the bottom of the stack
+        if (layerStart == -1 && layerEnd == -1)
+            return count;
+
+        // In the case of a single layer entry handle the degenerative cases
+        if (layerStart != -1 && layerEnd == -1)
+            layerEnd = count;
+
+        if (layerEnd != -1 && layerStart == -1)
+            layerStart = layerEnd;
+
+        // If we are adding to the bottom, return the last element
+        if (position == -1)
+            return layerEnd;
+
+        // Otherwise make sure the requested position falls in the
+        // proper range
+        if (position > -1 && layerStart + position <= layerEnd)
+            return layerStart + position;
+
+        // Otherwise return the end of the layer
+        return layerEnd;
+!!!10574594.java!!!	paramString() : String
+        String optimizedDrawingPossibleString = (optimizedDrawingPossible ?
+                                                 "true" : "false");
+
+        return super.paramString() +
+        ",optimizedDrawingPossible=" + optimizedDrawingPossibleString;
+!!!10574722.java!!!	getAccessibleContext() : AccessibleContext
+        if (accessibleContext == null) {
+            accessibleContext = new AccessibleJLayeredPane();
+        }
+        return accessibleContext;

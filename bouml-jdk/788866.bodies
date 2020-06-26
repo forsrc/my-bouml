@@ -1,0 +1,135 @@
+class EncodingInfos
+!!!5563906.java!!!	EncodingInfos()
+            loadEncodingInfo();
+!!!5564034.java!!!	openEncodingsFileStream() : InputStream
+            String urlString = null;
+            InputStream is = null;
+
+            try {
+                urlString = SecuritySupport.getSystemProperty(ENCODINGS_PROP, "");
+            } catch (SecurityException e) {
+            }
+
+            if (urlString != null && urlString.length() > 0) {
+                URL url = new URL(urlString);
+                is = url.openStream();
+            }
+
+            if (is == null) {
+                is = SecuritySupport.getResourceAsStream(ENCODINGS_FILE);
+            }
+            return is;
+!!!5564162.java!!!	loadProperties() : Properties
+            Properties props = new Properties();
+            try (InputStream is = openEncodingsFileStream()) {
+                if (is != null) {
+                    props.load(is);
+                } else {
+                    // Seems to be no real need to force failure here, let the
+                    // system do its best... The issue is not really very critical,
+                    // and the output will be in any case _correct_ though maybe not
+                    // always human-friendly... :)
+                    // But maybe report/log the resource problem?
+                    // Any standard ways to report/log errors (in static context)?
+                }
+            }
+            return props;
+!!!5564290.java!!!	parseMimeTypes(inout val : String) : String
+            int pos = val.indexOf(' ');
+            //int lastPrintable;
+            if (pos < 0) {
+                // Maybe report/log this problem?
+                //  "Last printable character not defined for encoding " +
+                //  mimeName + " (" + val + ")" ...
+                return new String[] { val };
+                //lastPrintable = 0x00FF;
+            }
+            //lastPrintable =
+            //    Integer.decode(val.substring(pos).trim()).intValue();
+            StringTokenizer st =
+                    new StringTokenizer(val.substring(0, pos), ",");
+            String[] values = new String[st.countTokens()];
+            for (int i=0; st.hasMoreTokens(); i++) {
+                values[i] = st.nextToken();
+            }
+            return values;
+!!!5564418.java!!!	findCharsetNameFor(inout name : String) : String
+            try {
+                return Charset.forName(name).name();
+            } catch (Exception x) {
+                return null;
+            }
+!!!5564546.java!!!	findCharsetNameFor(inout javaName : String, inout mimes : String [[]]) : String
+            String cs = findCharsetNameFor(javaName);
+            if (cs != null) return javaName;
+            for (String m : mimes) {
+                cs = findCharsetNameFor(m);
+                if (cs != null) break;
+            }
+            return cs;
+!!!5564674.java!!!	loadEncodingInfo() : void
+            try {
+                // load (java name)->(preferred mime name) mapping.
+                final Properties props = loadProperties();
+
+                // create instances of EncodingInfo from the loaded mapping
+                Enumeration keys = props.keys();
+                Map<String, EncodingInfo> canonicals = new HashMap<>();
+                while (keys.hasMoreElements()) {
+                    final String javaName = (String) keys.nextElement();
+                    final String[] mimes = parseMimeTypes(props.getProperty(javaName));
+
+                    final String charsetName = findCharsetNameFor(javaName, mimes);
+                    if (charsetName != null) {
+                        final String kj = toUpperCaseFast(javaName);
+                        final String kc = toUpperCaseFast(charsetName);
+                        for (int i = 0; i < mimes.length; ++i) {
+                            final String mimeName = mimes[i];
+                            final String km = toUpperCaseFast(mimeName);
+                            EncodingInfo info = new EncodingInfo(mimeName, charsetName);
+                            _encodingTableKeyMime.put(km, info);
+                            if (!canonicals.containsKey(kc)) {
+                                // canonicals will map the charset name to
+                                //   the info containing the prefered mime name
+                                //   (the preferred mime name is the first mime
+                                //   name in the list).
+                                canonicals.put(kc, info);
+                                _encodingTableKeyJava.put(kc, info);
+                            }
+                            _encodingTableKeyJava.put(kj, info);
+                        }
+                    } else {
+                        // None of the java or mime names on the line were
+                        // recognized => this charset is not supported?
+                    }
+                }
+
+                // Fix up the _encodingTableKeyJava so that the info mapped to
+                // the java name contains the preferred mime name.
+                // (a given java name can correspond to several mime name,
+                //  but we want the _encodingTableKeyJava to point to the
+                //  preferred mime name).
+                for (Entry<String, EncodingInfo> e : _encodingTableKeyJava.entrySet()) {
+                    e.setValue(canonicals.get(toUpperCaseFast(e.getValue().javaName)));
+                }
+
+            } catch (java.net.MalformedURLException mue) {
+                throw new com.sun.org.apache.xml.internal.serializer.utils.WrappedRuntimeException(mue);
+            } catch (java.io.IOException ioe) {
+                throw new com.sun.org.apache.xml.internal.serializer.utils.WrappedRuntimeException(ioe);
+            }
+!!!5564802.java!!!	findEncoding(inout normalizedEncoding : String) : EncodingInfo
+            EncodingInfo info = _encodingTableKeyJava.get(normalizedEncoding);
+            if (info == null) {
+                info = _encodingTableKeyMime.get(normalizedEncoding);
+            }
+            if (info == null) {
+                info = _encodingDynamicTable.get(normalizedEncoding);
+            }
+            return info;
+!!!5564930.java!!!	getEncodingFromMimeKey(inout normalizedMimeName : String) : EncodingInfo
+            return _encodingTableKeyMime.get(normalizedMimeName);
+!!!5565058.java!!!	getEncodingFromJavaKey(inout normalizedJavaName : String) : EncodingInfo
+            return _encodingTableKeyJava.get(normalizedJavaName);
+!!!5565186.java!!!	putEncoding(inout key : String, inout info : EncodingInfo) : void
+            _encodingDynamicTable.put(key, info);

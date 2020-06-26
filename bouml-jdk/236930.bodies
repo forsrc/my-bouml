@@ -1,0 +1,119 @@
+class POAPolicyMediatorBase_R
+!!!1136514.java!!!	POAPolicyMediatorBase_R(inout policies : Policies, inout poa : POAImpl)
+        super( policies, poa ) ;
+
+        // assert policies.retainServants() && policies.useActiveObjectMapOnly()
+        if (!policies.retainServants())
+            throw poa.invocationWrapper().policyMediatorBadPolicyInFactory() ;
+
+        activeObjectMap = ActiveObjectMap.create(poa, !isUnique);
+!!!1136642.java!!!	returnServant() : void
+        // NO-OP
+!!!1136770.java!!!	clearAOM() : void
+        activeObjectMap.clear() ;
+        activeObjectMap = null ;
+!!!1136898.java!!!	internalKeyToServant(inout key : ActiveObjectMap::Key) : Servant
+        AOMEntry entry = activeObjectMap.get(key);
+        if (entry == null)
+            return null ;
+
+        return activeObjectMap.getServant( entry ) ;
+!!!1137026.java!!!	internalIdToServant(inout id : byte [[]]) : Servant
+        ActiveObjectMap.Key key = new ActiveObjectMap.Key( id ) ;
+        return internalKeyToServant( key ) ;
+!!!1137154.java!!!	activateServant(inout key : ActiveObjectMap::Key, inout entry : AOMEntry, inout servant : Servant) : void
+        setDelegate(servant, key.id );
+
+        if (orb.shutdownDebugFlag) {
+            System.out.println("Activating object " + servant +
+                " with POA " + poa);
+        }
+
+        activeObjectMap.putServant( servant, entry ) ;
+
+        if (Util.isInstanceDefined()) {
+            POAManagerImpl pm = (POAManagerImpl)poa.the_POAManager() ;
+            POAFactory factory = pm.getFactory() ;
+            factory.registerPOAForServant(poa, servant);
+        }
+!!!1137282.java!!!	activateObject(inout id : byte [[]], inout servant : Servant) : void
+        if (isUnique && activeObjectMap.contains(servant))
+            throw new ServantAlreadyActive();
+        ActiveObjectMap.Key key = new ActiveObjectMap.Key( id ) ;
+
+        AOMEntry entry = activeObjectMap.get( key ) ;
+
+        // Check for an ObjectAlreadyActive error
+        entry.activateObject() ;
+        activateServant( key, entry, servant ) ;
+!!!1137410.java!!!	deactivateObject(inout id : byte [[]]) : Servant
+        ActiveObjectMap.Key key = new ActiveObjectMap.Key( id ) ;
+        return deactivateObject( key ) ;
+!!!1137538.java!!!	deactivateHelper(inout key : ActiveObjectMap::Key, inout entry : AOMEntry, inout s : Servant) : void
+        // Default does nothing, but the USE_SERVANT_MANAGER case
+        // must handle etherealization
+
+        activeObjectMap.remove(key);
+
+        if (Util.isInstanceDefined()) {
+            POAManagerImpl pm = (POAManagerImpl)poa.the_POAManager() ;
+            POAFactory factory = pm.getFactory() ;
+            factory.unregisterPOAForServant(poa, s);
+        }
+!!!1137666.java!!!	deactivateObject(inout key : ActiveObjectMap::Key) : Servant
+        if (orb.poaDebugFlag) {
+            ORBUtility.dprint( this,
+                "Calling deactivateObject for key " + key ) ;
+        }
+
+        try {
+            AOMEntry entry = activeObjectMap.get(key);
+            if (entry == null)
+                throw new ObjectNotActive();
+
+            Servant s = activeObjectMap.getServant( entry ) ;
+            if (s == null)
+                throw new ObjectNotActive();
+
+            if (orb.poaDebugFlag) {
+                System.out.println("Deactivating object " + s + " with POA " + poa);
+            }
+
+            deactivateHelper( key, entry, s ) ;
+
+            return s ;
+        } finally {
+            if (orb.poaDebugFlag) {
+                ORBUtility.dprint( this,
+                    "Exiting deactivateObject" ) ;
+            }
+        }
+!!!1137794.java!!!	servantToId(inout servant : Servant) : byte
+        // XXX needs to handle call from an invocation on this POA
+
+        if (!isUnique && !isImplicit)
+            throw new WrongPolicy();
+
+        if (isUnique) {
+            ActiveObjectMap.Key key = activeObjectMap.getKey(servant);
+            if (key != null)
+                return key.id ;
+        }
+
+        // assert !isUnique || (servant not in activateObjectMap)
+
+        if (isImplicit)
+            try {
+                byte[] id = newSystemId() ;
+                activateObject( id, servant ) ;
+                return id ;
+            } catch (ObjectAlreadyActive oaa) {
+                // This can't occur here, since id is always brand new.
+                throw poa.invocationWrapper().servantToIdOaa( oaa ) ;
+            } catch (ServantAlreadyActive s) {
+                throw poa.invocationWrapper().servantToIdSaa( s ) ;
+            } catch (WrongPolicy w) {
+                throw poa.invocationWrapper().servantToIdWp( w ) ;
+            }
+
+        throw new ServantNotActive();

@@ -1,0 +1,1513 @@
+class DTDGrammar
+!!!4433282.java!!!	DTDGrammar(inout symbolTable : SymbolTable, inout desc : XMLDTDDescription)
+        fSymbolTable = symbolTable;
+        fGrammarDescription = desc;
+!!!4433410.java!!!	getGrammarDescription() : XMLGrammarDescription
+        return fGrammarDescription;
+!!!4433538.java!!!	getElementDeclIsExternal(in elementDeclIndex : int) : boolean
+
+        if (elementDeclIndex < 0) {
+            return false;
+        }
+
+        int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        int index = elementDeclIndex & CHUNK_MASK;
+        return (fElementDeclIsExternal[chunk][index] != 0);
+
+!!!4433666.java!!!	getAttributeDeclIsExternal(in attributeDeclIndex : int) : boolean
+
+        if (attributeDeclIndex < 0) {
+            return false;
+        }
+
+        int chunk = attributeDeclIndex >> CHUNK_SHIFT;
+        int index = attributeDeclIndex & CHUNK_MASK;
+        return (fAttributeDeclIsExternal[chunk][index] != 0);
+!!!4433794.java!!!	getAttributeDeclIndex(in elementDeclIndex : int, inout attributeDeclName : String) : int
+        if (elementDeclIndex == -1) {
+            return -1;
+        }
+        int attDefIndex = getFirstAttributeDeclIndex(elementDeclIndex);
+        while (attDefIndex != -1) {
+            getAttributeDecl(attDefIndex, fAttributeDecl);
+
+            if (fAttributeDecl.name.rawname == attributeDeclName
+                || attributeDeclName.equals(fAttributeDecl.name.rawname) ) {
+                return attDefIndex;
+            }
+            attDefIndex = getNextAttributeDeclIndex(attDefIndex);
+        }
+        return -1;
+!!!4433922.java!!!	startDTD(inout locator : XMLLocator, inout augs : Augmentations) : void
+        //Initialize stack
+        fOpStack = null;
+        fNodeIndexStack = null;
+        fPrevNodeIndexStack = null;
+!!!4434050.java!!!	startParameterEntity(inout name : String, inout identifier : XMLResourceIdentifier, inout encoding : String, inout augs : Augmentations) : void
+
+        // keep track of this entity before fEntityDepth is increased
+        if (fPEDepth == fPEntityStack.length) {
+            boolean[] entityarray = new boolean[fPEntityStack.length * 2];
+            System.arraycopy(fPEntityStack, 0, entityarray, 0, fPEntityStack.length);
+            fPEntityStack = entityarray;
+        }
+        fPEntityStack[fPEDepth] = fReadingExternalDTD;
+        fPEDepth++;
+
+!!!4434178.java!!!	startExternalSubset(inout identifier : XMLResourceIdentifier, inout augs : Augmentations) : void
+        fReadingExternalDTD = true;
+!!!4434306.java!!!	endParameterEntity(inout name : String, inout augs : Augmentations) : void
+
+        fPEDepth--;
+        fReadingExternalDTD = fPEntityStack[fPEDepth];
+
+!!!4434434.java!!!	endExternalSubset(inout augs : Augmentations) : void
+        fReadingExternalDTD = false;
+!!!4434562.java!!!	elementDecl(inout name : String, inout contentModel : String, inout augs : Augmentations) : void
+
+        XMLElementDecl tmpElementDecl = fElementDeclTab.get(name) ;
+
+        // check if it is already defined
+        if ( tmpElementDecl != null ) {
+            if (tmpElementDecl.type == -1) {
+                fCurrentElementIndex = getElementDeclIndex(name);
+            }
+            else {
+                // duplicate element, ignored.
+                return;
+            }
+        }
+        else {
+            fCurrentElementIndex = createElementDecl();//create element decl
+        }
+
+        XMLElementDecl elementDecl       = new XMLElementDecl();
+
+        fQName.setValues(null, name, name, null);
+
+        elementDecl.name.setValues(fQName);
+
+        elementDecl.contentModelValidator = null;
+        elementDecl.scope= -1;
+        if (contentModel.equals("EMPTY")) {
+            elementDecl.type = XMLElementDecl.TYPE_EMPTY;
+        }
+        else if (contentModel.equals("ANY")) {
+            elementDecl.type = XMLElementDecl.TYPE_ANY;
+        }
+        else if (contentModel.startsWith("(") ) {
+            if (contentModel.indexOf("#PCDATA") > 0 ) {
+                elementDecl.type = XMLElementDecl.TYPE_MIXED;
+            }
+            else {
+                elementDecl.type = XMLElementDecl.TYPE_CHILDREN;
+            }
+        }
+
+
+        //add(or set) this elementDecl to the local cache
+        this.fElementDeclTab.put(name, elementDecl );
+
+        fElementDecl = elementDecl;
+        addContentSpecToElement(elementDecl);
+
+        if ( DEBUG ) {
+            System.out.println(  "name = " + fElementDecl.name.localpart );
+            System.out.println(  "Type = " + fElementDecl.type );
+        }
+
+        setElementDecl(fCurrentElementIndex, fElementDecl );//set internal structure
+
+        int chunk = fCurrentElementIndex >> CHUNK_SHIFT;
+        int index = fCurrentElementIndex & CHUNK_MASK;
+        ensureElementDeclCapacity(chunk);
+        fElementDeclIsExternal[chunk][index] = (fReadingExternalDTD || fPEDepth > 0) ? 1 : 0;
+
+!!!4434690.java!!!	attributeDecl(inout elementName : String, inout attributeName : String, inout type : String, inout enumeration : String [[]], inout defaultType : String, inout defaultValue : XMLString, inout nonNormalizedDefaultValue : XMLString, inout augs : Augmentations) : void
+
+        if ( this.fElementDeclTab.containsKey(elementName) ) {
+            //if ElementDecl has already being created in the Grammar then remove from table,
+            //this.fElementDeclTab.remove( (String) elementName );
+        }
+        // then it is forward reference to a element decl, create the elementDecl first.
+        else {
+            fCurrentElementIndex = createElementDecl();//create element decl
+
+            XMLElementDecl elementDecl       = new XMLElementDecl();
+            elementDecl.name.setValues(null, elementName, elementName, null);
+
+            elementDecl.scope= -1;
+
+            //add(or set) this elementDecl to the local cache
+            this.fElementDeclTab.put(elementName, elementDecl );
+
+            //set internal structure
+            setElementDecl(fCurrentElementIndex, elementDecl );
+        }
+
+        //Get Grammar index to grammar array
+        int elementIndex       = getElementDeclIndex(elementName);
+
+        //return, when more than one definition is provided for the same attribute of given element type
+        //only the first declaration is binding and later declarations are ignored
+        if (getAttributeDeclIndex(elementIndex, attributeName) != -1) {
+            return;
+        }
+
+        fCurrentAttributeIndex = createAttributeDecl();// Create current Attribute Decl
+
+        fSimpleType.clear();
+        if ( defaultType != null ) {
+            if ( defaultType.equals( "#FIXED") ) {
+                fSimpleType.defaultType = XMLSimpleType.DEFAULT_TYPE_FIXED;
+            } else if ( defaultType.equals( "#IMPLIED") ) {
+                fSimpleType.defaultType = XMLSimpleType.DEFAULT_TYPE_IMPLIED;
+            } else if ( defaultType.equals( "#REQUIRED") ) {
+                fSimpleType.defaultType = XMLSimpleType.DEFAULT_TYPE_REQUIRED;
+            }
+        }
+        if ( DEBUG ) {
+            System.out.println("defaultvalue = " + defaultValue.toString() );
+        }
+        fSimpleType.defaultValue      = defaultValue!=null ?  defaultValue.toString() : null;
+        fSimpleType.nonNormalizedDefaultValue      = nonNormalizedDefaultValue!=null ?  nonNormalizedDefaultValue.toString() : null;
+        fSimpleType.enumeration       = enumeration;
+
+        if (type.equals("CDATA")) {
+            fSimpleType.type = XMLSimpleType.TYPE_CDATA;
+        }
+        else if ( type.equals("ID") ) {
+            fSimpleType.type = XMLSimpleType.TYPE_ID;
+        }
+        else if ( type.startsWith("IDREF") ) {
+            fSimpleType.type = XMLSimpleType.TYPE_IDREF;
+            if (type.indexOf("S") > 0) {
+                fSimpleType.list = true;
+            }
+        }
+        else if (type.equals("ENTITIES")) {
+            fSimpleType.type = XMLSimpleType.TYPE_ENTITY;
+            fSimpleType.list = true;
+        }
+        else if (type.equals("ENTITY")) {
+            fSimpleType.type = XMLSimpleType.TYPE_ENTITY;
+        }
+        else if (type.equals("NMTOKENS")) {
+            fSimpleType.type = XMLSimpleType.TYPE_NMTOKEN;
+            fSimpleType.list = true;
+        }
+        else if (type.equals("NMTOKEN")) {
+            fSimpleType.type = XMLSimpleType.TYPE_NMTOKEN;
+        }
+        else if (type.startsWith("NOTATION") ) {
+            fSimpleType.type = XMLSimpleType.TYPE_NOTATION;
+        }
+        else if (type.startsWith("ENUMERATION") ) {
+            fSimpleType.type = XMLSimpleType.TYPE_ENUMERATION;
+        }
+        else {
+            // REVISIT: Report error message. -Ac
+            System.err.println("!!! unknown attribute type "+type);
+        }
+        // REVISIT: The datatype should be stored with the attribute value
+        //          and not special-cased in the XMLValidator. -Ac
+        //fSimpleType.datatypeValidator = fDatatypeValidatorFactory.createDatatypeValidator(type, null, facets, fSimpleType.list);
+
+        fQName.setValues(null, attributeName, attributeName, null);
+        fAttributeDecl.setValues( fQName, fSimpleType, false );
+
+        setAttributeDecl(elementIndex, fCurrentAttributeIndex, fAttributeDecl);
+
+        int chunk = fCurrentAttributeIndex >> CHUNK_SHIFT;
+        int index = fCurrentAttributeIndex & CHUNK_MASK;
+        ensureAttributeDeclCapacity(chunk);
+        fAttributeDeclIsExternal[chunk][index] = (fReadingExternalDTD || fPEDepth > 0) ?  1 : 0;
+
+!!!4434818.java!!!	internalEntityDecl(inout name : String, inout text : XMLString, inout nonNormalizedText : XMLString, inout augs : Augmentations) : void
+
+        int entityIndex = getEntityDeclIndex(name);
+        if( entityIndex == -1){
+            entityIndex = createEntityDecl();
+            boolean isPE = name.startsWith("%");
+            boolean inExternal = (fReadingExternalDTD || fPEDepth > 0);
+            XMLEntityDecl  entityDecl = new XMLEntityDecl();
+            entityDecl.setValues(name,null,null, null, null,
+                                 text.toString(), isPE, inExternal);
+
+            setEntityDecl(entityIndex, entityDecl);
+        }
+
+!!!4434946.java!!!	externalEntityDecl(inout name : String, inout identifier : XMLResourceIdentifier, inout augs : Augmentations) : void
+
+        int entityIndex = getEntityDeclIndex(name);
+        if( entityIndex == -1){
+            entityIndex = createEntityDecl();
+            boolean isPE = name.startsWith("%");
+            boolean inExternal = (fReadingExternalDTD || fPEDepth > 0);
+
+            XMLEntityDecl  entityDecl = new XMLEntityDecl();
+            entityDecl.setValues(name, identifier.getPublicId(), identifier.getLiteralSystemId(),
+                                identifier.getBaseSystemId(),
+                                null, null, isPE, inExternal);
+
+            setEntityDecl(entityIndex, entityDecl);
+        }
+!!!4435074.java!!!	unparsedEntityDecl(inout name : String, inout identifier : XMLResourceIdentifier, inout notation : String, inout augs : Augmentations) : void
+
+        XMLEntityDecl  entityDecl = new XMLEntityDecl();
+        boolean isPE = name.startsWith("%");
+        boolean inExternal = (fReadingExternalDTD || fPEDepth > 0);
+
+        entityDecl.setValues(name,identifier.getPublicId(),identifier.getLiteralSystemId(),
+                            identifier.getBaseSystemId(), notation,
+                            null, isPE, inExternal);
+        int entityIndex = getEntityDeclIndex(name);
+        if (entityIndex == -1) {
+            entityIndex = createEntityDecl();
+            setEntityDecl(entityIndex, entityDecl);
+        }
+
+!!!4435202.java!!!	notationDecl(inout name : String, inout identifier : XMLResourceIdentifier, inout augs : Augmentations) : void
+
+        XMLNotationDecl  notationDecl = new XMLNotationDecl();
+        notationDecl.setValues(name,identifier.getPublicId(),identifier.getLiteralSystemId(),
+                identifier.getBaseSystemId());
+        int notationIndex = getNotationDeclIndex(name);
+        if (notationIndex == -1) {
+            notationIndex = createNotationDecl();
+            setNotationDecl(notationIndex, notationDecl);
+        }
+
+!!!4435330.java!!!	endDTD(inout augs : Augmentations) : void
+        fIsImmutable = true;
+        // make sure our description contains useful stuff...
+        if (fGrammarDescription.getRootName() == null) {
+            // we don't know what the root is; so use possibleRoots...
+            int chunk, index = 0;
+            String currName = null;
+            final int size = fElementDeclCount;
+            ArrayList elements = new ArrayList(size);
+            for (int i = 0; i < size; ++i) {
+                chunk = i >> CHUNK_SHIFT;
+                index = i & CHUNK_MASK;
+                currName = fElementDeclName[chunk][index].rawname;
+                elements.add(currName);
+            }
+            fGrammarDescription.setPossibleRoots(elements);
+        }
+!!!4435458.java!!!	setDTDSource(inout source : XMLDTDSource) : void
+        fDTDSource = source;
+!!!4435586.java!!!	getDTDSource() : XMLDTDSource
+        return fDTDSource;
+!!!4436738.java!!!	setDTDContentModelSource(inout source : XMLDTDContentModelSource) : void
+        fDTDContentModelSource = source;
+!!!4436866.java!!!	getDTDContentModelSource() : XMLDTDContentModelSource
+        return fDTDContentModelSource;
+!!!4436994.java!!!	startContentModel(inout elementName : String, inout augs : Augmentations) : void
+
+        XMLElementDecl elementDecl = this.fElementDeclTab.get(elementName);
+        if ( elementDecl != null ) {
+            fElementDecl = elementDecl;
+        }
+        fDepth = 0;
+        initializeContentModelStack();
+
+!!!4437122.java!!!	startGroup(inout augs : Augmentations) : void
+        fDepth++;
+        initializeContentModelStack();
+        fMixed = false;
+!!!4437250.java!!!	pcdata(inout augs : Augmentations) : void
+        fMixed = true;
+!!!4437378.java!!!	element(inout elementName : String, inout augs : Augmentations) : void
+        if (fMixed) {
+            if (fNodeIndexStack[fDepth] == -1 ) {
+                fNodeIndexStack[fDepth] = addUniqueLeafNode(elementName);
+            }
+            else {
+                fNodeIndexStack[fDepth] = addContentSpecNode(XMLContentSpec.CONTENTSPECNODE_CHOICE,
+                                                             fNodeIndexStack[fDepth],
+                                                             addUniqueLeafNode(elementName));
+            }
+        }
+        else {
+            fNodeIndexStack[fDepth] = addContentSpecNode(XMLContentSpec.CONTENTSPECNODE_LEAF, elementName);
+        }
+!!!4437506.java!!!	separator(in separator : short, inout augs : Augmentations) : void
+
+        if (!fMixed) {
+            if (fOpStack[fDepth] != XMLContentSpec.CONTENTSPECNODE_SEQ && separator == XMLDTDContentModelHandler.SEPARATOR_CHOICE ) {
+                if (fPrevNodeIndexStack[fDepth] != -1) {
+                    fNodeIndexStack[fDepth] = addContentSpecNode(fOpStack[fDepth], fPrevNodeIndexStack[fDepth], fNodeIndexStack[fDepth]);
+                }
+                fPrevNodeIndexStack[fDepth] = fNodeIndexStack[fDepth];
+                fOpStack[fDepth] = XMLContentSpec.CONTENTSPECNODE_CHOICE;
+            } else if (fOpStack[fDepth] != XMLContentSpec.CONTENTSPECNODE_CHOICE && separator == XMLDTDContentModelHandler.SEPARATOR_SEQUENCE) {
+                if (fPrevNodeIndexStack[fDepth] != -1) {
+                    fNodeIndexStack[fDepth] = addContentSpecNode(fOpStack[fDepth], fPrevNodeIndexStack[fDepth], fNodeIndexStack[fDepth]);
+                }
+                fPrevNodeIndexStack[fDepth] = fNodeIndexStack[fDepth];
+                fOpStack[fDepth] = XMLContentSpec.CONTENTSPECNODE_SEQ;
+            }
+        }
+
+!!!4437634.java!!!	occurrence(in occurrence : short, inout augs : Augmentations) : void
+
+        if (!fMixed) {
+            if (occurrence == XMLDTDContentModelHandler.OCCURS_ZERO_OR_ONE ) {
+                fNodeIndexStack[fDepth] = addContentSpecNode(XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE, fNodeIndexStack[fDepth], -1);
+            } else if ( occurrence == XMLDTDContentModelHandler.OCCURS_ZERO_OR_MORE ) {
+                fNodeIndexStack[fDepth] = addContentSpecNode(XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE, fNodeIndexStack[fDepth], -1 );
+            } else if ( occurrence == XMLDTDContentModelHandler.OCCURS_ONE_OR_MORE) {
+                fNodeIndexStack[fDepth] = addContentSpecNode(XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE, fNodeIndexStack[fDepth], -1 );
+            }
+        }
+
+!!!4437762.java!!!	endGroup(inout augs : Augmentations) : void
+
+        if (!fMixed) {
+            if (fPrevNodeIndexStack[fDepth] != -1) {
+                fNodeIndexStack[fDepth] = addContentSpecNode(fOpStack[fDepth], fPrevNodeIndexStack[fDepth], fNodeIndexStack[fDepth]);
+            }
+            int nodeIndex = fNodeIndexStack[fDepth--];
+            fNodeIndexStack[fDepth] = nodeIndex;
+        }
+
+!!!4438274.java!!!	isNamespaceAware() : boolean
+        return false;
+!!!4438402.java!!!	getSymbolTable() : SymbolTable
+        return fSymbolTable;
+!!!4438530.java!!!	getFirstElementDeclIndex() : int
+        return fElementDeclCount >= 0 ? 0 : -1;
+!!!4438658.java!!!	getNextElementDeclIndex(in elementDeclIndex : int) : int
+        return elementDeclIndex < fElementDeclCount - 1
+             ? elementDeclIndex + 1 : -1;
+!!!4438786.java!!!	getElementDeclIndex(inout elementDeclName : String) : int
+        Integer mapping = fElementIndexMap.get(elementDeclName);
+        if (mapping == null) {
+            mapping = -1;
+        }
+        //System.out.println("getElementDeclIndex("+elementDeclName+") -> "+mapping);
+        return mapping;
+!!!4438914.java!!!	getElementDeclIndex(inout elementDeclQName : QName) : int
+        return getElementDeclIndex(elementDeclQName.rawname);
+!!!4439042.java!!!	getContentSpecType(in elementIndex : int) : short
+        if (elementIndex < 0 || elementIndex >= fElementDeclCount) {
+            return -1 ;
+        }
+
+        int chunk = elementIndex >> CHUNK_SHIFT;
+        int index = elementIndex &  CHUNK_MASK;
+
+        if(fElementDeclType[chunk][index] == -1){
+            return -1 ;
+                            }
+        else{
+                                       return (short) (fElementDeclType[chunk][index] & LIST_MASK);
+                            }
+
+!!!4439170.java!!!	getElementDecl(in elementDeclIndex : int, inout elementDecl : XMLElementDecl) : boolean
+
+        if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+            return false;
+        }
+
+        int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        int index = elementDeclIndex &  CHUNK_MASK;
+
+        elementDecl.name.setValues(fElementDeclName[chunk][index]);
+
+        if (fElementDeclType[chunk][index] == -1) {
+            elementDecl.type                    = -1;
+            elementDecl.simpleType.list = false;
+        } else {
+            elementDecl.type            = (short) (fElementDeclType[chunk][index] & LIST_MASK);
+            elementDecl.simpleType.list = (fElementDeclType[chunk][index] & LIST_FLAG) != 0;
+        }
+
+        /* Validators are null until we add that code */
+        if (elementDecl.type == XMLElementDecl.TYPE_CHILDREN || elementDecl.type == XMLElementDecl.TYPE_MIXED) {
+            elementDecl.contentModelValidator = getElementContentModelValidator(elementDeclIndex);
+        }
+
+        elementDecl.simpleType.datatypeValidator = null;
+        elementDecl.simpleType.defaultType       = -1;
+        elementDecl.simpleType.defaultValue      = null;
+
+        return true;
+
+!!!4439298.java!!!	getElementDeclName(in elementDeclIndex : int) : QName
+        if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+            return null;
+        }
+        int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        int index = elementDeclIndex &  CHUNK_MASK;
+        return fElementDeclName[chunk][index];
+!!!4439426.java!!!	getFirstAttributeDeclIndex(in elementDeclIndex : int) : int
+        int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        int index = elementDeclIndex &  CHUNK_MASK;
+
+        return  fElementDeclFirstAttributeDeclIndex[chunk][index];
+!!!4439554.java!!!	getNextAttributeDeclIndex(in attributeDeclIndex : int) : int
+        int chunk = attributeDeclIndex >> CHUNK_SHIFT;
+        int index = attributeDeclIndex &  CHUNK_MASK;
+
+        return fAttributeDeclNextAttributeDeclIndex[chunk][index];
+!!!4439682.java!!!	getAttributeDecl(in attributeDeclIndex : int, inout attributeDecl : XMLAttributeDecl) : boolean
+        if (attributeDeclIndex < 0 || attributeDeclIndex >= fAttributeDeclCount) {
+            return false;
+        }
+        int chunk = attributeDeclIndex >> CHUNK_SHIFT;
+        int index = attributeDeclIndex & CHUNK_MASK;
+
+        attributeDecl.name.setValues(fAttributeDeclName[chunk][index]);
+
+        short attributeType;
+        boolean isList;
+
+        if (fAttributeDeclType[chunk][index] == -1) {
+
+            attributeType = -1;
+            isList = false;
+        } else {
+            attributeType = (short) (fAttributeDeclType[chunk][index] & LIST_MASK);
+            isList = (fAttributeDeclType[chunk][index] & LIST_FLAG) != 0;
+        }
+        attributeDecl.simpleType.setValues(attributeType,fAttributeDeclName[chunk][index].localpart,
+                                           fAttributeDeclEnumeration[chunk][index],
+                                           isList, fAttributeDeclDefaultType[chunk][index],
+                                           fAttributeDeclDefaultValue[chunk][index],
+                                           fAttributeDeclNonNormalizedDefaultValue[chunk][index],
+                                           fAttributeDeclDatatypeValidator[chunk][index]);
+        return true;
+
+!!!4439810.java!!!	isCDATAAttribute(inout elName : QName, inout atName : QName) : boolean
+        int elDeclIdx = getElementDeclIndex(elName);
+        if (getAttributeDecl(elDeclIdx, fAttributeDecl)
+            && fAttributeDecl.simpleType.type != XMLSimpleType.TYPE_CDATA){
+            return false;
+        }
+        return true;
+!!!4439938.java!!!	getEntityDeclIndex(inout entityDeclName : String) : int
+        if (entityDeclName == null || fEntityIndexMap.get(entityDeclName) == null) {
+            return -1;
+        }
+
+        return fEntityIndexMap.get(entityDeclName);
+!!!4440066.java!!!	getEntityDecl(in entityDeclIndex : int, inout entityDecl : XMLEntityDecl) : boolean
+        if (entityDeclIndex < 0 || entityDeclIndex >= fEntityCount) {
+            return false;
+        }
+        int chunk = entityDeclIndex >> CHUNK_SHIFT;
+        int index = entityDeclIndex & CHUNK_MASK;
+
+        entityDecl.setValues(fEntityName[chunk][index],
+                             fEntityPublicId[chunk][index],
+                             fEntitySystemId[chunk][index],
+                             fEntityBaseSystemId[chunk][index],
+                             fEntityNotation[chunk][index],
+                             fEntityValue[chunk][index],
+                             fEntityIsPE[chunk][index] == 0 ? false : true ,
+                             fEntityInExternal[chunk][index] == 0 ? false : true );
+
+        return true;
+!!!4440194.java!!!	getNotationDeclIndex(inout notationDeclName : String) : int
+        if (notationDeclName == null || fNotationIndexMap.get(notationDeclName) == null) {
+            return -1;
+        }
+
+        return fNotationIndexMap.get(notationDeclName);
+!!!4440322.java!!!	getNotationDecl(in notationDeclIndex : int, inout notationDecl : XMLNotationDecl) : boolean
+        if (notationDeclIndex < 0 || notationDeclIndex >= fNotationCount) {
+            return false;
+        }
+        int chunk = notationDeclIndex >> CHUNK_SHIFT;
+        int index = notationDeclIndex & CHUNK_MASK;
+
+        notationDecl.setValues(fNotationName[chunk][index],
+                               fNotationPublicId[chunk][index],
+                               fNotationSystemId[chunk][index],
+                               fNotationBaseSystemId[chunk][index]);
+
+        return true;
+
+!!!4440450.java!!!	getContentSpec(in contentSpecIndex : int, inout contentSpec : XMLContentSpec) : boolean
+        if (contentSpecIndex < 0 || contentSpecIndex >= fContentSpecCount )
+            return false;
+
+        int chunk = contentSpecIndex >> CHUNK_SHIFT;
+        int index = contentSpecIndex & CHUNK_MASK;
+
+        contentSpec.type       = fContentSpecType[chunk][index];
+        contentSpec.value      = fContentSpecValue[chunk][index];
+        contentSpec.otherValue = fContentSpecOtherValue[chunk][index];
+        return true;
+!!!4440578.java!!!	getContentSpecIndex(in elementDeclIndex : int) : int
+        if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+            return -1;
+        }
+        final int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        final int index = elementDeclIndex & CHUNK_MASK;
+        return fElementDeclContentSpecIndex[chunk][index];
+!!!4440706.java!!!	getContentSpecAsString(in elementDeclIndex : int) : String
+
+        if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+            return null;
+        }
+
+        int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        int index = elementDeclIndex &  CHUNK_MASK;
+
+        int contentSpecIndex = fElementDeclContentSpecIndex[chunk][index];
+
+        // lookup content spec node
+        XMLContentSpec contentSpec = new XMLContentSpec();
+
+        if (getContentSpec(contentSpecIndex, contentSpec)) {
+
+            // build string
+            StringBuffer str = new StringBuffer();
+            int    parentContentSpecType = contentSpec.type & 0x0f;
+            int    nextContentSpec;
+            switch (parentContentSpecType) {
+                case XMLContentSpec.CONTENTSPECNODE_LEAF: {
+                    str.append('(');
+                    if (contentSpec.value == null && contentSpec.otherValue == null) {
+                        str.append("#PCDATA");
+                    }
+                    else {
+                        str.append(contentSpec.value);
+                    }
+                    str.append(')');
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE: {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    nextContentSpec = contentSpec.type;
+
+                    if (nextContentSpec == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+                        str.append('(');
+                        str.append(contentSpec.value);
+                        str.append(')');
+                    } else if( nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE  ||
+                        nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE  ||
+                        nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ) {
+                        str.append('(' );
+                        appendContentSpec(contentSpec, str,
+                                          true, parentContentSpecType );
+                        str.append(')');
+                    } else {
+                        appendContentSpec(contentSpec, str,
+                                          true, parentContentSpecType );
+                    }
+                    str.append('?');
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE: {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    nextContentSpec = contentSpec.type;
+
+                    if ( nextContentSpec == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+                        str.append('(');
+                        if (contentSpec.value == null && contentSpec.otherValue == null) {
+                            str.append("#PCDATA");
+                        }
+                        else if (contentSpec.otherValue != null) {
+                            str.append("##any:uri=").append(contentSpec.otherValue);
+                        }
+                        else if (contentSpec.value == null) {
+                            str.append("##any");
+                        }
+                        else {
+                            appendContentSpec(contentSpec, str,
+                                              true, parentContentSpecType );
+                        }
+                        str.append(')');
+                    } else if( nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE  ||
+                        nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE  ||
+                        nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ) {
+                        str.append('(' );
+                        appendContentSpec(contentSpec, str,
+                                          true, parentContentSpecType );
+                        str.append(')');
+                    } else {
+                        appendContentSpec(contentSpec, str,
+                                          true, parentContentSpecType );
+                    }
+                    str.append('*');
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE: {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    nextContentSpec = contentSpec.type;
+
+                    if ( nextContentSpec == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+                        str.append('(');
+                        if (contentSpec.value == null && contentSpec.otherValue == null) {
+                            str.append("#PCDATA");
+                        }
+                        else if (contentSpec.otherValue != null) {
+                            str.append("##any:uri=").append(contentSpec.otherValue);
+                        }
+                        else if (contentSpec.value == null) {
+                            str.append("##any");
+                        }
+                        else {
+                            str.append(contentSpec.value);
+                        }
+                        str.append(')');
+                    } else if( nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE  ||
+                        nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE  ||
+                        nextContentSpec == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ) {
+                        str.append('(' );
+                        appendContentSpec(contentSpec, str,
+                                          true, parentContentSpecType );
+                        str.append(')');
+                    } else {
+                        appendContentSpec(contentSpec, str,
+                                          true, parentContentSpecType);
+                    }
+                    str.append('+');
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_CHOICE:
+                case XMLContentSpec.CONTENTSPECNODE_SEQ: {
+                    appendContentSpec(contentSpec, str,
+                                      true, parentContentSpecType );
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_ANY: {
+                    str.append("##any");
+                    if (contentSpec.otherValue != null) {
+                        str.append(":uri=");
+                        str.append(contentSpec.otherValue);
+                    }
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_ANY_OTHER: {
+                    str.append("##other:uri=");
+                    str.append(contentSpec.otherValue);
+                    break;
+                }
+                case XMLContentSpec.CONTENTSPECNODE_ANY_LOCAL: {
+                    str.append("##local");
+                    break;
+                }
+                default: {
+                    str.append("???");
+                }
+
+            } // switch type
+
+            // return string
+            return str.toString();
+        }
+
+        // not found
+        return null;
+
+!!!4440834.java!!!	printElements() : void
+        int elementDeclIndex = 0;
+        XMLElementDecl elementDecl = new XMLElementDecl();
+        while (getElementDecl(elementDeclIndex++, elementDecl)) {
+
+            System.out.println("element decl: "+elementDecl.name+
+                               ", "+ elementDecl.name.rawname  );
+
+            //                   ", "+ elementDecl.contentModelValidator.toString());
+        }
+!!!4440962.java!!!	printAttributes(in elementDeclIndex : int) : void
+        int attributeDeclIndex = getFirstAttributeDeclIndex(elementDeclIndex);
+        System.out.print(elementDeclIndex);
+        System.out.print(" [");
+        while (attributeDeclIndex != -1) {
+            System.out.print(' ');
+            System.out.print(attributeDeclIndex);
+            printAttribute(attributeDeclIndex);
+            attributeDeclIndex = getNextAttributeDeclIndex(attributeDeclIndex);
+            if (attributeDeclIndex != -1) {
+                System.out.print(",");
+            }
+        }
+        System.out.println(" ]");
+!!!4441090.java!!!	addContentSpecToElement(inout elementDecl : XMLElementDecl) : void
+        if ((fDepth == 0 || (fDepth == 1 && elementDecl.type == XMLElementDecl.TYPE_MIXED)) &&
+                fNodeIndexStack != null) {
+            if (elementDecl.type == XMLElementDecl.TYPE_MIXED) {
+                int pcdata = addUniqueLeafNode(null);
+                if (fNodeIndexStack[0] == -1) {
+                    fNodeIndexStack[0] = pcdata;
+                }
+                else {
+                    fNodeIndexStack[0] = addContentSpecNode(XMLContentSpec.CONTENTSPECNODE_CHOICE,
+                            pcdata, fNodeIndexStack[0]);
+                }
+            }
+            setContentSpecIndex(fCurrentElementIndex, fNodeIndexStack[fDepth]);
+        }
+!!!4441218.java!!!	getElementContentModelValidator(in elementDeclIndex : int) : ContentModelValidator
+
+        int chunk = elementDeclIndex >> CHUNK_SHIFT;
+        int index = elementDeclIndex & CHUNK_MASK;
+
+        ContentModelValidator contentModel    =  fElementDeclContentModelValidator[chunk][index];
+
+        // If we have one, just return that. Otherwise, gotta create one
+        if (contentModel != null) {
+            return contentModel;
+        }
+
+        int contentType = fElementDeclType[chunk][index];
+        if (contentType == XMLElementDecl.TYPE_SIMPLE) {
+            return null;
+        }
+
+        // Get the type of content this element has
+        int contentSpecIndex = fElementDeclContentSpecIndex[chunk][index];
+
+        /***
+        if ( contentSpecIndex == -1 )
+            return null;
+        /***/
+
+        XMLContentSpec  contentSpec = new XMLContentSpec();
+        getContentSpec( contentSpecIndex, contentSpec );
+
+        // And create the content model according to the spec type
+        if ( contentType == XMLElementDecl.TYPE_MIXED ) {
+            //
+            //  Just create a mixel content model object. This type of
+            //  content model is optimized for mixed content validation.
+            //
+            ChildrenList children = new ChildrenList();
+            contentSpecTree(contentSpecIndex, contentSpec, children);
+            contentModel = new MixedContentModel(children.qname,
+                                                 children.type,
+                                                 0, children.length,
+                                                 false);
+        } else if (contentType == XMLElementDecl.TYPE_CHILDREN) {
+            //  This method will create an optimal model for the complexity
+            //  of the element's defined model. If its simple, it will create
+            //  a SimpleContentModel object. If its a simple list, it will
+            //  create a SimpleListContentModel object. If its complex, it
+            //  will create a DFAContentModel object.
+            //
+            contentModel = createChildModel(contentSpecIndex);
+        } else {
+            throw new RuntimeException("Unknown content type for a element decl "
+                                     + "in getElementContentModelValidator() in AbstractDTDGrammar class");
+        }
+
+        // Add the new model to the content model for this element
+        fElementDeclContentModelValidator[chunk][index] = contentModel;
+
+        return contentModel;
+
+!!!4441346.java!!!	createElementDecl() : int
+      int chunk = fElementDeclCount >> CHUNK_SHIFT;
+      int index = fElementDeclCount & CHUNK_MASK;
+      ensureElementDeclCapacity(chunk);
+      fElementDeclName[chunk][index]                    = new QName();
+      fElementDeclType[chunk][index]                    = -1;
+      fElementDeclContentModelValidator[chunk][index]   = null;
+      fElementDeclFirstAttributeDeclIndex[chunk][index] = -1;
+      fElementDeclLastAttributeDeclIndex[chunk][index]  = -1;
+      return fElementDeclCount++;
+!!!4441474.java!!!	setElementDecl(in elementDeclIndex : int, inout elementDecl : XMLElementDecl) : void
+      if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+         return;
+      }
+      int     chunk       = elementDeclIndex >> CHUNK_SHIFT;
+      int     index       = elementDeclIndex &  CHUNK_MASK;
+
+      fElementDeclName[chunk][index].setValues(elementDecl.name);
+      fElementDeclType[chunk][index]                  = elementDecl.type;
+
+      fElementDeclContentModelValidator[chunk][index] = elementDecl.contentModelValidator;
+
+      if (elementDecl.simpleType.list  == true ) {
+         fElementDeclType[chunk][index] |= LIST_FLAG;
+      }
+
+      fElementIndexMap.put(elementDecl.name.rawname, elementDeclIndex);
+!!!4441730.java!!!	setFirstAttributeDeclIndex(in elementDeclIndex : int, in newFirstAttrIndex : int) : void
+
+      if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+         return;
+      }
+
+      int chunk = elementDeclIndex >> CHUNK_SHIFT;
+      int index = elementDeclIndex &  CHUNK_MASK;
+
+      fElementDeclFirstAttributeDeclIndex[chunk][index] = newFirstAttrIndex;
+!!!4441858.java!!!	setContentSpecIndex(in elementDeclIndex : int, in contentSpecIndex : int) : void
+
+      if (elementDeclIndex < 0 || elementDeclIndex >= fElementDeclCount) {
+         return;
+      }
+
+      int chunk = elementDeclIndex >> CHUNK_SHIFT;
+      int index = elementDeclIndex &  CHUNK_MASK;
+
+      fElementDeclContentSpecIndex[chunk][index] = contentSpecIndex;
+!!!4441986.java!!!	createAttributeDecl() : int
+      int chunk = fAttributeDeclCount >> CHUNK_SHIFT;
+      int index = fAttributeDeclCount & CHUNK_MASK;
+
+      ensureAttributeDeclCapacity(chunk);
+      fAttributeDeclName[chunk][index]                    = new QName();
+      fAttributeDeclType[chunk][index]                    = -1;
+      fAttributeDeclDatatypeValidator[chunk][index]       = null;
+      fAttributeDeclEnumeration[chunk][index]             = null;
+      fAttributeDeclDefaultType[chunk][index]             = XMLSimpleType.DEFAULT_TYPE_IMPLIED;
+      fAttributeDeclDefaultValue[chunk][index]            = null;
+      fAttributeDeclNonNormalizedDefaultValue[chunk][index]            = null;
+      fAttributeDeclNextAttributeDeclIndex[chunk][index]  = -1;
+      return fAttributeDeclCount++;
+!!!4442114.java!!!	setAttributeDecl(in elementDeclIndex : int, in attributeDeclIndex : int, inout attributeDecl : XMLAttributeDecl) : void
+      int attrChunk = attributeDeclIndex >> CHUNK_SHIFT;
+      int attrIndex = attributeDeclIndex &  CHUNK_MASK;
+      fAttributeDeclName[attrChunk][attrIndex].setValues(attributeDecl.name);
+      fAttributeDeclType[attrChunk][attrIndex]  =  attributeDecl.simpleType.type;
+
+      if (attributeDecl.simpleType.list) {
+         fAttributeDeclType[attrChunk][attrIndex] |= LIST_FLAG;
+      }
+      fAttributeDeclEnumeration[attrChunk][attrIndex]  =  attributeDecl.simpleType.enumeration;
+      fAttributeDeclDefaultType[attrChunk][attrIndex]  =  attributeDecl.simpleType.defaultType;
+      fAttributeDeclDatatypeValidator[attrChunk][attrIndex] =  attributeDecl.simpleType.datatypeValidator;
+
+      fAttributeDeclDefaultValue[attrChunk][attrIndex] = attributeDecl.simpleType.defaultValue;
+      fAttributeDeclNonNormalizedDefaultValue[attrChunk][attrIndex] = attributeDecl.simpleType.nonNormalizedDefaultValue;
+
+      int elemChunk     = elementDeclIndex >> CHUNK_SHIFT;
+      int elemIndex     = elementDeclIndex &  CHUNK_MASK;
+      int index         = fElementDeclFirstAttributeDeclIndex[elemChunk][elemIndex];
+      while (index != -1) {
+         if (index == attributeDeclIndex) {
+            break;
+         }
+         attrChunk = index >> CHUNK_SHIFT;
+         attrIndex = index & CHUNK_MASK;
+         index = fAttributeDeclNextAttributeDeclIndex[attrChunk][attrIndex];
+      }
+      if (index == -1) {
+         if (fElementDeclFirstAttributeDeclIndex[elemChunk][elemIndex] == -1) {
+            fElementDeclFirstAttributeDeclIndex[elemChunk][elemIndex] = attributeDeclIndex;
+         } else {
+            index = fElementDeclLastAttributeDeclIndex[elemChunk][elemIndex];
+            attrChunk = index >> CHUNK_SHIFT;
+            attrIndex = index & CHUNK_MASK;
+            fAttributeDeclNextAttributeDeclIndex[attrChunk][attrIndex] = attributeDeclIndex;
+         }
+         fElementDeclLastAttributeDeclIndex[elemChunk][elemIndex] = attributeDeclIndex;
+      }
+!!!4442242.java!!!	createContentSpec() : int
+      int chunk = fContentSpecCount >> CHUNK_SHIFT;
+      int index = fContentSpecCount & CHUNK_MASK;
+
+      ensureContentSpecCapacity(chunk);
+      fContentSpecType[chunk][index]       = -1;
+      fContentSpecValue[chunk][index]      = null;
+      fContentSpecOtherValue[chunk][index] = null;
+
+      return fContentSpecCount++;
+!!!4442370.java!!!	setContentSpec(in contentSpecIndex : int, inout contentSpec : XMLContentSpec) : void
+      int   chunk = contentSpecIndex >> CHUNK_SHIFT;
+      int   index = contentSpecIndex & CHUNK_MASK;
+
+      fContentSpecType[chunk][index]       = contentSpec.type;
+      fContentSpecValue[chunk][index]      = contentSpec.value;
+      fContentSpecOtherValue[chunk][index] = contentSpec.otherValue;
+!!!4442498.java!!!	createEntityDecl() : int
+       int chunk = fEntityCount >> CHUNK_SHIFT;
+       int index = fEntityCount & CHUNK_MASK;
+
+      ensureEntityDeclCapacity(chunk);
+      fEntityIsPE[chunk][index] = 0;
+      fEntityInExternal[chunk][index] = 0;
+
+      return fEntityCount++;
+!!!4442626.java!!!	setEntityDecl(in entityDeclIndex : int, inout entityDecl : XMLEntityDecl) : void
+       int chunk = entityDeclIndex >> CHUNK_SHIFT;
+       int index = entityDeclIndex & CHUNK_MASK;
+
+       fEntityName[chunk][index] = entityDecl.name;
+       fEntityValue[chunk][index] = entityDecl.value;
+       fEntityPublicId[chunk][index] = entityDecl.publicId;
+       fEntitySystemId[chunk][index] = entityDecl.systemId;
+       fEntityBaseSystemId[chunk][index] = entityDecl.baseSystemId;
+       fEntityNotation[chunk][index] = entityDecl.notation;
+       fEntityIsPE[chunk][index] = entityDecl.isPE ? (byte)1 : (byte)0;
+       fEntityInExternal[chunk][index] = entityDecl.inExternal ? (byte)1 : (byte)0;
+
+       fEntityIndexMap.put(entityDecl.name, entityDeclIndex);
+!!!4442754.java!!!	createNotationDecl() : int
+       int chunk = fNotationCount >> CHUNK_SHIFT;
+       ensureNotationDeclCapacity(chunk);
+       return fNotationCount++;
+!!!4442882.java!!!	setNotationDecl(in notationDeclIndex : int, inout notationDecl : XMLNotationDecl) : void
+       int chunk = notationDeclIndex >> CHUNK_SHIFT;
+       int index = notationDeclIndex & CHUNK_MASK;
+
+       fNotationName[chunk][index] = notationDecl.name;
+       fNotationPublicId[chunk][index] = notationDecl.publicId;
+       fNotationSystemId[chunk][index] = notationDecl.systemId;
+       fNotationBaseSystemId[chunk][index] = notationDecl.baseSystemId;
+
+       fNotationIndexMap.put(notationDecl.name, notationDeclIndex);
+!!!4443010.java!!!	addContentSpecNode(in nodeType : short, inout nodeValue : String) : int
+
+        // create content spec node
+        int contentSpecIndex = createContentSpec();
+
+        // set content spec node values
+        fContentSpec.setValues(nodeType, nodeValue, null);
+        setContentSpec(contentSpecIndex, fContentSpec);
+
+        // return index
+        return contentSpecIndex;
+
+!!!4443138.java!!!	addUniqueLeafNode(inout elementName : String) : int
+
+        // create content spec node
+        int contentSpecIndex = createContentSpec();
+
+        // set content spec node values
+        fContentSpec.setValues( XMLContentSpec.CONTENTSPECNODE_LEAF,
+                                elementName, null);
+        setContentSpec(contentSpecIndex, fContentSpec);
+
+        // return index
+        return contentSpecIndex;
+
+!!!4443266.java!!!	addContentSpecNode(in nodeType : short, in leftNodeIndex : int, in rightNodeIndex : int) : int
+
+        // create content spec node
+        int contentSpecIndex = createContentSpec();
+
+        // set content spec node values
+        int[] leftIntArray  = new int[1];
+        int[] rightIntArray = new int[1];
+
+        leftIntArray[0]      = leftNodeIndex;
+        rightIntArray[0]    = rightNodeIndex;
+        fContentSpec.setValues(nodeType, leftIntArray, rightIntArray);
+        setContentSpec(contentSpecIndex, fContentSpec);
+
+        // return index
+        return contentSpecIndex;
+
+!!!4443394.java!!!	initializeContentModelStack() : void
+
+        if (fOpStack == null) {
+            fOpStack = new short[8];
+            fNodeIndexStack = new int[8];
+            fPrevNodeIndexStack = new int[8];
+        } else if (fDepth == fOpStack.length) {
+            short[] newStack = new short[fDepth * 2];
+            System.arraycopy(fOpStack, 0, newStack, 0, fDepth);
+            fOpStack = newStack;
+            int[]   newIntStack = new int[fDepth * 2];
+            System.arraycopy(fNodeIndexStack, 0, newIntStack, 0, fDepth);
+            fNodeIndexStack = newIntStack;
+            newIntStack = new int[fDepth * 2];
+            System.arraycopy(fPrevNodeIndexStack, 0, newIntStack, 0, fDepth);
+            fPrevNodeIndexStack = newIntStack;
+        }
+        fOpStack[fDepth] = -1;
+        fNodeIndexStack[fDepth] = -1;
+        fPrevNodeIndexStack[fDepth] = -1;
+
+!!!4443522.java!!!	isImmutable() : boolean
+        return fIsImmutable;
+!!!4443650.java!!!	appendContentSpec(inout contentSpec : XMLContentSpec, inout str : StringBuffer, inout parens : boolean, in parentContentSpecType : int) : void
+
+        int thisContentSpec = contentSpec.type & 0x0f;
+        switch (thisContentSpec) {
+            case XMLContentSpec.CONTENTSPECNODE_LEAF: {
+                if (contentSpec.value == null && contentSpec.otherValue == null) {
+                    str.append("#PCDATA");
+                }
+                else if (contentSpec.value == null && contentSpec.otherValue != null) {
+                    str.append("##any:uri=").append(contentSpec.otherValue);
+                }
+                else if (contentSpec.value == null) {
+                    str.append("##any");
+                }
+                else {
+                    str.append(contentSpec.value);
+                }
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE: {
+                if (parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE  ||
+                    parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE ||
+                    parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ) {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    str.append('(');
+                    appendContentSpec(contentSpec, str, true, thisContentSpec );
+                    str.append(')');
+                }
+                else {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    appendContentSpec( contentSpec, str, true, thisContentSpec );
+                }
+                str.append('?');
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE: {
+                if (parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE ||
+                    parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE ||
+                    parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ) {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    str.append('(');
+                    appendContentSpec(contentSpec, str, true, thisContentSpec);
+                    str.append(')' );
+                }
+                else {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    appendContentSpec(contentSpec, str, true, thisContentSpec);
+                }
+                str.append('*');
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE: {
+                if (parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE   ||
+                    parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE  ||
+                    parentContentSpecType == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ) {
+
+                    str.append('(');
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    appendContentSpec(contentSpec, str, true, thisContentSpec);
+                    str.append(')' );
+                }
+                else {
+                    getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                    appendContentSpec(contentSpec, str, true, thisContentSpec);
+                }
+                str.append('+');
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_CHOICE:
+            case XMLContentSpec.CONTENTSPECNODE_SEQ: {
+                if (parens) {
+                    str.append('(');
+                }
+                int type = contentSpec.type;
+                int otherValue = ((int[])contentSpec.otherValue)[0];
+                getContentSpec(((int[])contentSpec.value)[0], contentSpec);
+                appendContentSpec(contentSpec, str, contentSpec.type != type, thisContentSpec);
+                if (type == XMLContentSpec.CONTENTSPECNODE_CHOICE) {
+                    str.append('|');
+                }
+                else {
+                    str.append(',');
+                }
+                getContentSpec(otherValue, contentSpec);
+                appendContentSpec(contentSpec, str, true, thisContentSpec);
+                if (parens) {
+                    str.append(')');
+                }
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_ANY: {
+                str.append("##any");
+                if (contentSpec.otherValue != null) {
+                    str.append(":uri=");
+                    str.append(contentSpec.otherValue);
+                }
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_ANY_OTHER: {
+                str.append("##other:uri=");
+                str.append(contentSpec.otherValue);
+                break;
+            }
+            case XMLContentSpec.CONTENTSPECNODE_ANY_LOCAL: {
+                str.append("##local");
+                break;
+            }
+            default: {
+                str.append("???");
+                break;
+            }
+
+        } // switch type
+
+!!!4443778.java!!!	printAttribute(in attributeDeclIndex : int) : void
+
+        XMLAttributeDecl attributeDecl = new XMLAttributeDecl();
+        if (getAttributeDecl(attributeDeclIndex, attributeDecl)) {
+            System.out.print(" { ");
+            System.out.print(attributeDecl.name.localpart);
+            System.out.print(" }");
+        }
+
+!!!4443906.java!!!	createChildModel(in contentSpecIndex : int) : ContentModelValidator
+
+        //
+        //  Get the content spec node for the element we are working on.
+        //  This will tell us what kind of node it is, which tells us what
+        //  kind of model we will try to create.
+        //
+        XMLContentSpec contentSpec = new XMLContentSpec();
+        getContentSpec(contentSpecIndex, contentSpec);
+
+        if ((contentSpec.type & 0x0f ) == XMLContentSpec.CONTENTSPECNODE_ANY ||
+            (contentSpec.type & 0x0f ) == XMLContentSpec.CONTENTSPECNODE_ANY_OTHER ||
+            (contentSpec.type & 0x0f ) == XMLContentSpec.CONTENTSPECNODE_ANY_LOCAL) {
+            // let fall through to build a DFAContentModel
+        }
+
+        else if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+            //
+            //  Check that the left value is not -1, since any content model
+            //  with PCDATA should be MIXED, so we should not have gotten here.
+            //
+            if (contentSpec.value == null && contentSpec.otherValue == null)
+                throw new RuntimeException("ImplementationMessages.VAL_NPCD");
+
+            //
+            //  Its a single leaf, so its an 'a' type of content model, i.e.
+            //  just one instance of one element. That one is definitely a
+            //  simple content model.
+            //
+
+            fQName.setValues(null, (String)contentSpec.value,
+                              (String)contentSpec.value, (String)contentSpec.otherValue);
+            return new SimpleContentModel(contentSpec.type, fQName, null);
+        } else if ((contentSpec.type == XMLContentSpec.CONTENTSPECNODE_CHOICE)
+                    ||  (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_SEQ)) {
+            //
+            //  Lets see if both of the children are leafs. If so, then it
+            //  it has to be a simple content model
+            //
+            XMLContentSpec contentSpecLeft  = new XMLContentSpec();
+            XMLContentSpec contentSpecRight = new XMLContentSpec();
+
+            getContentSpec( ((int[])contentSpec.value)[0], contentSpecLeft);
+            getContentSpec( ((int[])contentSpec.otherValue)[0], contentSpecRight);
+
+            if ((contentSpecLeft.type == XMLContentSpec.CONTENTSPECNODE_LEAF)
+                 &&  (contentSpecRight.type == XMLContentSpec.CONTENTSPECNODE_LEAF)) {
+                //
+                //  Its a simple choice or sequence, so we can do a simple
+                //  content model for it.
+                //
+                fQName.setValues(null, (String)contentSpecLeft.value,
+                                  (String)contentSpecLeft.value, (String)contentSpecLeft.otherValue);
+                fQName2.setValues(null, (String)contentSpecRight.value,
+                                  (String)contentSpecRight.value, (String)contentSpecRight.otherValue);
+                return new SimpleContentModel(contentSpec.type, fQName, fQName2);
+            }
+        } else if ((contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE)
+                    ||  (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE)
+                    ||  (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE)) {
+            //
+            //  Its a repetition, so see if its one child is a leaf. If so
+            //  its a repetition of a single element, so we can do a simple
+            //  content model for that.
+            //
+            XMLContentSpec contentSpecLeft = new XMLContentSpec();
+            getContentSpec(((int[])contentSpec.value)[0], contentSpecLeft);
+
+            if (contentSpecLeft.type == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+                //
+                //  It is, so we can create a simple content model here that
+                //  will check for this repetition. We pass -1 for the unused
+                //  right node.
+                //
+                fQName.setValues(null, (String)contentSpecLeft.value,
+                                  (String)contentSpecLeft.value, (String)contentSpecLeft.otherValue);
+                return new SimpleContentModel(contentSpec.type, fQName, null);
+            }
+        } else {
+            throw new RuntimeException("ImplementationMessages.VAL_CST");
+        }
+
+        //
+        //  Its not a simple content model, so here we have to create a DFA
+        //  for this element. So we create a DFAContentModel object. He
+        //  encapsulates all of the work to create the DFA.
+        //
+
+        fLeafCount = 0;
+        //int leafCount = countLeaves(contentSpecIndex);
+        fLeafCount = 0;
+        CMNode cmn    = buildSyntaxTree(contentSpecIndex, contentSpec);
+
+        // REVISIT: has to be fLeafCount because we convert x+ to x,x*, one more leaf
+        return new DFAContentModel(  cmn, fLeafCount, false);
+
+!!!4444034.java!!!	buildSyntaxTree(in startNode : int, inout contentSpec : XMLContentSpec) : CMNode
+
+        // We will build a node at this level for the new tree
+        CMNode nodeRet = null;
+        getContentSpec(startNode, contentSpec);
+        if ((contentSpec.type & 0x0f) == XMLContentSpec.CONTENTSPECNODE_ANY) {
+            //nodeRet = new CMAny(contentSpec.type, -1, fLeafCount++);
+            nodeRet = new CMAny(contentSpec.type, (String)contentSpec.otherValue, fLeafCount++);
+        }
+        else if ((contentSpec.type & 0x0f) == XMLContentSpec.CONTENTSPECNODE_ANY_OTHER) {
+            nodeRet = new CMAny(contentSpec.type, (String)contentSpec.otherValue, fLeafCount++);
+        }
+        else if ((contentSpec.type & 0x0f) == XMLContentSpec.CONTENTSPECNODE_ANY_LOCAL) {
+            nodeRet = new CMAny(contentSpec.type, null, fLeafCount++);
+        }
+        //
+        //  If this node is a leaf, then its an easy one. We just add it
+        //  to the tree.
+        //
+        else if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_LEAF) {
+            //
+            //  Create a new leaf node, and pass it the current leaf count,
+            //  which is its DFA state position. Bump the leaf count after
+            //  storing it. This makes the positions zero based since we
+            //  store first and then increment.
+            //
+            fQName.setValues(null, (String)contentSpec.value,
+                              (String)contentSpec.value, (String)contentSpec.otherValue);
+            nodeRet = new CMLeaf(fQName, fLeafCount++);
+        }
+        else {
+            //
+            //  Its not a leaf, so we have to recurse its left and maybe right
+            //  nodes. Save both values before we recurse and trash the node.
+            final int leftNode = ((int[])contentSpec.value)[0];
+            final int rightNode = ((int[])contentSpec.otherValue)[0];
+
+            if ((contentSpec.type == XMLContentSpec.CONTENTSPECNODE_CHOICE)
+                ||  (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_SEQ)) {
+                //
+                //  Recurse on both children, and return a binary op node
+                //  with the two created sub nodes as its children. The node
+                //  type is the same type as the source.
+                //
+
+                nodeRet = new CMBinOp( contentSpec.type, buildSyntaxTree(leftNode, contentSpec)
+                                       , buildSyntaxTree(rightNode, contentSpec));
+            }
+            else if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE) {
+                nodeRet = new CMUniOp( contentSpec.type, buildSyntaxTree(leftNode, contentSpec));
+            }
+            else if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE
+                  || contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE
+                  || contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE) {
+                nodeRet = new CMUniOp(contentSpec.type, buildSyntaxTree(leftNode, contentSpec));
+            }
+            else {
+                throw new RuntimeException("ImplementationMessages.VAL_CST");
+            }
+        }
+        // And return our new node for this level
+        return nodeRet;
+!!!4444162.java!!!	contentSpecTree(in contentSpecIndex : int, inout contentSpec : XMLContentSpec, inout children : DTDGrammar::ChildrenList) : void
+
+        // Handle any and leaf nodes
+        getContentSpec( contentSpecIndex, contentSpec);
+        if ( contentSpec.type == XMLContentSpec.CONTENTSPECNODE_LEAF ||
+            (contentSpec.type & 0x0f) == XMLContentSpec.CONTENTSPECNODE_ANY ||
+            (contentSpec.type & 0x0f) == XMLContentSpec.CONTENTSPECNODE_ANY_LOCAL ||
+            (contentSpec.type & 0x0f) == XMLContentSpec.CONTENTSPECNODE_ANY_OTHER) {
+
+            // resize arrays, if needed
+            if (children.length == children.qname.length) {
+                QName[] newQName = new QName[children.length * 2];
+                System.arraycopy(children.qname, 0, newQName, 0, children.length);
+                children.qname = newQName;
+                int[] newType = new int[children.length * 2];
+                System.arraycopy(children.type, 0, newType, 0, children.length);
+                children.type = newType;
+            }
+
+            // save values and return length
+            children.qname[children.length] = new QName(null, (String)contentSpec.value,
+                                                     (String) contentSpec.value,
+                                                     (String) contentSpec.otherValue);
+            children.type[children.length] = contentSpec.type;
+            children.length++;
+            return;
+        }
+
+        //
+        //  Its not a leaf, so we have to recurse its left and maybe right
+        //  nodes. Save both values before we recurse and trash the node.
+        //
+        final int leftNode = contentSpec.value != null
+                           ? ((int[])(contentSpec.value))[0] : -1;
+        int rightNode = -1 ;
+        if (contentSpec.otherValue != null )
+            rightNode = ((int[])(contentSpec.otherValue))[0];
+        else
+            return;
+
+        if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_CHOICE ||
+            contentSpec.type == XMLContentSpec.CONTENTSPECNODE_SEQ) {
+            contentSpecTree(leftNode, contentSpec, children);
+            contentSpecTree(rightNode, contentSpec, children);
+            return;
+        }
+
+        if (contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_ONE ||
+            contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ZERO_OR_MORE ||
+            contentSpec.type == XMLContentSpec.CONTENTSPECNODE_ONE_OR_MORE) {
+            contentSpecTree(leftNode, contentSpec, children);
+            return;
+        }
+
+        // error
+        throw new RuntimeException("Invalid content spec type seen in contentSpecTree() method of AbstractDTDGrammar class : "+contentSpec.type);
+
+!!!4444290.java!!!	ensureElementDeclCapacity(in chunk : int) : void
+        if (chunk >= fElementDeclName.length) {
+            fElementDeclIsExternal = resize(fElementDeclIsExternal,
+                                     fElementDeclIsExternal.length * 2);
+
+            fElementDeclName = resize(fElementDeclName, fElementDeclName.length * 2);
+            fElementDeclType = resize(fElementDeclType, fElementDeclType.length * 2);
+            fElementDeclContentModelValidator = resize(fElementDeclContentModelValidator, fElementDeclContentModelValidator.length * 2);
+            fElementDeclContentSpecIndex = resize(fElementDeclContentSpecIndex,fElementDeclContentSpecIndex.length * 2);
+            fElementDeclFirstAttributeDeclIndex = resize(fElementDeclFirstAttributeDeclIndex, fElementDeclFirstAttributeDeclIndex.length * 2);
+            fElementDeclLastAttributeDeclIndex = resize(fElementDeclLastAttributeDeclIndex, fElementDeclLastAttributeDeclIndex.length * 2);
+        }
+        else if (fElementDeclName[chunk] != null) {
+            return;
+        }
+
+        fElementDeclIsExternal[chunk] = new int[CHUNK_SIZE];
+        fElementDeclName[chunk] = new QName[CHUNK_SIZE];
+        fElementDeclType[chunk] = new short[CHUNK_SIZE];
+        fElementDeclContentModelValidator[chunk] = new ContentModelValidator[CHUNK_SIZE];
+        fElementDeclContentSpecIndex[chunk] = new int[CHUNK_SIZE];
+        fElementDeclFirstAttributeDeclIndex[chunk] = new int[CHUNK_SIZE];
+        fElementDeclLastAttributeDeclIndex[chunk] = new int[CHUNK_SIZE];
+        return;
+!!!4444418.java!!!	ensureAttributeDeclCapacity(in chunk : int) : void
+
+        if (chunk >= fAttributeDeclName.length) {
+            fAttributeDeclIsExternal = resize(fAttributeDeclIsExternal,
+                                       fAttributeDeclIsExternal.length * 2);
+            fAttributeDeclName = resize(fAttributeDeclName, fAttributeDeclName.length * 2);
+            fAttributeDeclType = resize(fAttributeDeclType, fAttributeDeclType.length * 2);
+            fAttributeDeclEnumeration = resize(fAttributeDeclEnumeration, fAttributeDeclEnumeration.length * 2);
+            fAttributeDeclDefaultType = resize(fAttributeDeclDefaultType, fAttributeDeclDefaultType.length * 2);
+            fAttributeDeclDatatypeValidator = resize(fAttributeDeclDatatypeValidator, fAttributeDeclDatatypeValidator.length * 2);
+            fAttributeDeclDefaultValue = resize(fAttributeDeclDefaultValue, fAttributeDeclDefaultValue.length * 2);
+            fAttributeDeclNonNormalizedDefaultValue = resize(fAttributeDeclNonNormalizedDefaultValue, fAttributeDeclNonNormalizedDefaultValue.length * 2);
+            fAttributeDeclNextAttributeDeclIndex = resize(fAttributeDeclNextAttributeDeclIndex, fAttributeDeclNextAttributeDeclIndex.length * 2);
+        }
+        else if (fAttributeDeclName[chunk] != null) {
+            return;
+        }
+
+        fAttributeDeclIsExternal[chunk] = new int[CHUNK_SIZE];
+        fAttributeDeclName[chunk] = new QName[CHUNK_SIZE];
+        fAttributeDeclType[chunk] = new short[CHUNK_SIZE];
+        fAttributeDeclEnumeration[chunk] = new String[CHUNK_SIZE][];
+        fAttributeDeclDefaultType[chunk] = new short[CHUNK_SIZE];
+        fAttributeDeclDatatypeValidator[chunk] = new DatatypeValidator[CHUNK_SIZE];
+        fAttributeDeclDefaultValue[chunk] = new String[CHUNK_SIZE];
+        fAttributeDeclNonNormalizedDefaultValue[chunk] = new String[CHUNK_SIZE];
+        fAttributeDeclNextAttributeDeclIndex[chunk] = new int[CHUNK_SIZE];
+        return;
+!!!4444546.java!!!	ensureEntityDeclCapacity(in chunk : int) : void
+        if (chunk >= fEntityName.length) {
+            fEntityName = resize(fEntityName, fEntityName.length * 2);
+            fEntityValue = resize(fEntityValue, fEntityValue.length * 2);
+            fEntityPublicId = resize(fEntityPublicId, fEntityPublicId.length * 2);
+            fEntitySystemId = resize(fEntitySystemId, fEntitySystemId.length * 2);
+            fEntityBaseSystemId = resize(fEntityBaseSystemId, fEntityBaseSystemId.length * 2);
+            fEntityNotation = resize(fEntityNotation, fEntityNotation.length * 2);
+            fEntityIsPE = resize(fEntityIsPE, fEntityIsPE.length * 2);
+            fEntityInExternal = resize(fEntityInExternal, fEntityInExternal.length * 2);
+        }
+        else if (fEntityName[chunk] != null) {
+            return;
+        }
+
+        fEntityName[chunk] = new String[CHUNK_SIZE];
+        fEntityValue[chunk] = new String[CHUNK_SIZE];
+        fEntityPublicId[chunk] = new String[CHUNK_SIZE];
+        fEntitySystemId[chunk] = new String[CHUNK_SIZE];
+        fEntityBaseSystemId[chunk] = new String[CHUNK_SIZE];
+        fEntityNotation[chunk] = new String[CHUNK_SIZE];
+        fEntityIsPE[chunk] = new byte[CHUNK_SIZE];
+        fEntityInExternal[chunk] = new byte[CHUNK_SIZE];
+        return;
+!!!4444674.java!!!	ensureNotationDeclCapacity(in chunk : int) : void
+        if (chunk >= fNotationName.length) {
+            fNotationName = resize(fNotationName, fNotationName.length * 2);
+            fNotationPublicId = resize(fNotationPublicId, fNotationPublicId.length * 2);
+            fNotationSystemId = resize(fNotationSystemId, fNotationSystemId.length * 2);
+            fNotationBaseSystemId = resize(fNotationBaseSystemId, fNotationBaseSystemId.length * 2);
+        }
+        else if (fNotationName[chunk] != null) {
+            return;
+        }
+
+        fNotationName[chunk] = new String[CHUNK_SIZE];
+        fNotationPublicId[chunk] = new String[CHUNK_SIZE];
+        fNotationSystemId[chunk] = new String[CHUNK_SIZE];
+        fNotationBaseSystemId[chunk] = new String[CHUNK_SIZE];
+        return;
+!!!4444802.java!!!	ensureContentSpecCapacity(in chunk : int) : void
+        if (chunk >= fContentSpecType.length) {
+            fContentSpecType = resize(fContentSpecType, fContentSpecType.length * 2);
+            fContentSpecValue = resize(fContentSpecValue, fContentSpecValue.length * 2);
+            fContentSpecOtherValue = resize(fContentSpecOtherValue, fContentSpecOtherValue.length * 2);
+        }
+        else if (fContentSpecType[chunk] != null) {
+            return;
+        }
+
+        fContentSpecType[chunk] = new short[CHUNK_SIZE];
+        fContentSpecValue[chunk] = new Object[CHUNK_SIZE];
+        fContentSpecOtherValue[chunk] = new Object[CHUNK_SIZE];
+        return;
+!!!4444930.java!!!	resize(inout array : byte [[][]], in newsize : int) : byte
+        byte newarray[][] = new byte[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445058.java!!!	resize(inout array : short [[][]], in newsize : int) : short
+        short newarray[][] = new short[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445186.java!!!	resize(inout array : int [[][]], in newsize : int) : int
+        int newarray[][] = new int[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445314.java!!!	resize(inout array : DatatypeValidator [[][]], in newsize : int) : DatatypeValidator
+        DatatypeValidator newarray[][] = new DatatypeValidator[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445442.java!!!	resize(inout array : ContentModelValidator [[][]], in newsize : int) : ContentModelValidator
+        ContentModelValidator newarray[][] = new ContentModelValidator[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445570.java!!!	resize(inout array : Object [[][]], in newsize : int) : Object
+        Object newarray[][] = new Object[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445698.java!!!	resize(inout array : QName [[][]], in newsize : int) : QName
+        QName newarray[][] = new QName[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445826.java!!!	resize(inout array : String [[][]], in newsize : int) : String
+        String newarray[][] = new String[newsize][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4445954.java!!!	resize(inout array : String [[][][]], in newsize : int) : String
+        String newarray[][][] = new String[newsize] [][];
+        System.arraycopy(array, 0, newarray, 0, array.length);
+        return newarray;
+!!!4446210.java!!!	isEntityDeclared(inout name : String) : boolean
+        return (getEntityDeclIndex(name)!=-1)?true:false;
+!!!4446338.java!!!	isEntityUnparsed(inout name : String) : boolean
+        int entityIndex = getEntityDeclIndex(name);
+        if (entityIndex >-1) {
+            int chunk = entityIndex >> CHUNK_SHIFT;
+            int index = entityIndex & CHUNK_MASK;
+            //for unparsed entity notation!=null
+            return (fEntityNotation[chunk][index]!=null)?true:false;
+        }
+        return false;

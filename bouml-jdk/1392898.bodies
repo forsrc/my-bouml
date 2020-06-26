@@ -1,0 +1,494 @@
+class ImageView
+!!!11784962.java!!!	ImageView(inout elem : Element)
+        super(elem);
+        fBounds = new Rectangle();
+        imageObserver = new ImageHandler();
+        state = RELOAD_FLAG | RELOAD_IMAGE_FLAG;
+!!!11785090.java!!!	getAltText() : String
+        return (String)getElement().getAttributes().getAttribute
+            (HTML.Attribute.ALT);
+!!!11785218.java!!!	getImageURL() : URL
+        String src = (String)getElement().getAttributes().
+                             getAttribute(HTML.Attribute.SRC);
+        if (src == null) {
+            return null;
+        }
+
+        URL reference = ((HTMLDocument)getDocument()).getBase();
+        try {
+            URL u = new URL(reference,src);
+            return u;
+        } catch (MalformedURLException e) {
+            return null;
+        }
+!!!11785346.java!!!	getNoImageIcon() : Icon
+        return (Icon) UIManager.getLookAndFeelDefaults().get(MISSING_IMAGE);
+!!!11785474.java!!!	getLoadingImageIcon() : Icon
+        return (Icon) UIManager.getLookAndFeelDefaults().get(PENDING_IMAGE);
+!!!11785602.java!!!	getImage() : Image
+        sync();
+        return image;
+!!!11785730.java!!!	getImage(inout enabled : boolean) : Image
+        Image img = getImage();
+        if (! enabled) {
+            if (disabledImage == null) {
+                disabledImage = GrayFilter.createDisabledImage(img);
+            }
+            img = disabledImage;
+        }
+        return img;
+!!!11785858.java!!!	setLoadsSynchronously(inout newValue : boolean) : void
+        synchronized(this) {
+            if (newValue) {
+                state |= SYNC_LOAD_FLAG;
+            }
+            else {
+                state = (state | SYNC_LOAD_FLAG) ^ SYNC_LOAD_FLAG;
+            }
+        }
+!!!11785986.java!!!	getLoadsSynchronously() : boolean
+        return ((state & SYNC_LOAD_FLAG) != 0);
+!!!11786114.java!!!	getStyleSheet() : StyleSheet
+        HTMLDocument doc = (HTMLDocument) getDocument();
+        return doc.getStyleSheet();
+!!!11786242.java!!!	getAttributes() : AttributeSet
+        sync();
+        return attr;
+!!!11786370.java!!!	getToolTipText(in x : float, in y : float, inout allocation : Shape) : String
+        return getAltText();
+!!!11786498.java!!!	setPropertiesFromAttributes() : void
+        StyleSheet sheet = getStyleSheet();
+        this.attr = sheet.getViewAttributes(this);
+
+        // Gutters
+        borderSize = (short)getIntAttr(HTML.Attribute.BORDER, isLink() ?
+                                       DEFAULT_BORDER : 0);
+
+        leftInset = rightInset = (short)(getIntAttr(HTML.Attribute.HSPACE,
+                                                    0) + borderSize);
+        topInset = bottomInset = (short)(getIntAttr(HTML.Attribute.VSPACE,
+                                                    0) + borderSize);
+
+        borderColor = ((StyledDocument)getDocument()).getForeground
+                      (getAttributes());
+
+        AttributeSet attr = getElement().getAttributes();
+
+        // Alignment.
+        // PENDING: This needs to be changed to support the CSS versions
+        // when conversion from ALIGN to VERTICAL_ALIGN is complete.
+        Object alignment = attr.getAttribute(HTML.Attribute.ALIGN);
+
+        vAlign = 1.0f;
+        if (alignment != null) {
+            alignment = alignment.toString();
+            if ("top".equals(alignment)) {
+                vAlign = 0f;
+            }
+            else if ("middle".equals(alignment)) {
+                vAlign = .5f;
+            }
+        }
+
+        AttributeSet anchorAttr = (AttributeSet)attr.getAttribute(HTML.Tag.A);
+        if (anchorAttr != null && anchorAttr.isDefined
+            (HTML.Attribute.HREF)) {
+            synchronized(this) {
+                state |= LINK_FLAG;
+            }
+        }
+        else {
+            synchronized(this) {
+                state = (state | LINK_FLAG) ^ LINK_FLAG;
+            }
+        }
+!!!11786626.java!!!	setParent(inout parent : View) : void
+        View oldParent = getParent();
+        super.setParent(parent);
+        container = (parent != null) ? getContainer() : null;
+        if (oldParent != parent) {
+            synchronized(this) {
+                state |= RELOAD_FLAG;
+            }
+        }
+!!!11786754.java!!!	changedUpdate(inout e : DocumentEvent, inout a : Shape, inout f : ViewFactory) : void
+        super.changedUpdate(e,a,f);
+
+        synchronized(this) {
+            state |= RELOAD_FLAG | RELOAD_IMAGE_FLAG;
+        }
+
+        // Assume the worst.
+        preferenceChanged(null, true, true);
+!!!11786882.java!!!	paint(inout g : Graphics, inout a : Shape) : void
+        sync();
+
+        Rectangle rect = (a instanceof Rectangle) ? (Rectangle)a :
+                         a.getBounds();
+        Rectangle clip = g.getClipBounds();
+
+        fBounds.setBounds(rect);
+        paintHighlights(g, a);
+        paintBorder(g, rect);
+        if (clip != null) {
+            g.clipRect(rect.x + leftInset, rect.y + topInset,
+                       rect.width - leftInset - rightInset,
+                       rect.height - topInset - bottomInset);
+        }
+
+        Container host = getContainer();
+        Image img = getImage(host == null || host.isEnabled());
+        if (img != null) {
+            if (! hasPixels(img)) {
+                // No pixels yet, use the default
+                Icon icon = getLoadingImageIcon();
+                if (icon != null) {
+                    icon.paintIcon(host, g,
+                            rect.x + leftInset, rect.y + topInset);
+                }
+            }
+            else {
+                // Draw the image
+                g.drawImage(img, rect.x + leftInset, rect.y + topInset,
+                            width, height, imageObserver);
+            }
+        }
+        else {
+            Icon icon = getNoImageIcon();
+            if (icon != null) {
+                icon.paintIcon(host, g,
+                        rect.x + leftInset, rect.y + topInset);
+            }
+            View view = getAltView();
+            // Paint the view representing the alt text, if its non-null
+            if (view != null && ((state & WIDTH_FLAG) == 0 ||
+                                 width > DEFAULT_WIDTH)) {
+                // Assume layout along the y direction
+                Rectangle altRect = new Rectangle
+                    (rect.x + leftInset + DEFAULT_WIDTH, rect.y + topInset,
+                     rect.width - leftInset - rightInset - DEFAULT_WIDTH,
+                     rect.height - topInset - bottomInset);
+
+                view.paint(g, altRect);
+            }
+        }
+        if (clip != null) {
+            // Reset clip.
+            g.setClip(clip.x, clip.y, clip.width, clip.height);
+        }
+!!!11787010.java!!!	paintHighlights(inout g : Graphics, inout shape : Shape) : void
+        if (container instanceof JTextComponent) {
+            JTextComponent tc = (JTextComponent)container;
+            Highlighter h = tc.getHighlighter();
+            if (h instanceof LayeredHighlighter) {
+                ((LayeredHighlighter)h).paintLayeredHighlights
+                    (g, getStartOffset(), getEndOffset(), shape, tc, this);
+            }
+        }
+!!!11787138.java!!!	paintBorder(inout g : Graphics, inout rect : Rectangle) : void
+        Color color = borderColor;
+
+        if ((borderSize > 0 || image == null) && color != null) {
+            int xOffset = leftInset - borderSize;
+            int yOffset = topInset - borderSize;
+            g.setColor(color);
+            int n = (image == null) ? 1 : borderSize;
+            for (int counter = 0; counter < n; counter++) {
+                g.drawRect(rect.x + xOffset + counter,
+                           rect.y + yOffset + counter,
+                           rect.width - counter - counter - xOffset -xOffset-1,
+                           rect.height - counter - counter -yOffset-yOffset-1);
+            }
+        }
+!!!11787266.java!!!	getPreferredSpan(in axis : int) : float
+        sync();
+
+        // If the attributes specified a width/height, always use it!
+        if (axis == View.X_AXIS && (state & WIDTH_FLAG) == WIDTH_FLAG) {
+            getPreferredSpanFromAltView(axis);
+            return width + leftInset + rightInset;
+        }
+        if (axis == View.Y_AXIS && (state & HEIGHT_FLAG) == HEIGHT_FLAG) {
+            getPreferredSpanFromAltView(axis);
+            return height + topInset + bottomInset;
+        }
+
+        Image image = getImage();
+
+        if (image != null) {
+            switch (axis) {
+            case View.X_AXIS:
+                return width + leftInset + rightInset;
+            case View.Y_AXIS:
+                return height + topInset + bottomInset;
+            default:
+                throw new IllegalArgumentException("Invalid axis: " + axis);
+            }
+        }
+        else {
+            View view = getAltView();
+            float retValue = 0f;
+
+            if (view != null) {
+                retValue = view.getPreferredSpan(axis);
+            }
+            switch (axis) {
+            case View.X_AXIS:
+                return retValue + (float)(width + leftInset + rightInset);
+            case View.Y_AXIS:
+                return retValue + (float)(height + topInset + bottomInset);
+            default:
+                throw new IllegalArgumentException("Invalid axis: " + axis);
+            }
+        }
+!!!11787394.java!!!	getAlignment(in axis : int) : float
+        switch (axis) {
+        case View.Y_AXIS:
+            return vAlign;
+        default:
+            return super.getAlignment(axis);
+        }
+!!!11787522.java!!!	modelToView(in pos : int, inout a : Shape, inout b : Position::Bias) : Shape
+        int p0 = getStartOffset();
+        int p1 = getEndOffset();
+        if ((pos >= p0) && (pos <= p1)) {
+            Rectangle r = a.getBounds();
+            if (pos == p1) {
+                r.x += r.width;
+            }
+            r.width = 0;
+            return r;
+        }
+        return null;
+!!!11787650.java!!!	viewToModel(in x : float, in y : float, inout a : Shape, inout bias : Position::Bias [[]]) : int
+        Rectangle alloc = (Rectangle) a;
+        if (x < alloc.x + alloc.width) {
+            bias[0] = Position.Bias.Forward;
+            return getStartOffset();
+        }
+        bias[0] = Position.Bias.Backward;
+        return getEndOffset();
+!!!11787778.java!!!	setSize(in width : float, in height : float) : void
+        sync();
+
+        if (getImage() == null) {
+            View view = getAltView();
+
+            if (view != null) {
+                view.setSize(Math.max(0f, width - (float)(DEFAULT_WIDTH + leftInset + rightInset)),
+                             Math.max(0f, height - (float)(topInset + bottomInset)));
+            }
+        }
+!!!11787906.java!!!	isLink() : boolean
+        return ((state & LINK_FLAG) == LINK_FLAG);
+!!!11788034.java!!!	hasPixels(inout image : Image) : boolean
+        return image != null &&
+            (image.getHeight(imageObserver) > 0) &&
+            (image.getWidth(imageObserver) > 0);
+!!!11788162.java!!!	getPreferredSpanFromAltView(in axis : int) : float
+        if (getImage() == null) {
+            View view = getAltView();
+
+            if (view != null) {
+                return view.getPreferredSpan(axis);
+            }
+        }
+        return 0f;
+!!!11788290.java!!!	repaint(in delay : long) : void
+        if (container != null && fBounds != null) {
+            container.repaint(delay, fBounds.x, fBounds.y, fBounds.width,
+                               fBounds.height);
+        }
+!!!11788418.java!!!	getIntAttr(inout name : HTML::Attribute, in deflt : int) : int
+        AttributeSet attr = getElement().getAttributes();
+        if (attr.isDefined(name)) {             // does not check parents!
+            int i;
+            String val = (String)attr.getAttribute(name);
+            if (val == null) {
+                i = deflt;
+            }
+            else {
+                try{
+                    i = Math.max(0, Integer.parseInt(val));
+                }catch( NumberFormatException x ) {
+                    i = deflt;
+                }
+            }
+            return i;
+        } else
+            return deflt;
+!!!11788546.java!!!	sync() : void
+        int s = state;
+        if ((s & RELOAD_IMAGE_FLAG) != 0) {
+            refreshImage();
+        }
+        s = state;
+        if ((s & RELOAD_FLAG) != 0) {
+            synchronized(this) {
+                state = (state | RELOAD_FLAG) ^ RELOAD_FLAG;
+            }
+            setPropertiesFromAttributes();
+        }
+!!!11788674.java!!!	refreshImage() : void
+        synchronized(this) {
+            // clear out width/height/realoadimage flag and set loading flag
+            state = (state | LOADING_FLAG | RELOAD_IMAGE_FLAG | WIDTH_FLAG |
+                     HEIGHT_FLAG) ^ (WIDTH_FLAG | HEIGHT_FLAG |
+                                     RELOAD_IMAGE_FLAG);
+            image = null;
+            width = height = 0;
+        }
+
+        try {
+            // Load the image
+            loadImage();
+
+            // And update the size params
+            updateImageSize();
+        }
+        finally {
+            synchronized(this) {
+                // Clear out state in case someone threw an exception.
+                state = (state | LOADING_FLAG) ^ LOADING_FLAG;
+            }
+        }
+!!!11788802.java!!!	loadImage() : void
+        URL src = getImageURL();
+        Image newImage = null;
+        if (src != null) {
+            Dictionary cache = (Dictionary)getDocument().
+                                    getProperty(IMAGE_CACHE_PROPERTY);
+            if (cache != null) {
+                newImage = (Image)cache.get(src);
+            }
+            else {
+                newImage = Toolkit.getDefaultToolkit().createImage(src);
+                if (newImage != null && getLoadsSynchronously()) {
+                    // Force the image to be loaded by using an ImageIcon.
+                    ImageIcon ii = new ImageIcon();
+                    ii.setImage(newImage);
+                }
+            }
+        }
+        image = newImage;
+!!!11788930.java!!!	updateImageSize() : void
+        int newWidth = 0;
+        int newHeight = 0;
+        int newState = 0;
+        Image newImage = getImage();
+
+        if (newImage != null) {
+            Element elem = getElement();
+            AttributeSet attr = elem.getAttributes();
+
+            // Get the width/height and set the state ivar before calling
+            // anything that might cause the image to be loaded, and thus the
+            // ImageHandler to be called.
+            newWidth = getIntAttr(HTML.Attribute.WIDTH, -1);
+            if (newWidth > 0) {
+                newState |= WIDTH_FLAG;
+            }
+            newHeight = getIntAttr(HTML.Attribute.HEIGHT, -1);
+            if (newHeight > 0) {
+                newState |= HEIGHT_FLAG;
+            }
+
+            if (newWidth <= 0) {
+                newWidth = newImage.getWidth(imageObserver);
+                if (newWidth <= 0) {
+                    newWidth = DEFAULT_WIDTH;
+                }
+            }
+
+            if (newHeight <= 0) {
+                newHeight = newImage.getHeight(imageObserver);
+                if (newHeight <= 0) {
+                    newHeight = DEFAULT_HEIGHT;
+                }
+            }
+
+            // Make sure the image starts loading:
+            if ((newState & (WIDTH_FLAG | HEIGHT_FLAG)) != 0) {
+                Toolkit.getDefaultToolkit().prepareImage(newImage, newWidth,
+                                                         newHeight,
+                                                         imageObserver);
+            }
+            else {
+                Toolkit.getDefaultToolkit().prepareImage(newImage, -1, -1,
+                                                         imageObserver);
+            }
+
+            boolean createText = false;
+            synchronized(this) {
+                // If imageloading failed, other thread may have called
+                // ImageLoader which will null out image, hence we check
+                // for it.
+                if (image != null) {
+                    if ((newState & WIDTH_FLAG) == WIDTH_FLAG || width == 0) {
+                        width = newWidth;
+                    }
+                    if ((newState & HEIGHT_FLAG) == HEIGHT_FLAG ||
+                        height == 0) {
+                        height = newHeight;
+                    }
+                }
+                else {
+                    createText = true;
+                    if ((newState & WIDTH_FLAG) == WIDTH_FLAG) {
+                        width = newWidth;
+                    }
+                    if ((newState & HEIGHT_FLAG) == HEIGHT_FLAG) {
+                        height = newHeight;
+                    }
+                }
+                state = state | newState;
+                state = (state | LOADING_FLAG) ^ LOADING_FLAG;
+            }
+            if (createText) {
+                // Only reset if this thread determined image is null
+                updateAltTextView();
+            }
+        }
+        else {
+            width = height = DEFAULT_HEIGHT;
+            updateAltTextView();
+        }
+!!!11789058.java!!!	updateAltTextView() : void
+        String text = getAltText();
+
+        if (text != null) {
+            ImageLabelView newView;
+
+            newView = new ImageLabelView(getElement(), text);
+            synchronized(this) {
+                altView = newView;
+            }
+        }
+!!!11789186.java!!!	getAltView() : View
+        View view;
+
+        synchronized(this) {
+            view = altView;
+        }
+        if (view != null && view.getParent() == null) {
+            view.setParent(getParent());
+        }
+        return view;
+!!!11789314.java!!!	safePreferenceChanged() : void
+        if (SwingUtilities.isEventDispatchThread()) {
+            Document doc = getDocument();
+            if (doc instanceof AbstractDocument) {
+                ((AbstractDocument)doc).readLock();
+            }
+            preferenceChanged(null, true, true);
+            if (doc instanceof AbstractDocument) {
+                ((AbstractDocument)doc).readUnlock();
+            }
+        }
+        else {
+            SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        safePreferenceChanged();
+                    }
+                });
+        }

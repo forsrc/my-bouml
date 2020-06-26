@@ -1,0 +1,247 @@
+class AxesWalker
+!!!5818882.java!!!	AxesWalker(inout locPathIterator : LocPathIterator, in axis : int)
+    super( locPathIterator );
+    m_axis = axis;
+!!!5819010.java!!!	wi() : WalkingIterator
+    return (WalkingIterator)m_lpi;
+!!!5819138.java!!!	init(inout compiler : Compiler, in opPos : int, in stepType : int) : void
+
+    initPredicateInfo(compiler, opPos);
+
+    // int testType = compiler.getOp(nodeTestOpPos);
+!!!5819266.java!!!	clone() : Object
+    // Do not access the location path itterator during this operation!
+
+    AxesWalker clone = (AxesWalker) super.clone();
+
+    //clone.setCurrentNode(clone.m_root);
+
+    // clone.m_isFresh = true;
+
+    return clone;
+!!!5819394.java!!!	cloneDeep(inout cloneOwner : WalkingIterator, inout cloneList : Vector) : AxesWalker
+    AxesWalker clone = findClone(this, cloneList);
+    if(null != clone)
+      return clone;
+    clone = (AxesWalker)this.clone();
+    clone.setLocPathIterator(cloneOwner);
+    if(null != cloneList)
+    {
+      cloneList.addElement(this);
+      cloneList.addElement(clone);
+    }
+
+    if(wi().m_lastUsedWalker == this)
+      cloneOwner.m_lastUsedWalker = clone;
+
+    if(null != m_nextWalker)
+      clone.m_nextWalker = m_nextWalker.cloneDeep(cloneOwner, cloneList);
+
+    // If you don't check for the cloneList here, you'll go into an
+    // recursive infinate loop.
+    if(null != cloneList)
+    {
+      if(null != m_prevWalker)
+        clone.m_prevWalker = m_prevWalker.cloneDeep(cloneOwner, cloneList);
+    }
+    else
+    {
+      if(null != m_nextWalker)
+        clone.m_nextWalker.m_prevWalker = clone;
+    }
+    return clone;
+!!!5819522.java!!!	findClone(inout key : AxesWalker, inout cloneList : Vector) : AxesWalker
+    if(null != cloneList)
+    {
+      // First, look for clone on list.
+      int n = cloneList.size();
+      for (int i = 0; i < n; i+=2)
+      {
+        if(key == cloneList.elementAt(i))
+          return (AxesWalker)cloneList.elementAt(i+1);
+      }
+    }
+    return null;
+!!!5819650.java!!!	detach() : void
+        m_currentNode = DTM.NULL;
+        m_dtm = null;
+        m_traverser = null;
+        m_isFresh = true;
+        m_root = DTM.NULL;
+!!!5819778.java!!!	getRoot() : int
+    return m_root;
+!!!5819906.java!!!	getAnalysisBits() : int
+        int axis = getAxis();
+        int bit = WalkerFactory.getAnalysisBitFromAxes(axis);
+        return bit;
+!!!5820034.java!!!	setRoot(in root : int) : void
+    // %OPT% Get this directly from the lpi.
+    XPathContext xctxt = wi().getXPathContext();
+    m_dtm = xctxt.getDTM(root);
+    m_traverser = m_dtm.getAxisTraverser(m_axis);
+    m_isFresh = true;
+    m_foundLast = false;
+    m_root = root;
+    m_currentNode = root;
+
+    if (DTM.NULL == root)
+    {
+      throw new RuntimeException(
+        XSLMessages.createXPATHMessage(XPATHErrorResources.ER_SETTING_WALKER_ROOT_TO_NULL, null)); //"\n !!!! Error! Setting the root of a walker to null!!!");
+    }
+
+    resetProximityPositions();
+!!!5820162.java!!!	getCurrentNode() : int
+    return m_currentNode;
+!!!5820290.java!!!	setNextWalker(inout walker : AxesWalker) : void
+    m_nextWalker = walker;
+!!!5820418.java!!!	getNextWalker() : AxesWalker
+    return m_nextWalker;
+!!!5820546.java!!!	setPrevWalker(inout walker : AxesWalker) : void
+    m_prevWalker = walker;
+!!!5820674.java!!!	getPrevWalker() : AxesWalker
+    return m_prevWalker;
+!!!5820802.java!!!	returnNextNode(in n : int) : int
+
+    return n;
+!!!5820930.java!!!	getNextNode() : int
+    if (m_foundLast)
+      return DTM.NULL;
+
+    if (m_isFresh)
+    {
+      m_currentNode = m_traverser.first(m_root);
+      m_isFresh = false;
+    }
+    // I shouldn't have to do this the check for current node, I think.
+    // numbering\numbering24.xsl fails if I don't do this.  I think
+    // it occurs as the walkers are backing up. -sb
+    else if(DTM.NULL != m_currentNode)
+    {
+      m_currentNode = m_traverser.next(m_root, m_currentNode);
+    }
+
+    if (DTM.NULL == m_currentNode)
+      this.m_foundLast = true;
+
+    return m_currentNode;
+!!!5821058.java!!!	nextNode() : int
+    int nextNode = DTM.NULL;
+    AxesWalker walker = wi().getLastUsedWalker();
+
+    while (true)
+    {
+      if (null == walker)
+        break;
+
+      nextNode = walker.getNextNode();
+
+      if (DTM.NULL == nextNode)
+      {
+
+        walker = walker.m_prevWalker;
+      }
+      else
+      {
+        if (walker.acceptNode(nextNode) != DTMIterator.FILTER_ACCEPT)
+        {
+          continue;
+        }
+
+        if (null == walker.m_nextWalker)
+        {
+          wi().setLastUsedWalker(walker);
+
+          // return walker.returnNextNode(nextNode);
+          break;
+        }
+        else
+        {
+          AxesWalker prev = walker;
+
+          walker = walker.m_nextWalker;
+
+          walker.setRoot(nextNode);
+
+          walker.m_prevWalker = prev;
+
+          continue;
+        }
+      }  // if(null != nextNode)
+    }  // while(null != walker)
+
+    return nextNode;
+!!!5821186.java!!!	getLastPos(inout xctxt : XPathContext) : int
+
+    int pos = getProximityPosition();
+
+    AxesWalker walker;
+
+    try
+    {
+      walker = (AxesWalker) clone();
+    }
+    catch (CloneNotSupportedException cnse)
+    {
+      return -1;
+    }
+
+    walker.setPredicateCount(m_predicateIndex);
+    walker.setNextWalker(null);
+    walker.setPrevWalker(null);
+
+    WalkingIterator lpi = wi();
+    AxesWalker savedWalker = lpi.getLastUsedWalker();
+
+    try
+    {
+      lpi.setLastUsedWalker(walker);
+
+      int next;
+
+      while (DTM.NULL != (next = walker.nextNode()))
+      {
+        pos++;
+      }
+
+      // TODO: Should probably save this in the iterator.
+    }
+    finally
+    {
+      lpi.setLastUsedWalker(savedWalker);
+    }
+
+    // System.out.println("pos: "+pos);
+    return pos;
+!!!5821314.java!!!	setDefaultDTM(inout dtm : DTM) : void
+    m_dtm = dtm;
+!!!5821442.java!!!	getDTM(in node : int) : DTM
+    //
+    return wi().getXPathContext().getDTM(node);
+!!!5821570.java!!!	isDocOrdered() : boolean
+    return true;
+!!!5821698.java!!!	getAxis() : int
+    return m_axis;
+!!!5821826.java!!!	callVisitors(inout owner : ExpressionOwner, inout visitor : XPathVisitor) : void
+        if(visitor.visitStep(owner, this))
+        {
+                callPredicateVisitors(visitor);
+                if(null != m_nextWalker)
+                {
+                        m_nextWalker.callVisitors(this, visitor);
+                }
+        }
+!!!5821954.java!!!	getExpression() : Expression
+    return m_nextWalker;
+!!!5822082.java!!!	setExpression(inout exp : Expression) : void
+        exp.exprSetParent(this);
+        m_nextWalker = (AxesWalker)exp;
+!!!5822210.java!!!	deepEquals(inout expr : Expression) : boolean
+      if (!super.deepEquals(expr))
+                return false;
+
+      AxesWalker walker = (AxesWalker)expr;
+      if(this.m_axis != walker.m_axis)
+        return false;
+
+      return true;

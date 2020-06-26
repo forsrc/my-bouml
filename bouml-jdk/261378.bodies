@@ -1,0 +1,118 @@
+class Proxy
+!!!7360770.java!!!	Proxy(inout h : InvocationHandler)
+        Objects.requireNonNull(h);
+        this.h = h;
+!!!7360898.java!!!	getProxyClass(inout loader : ClassLoader, inout interfaces : Class<?>...) : Class
+        final Class<?>[] intfs = interfaces.clone();
+        final SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            checkProxyAccess(Reflection.getCallerClass(), loader, intfs);
+        }
+
+        return getProxyClass0(loader, intfs);
+!!!7361026.java!!!	checkProxyAccess(inout caller : Class, inout loader : ClassLoader, inout interfaces : Class<?>...) : void
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            ClassLoader ccl = caller.getClassLoader();
+            if (VM.isSystemDomainLoader(loader) && !VM.isSystemDomainLoader(ccl)) {
+                sm.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
+            }
+            ReflectUtil.checkProxyPackageAccess(ccl, interfaces);
+        }
+!!!7361154.java!!!	getProxyClass0(inout loader : ClassLoader, inout interfaces : Class<?>...) : Class
+        if (interfaces.length > 65535) {
+            throw new IllegalArgumentException("interface limit exceeded");
+        }
+
+        // If the proxy class defined by the given loader implementing
+        // the given interfaces exists, this will simply return the cached copy;
+        // otherwise, it will create the proxy class via the ProxyClassFactory
+        return proxyClassCache.get(loader, interfaces);
+!!!7363074.java!!!	newProxyInstance(inout loader : ClassLoader, inout interfaces : Class [[]], inout h : InvocationHandler) : Object
+        Objects.requireNonNull(h);
+
+        final Class<?>[] intfs = interfaces.clone();
+        final SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            checkProxyAccess(Reflection.getCallerClass(), loader, intfs);
+        }
+
+        /*
+         * Look up or generate the designated proxy class.
+         */
+        Class<?> cl = getProxyClass0(loader, intfs);
+
+        /*
+         * Invoke its constructor with the designated invocation handler.
+         */
+        try {
+            if (sm != null) {
+                checkNewProxyPermission(Reflection.getCallerClass(), cl);
+            }
+
+            final Constructor<?> cons = cl.getConstructor(constructorParams);
+            final InvocationHandler ih = h;
+            if (!Modifier.isPublic(cl.getModifiers())) {
+                AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                    public Void run() {
+                        cons.setAccessible(true);
+                        return null;
+                    }
+                });
+            }
+            return cons.newInstance(new Object[]{h});
+        } catch (IllegalAccessException|InstantiationException e) {
+            throw new InternalError(e.toString(), e);
+        } catch (InvocationTargetException e) {
+            Throwable t = e.getCause();
+            if (t instanceof RuntimeException) {
+                throw (RuntimeException) t;
+            } else {
+                throw new InternalError(t.toString(), t);
+            }
+        } catch (NoSuchMethodException e) {
+            throw new InternalError(e.toString(), e);
+        }
+!!!7363202.java!!!	checkNewProxyPermission(inout caller : Class, inout proxyClass : Class) : void
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            if (ReflectUtil.isNonPublicProxyClass(proxyClass)) {
+                ClassLoader ccl = caller.getClassLoader();
+                ClassLoader pcl = proxyClass.getClassLoader();
+
+                // do permission check if the caller is in a different runtime package
+                // of the proxy class
+                int n = proxyClass.getName().lastIndexOf('.');
+                String pkg = (n == -1) ? "" : proxyClass.getName().substring(0, n);
+
+                n = caller.getName().lastIndexOf('.');
+                String callerPkg = (n == -1) ? "" : caller.getName().substring(0, n);
+
+                if (pcl != ccl || !pkg.equals(callerPkg)) {
+                    sm.checkPermission(new ReflectPermission("newProxyInPackage." + pkg));
+                }
+            }
+        }
+!!!7363330.java!!!	isProxyClass(inout cl : Class) : boolean
+        return Proxy.class.isAssignableFrom(cl) && proxyClassCache.containsValue(cl);
+!!!7363458.java!!!	getInvocationHandler(inout proxy : Object) : InvocationHandler
+        /*
+         * Verify that the object is actually a proxy instance.
+         */
+        if (!isProxyClass(proxy.getClass())) {
+            throw new IllegalArgumentException("not a proxy instance");
+        }
+
+        final Proxy p = (Proxy) proxy;
+        final InvocationHandler ih = p.h;
+        if (System.getSecurityManager() != null) {
+            Class<?> ihClass = ih.getClass();
+            Class<?> caller = Reflection.getCallerClass();
+            if (ReflectUtil.needsPackageAccessCheck(caller.getClassLoader(),
+                                                    ihClass.getClassLoader()))
+            {
+                ReflectUtil.checkPackageAccess(ihClass);
+            }
+        }
+
+        return ih;

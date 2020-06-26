@@ -1,0 +1,116 @@
+class InterceptorList
+!!!499202.java!!!	InterceptorList(inout wrapper : InterceptorsSystemException)
+        this.wrapper = wrapper ;
+        // Create empty interceptors arrays for each type:
+        initInterceptorArrays();
+!!!499330.java!!!	register_interceptor(inout interceptor : Interceptor, in type : int) : void
+        // If locked, deny any further addition of interceptors.
+        if( locked ) {
+            throw wrapper.interceptorListLocked() ;
+        }
+
+        // Cache interceptor name:
+        String interceptorName = interceptor.name();
+        boolean anonymous = interceptorName.equals( "" );
+        boolean foundDuplicate = false;
+        Interceptor[] interceptorList = interceptors[type];
+
+        // If this is not an anonymous interceptor,
+        // search for an interceptor of the same name in this category:
+        if( !anonymous ) {
+            int size = interceptorList.length;
+
+            // An O(n) search will suffice because register_interceptor is not
+            // likely to be called often.
+            for( int i = 0; i < size; i++ ) {
+                Interceptor in = (Interceptor)interceptorList[i];
+                if( in.name().equals( interceptorName ) ) {
+                    foundDuplicate = true;
+                    break;
+                }
+            }
+        }
+
+        if( !foundDuplicate ) {
+            growInterceptorArray( type );
+            interceptors[type][interceptors[type].length-1] = interceptor;
+        }
+        else {
+            throw new DuplicateName( interceptorName );
+        }
+!!!499458.java!!!	lock() : void
+        locked = true;
+!!!499586.java!!!	getInterceptors(in type : int) : Interceptor
+        return interceptors[type];
+!!!499714.java!!!	hasInterceptorsOfType(in type : int) : boolean
+        return interceptors[type].length > 0;
+!!!499842.java!!!	initInterceptorArrays() : void
+        for( int type = 0; type < NUM_INTERCEPTOR_TYPES; type++ ) {
+            Class classType = classTypes[type];
+
+            // Create a zero-length array for each type:
+            interceptors[type] =
+                (Interceptor[])Array.newInstance( classType, 0 );
+        }
+!!!499970.java!!!	growInterceptorArray(in type : int) : void
+        Class classType = classTypes[type];
+        int currentLength = interceptors[type].length;
+        Interceptor[] replacementArray;
+
+        // Create new array to replace the old one.  The new array will be
+        // one element larger but have the same type as the old one.
+        replacementArray = (Interceptor[])
+            Array.newInstance( classType, currentLength + 1 );
+        System.arraycopy( interceptors[type], 0,
+                          replacementArray, 0, currentLength );
+        interceptors[type] = replacementArray;
+!!!500098.java!!!	destroyAll() : void
+        int numTypes = interceptors.length;
+
+        for( int i = 0; i < numTypes; i++ ) {
+            int numInterceptors = interceptors[i].length;
+            for( int j = 0; j < numInterceptors; j++ ) {
+                interceptors[i][j].destroy();
+            }
+        }
+!!!500226.java!!!	sortInterceptors() : void
+        List sorted = null;
+        List unsorted = null;
+
+        int numTypes = interceptors.length;
+
+        for( int i = 0; i < numTypes; i++ ) {
+            int numInterceptors = interceptors[i].length;
+            if (numInterceptors > 0) {
+                // Get fresh sorting bins for each non empty type.
+                sorted = new ArrayList(); // not synchronized like we want.
+                unsorted = new ArrayList();
+            }
+            for( int j = 0; j < numInterceptors; j++ ) {
+                Interceptor interceptor = interceptors[i][j];
+                if (interceptor instanceof Comparable) {
+                    sorted.add(interceptor);
+                } else {
+                    unsorted.add(interceptor);
+                }
+            }
+            if (numInterceptors > 0 && sorted.size() > 0) {
+                // Let the RuntimeExceptions thrown by sort
+                // (i.e., ClassCastException and UnsupportedOperationException)
+                // flow back to the user.
+                Collections.sort(sorted);
+                Iterator sortedIterator = sorted.iterator();
+                Iterator unsortedIterator = unsorted.iterator();
+                for( int j = 0; j < numInterceptors; j++ ) {
+                    if (sortedIterator.hasNext()) {
+                        interceptors[i][j] =
+                            (Interceptor) sortedIterator.next();
+                    } else if (unsortedIterator.hasNext()) {
+                        interceptors[i][j] =
+                            (Interceptor) unsortedIterator.next();
+                    } else {
+                        throw wrapper.sortSizeMismatch() ;
+                    }
+                }
+            }
+        }

@@ -1,0 +1,224 @@
+class UndoManager
+!!!11916162.java!!!	UndoManager()
+        super();
+        indexOfNextAdd = 0;
+        limit = 100;
+        edits.ensureCapacity(limit);
+!!!11916290.java!!!	getLimit() : int
+        return limit;
+!!!11916418.java!!!	discardAllEdits() : void
+        for (UndoableEdit e : edits) {
+            e.die();
+        }
+        edits = new Vector<UndoableEdit>();
+        indexOfNextAdd = 0;
+        // PENDING(rjrjr) when vector grows a removeRange() method
+        // (expected in JDK 1.2), trimEdits() will be nice and
+        // efficient, and this method can call that instead.
+!!!11916546.java!!!	trimForLimit() : void
+        if (limit >= 0) {
+            int size = edits.size();
+//          System.out.print("limit: " + limit +
+//                           " size: " + size +
+//                           " indexOfNextAdd: " + indexOfNextAdd +
+//                           "\n");
+
+            if (size > limit) {
+                int halfLimit = limit/2;
+                int keepFrom = indexOfNextAdd - 1 - halfLimit;
+                int keepTo   = indexOfNextAdd - 1 + halfLimit;
+
+                // These are ints we're playing with, so dividing by two
+                // rounds down for odd numbers, so make sure the limit was
+                // honored properly. Note that the keep range is
+                // inclusive.
+
+                if (keepTo - keepFrom + 1 > limit) {
+                    keepFrom++;
+                }
+
+                // The keep range is centered on indexOfNextAdd,
+                // but odds are good that the actual edits Vector
+                // isn't. Move the keep range to keep it legal.
+
+                if (keepFrom < 0) {
+                    keepTo -= keepFrom;
+                    keepFrom = 0;
+                }
+                if (keepTo >= size) {
+                    int delta = size - keepTo - 1;
+                    keepTo += delta;
+                    keepFrom += delta;
+                }
+
+//              System.out.println("Keeping " + keepFrom + " " + keepTo);
+                trimEdits(keepTo+1, size-1);
+                trimEdits(0, keepFrom-1);
+            }
+        }
+!!!11916674.java!!!	trimEdits(in from : int, in to : int) : void
+        if (from <= to) {
+//          System.out.println("Trimming " + from + " " + to + " with index " +
+//                           indexOfNextAdd);
+            for (int i = to; from <= i; i--) {
+                UndoableEdit e = edits.elementAt(i);
+//              System.out.println("JUM: Discarding " +
+//                                 e.getUndoPresentationName());
+                e.die();
+                // PENDING(rjrjr) when Vector supports range deletion (JDK
+                // 1.2) , we can optimize the next line considerably.
+                edits.removeElementAt(i);
+            }
+
+            if (indexOfNextAdd > to) {
+//              System.out.print("...right...");
+                indexOfNextAdd -= to-from+1;
+            } else if (indexOfNextAdd >= from) {
+//              System.out.println("...mid...");
+                indexOfNextAdd = from;
+            }
+
+//          System.out.println("new index " + indexOfNextAdd);
+        }
+!!!11916802.java!!!	setLimit(in l : int) : void
+        if (!inProgress) throw new RuntimeException("Attempt to call UndoManager.setLimit() after UndoManager.end() has been called");
+        limit = l;
+        trimForLimit();
+!!!11916930.java!!!	editToBeUndone() : UndoableEdit
+        int i = indexOfNextAdd;
+        while (i > 0) {
+            UndoableEdit edit = edits.elementAt(--i);
+            if (edit.isSignificant()) {
+                return edit;
+            }
+        }
+
+        return null;
+!!!11917058.java!!!	editToBeRedone() : UndoableEdit
+        int count = edits.size();
+        int i = indexOfNextAdd;
+
+        while (i < count) {
+            UndoableEdit edit = edits.elementAt(i++);
+            if (edit.isSignificant()) {
+                return edit;
+            }
+        }
+
+        return null;
+!!!11917186.java!!!	undoTo(inout edit : UndoableEdit) : void
+        boolean done = false;
+        while (!done) {
+            UndoableEdit next = edits.elementAt(--indexOfNextAdd);
+            next.undo();
+            done = next == edit;
+        }
+!!!11917314.java!!!	redoTo(inout edit : UndoableEdit) : void
+        boolean done = false;
+        while (!done) {
+            UndoableEdit next = edits.elementAt(indexOfNextAdd++);
+            next.redo();
+            done = next == edit;
+        }
+!!!11917442.java!!!	undoOrRedo() : void
+        if (indexOfNextAdd == edits.size()) {
+            undo();
+        } else {
+            redo();
+        }
+!!!11917570.java!!!	canUndoOrRedo() : boolean
+        if (indexOfNextAdd == edits.size()) {
+            return canUndo();
+        } else {
+            return canRedo();
+        }
+!!!11917698.java!!!	undo() : void
+        if (inProgress) {
+            UndoableEdit edit = editToBeUndone();
+            if (edit == null) {
+                throw new CannotUndoException();
+            }
+            undoTo(edit);
+        } else {
+            super.undo();
+        }
+!!!11917826.java!!!	canUndo() : boolean
+        if (inProgress) {
+            UndoableEdit edit = editToBeUndone();
+            return edit != null && edit.canUndo();
+        } else {
+            return super.canUndo();
+        }
+!!!11917954.java!!!	redo() : void
+        if (inProgress) {
+            UndoableEdit edit = editToBeRedone();
+            if (edit == null) {
+                throw new CannotRedoException();
+            }
+            redoTo(edit);
+        } else {
+            super.redo();
+        }
+!!!11918082.java!!!	canRedo() : boolean
+        if (inProgress) {
+            UndoableEdit edit = editToBeRedone();
+            return edit != null && edit.canRedo();
+        } else {
+            return super.canRedo();
+        }
+!!!11918210.java!!!	addEdit(inout anEdit : UndoableEdit) : boolean
+        boolean retVal;
+
+        // Trim from the indexOfNextAdd to the end, as we'll
+        // never reach these edits once the new one is added.
+        trimEdits(indexOfNextAdd, edits.size()-1);
+
+        retVal = super.addEdit(anEdit);
+        if (inProgress) {
+          retVal = true;
+        }
+
+        // Maybe super added this edit, maybe it didn't (perhaps
+        // an in progress compound edit took it instead. Or perhaps
+        // this UndoManager is no longer in progress). So make sure
+        // the indexOfNextAdd is pointed at the right place.
+        indexOfNextAdd = edits.size();
+
+        // Enforce the limit
+        trimForLimit();
+
+        return retVal;
+!!!11918338.java!!!	end() : void
+        super.end();
+        this.trimEdits(indexOfNextAdd, edits.size()-1);
+!!!11918466.java!!!	getUndoOrRedoPresentationName() : String
+        if (indexOfNextAdd == edits.size()) {
+            return getUndoPresentationName();
+        } else {
+            return getRedoPresentationName();
+        }
+!!!11918594.java!!!	getUndoPresentationName() : String
+        if (inProgress) {
+            if (canUndo()) {
+                return editToBeUndone().getUndoPresentationName();
+            } else {
+                return UIManager.getString("AbstractUndoableEdit.undoText");
+            }
+        } else {
+            return super.getUndoPresentationName();
+        }
+!!!11918722.java!!!	getRedoPresentationName() : String
+        if (inProgress) {
+            if (canRedo()) {
+                return editToBeRedone().getRedoPresentationName();
+            } else {
+                return UIManager.getString("AbstractUndoableEdit.redoText");
+            }
+        } else {
+            return super.getRedoPresentationName();
+        }
+!!!11918850.java!!!	undoableEditHappened(inout e : UndoableEditEvent) : void
+        addEdit(e.getEdit());
+!!!11918978.java!!!	toString() : String
+        return super.toString() + " limit: " + limit +
+            " indexOfNextAdd: " + indexOfNextAdd;

@@ -1,0 +1,232 @@
+class DescendantIterator
+!!!5822850.java!!!	DescendantIterator(inout compiler : Compiler, in opPos : int, in analysis : int)
+
+    super(compiler, opPos, analysis, false);
+
+    int firstStepPos = OpMap.getFirstChildPos(opPos);
+    int stepType = compiler.getOp(firstStepPos);
+
+    boolean orSelf = (OpCodes.FROM_DESCENDANTS_OR_SELF == stepType);
+    boolean fromRoot = false;
+    if (OpCodes.FROM_SELF == stepType)
+    {
+      orSelf = true;
+      // firstStepPos += 8;
+    }
+    else if(OpCodes.FROM_ROOT == stepType)
+    {
+      fromRoot = true;
+      // Ugly code... will go away when AST work is done.
+      int nextStepPos = compiler.getNextStepPos(firstStepPos);
+      if(compiler.getOp(nextStepPos) == OpCodes.FROM_DESCENDANTS_OR_SELF)
+        orSelf = true;
+      // firstStepPos += 8;
+    }
+
+    // Find the position of the last step.
+    int nextStepPos = firstStepPos;
+    while(true)
+    {
+      nextStepPos = compiler.getNextStepPos(nextStepPos);
+      if(nextStepPos > 0)
+      {
+        int stepOp = compiler.getOp(nextStepPos);
+        if(OpCodes.ENDOP != stepOp)
+          firstStepPos = nextStepPos;
+        else
+          break;
+      }
+      else
+        break;
+
+    }
+
+    // Fix for http://nagoya.apache.org/bugzilla/show_bug.cgi?id=1336
+    if((analysis & WalkerFactory.BIT_CHILD) != 0)
+      orSelf = false;
+
+    if(fromRoot)
+    {
+      if(orSelf)
+        m_axis = Axis.DESCENDANTSORSELFFROMROOT;
+      else
+        m_axis = Axis.DESCENDANTSFROMROOT;
+    }
+    else if(orSelf)
+      m_axis = Axis.DESCENDANTORSELF;
+    else
+      m_axis = Axis.DESCENDANT;
+
+    int whatToShow = compiler.getWhatToShow(firstStepPos);
+
+    if ((0 == (whatToShow
+               & (DTMFilter.SHOW_ATTRIBUTE | DTMFilter.SHOW_ELEMENT
+                  | DTMFilter.SHOW_PROCESSING_INSTRUCTION))) ||
+                   (whatToShow == DTMFilter.SHOW_ALL))
+      initNodeTest(whatToShow);
+    else
+    {
+      initNodeTest(whatToShow, compiler.getStepNS(firstStepPos),
+                              compiler.getStepLocalName(firstStepPos));
+    }
+    initPredicateInfo(compiler, firstStepPos);
+!!!5822978.java!!!	DescendantIterator()
+    super(null);
+    m_axis = Axis.DESCENDANTSORSELFFROMROOT;
+    int whatToShow = DTMFilter.SHOW_ALL;
+    initNodeTest(whatToShow);
+!!!5823106.java!!!	cloneWithReset() : DTMIterator
+
+    DescendantIterator clone = (DescendantIterator) super.cloneWithReset();
+    clone.m_traverser = m_traverser;
+
+    clone.resetProximityPositions();
+
+    return clone;
+!!!5823234.java!!!	nextNode() : int
+        if(m_foundLast)
+                return DTM.NULL;
+
+    if(DTM.NULL == m_lastFetched)
+    {
+      resetProximityPositions();
+    }
+
+    int next;
+
+    com.sun.org.apache.xpath.internal.VariableStack vars;
+    int savedStart;
+    if (-1 != m_stackFrame)
+    {
+      vars = m_execContext.getVarStack();
+
+      // These three statements need to be combined into one operation.
+      savedStart = vars.getStackFrame();
+
+      vars.setStackFrame(m_stackFrame);
+    }
+    else
+    {
+      // Yuck.  Just to shut up the compiler!
+      vars = null;
+      savedStart = 0;
+    }
+
+    try
+    {
+      do
+      {
+        if(0 == m_extendedTypeID)
+        {
+          next = m_lastFetched = (DTM.NULL == m_lastFetched)
+                       ? m_traverser.first(m_context)
+                       : m_traverser.next(m_context, m_lastFetched);
+        }
+        else
+        {
+          next = m_lastFetched = (DTM.NULL == m_lastFetched)
+                       ? m_traverser.first(m_context, m_extendedTypeID)
+                       : m_traverser.next(m_context, m_lastFetched,
+                                          m_extendedTypeID);
+        }
+
+        if (DTM.NULL != next)
+        {
+          if(DTMIterator.FILTER_ACCEPT == acceptNode(next))
+            break;
+          else
+            continue;
+        }
+        else
+          break;
+      }
+      while (next != DTM.NULL);
+
+      if (DTM.NULL != next)
+      {
+        m_pos++;
+        return next;
+      }
+      else
+      {
+        m_foundLast = true;
+
+        return DTM.NULL;
+      }
+    }
+    finally
+    {
+      if (-1 != m_stackFrame)
+      {
+        // These two statements need to be combined into one operation.
+        vars.setStackFrame(savedStart);
+      }
+    }
+!!!5823362.java!!!	setRoot(in context : int, inout environment : Object) : void
+    super.setRoot(context, environment);
+    m_traverser = m_cdtm.getAxisTraverser(m_axis);
+
+    String localName = getLocalName();
+    String namespace = getNamespace();
+    int what = m_whatToShow;
+    // System.out.println("what: ");
+    // NodeTest.debugWhatToShow(what);
+    if(DTMFilter.SHOW_ALL == what
+       || NodeTest.WILD.equals(localName)
+       || NodeTest.WILD.equals(namespace))
+    {
+      m_extendedTypeID = 0;
+    }
+    else
+    {
+      int type = getNodeTypeTest(what);
+      m_extendedTypeID = m_cdtm.getExpandedTypeID(namespace, localName, type);
+    }
+
+!!!5823490.java!!!	asNode(inout xctxt : XPathContext) : int
+    if(getPredicateCount() > 0)
+      return super.asNode(xctxt);
+
+    int current = xctxt.getCurrentNode();
+
+    DTM dtm = xctxt.getDTM(current);
+    DTMAxisTraverser traverser = dtm.getAxisTraverser(m_axis);
+
+    String localName = getLocalName();
+    String namespace = getNamespace();
+    int what = m_whatToShow;
+
+    // System.out.print(" (DescendantIterator) ");
+
+    // System.out.println("what: ");
+    // NodeTest.debugWhatToShow(what);
+    if(DTMFilter.SHOW_ALL == what
+       || localName == NodeTest.WILD
+       || namespace == NodeTest.WILD)
+    {
+      return traverser.first(current);
+    }
+    else
+    {
+      int type = getNodeTypeTest(what);
+      int extendedType = dtm.getExpandedTypeID(namespace, localName, type);
+      return traverser.first(current, extendedType);
+    }
+!!!5823618.java!!!	detach() : void
+    if (m_allowDetach) {
+      m_traverser = null;
+      m_extendedTypeID = 0;
+
+      // Always call the superclass detach last!
+      super.detach();
+    }
+!!!5823746.java!!!	getAxis() : int
+    return m_axis;
+!!!5823874.java!!!	deepEquals(inout expr : Expression) : boolean
+        if(!super.deepEquals(expr))
+                return false;
+
+        if(m_axis != ((DescendantIterator)expr).m_axis)
+                return false;
+
+        return true;

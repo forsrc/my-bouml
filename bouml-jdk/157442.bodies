@@ -1,0 +1,615 @@
+class DynAnyConstructedImpl
+!!!290690.java!!!	DynAnyConstructedImpl()
+        this(null, (Any)null, false);
+!!!290818.java!!!	DynAnyConstructedImpl(inout orb : ORB, inout any : Any, inout copyValue : boolean)
+        super(orb, any, copyValue);
+        //System.out.println(this + " constructed with any " + any);
+        if (this.any != null) {
+            representations = REPRESENTATION_ANY;
+        }
+        // set the current position to 0 if any has components, otherwise to -1.
+        index = 0;
+!!!290946.java!!!	DynAnyConstructedImpl(inout orb : ORB, inout typeCode : TypeCode)
+        // assertion: typeCode has been checked to be valid for this particular subclass.
+        // note: We don't copy TypeCodes since they are considered immutable.
+        super(orb, typeCode);
+        if (typeCode != null) {
+            representations = REPRESENTATION_TYPECODE;
+        }
+        // set the current position to 0 if any has components, otherwise to -1.
+        index = NO_INDEX;
+
+        // _REVISIT_ Would need REPRESENTATION_TYPECODE for lazy initialization
+        //if ( ! isRecursive()) {
+        //    initializeComponentsFromTypeCode();
+        //}
+!!!291074.java!!!	isRecursive() : boolean
+        if (isRecursive == RECURSIVE_UNDEF) {
+            TypeCode typeCode = any.type();
+            if (typeCode instanceof TypeCodeImpl) {
+                if (((TypeCodeImpl)typeCode).is_recursive())
+                    isRecursive = RECURSIVE_YES;
+                else
+                    isRecursive = RECURSIVE_NO;
+            } else {
+                // No way to find out unless the TypeCode spec changes.
+                isRecursive = RECURSIVE_NO;
+            }
+        }
+        return (isRecursive == RECURSIVE_YES);
+!!!291202.java!!!	current_component() : DynAny
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX) {
+            return null;
+        }
+        return (checkInitComponents() ? components[index] : null);
+!!!291330.java!!!	component_count() : int
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        return (checkInitComponents() ? components.length : 0);
+!!!291458.java!!!	next() : boolean
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (checkInitComponents() == false) {
+            return false;
+        }
+        index++;
+        if (index >= 0 && index < components.length) {
+            return true;
+        } else {
+            index = NO_INDEX;
+            return false;
+        }
+!!!291586.java!!!	seek(in newIndex : int) : boolean
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (newIndex < 0) {
+            this.index = NO_INDEX;
+            return false;
+        }
+        if (checkInitComponents() == false) {
+            return false;
+        }
+        if (newIndex < components.length) {
+            index = newIndex;
+            return true;
+        }
+        return false;
+!!!291714.java!!!	rewind() : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        this.seek(0);
+!!!291842.java!!!	clearData() : void
+        super.clearData();
+        // _REVISIT_ What about status?
+        components = emptyComponents;
+        index = NO_INDEX;
+        representations = REPRESENTATION_NONE;
+!!!291970.java!!!	writeAny(inout out : OutputStream) : void
+        // If all we got is TypeCode representation (no value)
+        // then we don't want to force creating a default value
+        //System.out.println(this + " checkInitAny before writeAny");
+        checkInitAny();
+        super.writeAny(out);
+!!!292098.java!!!	checkInitComponents() : boolean
+        if ((representations & REPRESENTATION_COMPONENTS) == 0) {
+            if ((representations & REPRESENTATION_ANY) != 0) {
+                if (initializeComponentsFromAny()) {
+                    representations |= REPRESENTATION_COMPONENTS;
+                } else {
+                    return false;
+                }
+            } else if ((representations & REPRESENTATION_TYPECODE) != 0) {
+                if (initializeComponentsFromTypeCode()) {
+                    representations |= REPRESENTATION_COMPONENTS;
+                } else {
+                    return false;
+                }
+            }
+        }
+        return true;
+!!!292226.java!!!	checkInitAny() : void
+        if ((representations & REPRESENTATION_ANY) == 0) {
+            //System.out.println(this + " checkInitAny: reps does not have REPRESENTATION_ANY");
+            if ((representations & REPRESENTATION_COMPONENTS) != 0) {
+                //System.out.println(this + " checkInitAny: reps has REPRESENTATION_COMPONENTS");
+                if (initializeAnyFromComponents()) {
+                    representations |= REPRESENTATION_ANY;
+                }
+            } else if ((representations & REPRESENTATION_TYPECODE) != 0) {
+                //System.out.println(this + " checkInitAny: reps has REPRESENTATION_TYPECODE");
+                if (representations == REPRESENTATION_TYPECODE && isRecursive())
+                    return;
+                if (initializeComponentsFromTypeCode()) {
+                    representations |= REPRESENTATION_COMPONENTS;
+                }
+                if (initializeAnyFromComponents()) {
+                    representations |= REPRESENTATION_ANY;
+                }
+            }
+        } else {
+            //System.out.println(this + " checkInitAny: reps != REPRESENTATION_ANY");
+        }
+        return;
+!!!292610.java!!!	initializeAnyFromComponents() : boolean
+        //System.out.println(this + " initializeAnyFromComponents");
+        OutputStream out = any.create_output_stream();
+        for (int i=0; i<components.length; i++) {
+            if (components[i] instanceof DynAnyImpl) {
+                ((DynAnyImpl)components[i]).writeAny(out);
+            } else {
+                // Not our implementation. Nothing we can do to prevent copying.
+                components[i].to_any().write_value(out);
+            }
+        }
+        any.read_value(out.create_input_stream(), any.type());
+        return true;
+!!!292738.java!!!	assign(inout dyn_any : DynAny) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        clearData();
+        super.assign(dyn_any);
+        representations = REPRESENTATION_ANY;
+        index = 0;
+!!!292866.java!!!	from_any(inout value : Any) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        clearData();
+        super.from_any(value);
+        representations = REPRESENTATION_ANY;
+        index = 0;
+!!!292994.java!!!	to_any() : Any
+        //System.out.println(this + " to_any ");
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        checkInitAny();
+        // Anys value may still be uninitialized if DynAny was initialized by TypeCode only
+        return DynAnyUtil.copy(any, orb);
+!!!293122.java!!!	equal(inout dyn_any : DynAny) : boolean
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (dyn_any == this) {
+            return true;
+        }
+        if ( ! any.type().equal(dyn_any.type())) {
+            return false;
+        }
+        // This changes the current position of dyn_any.
+        // Make sure that our position isn't changed.
+        if (checkInitComponents() == false) {
+            return false;
+        }
+        DynAny currentComponent = null;
+        try {
+            // Remember the current position to restore it later
+            currentComponent = dyn_any.current_component();
+            for (int i=0; i<components.length; i++) {
+                if (dyn_any.seek(i) == false)
+                    return false;
+                //System.out.println(this + " comparing component " + i + "=" + components[i] +
+                //                   " of type " + components[i].type().kind().value());
+                if ( ! components[i].equal(dyn_any.current_component())) {
+                    //System.out.println("Not equal component " + i);
+                    return false;
+                }
+            }
+        } catch (TypeMismatch tm) {
+            // impossible, we checked the type codes already
+        } finally {
+            // Restore the current position of the other DynAny
+            DynAnyUtil.set_current_component(dyn_any, currentComponent);
+        }
+        return true;
+!!!293250.java!!!	destroy() : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (status == STATUS_DESTROYABLE) {
+            status = STATUS_DESTROYED;
+            for (int i=0; i<components.length; i++) {
+                if (components[i] instanceof DynAnyImpl) {
+                    ((DynAnyImpl)components[i]).setStatus(STATUS_DESTROYABLE);
+                }
+                components[i].destroy();
+            }
+        }
+!!!293378.java!!!	copy() : DynAny
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        checkInitAny();
+        try {
+            return DynAnyUtil.createMostDerivedDynAny(any, orb, true);
+        } catch (InconsistentTypeCode ictc) {
+            return null; // impossible
+        }
+!!!293506.java!!!	insert_boolean(inout value : boolean) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_boolean(value);
+!!!293634.java!!!	insert_octet(in value : byte) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_octet(value);
+!!!293762.java!!!	insert_char(in value : char) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_char(value);
+!!!293890.java!!!	insert_short(in value : short) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_short(value);
+!!!294018.java!!!	insert_ushort(in value : short) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_ushort(value);
+!!!294146.java!!!	insert_long(in value : int) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_long(value);
+!!!294274.java!!!	insert_ulong(in value : int) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_ulong(value);
+!!!294402.java!!!	insert_float(in value : float) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_float(value);
+!!!294530.java!!!	insert_double(in value : double) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_double(value);
+!!!294658.java!!!	insert_string(inout value : String) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_string(value);
+!!!294786.java!!!	insert_reference(inout value : Object) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_reference(value);
+!!!294914.java!!!	insert_typecode(inout value : TypeCode) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_typecode(value);
+!!!295042.java!!!	insert_longlong(in value : long) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_longlong(value);
+!!!295170.java!!!	insert_ulonglong(in value : long) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_ulonglong(value);
+!!!295298.java!!!	insert_wchar(in value : char) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_wchar(value);
+!!!295426.java!!!	insert_wstring(inout value : String) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_wstring(value);
+!!!295554.java!!!	insert_any(inout value : Any) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_any(value);
+!!!295682.java!!!	insert_dyn_any(inout value : DynAny) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_dyn_any(value);
+!!!295810.java!!!	insert_val(inout value : Serializable) : void
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        currentComponent.insert_val(value);
+!!!295938.java!!!	get_val() : Serializable
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_val();
+!!!296066.java!!!	get_boolean() : boolean
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_boolean();
+!!!296194.java!!!	get_octet() : byte
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_octet();
+!!!296322.java!!!	get_char() : char
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_char();
+!!!296450.java!!!	get_short() : short
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_short();
+!!!296578.java!!!	get_ushort() : short
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_ushort();
+!!!296706.java!!!	get_long() : int
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_long();
+!!!296834.java!!!	get_ulong() : int
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_ulong();
+!!!296962.java!!!	get_float() : float
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_float();
+!!!297090.java!!!	get_double() : double
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_double();
+!!!297218.java!!!	get_string() : String
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_string();
+!!!297346.java!!!	get_reference() : Object
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_reference();
+!!!297474.java!!!	get_typecode() : TypeCode
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_typecode();
+!!!297602.java!!!	get_longlong() : long
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_longlong();
+!!!297730.java!!!	get_ulonglong() : long
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_ulonglong();
+!!!297858.java!!!	get_wchar() : char
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_wchar();
+!!!297986.java!!!	get_wstring() : String
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_wstring();
+!!!298114.java!!!	get_any() : Any
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_any();
+!!!298242.java!!!	get_dyn_any() : DynAny
+        if (status == STATUS_DESTROYED) {
+            throw wrapper.dynAnyDestroyed() ;
+        }
+        if (index == NO_INDEX)
+            throw new org.omg.DynamicAny.DynAnyPackage.InvalidValue();
+        DynAny currentComponent = current_component();
+        if (DynAnyUtil.isConstructedDynAny(currentComponent))
+            throw new org.omg.DynamicAny.DynAnyPackage.TypeMismatch();
+        return currentComponent.get_dyn_any();

@@ -1,0 +1,172 @@
+class DynamicMethodMarshallerImpl
+!!!1307394.java!!!	isAnyClass(inout cls : Class) : boolean
+        return cls.equals( Object.class ) || cls.equals( Serializable.class ) ||
+            cls.equals( Externalizable.class ) ;
+!!!1307522.java!!!	isAbstractInterface(inout cls : Class) : boolean
+        // Either cls is an interface that extends IDLEntity, or else
+        // cls does not extend java.rmi.Remote and all of its methods
+        // throw RemoteException.
+        if (IDLEntity.class.isAssignableFrom( cls ))
+            return cls.isInterface() ;
+        else
+            return cls.isInterface() && allMethodsThrowRemoteException( cls ) ;
+!!!1307650.java!!!	allMethodsThrowRemoteException(inout cls : Class) : boolean
+        Method[] methods = cls.getMethods() ;
+
+        // Check that all methods (other than those declared in java.lang.Object)
+        // throw an exception that is a subclass of RemoteException.
+        for (int ctr=0; ctr<methods.length; ctr++) {
+            Method method = methods[ctr] ;
+            if (method.getDeclaringClass() != Object.class)
+                if (!throwsRemote( method ))
+                    return false ;
+        }
+
+        return true ;
+!!!1307778.java!!!	throwsRemote(inout method : Method) : boolean
+        Class[] exceptionTypes = method.getExceptionTypes() ;
+
+        // Check that some exceptionType is a subclass of RemoteException
+        for (int ctr=0; ctr<exceptionTypes.length; ctr++) {
+            Class exceptionType = exceptionTypes[ctr] ;
+            if (java.rmi.RemoteException.class.isAssignableFrom( exceptionType ))
+                return true ;
+        }
+
+        return false ;
+!!!1308418.java!!!	makeReaderWriter(in cls : Class) : DynamicMethodMarshallerImpl::ReaderWriter
+        if (cls.equals( boolean.class ))
+            return booleanRW ;
+        else if (cls.equals( byte.class ))
+            return byteRW ;
+        else if (cls.equals( char.class ))
+            return charRW ;
+        else if (cls.equals( short.class ))
+            return shortRW ;
+        else if (cls.equals( int.class ))
+            return intRW ;
+        else if (cls.equals( long.class ))
+            return longRW ;
+        else if (cls.equals( float.class ))
+            return floatRW ;
+        else if (cls.equals( double.class ))
+            return doubleRW ;
+        else if (java.rmi.Remote.class.isAssignableFrom( cls ))
+            return new ReaderWriterBase( "remote(" + cls.getName() + ")" )
+            {
+                public Object read( InputStream is )
+                {
+                    return PortableRemoteObject.narrow( is.read_Object(),
+                        cls ) ;
+                }
+
+                public void write( OutputStream os, Object value )
+                {
+                    Util.writeRemoteObject( os, value ) ;
+                }
+            } ;
+        else if (cls.equals(org.omg.CORBA.Object.class))
+            return corbaObjectRW ;
+        else if (org.omg.CORBA.Object.class.isAssignableFrom( cls ))
+            return new ReaderWriterBase( "org.omg.CORBA.Object(" +
+                cls.getName() + ")" )
+            {
+                public Object read( InputStream is )
+                {
+                    return is.read_Object(cls) ;
+                }
+
+                public void write( OutputStream os, Object value )
+                {
+                    os.write_Object( (org.omg.CORBA.Object)value ) ;
+                }
+            } ;
+        else if (isAnyClass(cls))
+            return anyRW ;
+        else if (isAbstractInterface(cls))
+            return abstractInterfaceRW ;
+
+        // For anything else, just read it as a value type.
+        return new ReaderWriterBase( "value(" + cls.getName() + ")" )
+        {
+            public Object read( InputStream is )
+            {
+                return is.read_value(cls) ;
+            }
+
+            public void write( OutputStream os, Object value )
+            {
+                os.write_value( (Serializable)value, cls ) ;
+            }
+        } ;
+!!!1308546.java!!!	DynamicMethodMarshallerImpl(inout method : Method)
+        this.method = method ;
+        ehandler = new ExceptionHandlerImpl( method.getExceptionTypes() ) ;
+        needsArgumentCopy = false ;
+
+        Class[] argTypes = method.getParameterTypes() ;
+        hasArguments = argTypes.length > 0 ;
+        if (hasArguments) {
+            argRWs = new ReaderWriter[ argTypes.length ] ;
+            for (int ctr=0; ctr<argTypes.length; ctr++ ) {
+                // This could be further optimized to avoid
+                // copying if argTypes contains at most one
+                // immutable object type.
+                if (!argTypes[ctr].isPrimitive())
+                    needsArgumentCopy = true ;
+                argRWs[ctr] = makeReaderWriter( argTypes[ctr] ) ;
+            }
+        }
+
+        Class resultType = method.getReturnType() ;
+        needsResultCopy = false ;
+        hasVoidResult = resultType.equals( void.class ) ;
+        if (!hasVoidResult) {
+            needsResultCopy = !resultType.isPrimitive() ;
+            resultRW = makeReaderWriter( resultType ) ;
+        }
+!!!1308674.java!!!	getMethod() : Method
+        return method ;
+!!!1308802.java!!!	copyArguments(inout args : Object [[]], inout orb : ORB) : Object
+        if (needsArgumentCopy)
+            return Util.copyObjects( args, orb ) ;
+        else
+            return args ;
+!!!1308930.java!!!	readArguments(inout is : InputStream) : Object
+        Object[] result = null ;
+
+        if (hasArguments) {
+            result = new Object[ argRWs.length ] ;
+            for (int ctr=0; ctr<argRWs.length; ctr++ )
+                result[ctr] = argRWs[ctr].read( is ) ;
+        }
+
+        return result ;
+!!!1309058.java!!!	writeArguments(inout os : OutputStream, inout args : Object [[]]) : void
+        if (hasArguments) {
+            if (args.length != argRWs.length)
+                throw new IllegalArgumentException( "Expected " + argRWs.length +
+                    " arguments, but got " + args.length + " arguments." ) ;
+
+            for (int ctr=0; ctr<argRWs.length; ctr++ )
+                argRWs[ctr].write( os, args[ctr] ) ;
+        }
+!!!1309186.java!!!	copyResult(inout result : Object, inout orb : ORB) : Object
+        if (needsResultCopy)
+            return Util.copyObject( result, orb ) ;
+        else
+            return result ;
+!!!1309314.java!!!	readResult(inout is : InputStream) : Object
+        if (hasVoidResult)
+            return null ;
+        else
+            return resultRW.read( is ) ;
+!!!1309442.java!!!	writeResult(inout os : OutputStream, inout result : Object) : void
+        if (!hasVoidResult)
+            resultRW.write( os, result ) ;
+!!!1309570.java!!!	isDeclaredException(inout thr : Throwable) : boolean
+        return ehandler.isDeclaredException( thr.getClass() ) ;
+!!!1309698.java!!!	writeException(inout os : OutputStream, inout ex : Exception) : void
+        ehandler.writeException( os, ex ) ;
+!!!1309826.java!!!	readException(inout ae : ApplicationException) : Exception
+        return ehandler.readException( ae ) ;

@@ -1,0 +1,796 @@
+class XMLSchemaLoader
+!!!4663298.java!!!	XMLSchemaLoader()
+        this( new SymbolTable(), null, new XMLEntityManager(), null, null, null);
+!!!4663426.java!!!	XMLSchemaLoader(inout symbolTable : SymbolTable)
+        this( symbolTable, null, new XMLEntityManager(), null, null, null);
+!!!4663554.java!!!	XMLSchemaLoader(inout errorReporter : XMLErrorReporter, inout grammarBucket : XSGrammarBucket, inout sHandler : SubstitutionGroupHandler, inout builder : CMBuilder)
+        this(null, errorReporter, null, grammarBucket, sHandler, builder);
+!!!4663682.java!!!	XMLSchemaLoader(inout symbolTable : SymbolTable, inout errorReporter : XMLErrorReporter, inout entityResolver : XMLEntityManager, inout grammarBucket : XSGrammarBucket, inout sHandler : SubstitutionGroupHandler, inout builder : CMBuilder)
+
+        // store properties and features in configuration
+        fLoaderConfig.addRecognizedFeatures(RECOGNIZED_FEATURES);
+        fLoaderConfig.addRecognizedProperties(RECOGNIZED_PROPERTIES);
+        if (symbolTable != null){
+            fLoaderConfig.setProperty(SYMBOL_TABLE, symbolTable);
+        }
+
+        if(errorReporter == null) {
+            errorReporter = new XMLErrorReporter ();
+            errorReporter.setLocale(fLocale);
+            errorReporter.setProperty(ERROR_HANDLER, new DefaultErrorHandler());
+
+        }
+        fErrorReporter = errorReporter;
+        // make sure error reporter knows about schemas...
+        if(fErrorReporter.getMessageFormatter(XSMessageFormatter.SCHEMA_DOMAIN) == null) {
+            fErrorReporter.putMessageFormatter(XSMessageFormatter.SCHEMA_DOMAIN, new XSMessageFormatter());
+        }
+        fLoaderConfig.setProperty(ERROR_REPORTER, fErrorReporter);
+        fEntityManager = entityResolver;
+        // entity manager is null if XMLSchemaValidator creates the loader
+        if (fEntityManager != null){
+            fLoaderConfig.setProperty(ENTITY_MANAGER, fEntityManager);
+        }
+
+        // by default augment PSVI (i.e. don't use declaration pool)
+        fLoaderConfig.setFeature(AUGMENT_PSVI, true);
+
+        if(grammarBucket == null ) {
+            grammarBucket = new XSGrammarBucket();
+        }
+        fGrammarBucket = grammarBucket;
+        if(sHandler == null) {
+            sHandler = new SubstitutionGroupHandler(fGrammarBucket);
+        }
+        fSubGroupHandler = sHandler;
+
+        if(builder == null) {
+            builder = new CMBuilder(fNodeFactory);
+        }
+        fCMBuilder = builder;
+        fSchemaHandler = new XSDHandler(fGrammarBucket);
+        if (fDeclPool != null) {
+            fDeclPool.reset();
+        }
+        fJAXPCache = new HashMap();
+
+        fSettingsChanged = true;
+!!!4663810.java!!!	getRecognizedFeatures() : String
+        return (String[])(RECOGNIZED_FEATURES.clone());
+!!!4663938.java!!!	getFeature(inout featureId : String) : boolean
+        return fLoaderConfig.getFeature(featureId);
+!!!4664066.java!!!	setFeature(inout featureId : String, inout state : boolean) : void
+        fSettingsChanged = true;
+        if(featureId.equals(CONTINUE_AFTER_FATAL_ERROR)) {
+            fErrorReporter.setFeature(CONTINUE_AFTER_FATAL_ERROR, state);
+        }
+        else if(featureId.equals(GENERATE_SYNTHETIC_ANNOTATIONS)) {
+            fSchemaHandler.setGenerateSyntheticAnnotations(state);
+        }
+        fLoaderConfig.setFeature(featureId, state);
+!!!4664194.java!!!	getRecognizedProperties() : String
+        return (String[])(RECOGNIZED_PROPERTIES.clone());
+!!!4664322.java!!!	getProperty(inout propertyId : String) : Object
+        return fLoaderConfig.getProperty(propertyId);
+!!!4664450.java!!!	setProperty(inout propertyId : String, inout state : Object) : void
+        fSettingsChanged = true;
+        fLoaderConfig.setProperty(propertyId, state);
+        if (propertyId.equals(JAXP_SCHEMA_SOURCE)) {
+            fJAXPSource = state;
+            fJAXPProcessed = false;
+        }
+        else if (propertyId.equals(XMLGRAMMAR_POOL)) {
+            fGrammarPool = (XMLGrammarPool)state;
+        }
+        else if (propertyId.equals(SCHEMA_LOCATION)) {
+            fExternalSchemas = (String)state;
+        }
+        else if (propertyId.equals(SCHEMA_NONS_LOCATION)) {
+            fExternalNoNSSchema = (String) state;
+        }
+        else if (propertyId.equals(LOCALE)) {
+            setLocale((Locale) state);
+        }
+        else if (propertyId.equals(ENTITY_RESOLVER)) {
+            fEntityManager.setProperty(ENTITY_RESOLVER, state);
+        }
+        else if (propertyId.equals(ERROR_REPORTER)) {
+            fErrorReporter = (XMLErrorReporter)state;
+            if (fErrorReporter.getMessageFormatter(XSMessageFormatter.SCHEMA_DOMAIN) == null) {
+                fErrorReporter.putMessageFormatter(XSMessageFormatter.SCHEMA_DOMAIN, new XSMessageFormatter());
+            }
+        }
+        else if (propertyId.equals(XML_SECURITY_PROPERTY_MANAGER)) {
+            XMLSecurityPropertyManager spm = (XMLSecurityPropertyManager)state;
+            faccessExternalSchema = spm.getValue(XMLSecurityPropertyManager.Property.ACCESS_EXTERNAL_SCHEMA);
+        }
+!!!4664578.java!!!	setLocale(inout locale : Locale) : void
+        fLocale = locale;
+        fErrorReporter.setLocale(locale);
+!!!4664706.java!!!	getLocale() : Locale
+        return fLocale;
+!!!4664834.java!!!	setErrorHandler(inout errorHandler : XMLErrorHandler) : void
+        fErrorReporter.setProperty(ERROR_HANDLER, errorHandler);
+!!!4664962.java!!!	getErrorHandler() : XMLErrorHandler
+        return fErrorReporter.getErrorHandler();
+!!!4665090.java!!!	setEntityResolver(inout entityResolver : XMLEntityResolver) : void
+        fUserEntityResolver = entityResolver;
+        fLoaderConfig.setProperty(ENTITY_RESOLVER, entityResolver);
+        fEntityManager.setProperty(ENTITY_RESOLVER, entityResolver);
+!!!4665218.java!!!	getEntityResolver() : XMLEntityResolver
+        return fUserEntityResolver;
+!!!4665346.java!!!	loadGrammar(inout source : XMLInputSource [[]]) : void
+        int numSource = source.length;
+        for (int i = 0; i < numSource; ++i) {
+            loadGrammar(source[i]);
+        }
+!!!4665474.java!!!	loadGrammar(inout source : XMLInputSource) : Grammar
+
+        // REVISIT: this method should have a namespace parameter specified by
+        // user. In this case we can easily detect if a schema asked to be loaded
+        // is already in the local cache.
+
+        reset(fLoaderConfig);
+        fSettingsChanged = false;
+        XSDDescription desc = new XSDDescription();
+        desc.fContextType = XSDDescription.CONTEXT_PREPARSE;
+        desc.setBaseSystemId(source.getBaseSystemId());
+        desc.setLiteralSystemId( source.getSystemId());
+        // none of the other fields make sense for preparsing
+        Map locationPairs = new HashMap();
+        // Process external schema location properties.
+        // We don't call tokenizeSchemaLocationStr here, because we also want
+        // to check whether the values are valid URI.
+        processExternalHints(fExternalSchemas, fExternalNoNSSchema,
+                locationPairs, fErrorReporter);
+        SchemaGrammar grammar = loadSchema(desc, source, locationPairs);
+
+        if(grammar != null && fGrammarPool != null) {
+            fGrammarPool.cacheGrammars(XMLGrammarDescription.XML_SCHEMA, fGrammarBucket.getGrammars());
+            // NOTE: we only need to verify full checking in case the schema was not provided via JAXP
+            // since full checking already verified for all JAXP schemas
+            if(fIsCheckedFully && fJAXPCache.get(grammar) != grammar) {
+                XSConstraints.fullSchemaChecking(fGrammarBucket, fSubGroupHandler, fCMBuilder, fErrorReporter);
+            }
+        }
+        return grammar;
+!!!4665602.java!!!	loadSchema(inout desc : XSDDescription, inout source : XMLInputSource, inout locationPairs : Map) : SchemaGrammar
+
+        // this should only be done once per invocation of this object;
+        // unless application alters JAXPSource in the mean time.
+        if(!fJAXPProcessed) {
+            processJAXPSchemaSource(locationPairs);
+        }
+
+        if (desc.isExternal()) {
+            String accessError = SecuritySupport.checkAccess(desc.getExpandedSystemId(), faccessExternalSchema, Constants.ACCESS_EXTERNAL_ALL);
+            if (accessError != null) {
+                throw new XNIException(fErrorReporter.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                        "schema_reference.access",
+                        new Object[] { SecuritySupport.sanitizePath(desc.getExpandedSystemId()), accessError }, XMLErrorReporter.SEVERITY_ERROR));
+            }
+        }
+        SchemaGrammar grammar = fSchemaHandler.parseSchema(source, desc, locationPairs);
+
+        return grammar;
+!!!4665730.java!!!	resolveDocument(inout desc : XSDDescription, inout locationPairs : Map, inout entityResolver : XMLEntityResolver) : XMLInputSource
+        String loc = null;
+        // we consider the schema location properties for import
+        if (desc.getContextType() == XSDDescription.CONTEXT_IMPORT ||
+                desc.fromInstance()) {
+            // use empty string as the key for absent namespace
+            String namespace = desc.getTargetNamespace();
+            String ns = namespace == null ? XMLSymbols.EMPTY_STRING : namespace;
+            // get the location hint for that namespace
+            LocationArray tempLA = locationPairs.get(ns);
+            if(tempLA != null)
+                loc = tempLA.getFirstLocation();
+        }
+
+        // if it's not import, or if the target namespace is not set
+        // in the schema location properties, use location hint
+        if (loc == null) {
+            String[] hints = desc.getLocationHints();
+            if (hints != null && hints.length > 0)
+                loc = hints[0];
+        }
+
+        String expandedLoc = XMLEntityManager.expandSystemId(loc, desc.getBaseSystemId(), false);
+        desc.setLiteralSystemId(loc);
+        desc.setExpandedSystemId(expandedLoc);
+        return entityResolver.resolveEntity(desc);
+!!!4665858.java!!!	processExternalHints(inout sl : String, inout nsl : String, inout locations : Map, inout er : XMLErrorReporter) : void
+        if (sl != null) {
+            try {
+                // get the attribute decl for xsi:schemaLocation
+                // because external schema location property has the same syntax
+                // as xsi:schemaLocation
+                XSAttributeDecl attrDecl = SchemaGrammar.SG_XSI.getGlobalAttributeDecl(SchemaSymbols.XSI_SCHEMALOCATION);
+                // validation the string value to get the list of URI's
+                attrDecl.fType.validate(sl, null, null);
+                if (!tokenizeSchemaLocationStr(sl, locations)) {
+                    // report warning (odd number of items)
+                    er.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                            "SchemaLocation",
+                            new Object[]{sl},
+                            XMLErrorReporter.SEVERITY_WARNING);
+                }
+            }
+            catch (InvalidDatatypeValueException ex) {
+                // report warning (not list of URI's)
+                er.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                        ex.getKey(), ex.getArgs(),
+                        XMLErrorReporter.SEVERITY_WARNING);
+            }
+        }
+
+        if (nsl != null) {
+            try {
+                // similarly for no ns schema location property
+                XSAttributeDecl attrDecl = SchemaGrammar.SG_XSI.getGlobalAttributeDecl(SchemaSymbols.XSI_NONAMESPACESCHEMALOCATION);
+                attrDecl.fType.validate(nsl, null, null);
+                LocationArray la = ((LocationArray)locations.get(XMLSymbols.EMPTY_STRING));
+                if(la == null) {
+                    la = new LocationArray();
+                    locations.put(XMLSymbols.EMPTY_STRING, la);
+                }
+                la.addLocation(nsl);
+            }
+            catch (InvalidDatatypeValueException ex) {
+                // report warning (not a URI)
+                er.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                        ex.getKey(), ex.getArgs(),
+                        XMLErrorReporter.SEVERITY_WARNING);
+            }
+        }
+!!!4665986.java!!!	tokenizeSchemaLocationStr(inout schemaStr : String, inout locations : Map) : boolean
+        if (schemaStr!= null) {
+            StringTokenizer t = new StringTokenizer(schemaStr, " \n\t\r");
+            String namespace, location;
+            while (t.hasMoreTokens()) {
+                namespace = t.nextToken ();
+                if (!t.hasMoreTokens()) {
+                    return false; // error!
+                }
+                location = t.nextToken();
+                LocationArray la = locations.get(namespace);
+                if(la == null) {
+                    la = new LocationArray();
+                    locations.put(namespace, la);
+                }
+                la.addLocation(location);
+            }
+        }
+        return true;
+!!!4666114.java!!!	processJAXPSchemaSource(inout locationPairs : Map) : void
+        fJAXPProcessed = true;
+        if (fJAXPSource == null) {
+            return;
+        }
+
+        Class componentType = fJAXPSource.getClass().getComponentType();
+        XMLInputSource xis = null;
+        String sid = null;
+        if (componentType == null) {
+            // Not an array
+            if(fJAXPSource instanceof InputStream ||
+                    fJAXPSource instanceof InputSource) {
+                SchemaGrammar g = (SchemaGrammar)fJAXPCache.get(fJAXPSource);
+                if(g != null) {
+                    fGrammarBucket.putGrammar(g);
+                    return;
+                }
+            }
+            fXSDDescription.reset();
+            xis = xsdToXMLInputSource(fJAXPSource);
+            sid = xis.getSystemId();
+            fXSDDescription.fContextType = XSDDescription.CONTEXT_PREPARSE;
+            if (sid != null) {
+                fXSDDescription.setBaseSystemId(xis.getBaseSystemId());
+                fXSDDescription.setLiteralSystemId(sid);
+                fXSDDescription.setExpandedSystemId(sid);
+                fXSDDescription.fLocationHints = new String[]{sid};
+            }
+            SchemaGrammar g = loadSchema(fXSDDescription, xis, locationPairs);
+            // it is possible that we won't be able to resolve JAXP schema-source location
+            if (g != null){
+                if(fJAXPSource instanceof InputStream ||
+                        fJAXPSource instanceof InputSource) {
+                    fJAXPCache.put(fJAXPSource, g);
+                    if(fIsCheckedFully) {
+                        XSConstraints.fullSchemaChecking(fGrammarBucket, fSubGroupHandler, fCMBuilder, fErrorReporter);
+                    }
+                }
+                fGrammarBucket.putGrammar(g);
+            }
+            return ;
+        } else if ( (componentType != Object.class) &&
+                (componentType != String.class) &&
+                (componentType != File.class) &&
+                (componentType != InputStream.class) &&
+                (componentType != InputSource.class)
+        ) {
+            // Not an Object[], String[], File[], InputStream[], InputSource[]
+            throw new XMLConfigurationException(
+                    Status.NOT_SUPPORTED, "\""+JAXP_SCHEMA_SOURCE+
+                    "\" property cannot have an array of type {"+componentType.getName()+
+                    "}. Possible types of the array supported are Object, String, File, "+
+            "InputStream, InputSource.");
+        }
+
+        // JAXP spec. allow []s of type String, File, InputStream,
+        // InputSource also, apart from [] of type Object.
+        Object[] objArr = (Object[]) fJAXPSource;
+        //make local vector for storing targetn namespaces of schemasources specified in object arrays.
+        Vector jaxpSchemaSourceNamespaces = new Vector() ;
+        for (int i = 0; i < objArr.length; i++) {
+            if(objArr[i] instanceof InputStream ||
+                    objArr[i] instanceof InputSource) {
+                SchemaGrammar g = (SchemaGrammar)fJAXPCache.get(objArr[i]);
+                if (g != null) {
+                    fGrammarBucket.putGrammar(g);
+                    continue;
+                }
+            }
+            fXSDDescription.reset();
+            xis = xsdToXMLInputSource(objArr[i]);
+            sid = xis.getSystemId();
+            fXSDDescription.fContextType = XSDDescription.CONTEXT_PREPARSE;
+            if (sid != null) {
+                fXSDDescription.setBaseSystemId(xis.getBaseSystemId());
+                fXSDDescription.setLiteralSystemId(sid);
+                fXSDDescription.setExpandedSystemId(sid);
+                fXSDDescription.fLocationHints = new String[]{sid};
+            }
+            String targetNamespace = null ;
+            // load schema
+            SchemaGrammar grammar = fSchemaHandler.parseSchema(xis,fXSDDescription, locationPairs);
+
+            if(fIsCheckedFully) {
+                XSConstraints.fullSchemaChecking(fGrammarBucket, fSubGroupHandler, fCMBuilder, fErrorReporter);
+            }
+            if(grammar != null){
+                targetNamespace = grammar.getTargetNamespace() ;
+                if(jaxpSchemaSourceNamespaces.contains(targetNamespace)){
+                    //when an array of objects is passed it is illegal to have two schemas that share same namespace.
+                    throw new java.lang.IllegalArgumentException(
+                            " When using array of Objects as the value of SCHEMA_SOURCE property , " +
+                    "no two Schemas should share the same targetNamespace. " );
+                }
+                else{
+                    jaxpSchemaSourceNamespaces.add(targetNamespace) ;
+                }
+                if(objArr[i] instanceof InputStream ||
+                        objArr[i] instanceof InputSource) {
+                    fJAXPCache.put(objArr[i], grammar);
+                }
+                fGrammarBucket.putGrammar(grammar);
+            }
+            else{
+                //REVISIT: What should be the acutal behavior if grammar can't be loaded as specified in schema source?
+            }
+        }
+!!!4666242.java!!!	xsdToXMLInputSource(inout val : Object) : XMLInputSource
+        if (val instanceof String) {
+            // String value is treated as a URI that is passed through the
+            // EntityResolver
+            String loc = (String) val;
+            fXSDDescription.reset();
+            fXSDDescription.setValues(null, loc, null, null);
+            XMLInputSource xis = null;
+            try {
+                xis = fEntityManager.resolveEntity(fXSDDescription);
+            } catch (IOException ex) {
+                fErrorReporter.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                        "schema_reference.4",
+                        new Object[] { loc }, XMLErrorReporter.SEVERITY_ERROR);
+            }
+            if (xis == null) {
+                // REVISIT: can this happen?
+                // Treat value as a URI and pass in as systemId
+                return new XMLInputSource(null, loc, null);
+            }
+            return xis;
+        } else if (val instanceof InputSource) {
+            return saxToXMLInputSource((InputSource) val);
+        } else if (val instanceof InputStream) {
+            return new XMLInputSource(null, null, null,
+                    (InputStream) val, null);
+        } else if (val instanceof File) {
+            File file = (File) val;
+            InputStream is = null;
+            try {
+                is = new BufferedInputStream(new FileInputStream(file));
+            } catch (FileNotFoundException ex) {
+                fErrorReporter.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                        "schema_reference.4", new Object[] { file.toString() },
+                        XMLErrorReporter.SEVERITY_ERROR);
+            }
+            return new XMLInputSource(null, null, null, is, null);
+        }
+        throw new XMLConfigurationException(
+                Status.NOT_SUPPORTED, "\""+JAXP_SCHEMA_SOURCE+
+                "\" property cannot have a value of type {"+val.getClass().getName()+
+                "}. Possible types of the value supported are String, File, InputStream, "+
+        "InputSource OR an array of these types.");
+!!!4666370.java!!!	saxToXMLInputSource(inout sis : InputSource) : XMLInputSource
+        String publicId = sis.getPublicId();
+        String systemId = sis.getSystemId();
+
+        Reader charStream = sis.getCharacterStream();
+        if (charStream != null) {
+            return new XMLInputSource(publicId, systemId, null, charStream,
+                    null);
+        }
+
+        InputStream byteStream = sis.getByteStream();
+        if (byteStream != null) {
+            return new XMLInputSource(publicId, systemId, null, byteStream,
+                    sis.getEncoding());
+        }
+
+        return new XMLInputSource(publicId, systemId, null);
+!!!4667138.java!!!	getFeatureDefault(inout featureId : String) : Boolean
+        if (featureId.equals(AUGMENT_PSVI)){
+            return Boolean.TRUE;
+        }
+        return null;
+!!!4667266.java!!!	getPropertyDefault(inout propertyId : String) : Object
+        // TODO Auto-generated method stub
+        return null;
+!!!4667394.java!!!	reset(inout componentManager : XMLComponentManager) : void
+
+        XMLSecurityPropertyManager spm = (XMLSecurityPropertyManager)componentManager.getProperty(XML_SECURITY_PROPERTY_MANAGER);
+        if (spm == null) {
+            spm = new XMLSecurityPropertyManager();
+            setProperty(XML_SECURITY_PROPERTY_MANAGER, spm);
+        }
+
+        XMLSecurityManager sm = (XMLSecurityManager)componentManager.getProperty(SECURITY_MANAGER);
+        if (sm == null)
+            setProperty(SECURITY_MANAGER,new XMLSecurityManager(true));
+
+        faccessExternalSchema = spm.getValue(XMLSecurityPropertyManager.Property.ACCESS_EXTERNAL_SCHEMA);
+
+        fGrammarBucket.reset();
+
+        fSubGroupHandler.reset();
+
+        boolean parser_settings = componentManager.getFeature(PARSER_SETTINGS, true);
+
+        if (!parser_settings || !fSettingsChanged){
+            // need to reprocess JAXP schema sources
+            fJAXPProcessed = false;
+            // reinitialize grammar bucket
+            initGrammarBucket();
+            return;
+        }
+
+        //pass the component manager to the factory..
+        fNodeFactory.reset(componentManager);
+
+        // get registered entity manager to be able to resolve JAXP schema-source property:
+        // Note: in case XMLSchemaValidator has created the loader,
+        // the entity manager property is null
+        fEntityManager = (XMLEntityManager)componentManager.getProperty(ENTITY_MANAGER);
+
+        // get the error reporter
+        fErrorReporter = (XMLErrorReporter)componentManager.getProperty(ERROR_REPORTER);
+
+        // Determine schema dv factory to use
+        SchemaDVFactory dvFactory = null;
+        dvFactory = fSchemaHandler.getDVFactory();
+        if (dvFactory == null) {
+            dvFactory = SchemaDVFactory.getInstance();
+            fSchemaHandler.setDVFactory(dvFactory);
+        }
+
+        boolean psvi = componentManager.getFeature(AUGMENT_PSVI, false);
+
+        if (!psvi) {
+            if (fDeclPool != null) {
+                fDeclPool.reset();
+            }
+            else {
+                fDeclPool = new XSDeclarationPool();
+            }
+            fCMBuilder.setDeclPool(fDeclPool);
+            fSchemaHandler.setDeclPool(fDeclPool);
+            if (dvFactory instanceof SchemaDVFactoryImpl) {
+                fDeclPool.setDVFactory((SchemaDVFactoryImpl)dvFactory);
+                ((SchemaDVFactoryImpl)dvFactory).setDeclPool(fDeclPool);
+            }
+        } else {
+            fCMBuilder.setDeclPool(null);
+            fSchemaHandler.setDeclPool(null);
+        }
+
+        // get schema location properties
+        try {
+            fExternalSchemas = (String) componentManager.getProperty(SCHEMA_LOCATION);
+            fExternalNoNSSchema = (String) componentManager.getProperty(SCHEMA_NONS_LOCATION);
+        } catch (XMLConfigurationException e) {
+            fExternalSchemas = null;
+            fExternalNoNSSchema = null;
+        }
+
+        // get JAXP sources if available
+        fJAXPSource = componentManager.getProperty(JAXP_SCHEMA_SOURCE, null);
+        fJAXPProcessed = false;
+
+        // clear grammars, and put the one for schema namespace there
+        fGrammarPool = (XMLGrammarPool) componentManager.getProperty(XMLGRAMMAR_POOL, null);
+        initGrammarBucket();
+        // get continue-after-fatal-error feature
+        try {
+            boolean fatalError = componentManager.getFeature(CONTINUE_AFTER_FATAL_ERROR, false);
+            if (!fatalError) {
+                fErrorReporter.setFeature(CONTINUE_AFTER_FATAL_ERROR, fatalError);
+            }
+        } catch (XMLConfigurationException e) {
+        }
+        // set full validation to false
+        fIsCheckedFully = componentManager.getFeature(SCHEMA_FULL_CHECKING, false);
+
+        // get generate-synthetic-annotations feature
+        fSchemaHandler.setGenerateSyntheticAnnotations(componentManager.getFeature(GENERATE_SYNTHETIC_ANNOTATIONS, false));
+        fSchemaHandler.reset(componentManager);
+!!!4667522.java!!!	initGrammarBucket() : void
+        if(fGrammarPool != null) {
+            Grammar [] initialGrammars = fGrammarPool.retrieveInitialGrammarSet(XMLGrammarDescription.XML_SCHEMA);
+            for (int i = 0; i < initialGrammars.length; i++) {
+                // put this grammar into the bucket, along with grammars
+                // imported by it (directly or indirectly)
+                if (!fGrammarBucket.putGrammar((SchemaGrammar)(initialGrammars[i]), true)) {
+                    // REVISIT: a conflict between new grammar(s) and grammars
+                    // in the bucket. What to do? A warning? An exception?
+                    fErrorReporter.reportError(XSMessageFormatter.SCHEMA_DOMAIN,
+                            "GrammarConflict", null,
+                            XMLErrorReporter.SEVERITY_WARNING);
+                }
+            }
+        }
+!!!4667650.java!!!	getConfig() : DOMConfiguration
+        return this;
+!!!4667778.java!!!	load(inout is : LSInput) : XSModel
+        try {
+            Grammar g = loadGrammar(dom2xmlInputSource(is));
+            return ((XSGrammar) g).toXSModel();
+        } catch (Exception e) {
+            reportDOMFatalError(e);
+            return null;
+        }
+!!!4667906.java!!!	loadInputList(inout is : LSInputList) : XSModel
+        int length = is.getLength();
+        SchemaGrammar[] gs = new SchemaGrammar[length];
+        for (int i = 0; i < length; i++) {
+            try {
+                gs[i] = (SchemaGrammar) loadGrammar(dom2xmlInputSource(is.item(i)));
+            } catch (Exception e) {
+                reportDOMFatalError(e);
+                return null;
+            }
+        }
+        return new XSModelImpl(gs);
+!!!4668034.java!!!	loadURI(inout uri : String) : XSModel
+        try {
+            Grammar g = loadGrammar(new XMLInputSource(null, uri, null));
+            return ((XSGrammar)g).toXSModel();
+        }
+        catch (Exception e){
+            reportDOMFatalError(e);
+            return null;
+        }
+!!!4668162.java!!!	loadURIList(inout uriList : StringList) : XSModel
+        int length = uriList.getLength();
+        SchemaGrammar[] gs = new SchemaGrammar[length];
+        for (int i = 0; i < length; i++) {
+            try {
+                gs[i] =
+                    (SchemaGrammar) loadGrammar(new XMLInputSource(null, uriList.item(i), null));
+            } catch (Exception e) {
+                reportDOMFatalError(e);
+                return null;
+            }
+        }
+        return new XSModelImpl(gs);
+!!!4668290.java!!!	reportDOMFatalError(inout e : Exception) : void
+                if (fErrorHandler != null) {
+                    DOMErrorImpl error = new DOMErrorImpl();
+                    error.fException = e;
+                    error.fMessage = e.getMessage();
+                    error.fSeverity = DOMError.SEVERITY_FATAL_ERROR;
+                    fErrorHandler.getErrorHandler().handleError(error);
+                }
+!!!4668418.java!!!	canSetParameter(inout name : String, inout value : Object) : boolean
+        if(value instanceof Boolean){
+            if (name.equals(Constants.DOM_VALIDATE) ||
+                name.equals(SCHEMA_FULL_CHECKING) ||
+                name.equals(VALIDATE_ANNOTATIONS) ||
+                name.equals(CONTINUE_AFTER_FATAL_ERROR) ||
+                name.equals(ALLOW_JAVA_ENCODINGS) ||
+                name.equals(STANDARD_URI_CONFORMANT_FEATURE) ||
+                name.equals(GENERATE_SYNTHETIC_ANNOTATIONS) ||
+                name.equals(HONOUR_ALL_SCHEMALOCATIONS) ||
+                name.equals(NAMESPACE_GROWTH) ||
+                name.equals(TOLERATE_DUPLICATES) ||
+                name.equals(USE_SERVICE_MECHANISM)) {
+                return true;
+
+            }
+            return false;
+        }
+        if (name.equals(Constants.DOM_ERROR_HANDLER) ||
+            name.equals(Constants.DOM_RESOURCE_RESOLVER) ||
+            name.equals(SYMBOL_TABLE) ||
+            name.equals(ERROR_REPORTER) ||
+            name.equals(ERROR_HANDLER) ||
+            name.equals(ENTITY_RESOLVER) ||
+            name.equals(XMLGRAMMAR_POOL) ||
+            name.equals(SCHEMA_LOCATION) ||
+            name.equals(SCHEMA_NONS_LOCATION) ||
+            name.equals(JAXP_SCHEMA_SOURCE) ||
+            name.equals(SCHEMA_DV_FACTORY)) {
+            return true;
+        }
+        return false;
+!!!4668546.java!!!	getParameter(inout name : String) : Object
+
+        if (name.equals(Constants.DOM_ERROR_HANDLER)){
+            return (fErrorHandler != null) ? fErrorHandler.getErrorHandler() : null;
+        }
+        else if (name.equals(Constants.DOM_RESOURCE_RESOLVER)) {
+            return (fResourceResolver != null) ? fResourceResolver.getEntityResolver() : null;
+        }
+
+        try {
+            boolean feature = getFeature(name);
+            return (feature) ? Boolean.TRUE : Boolean.FALSE;
+        } catch (Exception e) {
+            Object property;
+            try {
+                property = getProperty(name);
+                return property;
+            } catch (Exception ex) {
+                String msg =
+                    DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "FEATURE_NOT_SUPPORTED",
+                            new Object[] { name });
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+        }
+!!!4668674.java!!!	getParameterNames() : DOMStringList
+        if (fRecognizedParameters == null){
+            Vector v = new Vector();
+            v.add(Constants.DOM_VALIDATE);
+            v.add(Constants.DOM_ERROR_HANDLER);
+            v.add(Constants.DOM_RESOURCE_RESOLVER);
+            v.add(SYMBOL_TABLE);
+            v.add(ERROR_REPORTER);
+            v.add(ERROR_HANDLER);
+            v.add(ENTITY_RESOLVER);
+            v.add(XMLGRAMMAR_POOL);
+            v.add(SCHEMA_LOCATION);
+            v.add(SCHEMA_NONS_LOCATION);
+            v.add(JAXP_SCHEMA_SOURCE);
+            v.add(SCHEMA_FULL_CHECKING);
+            v.add(CONTINUE_AFTER_FATAL_ERROR);
+            v.add(ALLOW_JAVA_ENCODINGS);
+            v.add(STANDARD_URI_CONFORMANT_FEATURE);
+            v.add(VALIDATE_ANNOTATIONS);
+            v.add(GENERATE_SYNTHETIC_ANNOTATIONS);
+            v.add(HONOUR_ALL_SCHEMALOCATIONS);
+            v.add(NAMESPACE_GROWTH);
+            v.add(TOLERATE_DUPLICATES);
+            v.add(USE_SERVICE_MECHANISM);
+            fRecognizedParameters = new DOMStringListImpl(v);
+        }
+        return fRecognizedParameters;
+!!!4668802.java!!!	setParameter(inout name : String, inout value : Object) : void
+        if (value instanceof Boolean) {
+            boolean state = ((Boolean) value).booleanValue();
+            if (name.equals("validate") && state) {
+                return;
+            }
+            try {
+                setFeature(name, state);
+            } catch (Exception e) {
+                String msg =
+                    DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "FEATURE_NOT_SUPPORTED",
+                            new Object[] { name });
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+            return;
+        }
+        if (name.equals(Constants.DOM_ERROR_HANDLER)) {
+            if (value instanceof DOMErrorHandler) {
+                try {
+                    fErrorHandler = new DOMErrorHandlerWrapper((DOMErrorHandler) value);
+                    setErrorHandler(fErrorHandler);
+                } catch (XMLConfigurationException e) {
+                }
+            } else {
+                // REVISIT: type mismatch
+                String msg =
+                    DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "FEATURE_NOT_SUPPORTED",
+                            new Object[] { name });
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+            return;
+
+        }
+        if (name.equals(Constants.DOM_RESOURCE_RESOLVER)) {
+            if (value instanceof LSResourceResolver) {
+                try {
+                    fResourceResolver = new DOMEntityResolverWrapper((LSResourceResolver) value);
+                    setEntityResolver(fResourceResolver);
+                }
+                catch (XMLConfigurationException e) {}
+            } else {
+                // REVISIT: type mismatch
+                String msg =
+                    DOMMessageFormatter.formatMessage(
+                            DOMMessageFormatter.DOM_DOMAIN,
+                            "FEATURE_NOT_SUPPORTED",
+                            new Object[] { name });
+                throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+            }
+            return;
+        }
+
+        try {
+            setProperty(name, value);
+        } catch (Exception ex) {
+
+            String msg =
+                DOMMessageFormatter.formatMessage(
+                        DOMMessageFormatter.DOM_DOMAIN,
+                        "FEATURE_NOT_SUPPORTED",
+                        new Object[] { name });
+            throw new DOMException(DOMException.NOT_SUPPORTED_ERR, msg);
+
+        }
+
+!!!4668930.java!!!	dom2xmlInputSource(inout is : LSInput) : XMLInputSource
+        // need to wrap the LSInput with an XMLInputSource
+        XMLInputSource xis = null;
+
+        /**
+         * An LSParser looks at inputs specified in LSInput in
+         * the following order: characterStream, byteStream,
+         * stringData, systemId, publicId. For consistency
+         * have the same behaviour for XSLoader.
+         */
+
+        // check whether there is a Reader
+        // according to DOM, we need to treat such reader as "UTF-16".
+        if (is.getCharacterStream() != null) {
+            xis = new XMLInputSource(is.getPublicId(), is.getSystemId(),
+                    is.getBaseURI(), is.getCharacterStream(),
+            "UTF-16");
+        }
+        // check whether there is an InputStream
+        else if (is.getByteStream() != null) {
+            xis = new XMLInputSource(is.getPublicId(), is.getSystemId(),
+                    is.getBaseURI(), is.getByteStream(),
+                    is.getEncoding());
+        }
+        // if there is a string data, use a StringReader
+        // according to DOM, we need to treat such data as "UTF-16".
+        else if (is.getStringData() != null && is.getStringData().length() != 0) {
+            xis = new XMLInputSource(is.getPublicId(), is.getSystemId(),
+                    is.getBaseURI(), new StringReader(is.getStringData()),
+            "UTF-16");
+        }
+        // otherwise, just use the public/system/base Ids
+        else {
+            xis = new XMLInputSource(is.getPublicId(), is.getSystemId(),
+                    is.getBaseURI());
+        }
+
+        return xis;

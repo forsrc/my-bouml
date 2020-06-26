@@ -1,0 +1,824 @@
+class JTextComponent
+!!!2526082.java!!!	JTextComponent()
+        super();
+        // enable InputMethodEvent for on-the-spot pre-editing
+        enableEvents(AWTEvent.KEY_EVENT_MASK | AWTEvent.INPUT_METHOD_EVENT_MASK);
+        caretEvent = new MutableCaretEvent(this);
+        addMouseListener(caretEvent);
+        addFocusListener(caretEvent);
+        setEditable(true);
+        setDragEnabled(false);
+        setLayout(null); // layout is managed by View hierarchy
+        updateUI();
+!!!2526210.java!!!	getUI() : TextUI
+ return (TextUI)ui;
+!!!2526338.java!!!	setUI(inout ui : TextUI) : void
+        super.setUI(ui);
+!!!2526466.java!!!	updateUI() : void
+        setUI((TextUI)UIManager.getUI(this));
+        invalidate();
+!!!2526594.java!!!	addCaretListener(inout listener : CaretListener) : void
+        listenerList.add(CaretListener.class, listener);
+!!!2526722.java!!!	removeCaretListener(inout listener : CaretListener) : void
+        listenerList.remove(CaretListener.class, listener);
+!!!2526850.java!!!	getCaretListeners() : CaretListener
+        return listenerList.getListeners(CaretListener.class);
+!!!2526978.java!!!	fireCaretUpdate(inout e : CaretEvent) : void
+        // Guaranteed to return a non-null array
+        Object[] listeners = listenerList.getListenerList();
+        // Process the listeners last to first, notifying
+        // those that are interested in this event
+        for (int i = listeners.length-2; i>=0; i-=2) {
+            if (listeners[i]==CaretListener.class) {
+                ((CaretListener)listeners[i+1]).caretUpdate(e);
+            }
+        }
+!!!2527106.java!!!	setDocument(inout doc : Document) : void
+        Document old = model;
+
+        /*
+         * acquire a read lock on the old model to prevent notification of
+         * mutations while we disconnecting the old model.
+         */
+        try {
+            if (old instanceof AbstractDocument) {
+                ((AbstractDocument)old).readLock();
+            }
+            if (accessibleContext != null) {
+                model.removeDocumentListener(
+                    ((AccessibleJTextComponent)accessibleContext));
+            }
+            if (inputMethodRequestsHandler != null) {
+                model.removeDocumentListener((DocumentListener)inputMethodRequestsHandler);
+            }
+            model = doc;
+
+            // Set the document's run direction property to match the
+            // component's ComponentOrientation property.
+            Boolean runDir = getComponentOrientation().isLeftToRight()
+                             ? TextAttribute.RUN_DIRECTION_LTR
+                             : TextAttribute.RUN_DIRECTION_RTL;
+            if (runDir != doc.getProperty(TextAttribute.RUN_DIRECTION)) {
+                doc.putProperty(TextAttribute.RUN_DIRECTION, runDir );
+            }
+            firePropertyChange("document", old, doc);
+        } finally {
+            if (old instanceof AbstractDocument) {
+                ((AbstractDocument)old).readUnlock();
+            }
+        }
+
+        revalidate();
+        repaint();
+        if (accessibleContext != null) {
+            model.addDocumentListener(
+                ((AccessibleJTextComponent)accessibleContext));
+        }
+        if (inputMethodRequestsHandler != null) {
+            model.addDocumentListener((DocumentListener)inputMethodRequestsHandler);
+        }
+!!!2527234.java!!!	getDocument() : Document
+        return model;
+!!!2527362.java!!!	setComponentOrientation(inout o : ComponentOrientation) : void
+        // Set the document's run direction property to match the
+        // ComponentOrientation property.
+        Document doc = getDocument();
+        if( doc !=  null ) {
+            Boolean runDir = o.isLeftToRight()
+                             ? TextAttribute.RUN_DIRECTION_LTR
+                             : TextAttribute.RUN_DIRECTION_RTL;
+            doc.putProperty( TextAttribute.RUN_DIRECTION, runDir );
+        }
+        super.setComponentOrientation( o );
+!!!2527490.java!!!	getActions() : Action
+        return getUI().getEditorKit(this).getActions();
+!!!2527618.java!!!	setMargin(inout m : Insets) : void
+        Insets old = margin;
+        margin = m;
+        firePropertyChange("margin", old, m);
+        invalidate();
+!!!2527746.java!!!	getMargin() : Insets
+        return margin;
+!!!2527874.java!!!	setNavigationFilter(inout filter : NavigationFilter) : void
+        navigationFilter = filter;
+!!!2528002.java!!!	getNavigationFilter() : NavigationFilter
+        return navigationFilter;
+!!!2528130.java!!!	getCaret() : Caret
+        return caret;
+!!!2528258.java!!!	setCaret(inout c : Caret) : void
+        if (caret != null) {
+            caret.removeChangeListener(caretEvent);
+            caret.deinstall(this);
+        }
+        Caret old = caret;
+        caret = c;
+        if (caret != null) {
+            caret.install(this);
+            caret.addChangeListener(caretEvent);
+        }
+        firePropertyChange("caret", old, caret);
+!!!2528386.java!!!	getHighlighter() : Highlighter
+        return highlighter;
+!!!2528514.java!!!	setHighlighter(inout h : Highlighter) : void
+        if (highlighter != null) {
+            highlighter.deinstall(this);
+        }
+        Highlighter old = highlighter;
+        highlighter = h;
+        if (highlighter != null) {
+            highlighter.install(this);
+        }
+        firePropertyChange("highlighter", old, h);
+!!!2528642.java!!!	setKeymap(inout map : Keymap) : void
+        Keymap old = keymap;
+        keymap = map;
+        firePropertyChange("keymap", old, keymap);
+        updateInputMap(old, map);
+!!!2528770.java!!!	setDragEnabled(inout b : boolean) : void
+        if (b && GraphicsEnvironment.isHeadless()) {
+            throw new HeadlessException();
+        }
+        dragEnabled = b;
+!!!2528898.java!!!	getDragEnabled() : boolean
+        return dragEnabled;
+!!!2529026.java!!!	setDropMode(inout dropMode : DropMode) : void
+        if (dropMode != null) {
+            switch (dropMode) {
+                case USE_SELECTION:
+                case INSERT:
+                    this.dropMode = dropMode;
+                    return;
+            }
+        }
+
+        throw new IllegalArgumentException(dropMode + ": Unsupported drop mode for text");
+!!!2529154.java!!!	getDropMode() : DropMode
+        return dropMode;
+!!!2529282.java!!!	dropLocationForPoint(inout p : Point) : TransferHandler::DropLocation
+        Position.Bias[] bias = new Position.Bias[1];
+        int index = getUI().viewToModel(this, p, bias);
+
+        // viewToModel currently returns null for some HTML content
+        // when the point is within the component's top inset
+        if (bias[0] == null) {
+            bias[0] = Position.Bias.Forward;
+        }
+
+        return new DropLocation(p, index, bias[0]);
+!!!2529410.java!!!	setDropLocation(inout location : TransferHandler::DropLocation, inout state : Object, inout forDrop : boolean) : Object
+
+        Object retVal = null;
+        DropLocation textLocation = (DropLocation)location;
+
+        if (dropMode == DropMode.USE_SELECTION) {
+            if (textLocation == null) {
+                if (state != null) {
+                    /*
+                     * This object represents the state saved earlier.
+                     *     If the caret is a DefaultCaret it will be
+                     *     an Object array containing, in order:
+                     *         - the saved caret mark (Integer)
+                     *         - the saved caret dot (Integer)
+                     *         - the saved caret visibility (Boolean)
+                     *         - the saved mark bias (Position.Bias)
+                     *         - the saved dot bias (Position.Bias)
+                     *     If the caret is not a DefaultCaret it will
+                     *     be similar, but will not contain the dot
+                     *     or mark bias.
+                     */
+                    Object[] vals = (Object[])state;
+
+                    if (!forDrop) {
+                        if (caret instanceof DefaultCaret) {
+                            ((DefaultCaret)caret).setDot(((Integer)vals[0]).intValue(),
+                                                         (Position.Bias)vals[3]);
+                            ((DefaultCaret)caret).moveDot(((Integer)vals[1]).intValue(),
+                                                         (Position.Bias)vals[4]);
+                        } else {
+                            caret.setDot(((Integer)vals[0]).intValue());
+                            caret.moveDot(((Integer)vals[1]).intValue());
+                        }
+                    }
+
+                    caret.setVisible(((Boolean)vals[2]).booleanValue());
+                }
+            } else {
+                if (dropLocation == null) {
+                    boolean visible;
+
+                    if (caret instanceof DefaultCaret) {
+                        DefaultCaret dc = (DefaultCaret)caret;
+                        visible = dc.isActive();
+                        retVal = new Object[] {Integer.valueOf(dc.getMark()),
+                                               Integer.valueOf(dc.getDot()),
+                                               Boolean.valueOf(visible),
+                                               dc.getMarkBias(),
+                                               dc.getDotBias()};
+                    } else {
+                        visible = caret.isVisible();
+                        retVal = new Object[] {Integer.valueOf(caret.getMark()),
+                                               Integer.valueOf(caret.getDot()),
+                                               Boolean.valueOf(visible)};
+                    }
+
+                    caret.setVisible(true);
+                } else {
+                    retVal = state;
+                }
+
+                if (caret instanceof DefaultCaret) {
+                    ((DefaultCaret)caret).setDot(textLocation.getIndex(), textLocation.getBias());
+                } else {
+                    caret.setDot(textLocation.getIndex());
+                }
+            }
+        } else {
+            if (textLocation == null) {
+                if (state != null) {
+                    caret.setVisible(((Boolean)state).booleanValue());
+                }
+            } else {
+                if (dropLocation == null) {
+                    boolean visible = caret instanceof DefaultCaret
+                                      ? ((DefaultCaret)caret).isActive()
+                                      : caret.isVisible();
+                    retVal = Boolean.valueOf(visible);
+                    caret.setVisible(false);
+                } else {
+                    retVal = state;
+                }
+            }
+        }
+
+        DropLocation old = dropLocation;
+        dropLocation = textLocation;
+        firePropertyChange("dropLocation", old, dropLocation);
+
+        return retVal;
+!!!2529538.java!!!	getDropLocation() : TransferHandler::DropLocation
+        return dropLocation;
+!!!2529666.java!!!	updateInputMap(inout oldKm : Keymap, inout newKm : Keymap) : void
+        // Locate the current KeymapWrapper.
+        InputMap km = getInputMap(JComponent.WHEN_FOCUSED);
+        InputMap last = km;
+        while (km != null && !(km instanceof KeymapWrapper)) {
+            last = km;
+            km = km.getParent();
+        }
+        if (km != null) {
+            // Found it, tweak the InputMap that points to it, as well
+            // as anything it points to.
+            if (newKm == null) {
+                if (last != km) {
+                    last.setParent(km.getParent());
+                }
+                else {
+                    last.setParent(null);
+                }
+            }
+            else {
+                InputMap newKM = new KeymapWrapper(newKm);
+                last.setParent(newKM);
+                if (last != km) {
+                    newKM.setParent(km.getParent());
+                }
+            }
+        }
+        else if (newKm != null) {
+            km = getInputMap(JComponent.WHEN_FOCUSED);
+            if (km != null) {
+                // Couldn't find it.
+                // Set the parent of WHEN_FOCUSED InputMap to be the new one.
+                InputMap newKM = new KeymapWrapper(newKm);
+                newKM.setParent(km.getParent());
+                km.setParent(newKM);
+            }
+        }
+
+        // Do the same thing with the ActionMap
+        ActionMap am = getActionMap();
+        ActionMap lastAM = am;
+        while (am != null && !(am instanceof KeymapActionMap)) {
+            lastAM = am;
+            am = am.getParent();
+        }
+        if (am != null) {
+            // Found it, tweak the Actionap that points to it, as well
+            // as anything it points to.
+            if (newKm == null) {
+                if (lastAM != am) {
+                    lastAM.setParent(am.getParent());
+                }
+                else {
+                    lastAM.setParent(null);
+                }
+            }
+            else {
+                ActionMap newAM = new KeymapActionMap(newKm);
+                lastAM.setParent(newAM);
+                if (lastAM != am) {
+                    newAM.setParent(am.getParent());
+                }
+            }
+        }
+        else if (newKm != null) {
+            am = getActionMap();
+            if (am != null) {
+                // Couldn't find it.
+                // Set the parent of ActionMap to be the new one.
+                ActionMap newAM = new KeymapActionMap(newKm);
+                newAM.setParent(am.getParent());
+                am.setParent(newAM);
+            }
+        }
+!!!2529794.java!!!	getKeymap() : Keymap
+        return keymap;
+!!!2529922.java!!!	addKeymap(inout nm : String, inout parent : Keymap) : Keymap
+        Keymap map = new DefaultKeymap(nm, parent);
+        if (nm != null) {
+            // add a named keymap, a class of bindings
+            getKeymapTable().put(nm, map);
+        }
+        return map;
+!!!2530050.java!!!	removeKeymap(inout nm : String) : Keymap
+        return getKeymapTable().remove(nm);
+!!!2530178.java!!!	getKeymap(inout nm : String) : Keymap
+        return getKeymapTable().get(nm);
+!!!2530306.java!!!	getKeymapTable() : HashMap
+        synchronized (KEYMAP_TABLE) {
+            AppContext appContext = AppContext.getAppContext();
+            HashMap<String,Keymap> keymapTable =
+                (HashMap<String,Keymap>)appContext.get(KEYMAP_TABLE);
+            if (keymapTable == null) {
+                keymapTable = new HashMap<String,Keymap>(17);
+                appContext.put(KEYMAP_TABLE, keymapTable);
+                //initialize default keymap
+                Keymap binding = addKeymap(DEFAULT_KEYMAP, null);
+                binding.setDefaultAction(new
+                                         DefaultEditorKit.DefaultKeyTypedAction());
+            }
+            return keymapTable;
+        }
+!!!2530562.java!!!	loadKeymap(inout map : Keymap, inout bindings : JTextComponent::KeyBinding [[]], inout actions : Action [[]]) : void
+        Hashtable<String, Action> h = new Hashtable<String, Action>();
+        for (Action a : actions) {
+            String value = (String)a.getValue(Action.NAME);
+            h.put((value!=null ? value:""), a);
+        }
+        for (KeyBinding binding : bindings) {
+            Action a = h.get(binding.actionName);
+            if (a != null) {
+                map.addActionForKeyStroke(binding.key, a);
+            }
+        }
+!!!2530690.java!!!	getCaretColor() : Color
+        return caretColor;
+!!!2530818.java!!!	setCaretColor(inout c : Color) : void
+        Color old = caretColor;
+        caretColor = c;
+        firePropertyChange("caretColor", old, caretColor);
+!!!2530946.java!!!	getSelectionColor() : Color
+        return selectionColor;
+!!!2531074.java!!!	setSelectionColor(inout c : Color) : void
+        Color old = selectionColor;
+        selectionColor = c;
+        firePropertyChange("selectionColor", old, selectionColor);
+!!!2531202.java!!!	getSelectedTextColor() : Color
+        return selectedTextColor;
+!!!2531330.java!!!	setSelectedTextColor(inout c : Color) : void
+        Color old = selectedTextColor;
+        selectedTextColor = c;
+        firePropertyChange("selectedTextColor", old, selectedTextColor);
+!!!2531458.java!!!	getDisabledTextColor() : Color
+        return disabledTextColor;
+!!!2531586.java!!!	setDisabledTextColor(inout c : Color) : void
+        Color old = disabledTextColor;
+        disabledTextColor = c;
+        firePropertyChange("disabledTextColor", old, disabledTextColor);
+!!!2531714.java!!!	replaceSelection(inout content : String) : void
+        Document doc = getDocument();
+        if (doc != null) {
+            try {
+                boolean composedTextSaved = saveComposedText(caret.getDot());
+                int p0 = Math.min(caret.getDot(), caret.getMark());
+                int p1 = Math.max(caret.getDot(), caret.getMark());
+                if (doc instanceof AbstractDocument) {
+                    ((AbstractDocument)doc).replace(p0, p1 - p0, content,null);
+                }
+                else {
+                    if (p0 != p1) {
+                        doc.remove(p0, p1 - p0);
+                    }
+                    if (content != null && content.length() > 0) {
+                        doc.insertString(p0, content, null);
+                    }
+                }
+                if (composedTextSaved) {
+                    restoreComposedText();
+                }
+            } catch (BadLocationException e) {
+                UIManager.getLookAndFeel().provideErrorFeedback(JTextComponent.this);
+            }
+        }
+!!!2531842.java!!!	getText(in offs : int, in len : int) : String
+        return getDocument().getText(offs, len);
+!!!2531970.java!!!	modelToView(in pos : int) : Rectangle
+        return getUI().modelToView(this, pos);
+!!!2532098.java!!!	viewToModel(inout pt : Point) : int
+        return getUI().viewToModel(this, pt);
+!!!2532226.java!!!	cut() : void
+        if (isEditable() && isEnabled()) {
+            invokeAction("cut", TransferHandler.getCutAction());
+        }
+!!!2532354.java!!!	copy() : void
+        invokeAction("copy", TransferHandler.getCopyAction());
+!!!2532482.java!!!	paste() : void
+        if (isEditable() && isEnabled()) {
+            invokeAction("paste", TransferHandler.getPasteAction());
+        }
+!!!2532610.java!!!	invokeAction(inout name : String, inout altAction : Action) : void
+        ActionMap map = getActionMap();
+        Action action = null;
+
+        if (map != null) {
+            action = map.get(name);
+        }
+        if (action == null) {
+            installDefaultTransferHandlerIfNecessary();
+            action = altAction;
+        }
+        action.actionPerformed(new ActionEvent(this,
+                               ActionEvent.ACTION_PERFORMED, (String)action.
+                               getValue(Action.NAME),
+                               EventQueue.getMostRecentEventTime(),
+                               getCurrentEventModifiers()));
+!!!2532738.java!!!	installDefaultTransferHandlerIfNecessary() : void
+        if (getTransferHandler() == null) {
+            if (defaultTransferHandler == null) {
+                defaultTransferHandler = new DefaultTransferHandler();
+            }
+            setTransferHandler(defaultTransferHandler);
+        }
+!!!2532866.java!!!	moveCaretPosition(in pos : int) : void
+        Document doc = getDocument();
+        if (doc != null) {
+            if (pos > doc.getLength() || pos < 0) {
+                throw new IllegalArgumentException("bad position: " + pos);
+            }
+            caret.moveDot(pos);
+        }
+!!!2532994.java!!!	setFocusAccelerator(in aKey : char) : void
+        aKey = Character.toUpperCase(aKey);
+        char old = focusAccelerator;
+        focusAccelerator = aKey;
+        // Fix for 4341002: value of FOCUS_ACCELERATOR_KEY is wrong.
+        // So we fire both FOCUS_ACCELERATOR_KEY, for compatibility,
+        // and the correct event here.
+        firePropertyChange(FOCUS_ACCELERATOR_KEY, old, focusAccelerator);
+        firePropertyChange("focusAccelerator", old, focusAccelerator);
+!!!2533122.java!!!	getFocusAccelerator() : char
+        return focusAccelerator;
+!!!2533250.java!!!	read(inout in : Reader, inout desc : Object) : void
+        EditorKit kit = getUI().getEditorKit(this);
+        Document doc = kit.createDefaultDocument();
+        if (desc != null) {
+            doc.putProperty(Document.StreamDescriptionProperty, desc);
+        }
+        try {
+            kit.read(in, doc, 0);
+            setDocument(doc);
+        } catch (BadLocationException e) {
+            throw new IOException(e.getMessage());
+        }
+!!!2533378.java!!!	write(inout out : Writer) : void
+        Document doc = getDocument();
+        try {
+            getUI().getEditorKit(this).write(out, doc, 0, doc.getLength());
+        } catch (BadLocationException e) {
+            throw new IOException(e.getMessage());
+        }
+!!!2533506.java!!!	removeNotify() : void
+        super.removeNotify();
+        if (getFocusedComponent() == this) {
+            AppContext.getAppContext().remove(FOCUSED_COMPONENT);
+        }
+!!!2533634.java!!!	setCaretPosition(in position : int) : void
+        Document doc = getDocument();
+        if (doc != null) {
+            if (position > doc.getLength() || position < 0) {
+                throw new IllegalArgumentException("bad position: " + position);
+            }
+            caret.setDot(position);
+        }
+!!!2533762.java!!!	getCaretPosition() : int
+        return caret.getDot();
+!!!2533890.java!!!	setText(inout t : String) : void
+        try {
+            Document doc = getDocument();
+            if (doc instanceof AbstractDocument) {
+                ((AbstractDocument)doc).replace(0, doc.getLength(), t,null);
+            }
+            else {
+                doc.remove(0, doc.getLength());
+                doc.insertString(0, t, null);
+            }
+        } catch (BadLocationException e) {
+            UIManager.getLookAndFeel().provideErrorFeedback(JTextComponent.this);
+        }
+!!!2534018.java!!!	getText() : String
+        Document doc = getDocument();
+        String txt;
+        try {
+            txt = doc.getText(0, doc.getLength());
+        } catch (BadLocationException e) {
+            txt = null;
+        }
+        return txt;
+!!!2534146.java!!!	getSelectedText() : String
+        String txt = null;
+        int p0 = Math.min(caret.getDot(), caret.getMark());
+        int p1 = Math.max(caret.getDot(), caret.getMark());
+        if (p0 != p1) {
+            try {
+                Document doc = getDocument();
+                txt = doc.getText(p0, p1 - p0);
+            } catch (BadLocationException e) {
+                throw new IllegalArgumentException(e.getMessage());
+            }
+        }
+        return txt;
+!!!2534274.java!!!	isEditable() : boolean
+        return editable;
+!!!2534402.java!!!	setEditable(inout b : boolean) : void
+        if (b != editable) {
+            boolean oldVal = editable;
+            editable = b;
+            enableInputMethods(editable);
+            firePropertyChange("editable", Boolean.valueOf(oldVal), Boolean.valueOf(editable));
+            repaint();
+        }
+!!!2534530.java!!!	getSelectionStart() : int
+        int start = Math.min(caret.getDot(), caret.getMark());
+        return start;
+!!!2534658.java!!!	setSelectionStart(in selectionStart : int) : void
+        /* Route through select method to enforce consistent policy
+         * between selectionStart and selectionEnd.
+         */
+        select(selectionStart, getSelectionEnd());
+!!!2534786.java!!!	getSelectionEnd() : int
+        int end = Math.max(caret.getDot(), caret.getMark());
+        return end;
+!!!2534914.java!!!	setSelectionEnd(in selectionEnd : int) : void
+        /* Route through select method to enforce consistent policy
+         * between selectionStart and selectionEnd.
+         */
+        select(getSelectionStart(), selectionEnd);
+!!!2535042.java!!!	select(in selectionStart : int, in selectionEnd : int) : void
+        // argument adjustment done by java.awt.TextComponent
+        int docLength = getDocument().getLength();
+
+        if (selectionStart < 0) {
+            selectionStart = 0;
+        }
+        if (selectionStart > docLength) {
+            selectionStart = docLength;
+        }
+        if (selectionEnd > docLength) {
+            selectionEnd = docLength;
+        }
+        if (selectionEnd < selectionStart) {
+            selectionEnd = selectionStart;
+        }
+
+        setCaretPosition(selectionStart);
+        moveCaretPosition(selectionEnd);
+!!!2535170.java!!!	selectAll() : void
+        Document doc = getDocument();
+        if (doc != null) {
+            setCaretPosition(0);
+            moveCaretPosition(doc.getLength());
+        }
+!!!2535298.java!!!	getToolTipText(inout event : MouseEvent) : String
+        String retValue = super.getToolTipText(event);
+
+        if (retValue == null) {
+            TextUI ui = getUI();
+            if (ui != null) {
+                retValue = ui.getToolTipText(this, new Point(event.getX(),
+                                                             event.getY()));
+            }
+        }
+        return retValue;
+!!!2535426.java!!!	getPreferredScrollableViewportSize() : Dimension
+        return getPreferredSize();
+!!!2535554.java!!!	getScrollableUnitIncrement(inout visibleRect : Rectangle, in orientation : int, in direction : int) : int
+        switch(orientation) {
+        case SwingConstants.VERTICAL:
+            return visibleRect.height / 10;
+        case SwingConstants.HORIZONTAL:
+            return visibleRect.width / 10;
+        default:
+            throw new IllegalArgumentException("Invalid orientation: " + orientation);
+        }
+!!!2535682.java!!!	getScrollableBlockIncrement(inout visibleRect : Rectangle, in orientation : int, in direction : int) : int
+        switch(orientation) {
+        case SwingConstants.VERTICAL:
+            return visibleRect.height;
+        case SwingConstants.HORIZONTAL:
+            return visibleRect.width;
+        default:
+            throw new IllegalArgumentException("Invalid orientation: " + orientation);
+        }
+!!!2535810.java!!!	getScrollableTracksViewportWidth() : boolean
+        Container parent = SwingUtilities.getUnwrappedParent(this);
+        if (parent instanceof JViewport) {
+            return parent.getWidth() > getPreferredSize().width;
+        }
+        return false;
+!!!2535938.java!!!	getScrollableTracksViewportHeight() : boolean
+        Container parent = SwingUtilities.getUnwrappedParent(this);
+        if (parent instanceof JViewport) {
+            return parent.getHeight() > getPreferredSize().height;
+        }
+        return false;
+!!!2536066.java!!!	print() : boolean
+        return print(null, null, true, null, null, true);
+!!!2536194.java!!!	print(in headerFormat : MessageFormat, in footerFormat : MessageFormat) : boolean
+        return print(headerFormat, footerFormat, true, null, null, true);
+!!!2536322.java!!!	print(in headerFormat : MessageFormat, in footerFormat : MessageFormat, in showPrintDialog : boolean, in service : PrintService, in attributes : PrintRequestAttributeSet, in interactive : boolean) : boolean
+
+        final PrinterJob job = PrinterJob.getPrinterJob();
+        final Printable printable;
+        final PrintingStatus printingStatus;
+        final boolean isHeadless = GraphicsEnvironment.isHeadless();
+        final boolean isEventDispatchThread =
+            SwingUtilities.isEventDispatchThread();
+        final Printable textPrintable = getPrintable(headerFormat, footerFormat);
+        if (interactive && ! isHeadless) {
+            printingStatus =
+                PrintingStatus.createPrintingStatus(this, job);
+            printable =
+                printingStatus.createNotificationPrintable(textPrintable);
+        } else {
+            printingStatus = null;
+            printable = textPrintable;
+        }
+
+        if (service != null) {
+            job.setPrintService(service);
+        }
+
+        job.setPrintable(printable);
+
+        final PrintRequestAttributeSet attr = (attributes == null)
+            ? new HashPrintRequestAttributeSet()
+            : attributes;
+
+        if (showPrintDialog && ! isHeadless && ! job.printDialog(attr)) {
+            return false;
+        }
+
+        /*
+         * there are three cases for printing:
+         * 1. print non interactively (! interactive || isHeadless)
+         * 2. print interactively off EDT
+         * 3. print interactively on EDT
+         *
+         * 1 and 2 prints on the current thread (3 prints on another thread)
+         * 2 and 3 deal with PrintingStatusDialog
+         */
+        final Callable<Object> doPrint =
+            new Callable<Object>() {
+                public Object call() throws Exception {
+                    try {
+                        job.print(attr);
+                    } finally {
+                        if (printingStatus != null) {
+                            printingStatus.dispose();
+                        }
+                    }
+                    return null;
+                }
+            };
+
+        final FutureTask<Object> futurePrinting =
+            new FutureTask<Object>(doPrint);
+
+        final Runnable runnablePrinting =
+            new Runnable() {
+                public void run() {
+                    //disable component
+                    boolean wasEnabled = false;
+                    if (isEventDispatchThread) {
+                        if (isEnabled()) {
+                            wasEnabled = true;
+                            setEnabled(false);
+                        }
+                    } else {
+                        try {
+                            wasEnabled = SwingUtilities2.submit(
+                                new Callable<Boolean>() {
+                                    public Boolean call() throws Exception {
+                                        boolean rv = isEnabled();
+                                        if (rv) {
+                                            setEnabled(false);
+                                        }
+                                        return rv;
+                                    }
+                                }).get();
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        } catch (ExecutionException e) {
+                            Throwable cause = e.getCause();
+                            if (cause instanceof Error) {
+                                throw (Error) cause;
+                            }
+                            if (cause instanceof RuntimeException) {
+                                throw (RuntimeException) cause;
+                            }
+                            throw new AssertionError(cause);
+                        }
+                    }
+
+                    getDocument().render(futurePrinting);
+
+                    //enable component
+                    if (wasEnabled) {
+                        if (isEventDispatchThread) {
+                            setEnabled(true);
+                        } else {
+                            try {
+                                SwingUtilities2.submit(
+                                    new Runnable() {
+                                        public void run() {
+                                            setEnabled(true);
+                                        }
+                                    }, null).get();
+                            } catch (InterruptedException e) {
+                                throw new RuntimeException(e);
+                            } catch (ExecutionException e) {
+                                Throwable cause = e.getCause();
+                                if (cause instanceof Error) {
+                                    throw (Error) cause;
+                                }
+                                if (cause instanceof RuntimeException) {
+                                    throw (RuntimeException) cause;
+                                }
+                                throw new AssertionError(cause);
+                            }
+                        }
+                    }
+                }
+            };
+
+        if (! interactive || isHeadless) {
+            runnablePrinting.run();
+        } else {
+            if (isEventDispatchThread) {
+                (new Thread(runnablePrinting)).start();
+                printingStatus.showModal(true);
+            } else {
+                printingStatus.showModal(false);
+                runnablePrinting.run();
+            }
+        }
+
+        //the printing is done successfully or otherwise.
+        //dialog is hidden if needed.
+        try {
+            futurePrinting.get();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof PrinterAbortException) {
+                if (printingStatus != null
+                    && printingStatus.isAborted()) {
+                    return false;
+                } else {
+                    throw (PrinterAbortException) cause;
+                }
+            } else if (cause instanceof PrinterException) {
+                throw (PrinterException) cause;
+            } else if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            } else if (cause instanceof Error) {
+                throw (Error) cause;
+            } else {
+                throw new AssertionError(cause);
+            }
+        }
+        return true;
+!!!2536450.java!!!	getPrintable(in headerFormat : MessageFormat, in footerFormat : MessageFormat) : Printable
+        return TextComponentPrintable.getPrintable(
+                   this, headerFormat, footerFormat);
+!!!2536578.java!!!	getAccessibleContext() : AccessibleContext
+        if (accessibleContext == null) {
+            accessibleContext = new AccessibleJTextComponent();
+        }
+        return accessibleContext;
+!!!2548610.java!!!	readObject(inout s : ObjectInputStream) : void
+        s.defaultReadObject();
+        caretEvent = new MutableCaretEvent(this);
+        addMouseListener(caretEvent);
+        addFocusListener(caretEvent);

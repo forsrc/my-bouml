@@ -1,0 +1,166 @@
+class Permissions
+!!!7977602.java!!!	Permissions()
+        permsMap = new HashMap<Class<?>, PermissionCollection>(11);
+        allPermission = null;
+!!!7977730.java!!!	add(inout permission : Permission) : void
+        if (isReadOnly())
+            throw new SecurityException(
+              "attempt to add a Permission to a readonly Permissions object");
+
+        PermissionCollection pc;
+
+        synchronized (this) {
+            pc = getPermissionCollection(permission, true);
+            pc.add(permission);
+        }
+
+        // No sync; staleness -> optimizations delayed, which is OK
+        if (permission instanceof AllPermission) {
+            allPermission = pc;
+        }
+        if (permission instanceof UnresolvedPermission) {
+            hasUnresolved = true;
+        }
+!!!7977858.java!!!	implies(inout permission : Permission) : boolean
+        // No sync; staleness -> skip optimization, which is OK
+        if (allPermission != null) {
+            return true; // AllPermission has already been added
+        } else {
+            synchronized (this) {
+                PermissionCollection pc = getPermissionCollection(permission,
+                    false);
+                if (pc != null) {
+                    return pc.implies(permission);
+                } else {
+                    // none found
+                    return false;
+                }
+            }
+        }
+!!!7977986.java!!!	elements() : Enumeration
+        // go through each Permissions in the hash table
+        // and call their elements() function.
+
+        synchronized (this) {
+            return new PermissionsEnumerator(permsMap.values().iterator());
+        }
+!!!7978114.java!!!	getPermissionCollection(inout p : Permission, inout createEmpty : boolean) : PermissionCollection
+        Class<?> c = p.getClass();
+
+        PermissionCollection pc = permsMap.get(c);
+
+        if (!hasUnresolved && !createEmpty) {
+            return pc;
+        } else if (pc == null) {
+
+            // Check for unresolved permissions
+            pc = (hasUnresolved ? getUnresolvedPermissions(p) : null);
+
+            // if still null, create a new collection
+            if (pc == null && createEmpty) {
+
+                pc = p.newPermissionCollection();
+
+                // still no PermissionCollection?
+                // We'll give them a PermissionsHash.
+                if (pc == null)
+                    pc = new PermissionsHash();
+            }
+
+            if (pc != null) {
+                permsMap.put(c, pc);
+            }
+        }
+        return pc;
+!!!7978242.java!!!	getUnresolvedPermissions(inout p : Permission) : PermissionCollection
+        // Called from within synchronized method so permsMap doesn't need lock
+
+        UnresolvedPermissionCollection uc =
+        (UnresolvedPermissionCollection) permsMap.get(UnresolvedPermission.class);
+
+        // we have no unresolved permissions if uc is null
+        if (uc == null)
+            return null;
+
+        List<UnresolvedPermission> unresolvedPerms =
+                                        uc.getUnresolvedPermissions(p);
+
+        // we have no unresolved permissions of this type if unresolvedPerms is null
+        if (unresolvedPerms == null)
+            return null;
+
+        java.security.cert.Certificate certs[] = null;
+
+        Object signers[] = p.getClass().getSigners();
+
+        int n = 0;
+        if (signers != null) {
+            for (int j=0; j < signers.length; j++) {
+                if (signers[j] instanceof java.security.cert.Certificate) {
+                    n++;
+                }
+            }
+            certs = new java.security.cert.Certificate[n];
+            n = 0;
+            for (int j=0; j < signers.length; j++) {
+                if (signers[j] instanceof java.security.cert.Certificate) {
+                    certs[n++] = (java.security.cert.Certificate)signers[j];
+                }
+            }
+        }
+
+        PermissionCollection pc = null;
+        synchronized (unresolvedPerms) {
+            int len = unresolvedPerms.size();
+            for (int i = 0; i < len; i++) {
+                UnresolvedPermission up = unresolvedPerms.get(i);
+                Permission perm = up.resolve(p, certs);
+                if (perm != null) {
+                    if (pc == null) {
+                        pc = p.newPermissionCollection();
+                        if (pc == null)
+                            pc = new PermissionsHash();
+                    }
+                    pc.add(perm);
+                }
+            }
+        }
+        return pc;
+!!!7978370.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        // Don't call out.defaultWriteObject()
+
+        // Copy perms into a Hashtable
+        Hashtable<Class<?>, PermissionCollection> perms =
+            new Hashtable<>(permsMap.size()*2); // no sync; estimate
+        synchronized (this) {
+            perms.putAll(permsMap);
+        }
+
+        // Write out serializable fields
+        ObjectOutputStream.PutField pfields = out.putFields();
+
+        pfields.put("allPermission", allPermission); // no sync; staleness OK
+        pfields.put("perms", perms);
+        out.writeFields();
+!!!7978498.java!!!	readObject(inout in : ObjectInputStream) : void
+        // Don't call defaultReadObject()
+
+        // Read in serialized fields
+        ObjectInputStream.GetField gfields = in.readFields();
+
+        // Get allPermission
+        allPermission = (PermissionCollection) gfields.get("allPermission", null);
+
+        // Get permissions
+        // writeObject writes a Hashtable<Class<?>, PermissionCollection> for
+        // the perms key, so this cast is safe, unless the data is corrupt.
+        @SuppressWarnings("unchecked")
+        Hashtable<Class<?>, PermissionCollection> perms =
+            (Hashtable<Class<?>, PermissionCollection>)gfields.get("perms", null);
+        permsMap = new HashMap<Class<?>, PermissionCollection>(perms.size()*2);
+        permsMap.putAll(perms);
+
+        // Set hasUnresolved
+        UnresolvedPermissionCollection uc =
+        (UnresolvedPermissionCollection) permsMap.get(UnresolvedPermission.class);
+        hasUnresolved = (uc != null && uc.elements().hasMoreElements());

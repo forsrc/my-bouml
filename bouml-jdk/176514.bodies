@@ -1,0 +1,328 @@
+class RequestInfoImpl
+!!!485250.java!!!	reset() : void
+
+        // Please keep these in the same order as declared above.
+
+        flowStackIndex = 0;
+        startingPointCall = 0;
+        intermediatePointCall = 0;
+        endingPointCall = 0;
+        // 6763340
+        setReplyStatus( UNINITIALIZED ) ;
+        currentExecutionPoint = EXECUTION_POINT_STARTING;
+        alreadyExecuted = false;
+        connection = null;
+        serviceContexts = null;
+        forwardRequest = null;
+        forwardRequestIOR = null;
+        exception = null;
+
+        // We don't need to reset the Slots because they are
+        // already in the clean state after recieve_<point> interceptor
+        // are called.
+!!!485378.java!!!	RequestInfoImpl(inout myORB : ORB)
+        super();
+
+        this.myORB = myORB;
+        wrapper = InterceptorsSystemException.get( myORB,
+            CORBALogDomains.RPC_PROTOCOL ) ;
+        stdWrapper = OMGSystemException.get( myORB,
+            CORBALogDomains.RPC_PROTOCOL ) ;
+
+        // Capture the current TSC and make it the RSC of this request.
+        PICurrent current = (PICurrent)(myORB.getPIHandler().getPICurrent());
+        slotTable = current.getSlotTable( );
+!!!486530.java!!!	sync_scope() : short
+        checkAccess( MID_SYNC_SCOPE );
+        return SYNC_WITH_TRANSPORT.value; // REVISIT - get from MessageMediator
+!!!486658.java!!!	reply_status() : short
+        checkAccess( MID_REPLY_STATUS );
+        return replyStatus;
+!!!486914.java!!!	get_slot(in id : int) : Any
+        // access is currently valid for all states:
+        //checkAccess( MID_GET_SLOT );
+        // Delegate the call to the slotTable which was set when RequestInfo was
+        // created.
+        return slotTable.get_slot( id );
+!!!487298.java!!!	connection() : Connection
+        return connection;
+!!!487426.java!!!	insertApplicationException(inout appException : ApplicationException, inout result : Any) : void
+        try {
+            // Extract the UserException from the ApplicationException.
+            // Look up class name from repository id:
+            RepositoryId repId = RepositoryId.cache.getId(
+                appException.getId() );
+            String className = repId.getClassName();
+
+            // Find the read method on the helper class:
+            String helperClassName = className + "Helper";
+            Class<?> helperClass =
+                SharedSecrets.getJavaCorbaAccess().loadClass( helperClassName );
+            Class[] readParams = new Class[1];
+            readParams[0] = org.omg.CORBA.portable.InputStream.class;
+            Method readMethod = helperClass.getMethod( "read", readParams );
+
+            // Invoke the read method, passing in the input stream to
+            // retrieve the user exception.  Mark and reset the stream
+            // as to not disturb it.
+            InputStream ueInputStream = appException.getInputStream();
+            ueInputStream.mark( 0 );
+            UserException userException = null;
+            try {
+                java.lang.Object[] readArguments = new java.lang.Object[1];
+                readArguments[0] = ueInputStream;
+                userException = (UserException)readMethod.invoke(
+                    null, readArguments );
+            }
+            finally {
+                try {
+                    ueInputStream.reset();
+                }
+                catch( IOException e ) {
+                    throw wrapper.markAndResetFailed( e ) ;
+                }
+            }
+
+            // Insert this UserException into the provided Any using the
+            // helper class.
+            insertUserException( userException, result );
+        } catch( ClassNotFoundException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e ) ;
+        } catch( NoSuchMethodException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e ) ;
+        } catch( SecurityException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e ) ;
+        } catch( IllegalAccessException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e ) ;
+        } catch( IllegalArgumentException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e ) ;
+        } catch( InvocationTargetException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e ) ;
+        }
+!!!487554.java!!!	insertUserException(inout userException : UserException, inout result : Any) : void
+        try {
+            // Insert this UserException into the provided Any using the
+            // helper class.
+            if( userException != null ) {
+                Class exceptionClass = userException.getClass();
+                String className = exceptionClass.getName();
+                String helperClassName = className + "Helper";
+                Class<?> helperClass =
+                    SharedSecrets.getJavaCorbaAccess().loadClass( helperClassName );
+
+                // Find insert( Any, class ) method
+                Class[] insertMethodParams = new Class[2];
+                insertMethodParams[0] = org.omg.CORBA.Any.class;
+                insertMethodParams[1] = exceptionClass;
+                Method insertMethod = helperClass.getMethod(
+                    "insert", insertMethodParams );
+
+                // Call helper.insert( result, userException ):
+                java.lang.Object[] insertMethodArguments =
+                    new java.lang.Object[2];
+                insertMethodArguments[0] = result;
+                insertMethodArguments[1] = userException;
+                insertMethod.invoke( null, insertMethodArguments );
+            }
+        } catch( ClassNotFoundException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e );
+        } catch( NoSuchMethodException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e );
+        } catch( SecurityException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e );
+        } catch( IllegalAccessException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e );
+        } catch( IllegalArgumentException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e );
+        } catch( InvocationTargetException e ) {
+            throw stdWrapper.unknownUserException( CompletionStatus.COMPLETED_MAYBE, e );
+        }
+!!!487682.java!!!	nvListToParameterArray(inout parNVList : NVList) : Parameter
+
+        // _REVISIT_ This utility method should probably be doing a deep
+        // copy so interceptor can't accidentally change the arguments.
+
+        int count = parNVList.count();
+        Parameter[] plist = new Parameter[count];
+        try {
+            for( int i = 0; i < count; i++ ) {
+                Parameter p = new Parameter();
+                plist[i] = p;
+                NamedValue nv = parNVList.item( i );
+                plist[i].argument = nv.value();
+                // ParameterMode spec can be found in 99-10-07.pdf
+                // Section:10.5.22
+                // nv.flags spec can be found in 99-10-07.pdf
+                // Section 7.1.1
+                // nv.flags has ARG_IN as 1, ARG_OUT as 2 and ARG_INOUT as 3
+                // To convert this into enum PARAM_IN, PARAM_OUT and
+                // PARAM_INOUT the value is subtracted by 1.
+                plist[i].mode = ParameterMode.from_int( nv.flags() - 1 );
+            }
+        } catch ( Exception e ) {
+            throw wrapper.exceptionInArguments( e ) ;
+        }
+
+        return plist;
+!!!487810.java!!!	exceptionToAny(inout exception : Exception) : Any
+        Any result = myORB.create_any();
+
+        if( exception == null ) {
+            // Note: exception should never be null here since we will throw
+            // a BAD_INV_ORDER if this is not called from receive_exception.
+            throw wrapper.exceptionWasNull2() ;
+        } else if( exception instanceof SystemException ) {
+            ORBUtility.insertSystemException(
+                (SystemException)exception, result );
+        } else if( exception instanceof ApplicationException ) {
+            // Use the Helper class for this exception to insert it into an
+            // Any.
+            try {
+                // Insert the user exception inside the application exception
+                // into the Any result:
+                ApplicationException appException =
+                    (ApplicationException)exception;
+                insertApplicationException( appException, result );
+            } catch( UNKNOWN e ) {
+                // As per ptc/00-08-06, 21.3.13.4. if we cannot find the
+                // appropriate class, then return an any containing UNKNOWN,
+                // with a minor code of 1.  This is conveniently the same
+                // exception that is returned from the
+                // insertApplicationException utility method.
+                ORBUtility.insertSystemException( e, result );
+            }
+        } else if( exception instanceof UserException ) {
+            try {
+                UserException userException = (UserException)exception;
+                insertUserException( userException, result );
+            } catch( UNKNOWN e ) {
+                ORBUtility.insertSystemException( e, result );
+            }
+        }
+
+
+        return result;
+!!!487938.java!!!	getServiceContext(inout cachedServiceContexts : HashMap, inout serviceContexts : ServiceContexts, in id : int) : ServiceContext
+        org.omg.IOP.ServiceContext result = null;
+        Integer integerId = new Integer( id );
+
+        // Search cache first:
+        result = (org.omg.IOP.ServiceContext)
+            cachedServiceContexts.get( integerId );
+
+        // null could normally mean that either we cached the value null
+        // or it's not in the cache.  However, there is no way for us to
+        // cache the value null in the following code.
+        if( result == null ) {
+            // Not in cache.  Find it and put in cache.
+            // Get the desired "core" service context.
+            com.sun.corba.se.spi.servicecontext.ServiceContext context =
+                serviceContexts.get( id );
+            if (context == null)
+                throw stdWrapper.invalidServiceContextId() ;
+
+            // Convert the "core" service context to an
+            // "IOP" ServiceContext by writing it to a
+            // CDROutputStream and reading it back.
+            EncapsOutputStream out =
+                sun.corba.OutputStreamFactory.newEncapsOutputStream(myORB);
+
+            context.write( out, GIOPVersion.V1_2 );
+            InputStream inputStream = out.create_input_stream();
+            result = ServiceContextHelper.read( inputStream );
+
+            cachedServiceContexts.put( integerId, result );
+        }
+
+        // Good citizen: For increased efficiency, we assume that interceptors
+        // will not modify the returned ServiceContext.  Otherwise, we would
+        // have to make a deep copy.
+
+        return result;
+!!!488066.java!!!	addServiceContext(inout cachedServiceContexts : HashMap, inout serviceContexts : ServiceContexts, inout service_context : ServiceContext, inout replace : boolean) : void
+        int id = 0 ;
+        // Convert IOP.service_context to core.ServiceContext:
+        EncapsOutputStream outputStream =
+           sun.corba.OutputStreamFactory.newEncapsOutputStream(myORB);
+        InputStream inputStream = null;
+        UnknownServiceContext coreServiceContext = null;
+        ServiceContextHelper.write( outputStream, service_context );
+        inputStream = outputStream.create_input_stream();
+
+        // Constructor expects id to already have been read from stream.
+        coreServiceContext = new UnknownServiceContext(
+            inputStream.read_long(),
+            (org.omg.CORBA_2_3.portable.InputStream)inputStream );
+
+        id = coreServiceContext.getId();
+
+        if (serviceContexts.get(id) != null)
+            if (replace)
+                serviceContexts.delete( id );
+            else
+                throw stdWrapper.serviceContextAddFailed( new Integer(id) ) ;
+
+        serviceContexts.put( coreServiceContext );
+
+        // Place IOP.ServiceContext in cache as well:
+        cachedServiceContexts.put( new Integer( id ), service_context );
+!!!488194.java!!!	setFlowStackIndex(in num : int) : void
+        this.flowStackIndex = num;
+!!!488322.java!!!	getFlowStackIndex() : int
+        return this.flowStackIndex;
+!!!488450.java!!!	setEndingPointCall(in call : int) : void
+        this.endingPointCall = call;
+!!!488578.java!!!	getEndingPointCall() : int
+        return this.endingPointCall;
+!!!488706.java!!!	setIntermediatePointCall(in call : int) : void
+        this.intermediatePointCall = call;
+!!!488834.java!!!	getIntermediatePointCall() : int
+        return this.intermediatePointCall;
+!!!488962.java!!!	setStartingPointCall(in call : int) : void
+        this.startingPointCall = call;
+!!!489090.java!!!	getStartingPointCall() : int
+        return this.startingPointCall;
+!!!489218.java!!!	getAlreadyExecuted() : boolean
+        return this.alreadyExecuted;
+!!!489346.java!!!	setAlreadyExecuted(inout alreadyExecuted : boolean) : void
+        this.alreadyExecuted = alreadyExecuted;
+!!!489474.java!!!	setReplyStatus(in replyStatus : short) : void
+        this.replyStatus = replyStatus;
+!!!489602.java!!!	getReplyStatus() : short
+        return this.replyStatus;
+!!!489730.java!!!	setForwardRequest(inout forwardRequest : ForwardRequest) : void
+        this.forwardRequest = forwardRequest;
+        this.forwardRequestIOR = null;
+!!!489858.java!!!	setForwardRequest(inout ior : IOR) : void
+        this.forwardRequestIOR = ior;
+        this.forwardRequest = null;
+!!!489986.java!!!	getForwardRequestException() : ForwardRequest
+        if( this.forwardRequest == null ) {
+            if( this.forwardRequestIOR != null ) {
+                // Convert the internal IOR to a forward request exception
+                // by creating an object reference.
+                org.omg.CORBA.Object obj = iorToObject(this.forwardRequestIOR);
+                this.forwardRequest = new ForwardRequest( obj );
+            }
+        }
+
+        return this.forwardRequest;
+!!!490114.java!!!	getForwardRequestIOR() : IOR
+        if( this.forwardRequestIOR == null ) {
+            if( this.forwardRequest != null ) {
+                this.forwardRequestIOR = ORBUtility.getIOR(
+                    this.forwardRequest.forward ) ;
+            }
+        }
+
+        return this.forwardRequestIOR;
+!!!490242.java!!!	setException(inout exception : Exception) : void
+        this.exception = exception;
+!!!490370.java!!!	getException() : Exception
+        return this.exception;
+!!!490498.java!!!	setCurrentExecutionPoint(in executionPoint : int) : void
+        this.currentExecutionPoint = executionPoint;
+!!!490754.java!!!	setSlotTable(inout slotTable : SlotTable) : void
+        this.slotTable = slotTable;
+!!!490882.java!!!	iorToObject(inout ior : IOR) : Object
+        return ORBUtility.makeObjectReference( ior ) ;

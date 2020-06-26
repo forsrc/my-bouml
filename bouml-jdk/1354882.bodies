@@ -1,0 +1,133 @@
+class LazyStyle
+!!!11287298.java!!!	LazyStyle(inout prefix : String)
+            if (prefix == null) {
+                throw new IllegalArgumentException(
+                        "The prefix must not be null");
+            }
+
+            this.prefix = prefix;
+
+            //there is one odd case that needs to be supported here: cell
+            //renderers. A cell renderer is defined as a named internal
+            //component, so for example:
+            // List."List.cellRenderer"
+            //The problem is that the component named List.cellRenderer is not a
+            //child of a JList. Rather, it is treated more as a direct component
+            //Thus, if the prefix ends with "cellRenderer", then remove all the
+            //previous dotted parts of the prefix name so that it becomes, for
+            //example: "List.cellRenderer"
+            //Likewise, we have a hacked work around for cellRenderer, renderer,
+            //and listRenderer.
+            String temp = prefix;
+            if (temp.endsWith("cellRenderer\"")
+                    || temp.endsWith("renderer\"")
+                    || temp.endsWith("listRenderer\"")) {
+                temp = temp.substring(temp.lastIndexOf(":\"") + 1);
+            }
+
+            //otherwise, normal code path
+            List<String> sparts = split(temp);
+            parts = new Part[sparts.size()];
+            for (int i = 0; i < parts.length; i++) {
+                parts[i] = new Part(sparts.get(i));
+                if (parts[i].named) {
+                    simple = false;
+                }
+            }
+!!!11287426.java!!!	getStyle(inout c : JComponent, inout r : Region) : SynthStyle
+            // if the component has overrides, it gets its own unique style
+            // instead of the shared style.
+            if (c.getClientProperty("Nimbus.Overrides") != null) {
+                Map<Region, SynthStyle> map = overridesCache.get(c);
+                SynthStyle s = null;
+                if (map == null) {
+                    map = new HashMap<Region, SynthStyle>();
+                    overridesCache.put(c, map);
+                } else {
+                    s = map.get(r);
+                }
+                if (s == null) {
+                    s = new NimbusStyle(prefix, c);
+                    map.put(r, s);
+                }
+                return s;
+            }
+            
+            // lazily create the style if necessary
+            if (style == null)
+                style = new NimbusStyle(prefix, null);
+            
+            // return the style
+            return style;
+!!!11287554.java!!!	matches(inout c : JComponent) : boolean
+            return matches(c, parts.length - 1);
+!!!11287682.java!!!	matches(inout c : Component, in partIndex : int) : boolean
+            if (partIndex < 0) return true;
+            if (c == null) return false;
+            //only get here if partIndex > 0 and c == null
+
+            String name = c.getName();
+            if (parts[partIndex].named && parts[partIndex].s.equals(name)) {
+                //so far so good, recurse
+                return matches(c.getParent(), partIndex - 1);
+            } else if (!parts[partIndex].named) {
+                //if c is not named, and parts[partIndex] has an expected class
+                //type registered, then check to make sure c is of the
+                //right type;
+                Class clazz = parts[partIndex].c;
+                if (clazz != null && clazz.isAssignableFrom(c.getClass())) {
+                    //so far so good, recurse
+                    return matches(c.getParent(), partIndex - 1);
+                } else if (clazz == null &&
+                           registeredRegions.containsKey(parts[partIndex].s)) {
+                    Region r = registeredRegions.get(parts[partIndex].s);
+                    Component parent = r.isSubregion() ? c : c.getParent();
+                    //special case the JInternalFrameTitlePane, because it
+                    //doesn't fit the mold. very, very funky.
+                    if (r == Region.INTERNAL_FRAME_TITLE_PANE && parent != null
+                        && parent instanceof JInternalFrame.JDesktopIcon) {
+                        JInternalFrame.JDesktopIcon icon =
+                                (JInternalFrame.JDesktopIcon) parent;
+                        parent = icon.getInternalFrame();
+                    }
+                    //it was the name of a region. So far, so good. Recurse.
+                    return matches(parent, partIndex - 1);
+                }
+            }
+
+            return false;
+!!!11287810.java!!!	split(inout prefix : String) : List
+            List<String> parts = new ArrayList<String>();
+            int bracketCount = 0;
+            boolean inquotes = false;
+            int lastIndex = 0;
+            for (int i = 0; i < prefix.length(); i++) {
+                char c = prefix.charAt(i);
+
+                if (c == '[') {
+                    bracketCount++;
+                    continue;
+                } else if (c == '"') {
+                    inquotes = !inquotes;
+                    continue;
+                } else if (c == ']') {
+                    bracketCount--;
+                    if (bracketCount < 0) {
+                        throw new RuntimeException(
+                                "Malformed prefix: " + prefix);
+                    }
+                    continue;
+                }
+
+                if (c == ':' && !inquotes && bracketCount == 0) {
+                    //found a character to split on.
+                    parts.add(prefix.substring(lastIndex, i));
+                    lastIndex = i + 1;
+                }
+            }
+            if (lastIndex < prefix.length() - 1 && !inquotes
+                    && bracketCount == 0) {
+                parts.add(prefix.substring(lastIndex));
+            }
+            return parts;
+

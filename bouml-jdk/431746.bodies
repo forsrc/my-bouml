@@ -1,0 +1,310 @@
+class CompositeView
+!!!2557186.java!!!	CompositeView(inout elem : Element)
+        super(elem);
+        children = new View[1];
+        nchildren = 0;
+        childAlloc = new Rectangle();
+!!!2557314.java!!!	loadChildren(inout f : ViewFactory) : void
+        if (f == null) {
+            // No factory. This most likely indicates the parent view
+            // has changed out from under us, bail!
+            return;
+        }
+        Element e = getElement();
+        int n = e.getElementCount();
+        if (n > 0) {
+            View[] added = new View[n];
+            for (int i = 0; i < n; i++) {
+                added[i] = f.create(e.getElement(i));
+            }
+            replace(0, 0, added);
+        }
+!!!2557442.java!!!	setParent(inout parent : View) : void
+        super.setParent(parent);
+        if ((parent != null) && (nchildren == 0)) {
+            ViewFactory f = getViewFactory();
+            loadChildren(f);
+        }
+!!!2557570.java!!!	getViewCount() : int
+        return nchildren;
+!!!2557698.java!!!	getView(in n : int) : View
+        return children[n];
+!!!2557826.java!!!	replace(in offset : int, in length : int, inout views : View [[]]) : void
+        // make sure an array exists
+        if (views == null) {
+            views = ZERO;
+        }
+
+        // update parent reference on removed views
+        for (int i = offset; i < offset + length; i++) {
+            if (children[i].getParent() == this) {
+                // in FlowView.java view might be referenced
+                // from two super-views as a child. see logicalView
+                children[i].setParent(null);
+            }
+            children[i] = null;
+        }
+
+        // update the array
+        int delta = views.length - length;
+        int src = offset + length;
+        int nmove = nchildren - src;
+        int dest = src + delta;
+        if ((nchildren + delta) >= children.length) {
+            // need to grow the array
+            int newLength = Math.max(2*children.length, nchildren + delta);
+            View[] newChildren = new View[newLength];
+            System.arraycopy(children, 0, newChildren, 0, offset);
+            System.arraycopy(views, 0, newChildren, offset, views.length);
+            System.arraycopy(children, src, newChildren, dest, nmove);
+            children = newChildren;
+        } else {
+            // patch the existing array
+            System.arraycopy(children, src, children, dest, nmove);
+            System.arraycopy(views, 0, children, offset, views.length);
+        }
+        nchildren = nchildren + delta;
+
+        // update parent reference on added views
+        for (int i = 0; i < views.length; i++) {
+            views[i].setParent(this);
+        }
+!!!2557954.java!!!	getChildAllocation(in index : int, inout a : Shape) : Shape
+        Rectangle alloc = getInsideAllocation(a);
+        childAllocation(index, alloc);
+        return alloc;
+!!!2558082.java!!!	modelToView(in pos : int, inout a : Shape, inout b : Position::Bias) : Shape
+        boolean isBackward = (b == Position.Bias.Backward);
+        int testPos = (isBackward) ? Math.max(0, pos - 1) : pos;
+        if(isBackward && testPos < getStartOffset()) {
+            return null;
+        }
+        int vIndex = getViewIndexAtPosition(testPos);
+        if ((vIndex != -1) && (vIndex < getViewCount())) {
+            View v = getView(vIndex);
+            if(v != null && testPos >= v.getStartOffset() &&
+               testPos < v.getEndOffset()) {
+                Shape childShape = getChildAllocation(vIndex, a);
+                if (childShape == null) {
+                    // We are likely invalid, fail.
+                    return null;
+                }
+                Shape retShape = v.modelToView(pos, childShape, b);
+                if(retShape == null && v.getEndOffset() == pos) {
+                    if(++vIndex < getViewCount()) {
+                        v = getView(vIndex);
+                        retShape = v.modelToView(pos, getChildAllocation(vIndex, a), b);
+                    }
+                }
+                return retShape;
+            }
+        }
+        throw new BadLocationException("Position not represented by view",
+                                       pos);
+!!!2558210.java!!!	modelToView(in p0 : int, inout b0 : Position::Bias, in p1 : int, inout b1 : Position::Bias, inout a : Shape) : Shape
+        if (p0 == getStartOffset() && p1 == getEndOffset()) {
+            return a;
+        }
+        Rectangle alloc = getInsideAllocation(a);
+        Rectangle r0 = new Rectangle(alloc);
+        View v0 = getViewAtPosition((b0 == Position.Bias.Backward) ?
+                                    Math.max(0, p0 - 1) : p0, r0);
+        Rectangle r1 = new Rectangle(alloc);
+        View v1 = getViewAtPosition((b1 == Position.Bias.Backward) ?
+                                    Math.max(0, p1 - 1) : p1, r1);
+        if (v0 == v1) {
+            if (v0 == null) {
+                return a;
+            }
+            // Range contained in one view
+            return v0.modelToView(p0, b0, p1, b1, r0);
+        }
+        // Straddles some views.
+        int viewCount = getViewCount();
+        int counter = 0;
+        while (counter < viewCount) {
+            View v;
+            // Views may not be in same order as model.
+            // v0 or v1 may be null if there is a gap in the range this
+            // view contains.
+            if ((v = getView(counter)) == v0 || v == v1) {
+                View endView;
+                Rectangle retRect;
+                Rectangle tempRect = new Rectangle();
+                if (v == v0) {
+                    retRect = v0.modelToView(p0, b0, v0.getEndOffset(),
+                                             Position.Bias.Backward, r0).
+                              getBounds();
+                    endView = v1;
+                }
+                else {
+                    retRect = v1.modelToView(v1.getStartOffset(),
+                                             Position.Bias.Forward,
+                                             p1, b1, r1).getBounds();
+                    endView = v0;
+                }
+
+                // Views entirely covered by range.
+                while (++counter < viewCount &&
+                       (v = getView(counter)) != endView) {
+                    tempRect.setBounds(alloc);
+                    childAllocation(counter, tempRect);
+                    retRect.add(tempRect);
+                }
+
+                // End view.
+                if (endView != null) {
+                    Shape endShape;
+                    if (endView == v1) {
+                        endShape = v1.modelToView(v1.getStartOffset(),
+                                                  Position.Bias.Forward,
+                                                  p1, b1, r1);
+                    }
+                    else {
+                        endShape = v0.modelToView(p0, b0, v0.getEndOffset(),
+                                                  Position.Bias.Backward, r0);
+                    }
+                    if (endShape instanceof Rectangle) {
+                        retRect.add((Rectangle)endShape);
+                    }
+                    else {
+                        retRect.add(endShape.getBounds());
+                    }
+                }
+                return retRect;
+            }
+            counter++;
+        }
+        throw new BadLocationException("Position not represented by view", p0);
+!!!2558338.java!!!	viewToModel(in x : float, in y : float, inout a : Shape, inout bias : Position::Bias [[]]) : int
+        Rectangle alloc = getInsideAllocation(a);
+        if (isBefore((int) x, (int) y, alloc)) {
+            // point is before the range represented
+            int retValue = -1;
+
+            try {
+                retValue = getNextVisualPositionFrom(-1, Position.Bias.Forward,
+                                                     a, EAST, bias);
+            } catch (BadLocationException ble) { }
+            catch (IllegalArgumentException iae) { }
+            if(retValue == -1) {
+                retValue = getStartOffset();
+                bias[0] = Position.Bias.Forward;
+            }
+            return retValue;
+        } else if (isAfter((int) x, (int) y, alloc)) {
+            // point is after the range represented.
+            int retValue = -1;
+            try {
+                retValue = getNextVisualPositionFrom(-1, Position.Bias.Forward,
+                                                     a, WEST, bias);
+            } catch (BadLocationException ble) { }
+            catch (IllegalArgumentException iae) { }
+
+            if(retValue == -1) {
+                // NOTE: this could actually use end offset with backward.
+                retValue = getEndOffset() - 1;
+                bias[0] = Position.Bias.Forward;
+            }
+            return retValue;
+        } else {
+            // locate the child and pass along the request
+            View v = getViewAtPoint((int) x, (int) y, alloc);
+            if (v != null) {
+              return v.viewToModel(x, y, alloc, bias);
+            }
+        }
+        return -1;
+!!!2558466.java!!!	getNextVisualPositionFrom(in pos : int, inout b : Position::Bias, inout a : Shape, in direction : int, inout biasRet : Position::Bias [[]]) : int
+        if (pos < -1) {
+            throw new BadLocationException("invalid position", pos);
+        }
+        Rectangle alloc = getInsideAllocation(a);
+
+        switch (direction) {
+        case NORTH:
+            return getNextNorthSouthVisualPositionFrom(pos, b, a, direction,
+                                                       biasRet);
+        case SOUTH:
+            return getNextNorthSouthVisualPositionFrom(pos, b, a, direction,
+                                                       biasRet);
+        case EAST:
+            return getNextEastWestVisualPositionFrom(pos, b, a, direction,
+                                                     biasRet);
+        case WEST:
+            return getNextEastWestVisualPositionFrom(pos, b, a, direction,
+                                                     biasRet);
+        default:
+            throw new IllegalArgumentException("Bad direction: " + direction);
+        }
+!!!2558594.java!!!	getViewIndex(in pos : int, inout b : Position::Bias) : int
+        if(b == Position.Bias.Backward) {
+            pos -= 1;
+        }
+        if ((pos >= getStartOffset()) && (pos < getEndOffset())) {
+            return getViewIndexAtPosition(pos);
+        }
+        return -1;
+!!!2559234.java!!!	getViewAtPosition(in pos : int, inout a : Rectangle) : View
+        int index = getViewIndexAtPosition(pos);
+        if ((index >= 0) && (index < getViewCount())) {
+            View v = getView(index);
+            if (a != null) {
+                childAllocation(index, a);
+            }
+            return v;
+        }
+        return null;
+!!!2559362.java!!!	getViewIndexAtPosition(in pos : int) : int
+        Element elem = getElement();
+        return elem.getElementIndex(pos);
+!!!2559490.java!!!	getInsideAllocation(inout a : Shape) : Rectangle
+        if (a != null) {
+            // get the bounds, hopefully without allocating
+            // a new rectangle.  The Shape argument should
+            // not be modified... we copy it into the
+            // child allocation.
+            Rectangle alloc;
+            if (a instanceof Rectangle) {
+                alloc = (Rectangle) a;
+            } else {
+                alloc = a.getBounds();
+            }
+
+            childAlloc.setBounds(alloc);
+            childAlloc.x += getLeftInset();
+            childAlloc.y += getTopInset();
+            childAlloc.width -= getLeftInset() + getRightInset();
+            childAlloc.height -= getTopInset() + getBottomInset();
+            return childAlloc;
+        }
+        return null;
+!!!2559618.java!!!	setParagraphInsets(inout attr : AttributeSet) : void
+        // Since version 1.1 doesn't have scaling and assumes
+        // a pixel is equal to a point, we just cast the point
+        // sizes to integers.
+        top = (short) StyleConstants.getSpaceAbove(attr);
+        left = (short) StyleConstants.getLeftIndent(attr);
+        bottom = (short) StyleConstants.getSpaceBelow(attr);
+        right = (short) StyleConstants.getRightIndent(attr);
+!!!2559746.java!!!	setInsets(in top : short, in left : short, in bottom : short, in right : short) : void
+        this.top = top;
+        this.left = left;
+        this.right = right;
+        this.bottom = bottom;
+!!!2559874.java!!!	getLeftInset() : short
+        return left;
+!!!2560002.java!!!	getRightInset() : short
+        return right;
+!!!2560130.java!!!	getTopInset() : short
+        return top;
+!!!2560258.java!!!	getBottomInset() : short
+        return bottom;
+!!!2560386.java!!!	getNextNorthSouthVisualPositionFrom(in pos : int, inout b : Position::Bias, inout a : Shape, in direction : int, inout biasRet : Position::Bias [[]]) : int
+        return Utilities.getNextVisualPositionFrom(
+                            this, pos, b, a, direction, biasRet);
+!!!2560514.java!!!	getNextEastWestVisualPositionFrom(in pos : int, inout b : Position::Bias, inout a : Shape, in direction : int, inout biasRet : Position::Bias [[]]) : int
+        return Utilities.getNextVisualPositionFrom(
+                            this, pos, b, a, direction, biasRet);
+!!!2560642.java!!!	flipEastAndWestAtEnds(in position : int, inout bias : Position::Bias) : boolean
+        return false;

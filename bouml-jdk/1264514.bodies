@@ -1,0 +1,178 @@
+class BoxLayout
+!!!10424066.java!!!	BoxLayout(inout target : Container, in axis : int)
+        if (axis != X_AXIS && axis != Y_AXIS &&
+            axis != LINE_AXIS && axis != PAGE_AXIS) {
+            throw new AWTError("Invalid axis");
+        }
+        this.axis = axis;
+        this.target = target;
+!!!10424194.java!!!	BoxLayout(inout target : Container, in axis : int, inout dbg : PrintStream)
+        this(target, axis);
+        this.dbg = dbg;
+!!!10424322.java!!!	getTarget() : Container
+        return this.target;
+!!!10424450.java!!!	getAxis() : int
+        return this.axis;
+!!!10424578.java!!!	invalidateLayout(inout target : Container) : void
+        checkContainer(target);
+        xChildren = null;
+        yChildren = null;
+        xTotal = null;
+        yTotal = null;
+!!!10424706.java!!!	addLayoutComponent(inout name : String, inout comp : Component) : void
+        invalidateLayout(comp.getParent());
+!!!10424834.java!!!	removeLayoutComponent(inout comp : Component) : void
+        invalidateLayout(comp.getParent());
+!!!10424962.java!!!	addLayoutComponent(inout comp : Component, inout constraints : Object) : void
+        invalidateLayout(comp.getParent());
+!!!10425090.java!!!	preferredLayoutSize(inout target : Container) : Dimension
+        Dimension size;
+        synchronized(this) {
+            checkContainer(target);
+            checkRequests();
+            size = new Dimension(xTotal.preferred, yTotal.preferred);
+        }
+
+        Insets insets = target.getInsets();
+        size.width = (int) Math.min((long) size.width + (long) insets.left + (long) insets.right, Integer.MAX_VALUE);
+        size.height = (int) Math.min((long) size.height + (long) insets.top + (long) insets.bottom, Integer.MAX_VALUE);
+        return size;
+!!!10425218.java!!!	minimumLayoutSize(inout target : Container) : Dimension
+        Dimension size;
+        synchronized(this) {
+            checkContainer(target);
+            checkRequests();
+            size = new Dimension(xTotal.minimum, yTotal.minimum);
+        }
+
+        Insets insets = target.getInsets();
+        size.width = (int) Math.min((long) size.width + (long) insets.left + (long) insets.right, Integer.MAX_VALUE);
+        size.height = (int) Math.min((long) size.height + (long) insets.top + (long) insets.bottom, Integer.MAX_VALUE);
+        return size;
+!!!10425346.java!!!	maximumLayoutSize(inout target : Container) : Dimension
+        Dimension size;
+        synchronized(this) {
+            checkContainer(target);
+            checkRequests();
+            size = new Dimension(xTotal.maximum, yTotal.maximum);
+        }
+
+        Insets insets = target.getInsets();
+        size.width = (int) Math.min((long) size.width + (long) insets.left + (long) insets.right, Integer.MAX_VALUE);
+        size.height = (int) Math.min((long) size.height + (long) insets.top + (long) insets.bottom, Integer.MAX_VALUE);
+        return size;
+!!!10425474.java!!!	getLayoutAlignmentX(inout target : Container) : float
+        checkContainer(target);
+        checkRequests();
+        return xTotal.alignment;
+!!!10425602.java!!!	getLayoutAlignmentY(inout target : Container) : float
+        checkContainer(target);
+        checkRequests();
+        return yTotal.alignment;
+!!!10425730.java!!!	layoutContainer(inout target : Container) : void
+        checkContainer(target);
+        int nChildren = target.getComponentCount();
+        int[] xOffsets = new int[nChildren];
+        int[] xSpans = new int[nChildren];
+        int[] yOffsets = new int[nChildren];
+        int[] ySpans = new int[nChildren];
+
+        Dimension alloc = target.getSize();
+        Insets in = target.getInsets();
+        alloc.width -= in.left + in.right;
+        alloc.height -= in.top + in.bottom;
+
+        // Resolve axis to an absolute value (either X_AXIS or Y_AXIS)
+        ComponentOrientation o = target.getComponentOrientation();
+        int absoluteAxis = resolveAxis( axis, o );
+        boolean ltr = (absoluteAxis != axis) ? o.isLeftToRight() : true;
+
+
+        // determine the child placements
+        synchronized(this) {
+            checkRequests();
+
+            if (absoluteAxis == X_AXIS) {
+                SizeRequirements.calculateTiledPositions(alloc.width, xTotal,
+                                                         xChildren, xOffsets,
+                                                         xSpans, ltr);
+                SizeRequirements.calculateAlignedPositions(alloc.height, yTotal,
+                                                           yChildren, yOffsets,
+                                                           ySpans);
+            } else {
+                SizeRequirements.calculateAlignedPositions(alloc.width, xTotal,
+                                                           xChildren, xOffsets,
+                                                           xSpans, ltr);
+                SizeRequirements.calculateTiledPositions(alloc.height, yTotal,
+                                                         yChildren, yOffsets,
+                                                         ySpans);
+            }
+        }
+
+        // flush changes to the container
+        for (int i = 0; i < nChildren; i++) {
+            Component c = target.getComponent(i);
+            c.setBounds((int) Math.min((long) in.left + (long) xOffsets[i], Integer.MAX_VALUE),
+                        (int) Math.min((long) in.top + (long) yOffsets[i], Integer.MAX_VALUE),
+                        xSpans[i], ySpans[i]);
+
+        }
+        if (dbg != null) {
+            for (int i = 0; i < nChildren; i++) {
+                Component c = target.getComponent(i);
+                dbg.println(c.toString());
+                dbg.println("X: " + xChildren[i]);
+                dbg.println("Y: " + yChildren[i]);
+            }
+        }
+
+!!!10425858.java!!!	checkContainer(inout target : Container) : void
+        if (this.target != target) {
+            throw new AWTError("BoxLayout can't be shared");
+        }
+!!!10425986.java!!!	checkRequests() : void
+        if (xChildren == null || yChildren == null) {
+            // The requests have been invalidated... recalculate
+            // the request information.
+            int n = target.getComponentCount();
+            xChildren = new SizeRequirements[n];
+            yChildren = new SizeRequirements[n];
+            for (int i = 0; i < n; i++) {
+                Component c = target.getComponent(i);
+                if (!c.isVisible()) {
+                    xChildren[i] = new SizeRequirements(0,0,0, c.getAlignmentX());
+                    yChildren[i] = new SizeRequirements(0,0,0, c.getAlignmentY());
+                    continue;
+                }
+                Dimension min = c.getMinimumSize();
+                Dimension typ = c.getPreferredSize();
+                Dimension max = c.getMaximumSize();
+                xChildren[i] = new SizeRequirements(min.width, typ.width,
+                                                    max.width,
+                                                    c.getAlignmentX());
+                yChildren[i] = new SizeRequirements(min.height, typ.height,
+                                                    max.height,
+                                                    c.getAlignmentY());
+            }
+
+            // Resolve axis to an absolute value (either X_AXIS or Y_AXIS)
+            int absoluteAxis = resolveAxis(axis,target.getComponentOrientation());
+
+            if (absoluteAxis == X_AXIS) {
+                xTotal = SizeRequirements.getTiledSizeRequirements(xChildren);
+                yTotal = SizeRequirements.getAlignedSizeRequirements(yChildren);
+            } else {
+                xTotal = SizeRequirements.getAlignedSizeRequirements(xChildren);
+                yTotal = SizeRequirements.getTiledSizeRequirements(yChildren);
+            }
+        }
+!!!10426114.java!!!	resolveAxis(in axis : int, inout o : ComponentOrientation) : int
+        int absoluteAxis;
+        if( axis == LINE_AXIS ) {
+            absoluteAxis = o.isHorizontal() ? X_AXIS : Y_AXIS;
+        } else if( axis == PAGE_AXIS ) {
+            absoluteAxis = o.isHorizontal() ? Y_AXIS : X_AXIS;
+        } else {
+            absoluteAxis = axis;
+        }
+        return absoluteAxis;

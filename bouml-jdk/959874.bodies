@@ -1,0 +1,46 @@
+class Factory
+!!!7367682.java!!!	Factory(inout key : K, inout parameter : P, inout subKey : Object, inout valuesMap : ConcurrentMap)
+            this.key = key;
+            this.parameter = parameter;
+            this.subKey = subKey;
+            this.valuesMap = valuesMap;
+!!!7367810.java!!!	get() : V
+ // serialize access
+            // re-check
+            Supplier<V> supplier = valuesMap.get(subKey);
+            if (supplier != this) {
+                // something changed while we were waiting:
+                // might be that we were replaced by a CacheValue
+                // or were removed because of failure ->
+                // return null to signal WeakCache.get() to retry
+                // the loop
+                return null;
+            }
+            // else still us (supplier == this)
+
+            // create new value
+            V value = null;
+            try {
+                value = Objects.requireNonNull(valueFactory.apply(key, parameter));
+            } finally {
+                if (value == null) { // remove us on failure
+                    valuesMap.remove(subKey, this);
+                }
+            }
+            // the only path to reach here is with non-null value
+            assert value != null;
+
+            // wrap value with CacheValue (WeakReference)
+            CacheValue<V> cacheValue = new CacheValue<>(value);
+
+            // put into reverseMap
+            reverseMap.put(cacheValue, Boolean.TRUE);
+
+            // try replacing us with CacheValue (this should always succeed)
+            if (!valuesMap.replace(subKey, this, cacheValue)) {
+                throw new AssertionError("Should not reach here");
+            }
+
+            // successfully replaced us with new CacheValue -> return the value
+            // wrapped by it
+            return value;

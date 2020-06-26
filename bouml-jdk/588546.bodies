@@ -1,0 +1,138 @@
+class XMLSecurityManager
+!!!3663874.java!!!	XMLSecurityManager()
+        this(false);
+!!!3664002.java!!!	XMLSecurityManager(inout secureProcessing : boolean)
+        values = new int[Limit.values().length];
+        states = new State[Limit.values().length];
+        isSet = new boolean[Limit.values().length];
+        for (Limit limit : Limit.values()) {
+            if (secureProcessing) {
+                values[limit.ordinal()] = limit.secureValue();
+                states[limit.ordinal()] = State.FSP;
+            } else {
+                values[limit.ordinal()] = limit.defaultValue();
+                states[limit.ordinal()] = State.DEFAULT;
+            }
+        }
+        //read system properties or jaxp.properties
+        readSystemProperties();
+!!!3664130.java!!!	setSecureProcessing(inout secure : boolean) : void
+        for (Limit limit : Limit.values()) {
+            if (secure) {
+                setLimit(limit.ordinal(), State.FSP, limit.secureValue());
+            } else {
+                setLimit(limit.ordinal(), State.FSP, limit.defaultValue());
+            }
+        }
+!!!3664258.java!!!	setLimit(inout propertyName : String, inout state : XMLSecurityManager::State, inout value : Object) : boolean
+        int index = getIndex(propertyName);
+        if (index > -1) {
+            setLimit(index, state, value);
+            return true;
+        }
+        return false;
+!!!3664386.java!!!	setLimit(inout limit : XMLSecurityManager::Limit, inout state : XMLSecurityManager::State, in value : int) : void
+        setLimit(limit.ordinal(), state, value);
+!!!3664514.java!!!	setLimit(in index : int, inout state : XMLSecurityManager::State, inout value : Object) : void
+        if (index == indexEntityCountInfo) {
+            //if it's explicitly set, it's treated as yes no matter the value
+            printEntityCountInfo = (String)value;
+        } else {
+            int temp = 0;
+            try {
+                temp = Integer.parseInt((String) value);
+                if (temp < 0) {
+                    temp = 0;
+                }
+            } catch (NumberFormatException e) {}
+            setLimit(index, state, temp);        }
+!!!3664642.java!!!	setLimit(in index : int, inout state : XMLSecurityManager::State, in value : int) : void
+        if (index == indexEntityCountInfo) {
+            //if it's explicitly set, it's treated as yes no matter the value
+            printEntityCountInfo = XalanConstants.JDK_YES;
+        } else {
+            //only update if it shall override
+            if (state.compareTo(states[index]) >= 0) {
+                values[index] = value;
+                states[index] = state;
+                isSet[index] = true;
+            }
+        }
+!!!3664770.java!!!	getLimitAsString(inout propertyName : String) : String
+        int index = getIndex(propertyName);
+        if (index > -1) {
+            return getLimitValueByIndex(index);
+        }
+
+        return null;
+!!!3664898.java!!!	getLimitValueAsString(inout limit : XMLSecurityManager::Limit) : String
+        return Integer.toString(values[limit.ordinal()]);
+!!!3665026.java!!!	getLimit(inout limit : XMLSecurityManager::Limit) : int
+        return values[limit.ordinal()];
+!!!3665154.java!!!	getLimitByIndex(in index : int) : int
+        return values[index];
+!!!3665282.java!!!	getLimitValueByIndex(in index : int) : String
+        if (index == indexEntityCountInfo) {
+            return printEntityCountInfo;
+        }
+
+        return Integer.toString(values[index]);
+!!!3665410.java!!!	getState(inout limit : XMLSecurityManager::Limit) : XMLSecurityManager::State
+        return states[limit.ordinal()];
+!!!3665538.java!!!	getStateLiteral(inout limit : XMLSecurityManager::Limit) : String
+        return states[limit.ordinal()].literal();
+!!!3665666.java!!!	getIndex(inout propertyName : String) : int
+        for (Limit limit : Limit.values()) {
+            if (limit.equalsAPIPropertyName(propertyName)) {
+                //internally, ordinal is used as index
+                return limit.ordinal();
+            }
+        }
+        //special property to return entity count info
+        if (propertyName.equals(XalanConstants.JDK_ENTITY_COUNT_INFO)) {
+            return indexEntityCountInfo;
+        }
+        return -1;
+!!!3665794.java!!!	isSet(in index : int) : boolean
+        return isSet[index];
+!!!3665922.java!!!	printEntityCountInfo() : boolean
+        return printEntityCountInfo.equals(XalanConstants.JDK_YES);
+!!!3666050.java!!!	readSystemProperties() : void
+
+        for (Limit limit : Limit.values()) {
+            if (!getSystemProperty(limit, limit.systemProperty())) {
+                //if system property is not found, try the older form if any
+                for (NameMap nameMap : NameMap.values()) {
+                    String oldName = nameMap.getOldName(limit.systemProperty());
+                    if (oldName != null) {
+                        getSystemProperty(limit, oldName);
+                    }
+                }
+            }
+        }
+
+!!!3666178.java!!!	printWarning(inout parserClassName : String, inout propertyName : String, inout exception : SAXException) : void
+        String key = parserClassName+":"+propertyName;
+        if (printedWarnings.addIfAbsent(key)) {
+            System.err.println( "Warning: "+parserClassName+": "+exception.getMessage());
+        }
+!!!3666306.java!!!	getSystemProperty(inout limit : XMLSecurityManager::Limit, inout sysPropertyName : String) : boolean
+        try {
+            String value = SecuritySupport.getSystemProperty(sysPropertyName);
+            if (value != null && !value.equals("")) {
+                values[limit.ordinal()] = Integer.parseInt(value);
+                states[limit.ordinal()] = State.SYSTEMPROPERTY;
+                return true;
+            }
+
+            value = SecuritySupport.readJAXPProperty(sysPropertyName);
+            if (value != null && !value.equals("")) {
+                values[limit.ordinal()] = Integer.parseInt(value);
+                states[limit.ordinal()] = State.JAXPDOTPROPERTIES;
+                return true;
+            }
+        } catch (NumberFormatException e) {
+            //invalid setting
+            throw new NumberFormatException("Invalid setting for system property: " + limit.systemProperty());
+        }
+        return false;

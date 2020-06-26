@@ -1,0 +1,82 @@
+class RenderableImageProducer
+!!!6713090.java!!!	RenderableImageProducer(inout rdblImage : RenderableImage, inout rc : RenderContext)
+        this.rdblImage = rdblImage;
+        this.rc = rc;
+!!!6713218.java!!!	setRenderContext(inout rc : RenderContext) : void
+        this.rc = rc;
+!!!6713346.java!!!	addConsumer(inout ic : ImageConsumer) : void
+        if (!ics.contains(ic)) {
+            ics.addElement(ic);
+        }
+!!!6713474.java!!!	isConsumer(inout ic : ImageConsumer) : boolean
+        return ics.contains(ic);
+!!!6713602.java!!!	removeConsumer(inout ic : ImageConsumer) : void
+        ics.removeElement(ic);
+!!!6713730.java!!!	startProduction(inout ic : ImageConsumer) : void
+        addConsumer(ic);
+        // Need to build a runnable object for the Thread.
+        Thread thread = new Thread(this, "RenderableImageProducer Thread");
+        thread.start();
+!!!6713858.java!!!	requestTopDownLeftRightResend(inout ic : ImageConsumer) : void
+        // So far, all pixels are already sent in TDLR order
+!!!6713986.java!!!	run() : void
+        // First get the rendered image
+        RenderedImage rdrdImage;
+        if (rc != null) {
+            rdrdImage = rdblImage.createRendering(rc);
+        } else {
+            rdrdImage = rdblImage.createDefaultRendering();
+        }
+
+        // And its ColorModel
+        ColorModel colorModel = rdrdImage.getColorModel();
+        Raster raster = rdrdImage.getData();
+        SampleModel sampleModel = raster.getSampleModel();
+        DataBuffer dataBuffer = raster.getDataBuffer();
+
+        if (colorModel == null) {
+            colorModel = ColorModel.getRGBdefault();
+        }
+        int minX = raster.getMinX();
+        int minY = raster.getMinY();
+        int width = raster.getWidth();
+        int height = raster.getHeight();
+
+        Enumeration icList;
+        ImageConsumer ic;
+        // Set up the ImageConsumers
+        icList = ics.elements();
+        while (icList.hasMoreElements()) {
+            ic = (ImageConsumer)icList.nextElement();
+            ic.setDimensions(width,height);
+            ic.setHints(ImageConsumer.TOPDOWNLEFTRIGHT |
+                        ImageConsumer.COMPLETESCANLINES |
+                        ImageConsumer.SINGLEPASS |
+                        ImageConsumer.SINGLEFRAME);
+        }
+
+        // Get RGB pixels from the raster scanline by scanline and
+        // send to consumers.
+        int pix[] = new int[width];
+        int i,j;
+        int numBands = sampleModel.getNumBands();
+        int tmpPixel[] = new int[numBands];
+        for (j = 0; j < height; j++) {
+            for(i = 0; i < width; i++) {
+                sampleModel.getPixel(i, j, tmpPixel, dataBuffer);
+                pix[i] = colorModel.getDataElement(tmpPixel, 0);
+            }
+            // Now send the scanline to the Consumers
+            icList = ics.elements();
+            while (icList.hasMoreElements()) {
+                ic = (ImageConsumer)icList.nextElement();
+                ic.setPixels(0, j, width, 1, colorModel, pix, 0, width);
+            }
+        }
+
+        // Now tell the consumers we're done.
+        icList = ics.elements();
+        while (icList.hasMoreElements()) {
+            ic = (ImageConsumer)icList.nextElement();
+            ic.imageComplete(ImageConsumer.STATICIMAGEDONE);
+        }

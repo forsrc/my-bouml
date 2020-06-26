@@ -1,0 +1,198 @@
+class XslElement
+!!!3820930.java!!!	display(in indent : int) : void
+        indent(indent);
+        Util.println("Element " + _name);
+        displayContents(indent + IndentIncrement);
+!!!3821058.java!!!	declaresDefaultNS() : boolean
+        return false;
+!!!3821186.java!!!	parseContents(inout parser : Parser) : void
+        final SymbolTable stable = parser.getSymbolTable();
+
+        // Handle the 'name' attribute
+        String name = getAttribute("name");
+        if (name == EMPTYSTRING) {
+            ErrorMsg msg = new ErrorMsg(ErrorMsg.ILLEGAL_ELEM_NAME_ERR,
+                                        name, this);
+            parser.reportError(WARNING, msg);
+            parseChildren(parser);
+            _ignore = true;     // Ignore the element if the QName is invalid
+            return;
+        }
+
+        // Get namespace attribute
+        String namespace = getAttribute("namespace");
+
+        // Optimize compilation when name is known at compile time
+        _isLiteralName = Util.isLiteral(name);
+        if (_isLiteralName) {
+            if (!XML11Char.isXML11ValidQName(name)) {
+                ErrorMsg msg = new ErrorMsg(ErrorMsg.ILLEGAL_ELEM_NAME_ERR,
+                                            name, this);
+                parser.reportError(WARNING, msg);
+                parseChildren(parser);
+                _ignore = true;         // Ignore the element if the QName is invalid
+                return;
+            }
+
+            final QName qname = parser.getQNameSafe(name);
+            String prefix = qname.getPrefix();
+            String local = qname.getLocalPart();
+
+            if (prefix == null) {
+                prefix = EMPTYSTRING;
+            }
+
+            if (!hasAttribute("namespace")) {
+                namespace = lookupNamespace(prefix);
+                if (namespace == null) {
+                    ErrorMsg err = new ErrorMsg(ErrorMsg.NAMESPACE_UNDEF_ERR,
+                                                prefix, this);
+                    parser.reportError(WARNING, err);
+                    parseChildren(parser);
+                    _ignore = true;     // Ignore the element if prefix is undeclared
+                    return;
+                }
+                _prefix = prefix;
+                _namespace = new AttributeValueTemplate(namespace, parser, this);
+            }
+            else {
+                if (prefix == EMPTYSTRING) {
+                    if (Util.isLiteral(namespace)) {
+                        prefix = lookupPrefix(namespace);
+                        if (prefix == null) {
+                            prefix = stable.generateNamespacePrefix();
+                        }
+                    }
+
+                    // Prepend prefix to local name
+                    final StringBuffer newName = new StringBuffer(prefix);
+                    if (prefix != EMPTYSTRING) {
+                        newName.append(':');
+                    }
+                    name = newName.append(local).toString();
+                }
+                _prefix = prefix;
+                _namespace = new AttributeValueTemplate(namespace, parser, this);
+            }
+        }
+        else {
+            _namespace = (namespace == EMPTYSTRING) ? null :
+                         new AttributeValueTemplate(namespace, parser, this);
+        }
+
+        _name = new AttributeValueTemplate(name, parser, this);
+
+        final String useSets = getAttribute("use-attribute-sets");
+        if (useSets.length() > 0) {
+            if (!Util.isValidQNames(useSets)) {
+                ErrorMsg err = new ErrorMsg(ErrorMsg.INVALID_QNAME_ERR, useSets, this);
+                parser.reportError(Constants.ERROR, err);
+            }
+            setFirstElement(new UseAttributeSets(useSets, parser));
+        }
+
+        parseChildren(parser);
+!!!3821314.java!!!	typeCheck(inout stable : SymbolTable) : Type
+        if (!_ignore) {
+            _name.typeCheck(stable);
+            if (_namespace != null) {
+                _namespace.typeCheck(stable);
+            }
+        }
+        typeCheckContents(stable);
+        return Type.Void;
+!!!3821442.java!!!	translateLiteral(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+
+        if (!_ignore) {
+            il.append(methodGen.loadHandler());
+            _name.translate(classGen, methodGen);
+            il.append(DUP2);
+            il.append(methodGen.startElement());
+
+            if (_namespace != null) {
+                il.append(methodGen.loadHandler());
+                il.append(new PUSH(cpg, _prefix));
+                _namespace.translate(classGen,methodGen);
+                il.append(methodGen.namespace());
+            }
+        }
+
+        translateContents(classGen, methodGen);
+
+        if (!_ignore) {
+            il.append(methodGen.endElement());
+        }
+!!!3821570.java!!!	translate(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        LocalVariableGen local = null;
+        final ConstantPoolGen cpg = classGen.getConstantPool();
+        final InstructionList il = methodGen.getInstructionList();
+
+        // Optimize translation if element name is a literal
+        if (_isLiteralName) {
+            translateLiteral(classGen, methodGen);
+            return;
+        }
+
+        if (!_ignore) {
+
+            // if the qname is an AVT, then the qname has to be checked at runtime if it is a valid qname
+            LocalVariableGen nameValue =
+                    methodGen.addLocalVariable2("nameValue",
+                                                Util.getJCRefType(STRING_SIG),
+                                                null);
+
+            // store the name into a variable first so _name.translate only needs to be called once
+            _name.translate(classGen, methodGen);
+            nameValue.setStart(il.append(new ASTORE(nameValue.getIndex())));
+            il.append(new ALOAD(nameValue.getIndex()));
+
+            // call checkQName if the name is an AVT
+            final int check = cpg.addMethodref(BASIS_LIBRARY_CLASS, "checkQName",
+                            "("
+                            +STRING_SIG
+                            +")V");
+            il.append(new INVOKESTATIC(check));
+
+            // Push handler for call to endElement()
+            il.append(methodGen.loadHandler());
+
+            // load name value again
+            nameValue.setEnd(il.append(new ALOAD(nameValue.getIndex())));
+
+            if (_namespace != null) {
+                _namespace.translate(classGen, methodGen);
+            }
+            else {
+                il.append(ACONST_NULL);
+            }
+
+            // Push additional arguments
+            il.append(methodGen.loadHandler());
+            il.append(methodGen.loadDOM());
+            il.append(methodGen.loadCurrentNode());
+
+            // Invoke BasisLibrary.startXslElemCheckQName()
+            il.append(new INVOKESTATIC(
+            cpg.addMethodref(BASIS_LIBRARY_CLASS, "startXslElement",
+                    "(" + STRING_SIG
+                    + STRING_SIG
+                    + TRANSLET_OUTPUT_SIG
+                    + DOM_INTF_SIG + "I)" + STRING_SIG)));
+
+
+        }
+
+        translateContents(classGen, methodGen);
+
+        if (!_ignore) {
+            il.append(methodGen.endElement());
+        }
+!!!3821698.java!!!	translateContents(inout classGen : ClassGenerator, inout methodGen : MethodGenerator) : void
+        final int n = elementCount();
+        for (int i = 0; i < n; i++) {
+            final SyntaxTreeNode item = getContents().get(i);
+            if (_ignore && item instanceof XslAttribute) continue;
+            item.translate(classGen, methodGen);
+        }

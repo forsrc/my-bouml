@@ -1,0 +1,136 @@
+class ChronoZonedDateTimeImpl
+!!!8461186.java!!!	ofBest(inout localDateTime : ChronoLocalDateTimeImpl, inout zone : ZoneId, inout preferredOffset : ZoneOffset) : ChronoZonedDateTime
+        Objects.requireNonNull(localDateTime, "localDateTime");
+        Objects.requireNonNull(zone, "zone");
+        if (zone instanceof ZoneOffset) {
+            return new ChronoZonedDateTimeImpl<>(localDateTime, (ZoneOffset) zone, zone);
+        }
+        ZoneRules rules = zone.getRules();
+        LocalDateTime isoLDT = LocalDateTime.from(localDateTime);
+        List<ZoneOffset> validOffsets = rules.getValidOffsets(isoLDT);
+        ZoneOffset offset;
+        if (validOffsets.size() == 1) {
+            offset = validOffsets.get(0);
+        } else if (validOffsets.size() == 0) {
+            ZoneOffsetTransition trans = rules.getTransition(isoLDT);
+            localDateTime = localDateTime.plusSeconds(trans.getDuration().getSeconds());
+            offset = trans.getOffsetAfter();
+        } else {
+            if (preferredOffset != null && validOffsets.contains(preferredOffset)) {
+                offset = preferredOffset;
+            } else {
+                offset = validOffsets.get(0);
+            }
+        }
+        Objects.requireNonNull(offset, "offset");  // protect against bad ZoneRules
+        return new ChronoZonedDateTimeImpl<>(localDateTime, offset, zone);
+!!!8461314.java!!!	ofInstant(inout chrono : Chronology, inout instant : Instant, inout zone : ZoneId) : ChronoZonedDateTimeImpl
+        ZoneRules rules = zone.getRules();
+        ZoneOffset offset = rules.getOffset(instant);
+        Objects.requireNonNull(offset, "offset");  // protect against bad ZoneRules
+        LocalDateTime ldt = LocalDateTime.ofEpochSecond(instant.getEpochSecond(), instant.getNano(), offset);
+        ChronoLocalDateTimeImpl<?> cldt = (ChronoLocalDateTimeImpl<?>)chrono.localDateTime(ldt);
+        return new ChronoZonedDateTimeImpl<>(cldt, offset, zone);
+!!!8461442.java!!!	create(inout instant : Instant, inout zone : ZoneId) : ChronoZonedDateTimeImpl
+        return (ChronoZonedDateTimeImpl<D>)ofInstant(getChronology(), instant, zone);
+!!!8461570.java!!!	ensureValid(inout chrono : Chronology, inout temporal : Temporal) : ChronoZonedDateTimeImpl
+        @SuppressWarnings("unchecked")
+        ChronoZonedDateTimeImpl<R> other = (ChronoZonedDateTimeImpl<R>) temporal;
+        if (chrono.equals(other.getChronology()) == false) {
+            throw new ClassCastException("Chronology mismatch, required: " + chrono.getId()
+                    + ", actual: " + other.getChronology().getId());
+        }
+        return other;
+!!!8461698.java!!!	ChronoZonedDateTimeImpl(inout dateTime : ChronoLocalDateTimeImpl, inout offset : ZoneOffset, inout zone : ZoneId)
+        this.dateTime = Objects.requireNonNull(dateTime, "dateTime");
+        this.offset = Objects.requireNonNull(offset, "offset");
+        this.zone = Objects.requireNonNull(zone, "zone");
+!!!8461826.java!!!	getOffset() : ZoneOffset
+        return offset;
+!!!8461954.java!!!	withEarlierOffsetAtOverlap() : ChronoZonedDateTime
+        ZoneOffsetTransition trans = getZone().getRules().getTransition(LocalDateTime.from(this));
+        if (trans != null && trans.isOverlap()) {
+            ZoneOffset earlierOffset = trans.getOffsetBefore();
+            if (earlierOffset.equals(offset) == false) {
+                return new ChronoZonedDateTimeImpl<>(dateTime, earlierOffset, zone);
+            }
+        }
+        return this;
+!!!8462082.java!!!	withLaterOffsetAtOverlap() : ChronoZonedDateTime
+        ZoneOffsetTransition trans = getZone().getRules().getTransition(LocalDateTime.from(this));
+        if (trans != null) {
+            ZoneOffset offset = trans.getOffsetAfter();
+            if (offset.equals(getOffset()) == false) {
+                return new ChronoZonedDateTimeImpl<>(dateTime, offset, zone);
+            }
+        }
+        return this;
+!!!8462210.java!!!	toLocalDateTime() : ChronoLocalDateTime
+        return dateTime;
+!!!8462338.java!!!	getZone() : ZoneId
+        return zone;
+!!!8462466.java!!!	withZoneSameLocal(inout zone : ZoneId) : ChronoZonedDateTime
+        return ofBest(dateTime, zone, offset);
+!!!8462594.java!!!	withZoneSameInstant(inout zone : ZoneId) : ChronoZonedDateTime
+        Objects.requireNonNull(zone, "zone");
+        return this.zone.equals(zone) ? this : create(dateTime.toInstant(offset), zone);
+!!!8462722.java!!!	isSupported(inout field : TemporalField) : boolean
+        return field instanceof ChronoField || (field != null && field.isSupportedBy(this));
+!!!8462850.java!!!	with(inout field : TemporalField, in newValue : long) : ChronoZonedDateTime
+        if (field instanceof ChronoField) {
+            ChronoField f = (ChronoField) field;
+            switch (f) {
+                case INSTANT_SECONDS: return plus(newValue - toEpochSecond(), SECONDS);
+                case OFFSET_SECONDS: {
+                    ZoneOffset offset = ZoneOffset.ofTotalSeconds(f.checkValidIntValue(newValue));
+                    return create(dateTime.toInstant(offset), zone);
+                }
+            }
+            return ofBest(dateTime.with(field, newValue), zone, offset);
+        }
+        return ChronoZonedDateTimeImpl.ensureValid(getChronology(), field.adjustInto(this, newValue));
+!!!8462978.java!!!	plus(in amountToAdd : long, inout unit : TemporalUnit) : ChronoZonedDateTime
+        if (unit instanceof ChronoUnit) {
+            return with(dateTime.plus(amountToAdd, unit));
+        }
+        return ChronoZonedDateTimeImpl.ensureValid(getChronology(), unit.addTo(this, amountToAdd));   /// TODO: Generics replacement Risk!
+!!!8463106.java!!!	until(inout endExclusive : Temporal, inout unit : TemporalUnit) : long
+        Objects.requireNonNull(endExclusive, "endExclusive");
+        @SuppressWarnings("unchecked")
+        ChronoZonedDateTime<D> end = (ChronoZonedDateTime<D>) getChronology().zonedDateTime(endExclusive);
+        if (unit instanceof ChronoUnit) {
+            end = end.withZoneSameInstant(offset);
+            return dateTime.until(end.toLocalDateTime(), unit);
+        }
+        Objects.requireNonNull(unit, "unit");
+        return unit.between(this, end);
+!!!8463234.java!!!	writeReplace() : Object
+        return new Ser(Ser.CHRONO_ZONE_DATE_TIME_TYPE, this);
+!!!8463362.java!!!	readObject(inout s : ObjectInputStream) : void
+        throw new InvalidObjectException("Deserialization via serialization delegate");
+!!!8463490.java!!!	writeExternal(inout out : ObjectOutput) : void
+        out.writeObject(dateTime);
+        out.writeObject(offset);
+        out.writeObject(zone);
+!!!8463618.java!!!	readExternal(inout in : ObjectInput) : ChronoZonedDateTime
+        ChronoLocalDateTime<?> dateTime = (ChronoLocalDateTime<?>) in.readObject();
+        ZoneOffset offset = (ZoneOffset) in.readObject();
+        ZoneId zone = (ZoneId) in.readObject();
+        return dateTime.atZone(offset).withZoneSameLocal(zone);
+        // TODO: ZDT uses ofLenient()
+!!!8463746.java!!!	equals(inout obj : Object) : boolean
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof ChronoZonedDateTime) {
+            return compareTo((ChronoZonedDateTime<?>) obj) == 0;
+        }
+        return false;
+!!!8463874.java!!!	hashCode() : int
+        return toLocalDateTime().hashCode() ^ getOffset().hashCode() ^ Integer.rotateLeft(getZone().hashCode(), 3);
+!!!8464002.java!!!	toString() : String
+        String str = toLocalDateTime().toString() + getOffset().toString();
+        if (getOffset() != getZone()) {
+            str += '[' + getZone().toString() + ']';
+        }
+        return str;

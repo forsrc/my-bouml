@@ -1,0 +1,323 @@
+class ParserForXMLSchema
+!!!4589826.java!!!	ParserForXMLSchema()
+        //this.setLocale(Locale.getDefault());
+!!!4589954.java!!!	ParserForXMLSchema(inout locale : Locale)
+        super(locale);
+!!!4590082.java!!!	processCaret() : Token
+        this.next();
+        return Token.createChar('^');
+!!!4590210.java!!!	processDollar() : Token
+        this.next();
+        return Token.createChar('$');
+!!!4590338.java!!!	processLookahead() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4590466.java!!!	processNegativelookahead() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4590594.java!!!	processLookbehind() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4590722.java!!!	processNegativelookbehind() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4590850.java!!!	processBacksolidus_A() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4590978.java!!!	processBacksolidus_Z() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4591106.java!!!	processBacksolidus_z() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4591234.java!!!	processBacksolidus_b() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4591362.java!!!	processBacksolidus_B() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4591490.java!!!	processBacksolidus_lt() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4591618.java!!!	processBacksolidus_gt() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4591746.java!!!	processStar(inout tok : Token) : Token
+        this.next();
+        return Token.createClosure(tok);
+!!!4591874.java!!!	processPlus(inout tok : Token) : Token
+        // X+ -> XX*
+        this.next();
+        return Token.createConcat(tok, Token.createClosure(tok));
+!!!4592002.java!!!	processQuestion(inout tok : Token) : Token
+        // X? -> X|
+        this.next();
+        Token par = Token.createUnion();
+        par.addChild(tok);
+        par.addChild(Token.createEmpty());
+        return par;
+!!!4592130.java!!!	checkQuestion(in off : int) : boolean
+        return false;
+!!!4592258.java!!!	processParen() : Token
+        this.next();
+        Token tok = Token.createParen(this.parseRegex(), 0);
+        if (this.read() != T_RPAREN)  throw ex("parser.factor.1", this.offset-1);
+        this.next();                            // Skips ')'
+        return tok;
+!!!4592386.java!!!	processParen2() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4592514.java!!!	processCondition() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4592642.java!!!	processModifiers() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4592770.java!!!	processIndependent() : Token
+        throw ex("parser.process.1", this.offset);
+!!!4592898.java!!!	processBacksolidus_c() : Token
+        this.next();
+        return this.getTokenForShorthand('c');
+!!!4593026.java!!!	processBacksolidus_C() : Token
+        this.next();
+        return this.getTokenForShorthand('C');
+!!!4593154.java!!!	processBacksolidus_i() : Token
+        this.next();
+        return this.getTokenForShorthand('i');
+!!!4593282.java!!!	processBacksolidus_I() : Token
+        this.next();
+        return this.getTokenForShorthand('I');
+!!!4593410.java!!!	processBacksolidus_g() : Token
+        throw this.ex("parser.process.1", this.offset-2);
+!!!4593538.java!!!	processBacksolidus_X() : Token
+        throw ex("parser.process.1", this.offset-2);
+!!!4593666.java!!!	processBackreference() : Token
+        throw ex("parser.process.1", this.offset-4);
+!!!4593794.java!!!	processCIinCharacterClass(inout tok : RangeToken, in c : int) : int
+        tok.mergeRanges(this.getTokenForShorthand(c));
+        return -1;
+!!!4593922.java!!!	parseCharacterClass(inout useNrange : boolean) : RangeToken
+        this.setContext(S_INBRACKETS);
+        this.next();                            // '['
+        boolean nrange = false;
+        boolean wasDecoded = false;                     // used to detect if the last - was escaped.
+        RangeToken base = null;
+        RangeToken tok;
+        if (this.read() == T_CHAR && this.chardata == '^') {
+            nrange = true;
+            this.next();                        // '^'
+            base = Token.createRange();
+            base.addRange(0, Token.UTF16_MAX);
+            tok = Token.createRange();
+        } else {
+            tok = Token.createRange();
+        }
+        int type;
+        boolean firstloop = true;
+        while ((type = this.read()) != T_EOF) { // Don't use 'cotinue' for this loop.
+
+                wasDecoded = false;
+            // single-range | from-to-range | subtraction
+            if (type == T_CHAR && this.chardata == ']' && !firstloop) {
+                if (nrange) {
+                    base.subtractRanges(tok);
+                    tok = base;
+                }
+                break;
+            }
+            int c = this.chardata;
+            boolean end = false;
+            if (type == T_BACKSOLIDUS) {
+                switch (c) {
+                  case 'd':  case 'D':
+                  case 'w':  case 'W':
+                  case 's':  case 'S':
+                    tok.mergeRanges(this.getTokenForShorthand(c));
+                    end = true;
+                    break;
+
+                  case 'i':  case 'I':
+                  case 'c':  case 'C':
+                    c = this.processCIinCharacterClass(tok, c);
+                    if (c < 0)  end = true;
+                    break;
+
+                  case 'p':
+                  case 'P':
+                    int pstart = this.offset;
+                    RangeToken tok2 = this.processBacksolidus_pP(c);
+                    if (tok2 == null)  throw this.ex("parser.atom.5", pstart);
+                    tok.mergeRanges(tok2);
+                    end = true;
+                    break;
+
+                 case '-':
+                        c = this.decodeEscaped();
+                        wasDecoded = true;
+                        break;
+
+                  default:
+                    c = this.decodeEscaped();
+                } // \ + c
+            } // backsolidus
+            else if (type == T_XMLSCHEMA_CC_SUBTRACTION && !firstloop) {
+                                                // Subraction
+                if (nrange) {
+                    base.subtractRanges(tok);
+                    tok = base;
+                }
+                RangeToken range2 = this.parseCharacterClass(false);
+                tok.subtractRanges(range2);
+                if (this.read() != T_CHAR || this.chardata != ']')
+                    throw this.ex("parser.cc.5", this.offset);
+                break;                          // Exit this loop
+            }
+            this.next();
+            if (!end) {                         // if not shorthands...
+                if (type == T_CHAR) {
+                    if (c == '[')  throw this.ex("parser.cc.6", this.offset-2);
+                    if (c == ']')  throw this.ex("parser.cc.7", this.offset-2);
+                    if (c == '-' && this.chardata != ']' && !firstloop)  throw this.ex("parser.cc.8", this.offset-2);   // if regex = '[-]' then invalid
+                }
+                if (this.read() != T_CHAR || this.chardata != '-' || c == '-' && firstloop) { // Here is no '-'.
+                    if (!this.isSet(RegularExpression.IGNORE_CASE) || c > 0xffff) {
+                        tok.addRange(c, c);
+                    }
+                    else {
+                        addCaseInsensitiveChar(tok, c);
+                    }
+                } else {                        // Found '-'
+                                                // Is this '-' is a from-to token??
+                    this.next(); // Skips '-'
+                    if ((type = this.read()) == T_EOF)  throw this.ex("parser.cc.2", this.offset);
+                                                // c '-' ']' -> '-' is a single-range.
+                    if(type == T_CHAR && this.chardata == ']') {                                // if - is at the last position of the group
+                        if (!this.isSet(RegularExpression.IGNORE_CASE) || c > 0xffff) {
+                            tok.addRange(c, c);
+                        }
+                        else {
+                            addCaseInsensitiveChar(tok, c);
+                        }
+                        tok.addRange('-', '-');
+                    }
+                    else if (type == T_XMLSCHEMA_CC_SUBTRACTION) {
+                        throw this.ex("parser.cc.8", this.offset-1);
+                    } else {
+
+                        int rangeend = this.chardata;
+                        if (type == T_CHAR) {
+                            if (rangeend == '[')  throw this.ex("parser.cc.6", this.offset-1);
+                            if (rangeend == ']')  throw this.ex("parser.cc.7", this.offset-1);
+                            if (rangeend == '-')  throw this.ex("parser.cc.8", this.offset-2);
+                        }
+                        else if (type == T_BACKSOLIDUS)
+                            rangeend = this.decodeEscaped();
+                        this.next();
+
+                        if (c > rangeend)  throw this.ex("parser.ope.3", this.offset-1);
+                        if (!this.isSet(RegularExpression.IGNORE_CASE) ||
+                                (c > 0xffff && rangeend > 0xffff)) {
+                            tok.addRange(c, rangeend);
+                        }
+                        else {
+                            addCaseInsensitiveCharRange(tok, c, rangeend);
+                        }
+                    }
+                }
+            }
+            firstloop = false;
+        }
+        if (this.read() == T_EOF)
+            throw this.ex("parser.cc.2", this.offset);
+        tok.sortRanges();
+        tok.compactRanges();
+        //tok.dumpRanges();
+        this.setContext(S_NORMAL);
+        this.next();                    // Skips ']'
+
+        return tok;
+!!!4594050.java!!!	parseSetOperations() : RangeToken
+        throw this.ex("parser.process.1", this.offset);
+!!!4594178.java!!!	getTokenForShorthand(in ch : int) : Token
+        switch (ch) {
+          case 'd':
+            return ParserForXMLSchema.getRange("xml:isDigit", true);
+          case 'D':
+            return ParserForXMLSchema.getRange("xml:isDigit", false);
+          case 'w':
+            return ParserForXMLSchema.getRange("xml:isWord", true);
+          case 'W':
+            return ParserForXMLSchema.getRange("xml:isWord", false);
+          case 's':
+            return ParserForXMLSchema.getRange("xml:isSpace", true);
+          case 'S':
+            return ParserForXMLSchema.getRange("xml:isSpace", false);
+          case 'c':
+            return ParserForXMLSchema.getRange("xml:isNameChar", true);
+          case 'C':
+            return ParserForXMLSchema.getRange("xml:isNameChar", false);
+          case 'i':
+            return ParserForXMLSchema.getRange("xml:isInitialNameChar", true);
+          case 'I':
+            return ParserForXMLSchema.getRange("xml:isInitialNameChar", false);
+          default:
+            throw new RuntimeException("Internal Error: shorthands: \\u"+Integer.toString(ch, 16));
+        }
+!!!4594306.java!!!	decodeEscaped() : int
+        if (this.read() != T_BACKSOLIDUS)  throw ex("parser.next.1", this.offset-1);
+        int c = this.chardata;
+        switch (c) {
+          case 'n':  c = '\n';  break; // LINE FEED U+000A
+          case 'r':  c = '\r';  break; // CRRIAGE RETURN U+000D
+          case 't':  c = '\t';  break; // HORIZONTAL TABULATION U+0009
+          case '\\':
+          case '|':
+          case '.':
+          case '^':
+          case '-':
+          case '?':
+          case '*':
+          case '+':
+          case '{':
+          case '}':
+          case '(':
+          case ')':
+          case '[':
+          case ']':
+            break; // return actucal char
+          default:
+            throw ex("parser.process.1", this.offset-2);
+        }
+        return c;
+!!!4594434.java!!!	getRange(inout name : String, inout positive : boolean) : RangeToken
+        if (ranges == null) {
+            ranges = new HashMap<>();
+            ranges2 = new HashMap<>();
+
+            Token tok = Token.createRange();
+            setupRange(tok, SPACES);
+            ranges.put("xml:isSpace", tok);
+            ranges2.put("xml:isSpace", Token.complementRanges(tok));
+
+            tok = Token.createRange();
+            setupRange(tok, DIGITS);
+            setupRange(tok, DIGITS_INT);
+            ranges.put("xml:isDigit", tok);
+            ranges2.put("xml:isDigit", Token.complementRanges(tok));
+
+            tok = Token.createRange();
+            setupRange(tok, LETTERS);
+            setupRange(tok, LETTERS_INT);
+            tok.mergeRanges(ranges.get("xml:isDigit"));
+            ranges.put("xml:isWord", tok);
+            ranges2.put("xml:isWord", Token.complementRanges(tok));
+
+            tok = Token.createRange();
+            setupRange(tok, NAMECHARS);
+            ranges.put("xml:isNameChar", tok);
+            ranges2.put("xml:isNameChar", Token.complementRanges(tok));
+
+            tok = Token.createRange();
+            setupRange(tok, LETTERS);
+            tok.addRange('_', '_');
+            tok.addRange(':', ':');
+            ranges.put("xml:isInitialNameChar", tok);
+            ranges2.put("xml:isInitialNameChar", Token.complementRanges(tok));
+        }
+        RangeToken tok = positive ? (RangeToken)ranges.get(name)
+            : (RangeToken)ranges2.get(name);
+        return tok;
+!!!4594562.java!!!	setupRange(inout range : Token, inout src : String) : void
+        int len = src.length();
+        for (int i = 0;  i < len;  i += 2)
+            range.addRange(src.charAt(i), src.charAt(i+1));
+!!!4594690.java!!!	setupRange(inout range : Token, inout src : int [[]]) : void
+        int len = src.length;
+        for (int i = 0;  i < len;  i += 2)
+            range.addRange(src[i], src[i+1]);

@@ -1,0 +1,72 @@
+class DelegatingMethodHandle
+!!!7170434.java!!!	DelegatingMethodHandle(inout target : MethodHandle)
+        this(target.type(), target);
+!!!7170562.java!!!	DelegatingMethodHandle(inout type : MethodType, inout target : MethodHandle)
+        super(type, chooseDelegatingForm(target));
+!!!7170690.java!!!	DelegatingMethodHandle(inout type : MethodType, inout form : LambdaForm)
+        super(type, form);
+!!!7171074.java!!!	internalMemberName() : MemberName
+        return getTarget().internalMemberName();
+!!!7171202.java!!!	isInvokeSpecial() : boolean
+        return getTarget().isInvokeSpecial();
+!!!7171330.java!!!	internalCallerClass() : Class
+        return getTarget().internalCallerClass();
+!!!7171458.java!!!	copyWith(inout mt : MethodType, inout lf : LambdaForm) : MethodHandle
+        // FIXME: rethink 'copyWith' protocol; it is too low-level for use on all MHs
+        throw newIllegalArgumentException("do not use this");
+!!!7171586.java!!!	internalProperties() : String
+        return "\n& Class="+getClass().getSimpleName()+
+               "\n& Target="+getTarget().debugString();
+!!!7171714.java!!!	rebind() : BoundMethodHandle
+        return getTarget().rebind();
+!!!7171842.java!!!	chooseDelegatingForm(inout target : MethodHandle) : LambdaForm
+        if (target instanceof SimpleMethodHandle)
+            return target.internalForm();  // no need for an indirection
+        return makeReinvokerForm(target, MethodTypeForm.LF_DELEGATE, DelegatingMethodHandle.class, NF_getTarget);
+!!!7171970.java!!!	makeReinvokerForm(inout target : MethodHandle, in whichCache : int, inout constraint : Object, inout getTargetFn : NamedFunction) : LambdaForm
+        String debugString;
+        switch(whichCache) {
+            case MethodTypeForm.LF_REBIND:            debugString = "BMH.reinvoke";      break;
+            case MethodTypeForm.LF_DELEGATE:          debugString = "MH.delegate";       break;
+            default:                                  debugString = "MH.reinvoke";       break;
+        }
+        // No pre-action needed.
+        return makeReinvokerForm(target, whichCache, constraint, debugString, true, getTargetFn, null);
+!!!7172098.java!!!	makeReinvokerForm(inout target : MethodHandle, in whichCache : int, inout constraint : Object, inout debugString : String, inout forceInline : boolean, inout getTargetFn : NamedFunction, inout preActionFn : NamedFunction) : LambdaForm
+        MethodType mtype = target.type().basicType();
+        boolean customized = (whichCache < 0 ||
+                mtype.parameterSlotCount() > MethodType.MAX_MH_INVOKER_ARITY);
+        boolean hasPreAction = (preActionFn != null);
+        LambdaForm form;
+        if (!customized) {
+            form = mtype.form().cachedLambdaForm(whichCache);
+            if (form != null)  return form;
+        }
+        final int THIS_DMH    = 0;
+        final int ARG_BASE    = 1;
+        final int ARG_LIMIT   = ARG_BASE + mtype.parameterCount();
+        int nameCursor = ARG_LIMIT;
+        final int PRE_ACTION   = hasPreAction ? nameCursor++ : -1;
+        final int NEXT_MH     = customized ? -1 : nameCursor++;
+        final int REINVOKE    = nameCursor++;
+        LambdaForm.Name[] names = LambdaForm.arguments(nameCursor - ARG_LIMIT, mtype.invokerType());
+        assert(names.length == nameCursor);
+        names[THIS_DMH] = names[THIS_DMH].withConstraint(constraint);
+        Object[] targetArgs;
+        if (hasPreAction) {
+            names[PRE_ACTION] = new LambdaForm.Name(preActionFn, names[THIS_DMH]);
+        }
+        if (customized) {
+            targetArgs = Arrays.copyOfRange(names, ARG_BASE, ARG_LIMIT, Object[].class);
+            names[REINVOKE] = new LambdaForm.Name(target, targetArgs);  // the invoker is the target itself
+        } else {
+            names[NEXT_MH] = new LambdaForm.Name(getTargetFn, names[THIS_DMH]);
+            targetArgs = Arrays.copyOfRange(names, THIS_DMH, ARG_LIMIT, Object[].class);
+            targetArgs[0] = names[NEXT_MH];  // overwrite this MH with next MH
+            names[REINVOKE] = new LambdaForm.Name(mtype, targetArgs);
+        }
+        form = new LambdaForm(debugString, ARG_LIMIT, names, forceInline);
+        if (!customized) {
+            form = mtype.form().setCachedLambdaForm(whichCache, form);
+        }
+        return form;

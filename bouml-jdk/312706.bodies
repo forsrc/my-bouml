@@ -1,0 +1,734 @@
+class ImageReader
+!!!1666946.java!!!	ImageReader(inout originatingProvider : ImageReaderSpi)
+        this.originatingProvider = originatingProvider;
+!!!1667074.java!!!	getFormatName() : String
+        return originatingProvider.getFormatNames()[0];
+!!!1667202.java!!!	getOriginatingProvider() : ImageReaderSpi
+        return originatingProvider;
+!!!1667330.java!!!	setInput(inout input : Object, inout seekForwardOnly : boolean, inout ignoreMetadata : boolean) : void
+        if (input != null) {
+            boolean found = false;
+            if (originatingProvider != null) {
+                Class[] classes = originatingProvider.getInputTypes();
+                for (int i = 0; i < classes.length; i++) {
+                    if (classes[i].isInstance(input)) {
+                        found = true;
+                        break;
+                    }
+                }
+            } else {
+                if (input instanceof ImageInputStream) {
+                    found = true;
+                }
+            }
+            if (!found) {
+                throw new IllegalArgumentException("Incorrect input type!");
+            }
+
+            this.seekForwardOnly = seekForwardOnly;
+            this.ignoreMetadata = ignoreMetadata;
+            this.minIndex = 0;
+        }
+
+        this.input = input;
+!!!1667458.java!!!	setInput(inout input : Object, inout seekForwardOnly : boolean) : void
+        setInput(input, seekForwardOnly, false);
+!!!1667586.java!!!	setInput(inout input : Object) : void
+        setInput(input, false, false);
+!!!1667714.java!!!	getInput() : Object
+        return input;
+!!!1667842.java!!!	isSeekForwardOnly() : boolean
+        return seekForwardOnly;
+!!!1667970.java!!!	isIgnoringMetadata() : boolean
+        return ignoreMetadata;
+!!!1668098.java!!!	getMinIndex() : int
+        return minIndex;
+!!!1668226.java!!!	getAvailableLocales() : Locale
+        if (availableLocales == null) {
+            return null;
+        } else {
+            return (Locale[])availableLocales.clone();
+        }
+!!!1668354.java!!!	setLocale(inout locale : Locale) : void
+        if (locale != null) {
+            Locale[] locales = getAvailableLocales();
+            boolean found = false;
+            if (locales != null) {
+                for (int i = 0; i < locales.length; i++) {
+                    if (locale.equals(locales[i])) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                throw new IllegalArgumentException("Invalid locale!");
+            }
+        }
+        this.locale = locale;
+!!!1668482.java!!!	getLocale() : Locale
+        return locale;
+!!!1668994.java!!!	isRandomAccessEasy(in imageIndex : int) : boolean
+        return false;
+!!!1669122.java!!!	getAspectRatio(in imageIndex : int) : float
+        return (float)getWidth(imageIndex)/getHeight(imageIndex);
+!!!1669250.java!!!	getRawImageType(in imageIndex : int) : ImageTypeSpecifier
+        return (ImageTypeSpecifier)getImageTypes(imageIndex).next();
+!!!1669506.java!!!	getDefaultReadParam() : ImageReadParam
+        return new ImageReadParam();
+!!!1669762.java!!!	getStreamMetadata(inout formatName : String, inout nodeNames : Set) : IIOMetadata
+        return getMetadata(formatName, nodeNames, true, 0);
+!!!1669890.java!!!	getMetadata(inout formatName : String, inout nodeNames : Set, inout wantStream : boolean, in imageIndex : int) : IIOMetadata
+        if (formatName == null) {
+            throw new IllegalArgumentException("formatName == null!");
+        }
+        if (nodeNames == null) {
+            throw new IllegalArgumentException("nodeNames == null!");
+        }
+        IIOMetadata metadata =
+            wantStream
+            ? getStreamMetadata()
+            : getImageMetadata(imageIndex);
+        if (metadata != null) {
+            if (metadata.isStandardMetadataFormatSupported() &&
+                formatName.equals
+                (IIOMetadataFormatImpl.standardMetadataFormatName)) {
+                return metadata;
+            }
+            String nativeName = metadata.getNativeMetadataFormatName();
+            if (nativeName != null && formatName.equals(nativeName)) {
+                return metadata;
+            }
+            String[] extraNames = metadata.getExtraMetadataFormatNames();
+            if (extraNames != null) {
+                for (int i = 0; i < extraNames.length; i++) {
+                    if (formatName.equals(extraNames[i])) {
+                        return metadata;
+                    }
+                }
+            }
+        }
+        return null;
+!!!1670146.java!!!	getImageMetadata(in imageIndex : int, inout formatName : String, inout nodeNames : Set) : IIOMetadata
+        return getMetadata(formatName, nodeNames, false, imageIndex);
+!!!1670274.java!!!	read(in imageIndex : int) : BufferedImage
+        return read(imageIndex, null);
+!!!1670530.java!!!	readAll(in imageIndex : int, inout param : ImageReadParam) : IIOImage
+        if (imageIndex < getMinIndex()) {
+            throw new IndexOutOfBoundsException("imageIndex < getMinIndex()!");
+        }
+
+        BufferedImage im = read(imageIndex, param);
+
+        ArrayList thumbnails = null;
+        int numThumbnails = getNumThumbnails(imageIndex);
+        if (numThumbnails > 0) {
+            thumbnails = new ArrayList();
+            for (int j = 0; j < numThumbnails; j++) {
+                thumbnails.add(readThumbnail(imageIndex, j));
+            }
+        }
+
+        IIOMetadata metadata = getImageMetadata(imageIndex);
+        return new IIOImage(im, thumbnails, metadata);
+!!!1670658.java!!!	readAll(inout params : Iterator) : Iterator
+        List output = new ArrayList();
+
+        int imageIndex = getMinIndex();
+
+        // Inform IIOReadProgressListeners we're starting a sequence
+        processSequenceStarted(imageIndex);
+
+        while (true) {
+            // Inform IIOReadProgressListeners and IIOReadUpdateListeners
+            // that we're starting a new image
+
+            ImageReadParam param = null;
+            if (params != null && params.hasNext()) {
+                Object o = params.next();
+                if (o != null) {
+                    if (o instanceof ImageReadParam) {
+                        param = (ImageReadParam)o;
+                    } else {
+                        throw new IllegalArgumentException
+                            ("Non-ImageReadParam supplied as part of params!");
+                    }
+                }
+            }
+
+            BufferedImage bi = null;
+            try {
+                bi = read(imageIndex, param);
+            } catch (IndexOutOfBoundsException e) {
+                break;
+            }
+
+            ArrayList thumbnails = null;
+            int numThumbnails = getNumThumbnails(imageIndex);
+            if (numThumbnails > 0) {
+                thumbnails = new ArrayList();
+                for (int j = 0; j < numThumbnails; j++) {
+                    thumbnails.add(readThumbnail(imageIndex, j));
+                }
+            }
+
+            IIOMetadata metadata = getImageMetadata(imageIndex);
+            IIOImage im = new IIOImage(bi, thumbnails, metadata);
+            output.add(im);
+
+            ++imageIndex;
+        }
+
+        // Inform IIOReadProgressListeners we're ending a sequence
+        processSequenceComplete();
+
+        return output.iterator();
+!!!1670786.java!!!	canReadRaster() : boolean
+        return false;
+!!!1670914.java!!!	readRaster(in imageIndex : int, inout param : ImageReadParam) : Raster
+        throw new UnsupportedOperationException("readRaster not supported!");
+!!!1671042.java!!!	isImageTiled(in imageIndex : int) : boolean
+        return false;
+!!!1671170.java!!!	getTileWidth(in imageIndex : int) : int
+        return getWidth(imageIndex);
+!!!1671298.java!!!	getTileHeight(in imageIndex : int) : int
+        return getHeight(imageIndex);
+!!!1671426.java!!!	getTileGridXOffset(in imageIndex : int) : int
+        return 0;
+!!!1671554.java!!!	getTileGridYOffset(in imageIndex : int) : int
+        return 0;
+!!!1671682.java!!!	readTile(in imageIndex : int, in tileX : int, in tileY : int) : BufferedImage
+        if ((tileX != 0) || (tileY != 0)) {
+            throw new IllegalArgumentException("Invalid tile indices");
+        }
+        return read(imageIndex);
+!!!1671810.java!!!	readTileRaster(in imageIndex : int, in tileX : int, in tileY : int) : Raster
+        if (!canReadRaster()) {
+            throw new UnsupportedOperationException
+                ("readTileRaster not supported!");
+        }
+        if ((tileX != 0) || (tileY != 0)) {
+            throw new IllegalArgumentException("Invalid tile indices");
+        }
+        return readRaster(imageIndex, null);
+!!!1671938.java!!!	readAsRenderedImage(in imageIndex : int, inout param : ImageReadParam) : RenderedImage
+        return read(imageIndex, param);
+!!!1672066.java!!!	readerSupportsThumbnails() : boolean
+        return false;
+!!!1672194.java!!!	hasThumbnails(in imageIndex : int) : boolean
+        return getNumThumbnails(imageIndex) > 0;
+!!!1672322.java!!!	getNumThumbnails(in imageIndex : int) : int
+        return 0;
+!!!1672450.java!!!	getThumbnailWidth(in imageIndex : int, in thumbnailIndex : int) : int
+        return readThumbnail(imageIndex, thumbnailIndex).getWidth();
+!!!1672578.java!!!	getThumbnailHeight(in imageIndex : int, in thumbnailIndex : int) : int
+        return readThumbnail(imageIndex, thumbnailIndex).getHeight();
+!!!1672706.java!!!	readThumbnail(in imageIndex : int, in thumbnailIndex : int) : BufferedImage
+        throw new UnsupportedOperationException("Thumbnails not supported!");
+!!!1672834.java!!!	abort() : void
+        this.abortFlag = true;
+!!!1672962.java!!!	abortRequested() : boolean
+        return this.abortFlag;
+!!!1673090.java!!!	clearAbortRequest() : void
+        this.abortFlag = false;
+!!!1673218.java!!!	addToList(inout l : List, inout elt : Object) : List
+        if (l == null) {
+            l = new ArrayList();
+        }
+        l.add(elt);
+        return l;
+!!!1673346.java!!!	removeFromList(inout l : List, inout elt : Object) : List
+        if (l == null) {
+            return l;
+        }
+        l.remove(elt);
+        if (l.size() == 0) {
+            l = null;
+        }
+        return l;
+!!!1673474.java!!!	addIIOReadWarningListener(inout listener : IIOReadWarningListener) : void
+        if (listener == null) {
+            return;
+        }
+        warningListeners = addToList(warningListeners, listener);
+        warningLocales = addToList(warningLocales, getLocale());
+!!!1673602.java!!!	removeIIOReadWarningListener(inout listener : IIOReadWarningListener) : void
+        if (listener == null || warningListeners == null) {
+            return;
+        }
+        int index = warningListeners.indexOf(listener);
+        if (index != -1) {
+            warningListeners.remove(index);
+            warningLocales.remove(index);
+            if (warningListeners.size() == 0) {
+                warningListeners = null;
+                warningLocales = null;
+            }
+        }
+!!!1673730.java!!!	removeAllIIOReadWarningListeners() : void
+        warningListeners = null;
+        warningLocales = null;
+!!!1673858.java!!!	addIIOReadProgressListener(inout listener : IIOReadProgressListener) : void
+        if (listener == null) {
+            return;
+        }
+        progressListeners = addToList(progressListeners, listener);
+!!!1673986.java!!!	removeIIOReadProgressListener(inout listener : IIOReadProgressListener) : void
+        if (listener == null || progressListeners == null) {
+            return;
+        }
+        progressListeners = removeFromList(progressListeners, listener);
+!!!1674114.java!!!	removeAllIIOReadProgressListeners() : void
+        progressListeners = null;
+!!!1674242.java!!!	addIIOReadUpdateListener(inout listener : IIOReadUpdateListener) : void
+        if (listener == null) {
+            return;
+        }
+        updateListeners = addToList(updateListeners, listener);
+!!!1674370.java!!!	removeIIOReadUpdateListener(inout listener : IIOReadUpdateListener) : void
+        if (listener == null || updateListeners == null) {
+            return;
+        }
+        updateListeners = removeFromList(updateListeners, listener);
+!!!1674498.java!!!	removeAllIIOReadUpdateListeners() : void
+        updateListeners = null;
+!!!1674626.java!!!	processSequenceStarted(in minIndex : int) : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.sequenceStarted(this, minIndex);
+        }
+!!!1674754.java!!!	processSequenceComplete() : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.sequenceComplete(this);
+        }
+!!!1674882.java!!!	processImageStarted(in imageIndex : int) : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.imageStarted(this, imageIndex);
+        }
+!!!1675010.java!!!	processImageProgress(in percentageDone : float) : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.imageProgress(this, percentageDone);
+        }
+!!!1675138.java!!!	processImageComplete() : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.imageComplete(this);
+        }
+!!!1675266.java!!!	processThumbnailStarted(in imageIndex : int, in thumbnailIndex : int) : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.thumbnailStarted(this, imageIndex, thumbnailIndex);
+        }
+!!!1675394.java!!!	processThumbnailProgress(in percentageDone : float) : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.thumbnailProgress(this, percentageDone);
+        }
+!!!1675522.java!!!	processThumbnailComplete() : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.thumbnailComplete(this);
+        }
+!!!1675650.java!!!	processReadAborted() : void
+        if (progressListeners == null) {
+            return;
+        }
+        int numListeners = progressListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadProgressListener listener =
+                (IIOReadProgressListener)progressListeners.get(i);
+            listener.readAborted(this);
+        }
+!!!1675778.java!!!	processPassStarted(inout theImage : BufferedImage, in pass : int, in minPass : int, in maxPass : int, in minX : int, in minY : int, in periodX : int, in periodY : int, inout bands : int [[]]) : void
+        if (updateListeners == null) {
+            return;
+        }
+        int numListeners = updateListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadUpdateListener listener =
+                (IIOReadUpdateListener)updateListeners.get(i);
+            listener.passStarted(this, theImage, pass,
+                                 minPass,
+                                 maxPass,
+                                 minX, minY,
+                                 periodX, periodY,
+                                 bands);
+        }
+!!!1675906.java!!!	processImageUpdate(inout theImage : BufferedImage, in minX : int, in minY : int, in width : int, in height : int, in periodX : int, in periodY : int, inout bands : int [[]]) : void
+        if (updateListeners == null) {
+            return;
+        }
+        int numListeners = updateListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadUpdateListener listener =
+                (IIOReadUpdateListener)updateListeners.get(i);
+            listener.imageUpdate(this,
+                                 theImage,
+                                 minX, minY,
+                                 width, height,
+                                 periodX, periodY,
+                                 bands);
+        }
+!!!1676034.java!!!	processPassComplete(inout theImage : BufferedImage) : void
+        if (updateListeners == null) {
+            return;
+        }
+        int numListeners = updateListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadUpdateListener listener =
+                (IIOReadUpdateListener)updateListeners.get(i);
+            listener.passComplete(this, theImage);
+        }
+!!!1676162.java!!!	processThumbnailPassStarted(inout theThumbnail : BufferedImage, in pass : int, in minPass : int, in maxPass : int, in minX : int, in minY : int, in periodX : int, in periodY : int, inout bands : int [[]]) : void
+        if (updateListeners == null) {
+            return;
+        }
+        int numListeners = updateListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadUpdateListener listener =
+                (IIOReadUpdateListener)updateListeners.get(i);
+            listener.thumbnailPassStarted(this, theThumbnail, pass,
+                                          minPass,
+                                          maxPass,
+                                          minX, minY,
+                                          periodX, periodY,
+                                          bands);
+        }
+!!!1676290.java!!!	processThumbnailUpdate(inout theThumbnail : BufferedImage, in minX : int, in minY : int, in width : int, in height : int, in periodX : int, in periodY : int, inout bands : int [[]]) : void
+        if (updateListeners == null) {
+            return;
+        }
+        int numListeners = updateListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadUpdateListener listener =
+                (IIOReadUpdateListener)updateListeners.get(i);
+            listener.thumbnailUpdate(this,
+                                     theThumbnail,
+                                     minX, minY,
+                                     width, height,
+                                     periodX, periodY,
+                                     bands);
+        }
+!!!1676418.java!!!	processThumbnailPassComplete(inout theThumbnail : BufferedImage) : void
+        if (updateListeners == null) {
+            return;
+        }
+        int numListeners = updateListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadUpdateListener listener =
+                (IIOReadUpdateListener)updateListeners.get(i);
+            listener.thumbnailPassComplete(this, theThumbnail);
+        }
+!!!1676546.java!!!	processWarningOccurred(inout warning : String) : void
+        if (warningListeners == null) {
+            return;
+        }
+        if (warning == null) {
+            throw new IllegalArgumentException("warning == null!");
+        }
+        int numListeners = warningListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadWarningListener listener =
+                (IIOReadWarningListener)warningListeners.get(i);
+
+            listener.warningOccurred(this, warning);
+        }
+!!!1676674.java!!!	processWarningOccurred(inout baseName : String, inout keyword : String) : void
+        if (warningListeners == null) {
+            return;
+        }
+        if (baseName == null) {
+            throw new IllegalArgumentException("baseName == null!");
+        }
+        if (keyword == null) {
+            throw new IllegalArgumentException("keyword == null!");
+        }
+        int numListeners = warningListeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            IIOReadWarningListener listener =
+                (IIOReadWarningListener)warningListeners.get(i);
+            Locale locale = (Locale)warningLocales.get(i);
+            if (locale == null) {
+                locale = Locale.getDefault();
+            }
+
+            /**
+             * If an applet supplies an implementation of ImageReader and
+             * resource bundles, then the resource bundle will need to be
+             * accessed via the applet class loader. So first try the context
+             * class loader to locate the resource bundle.
+             * If that throws MissingResourceException, then try the
+             * system class loader.
+             */
+            ClassLoader loader = (ClassLoader)
+                java.security.AccessController.doPrivileged(
+                   new java.security.PrivilegedAction() {
+                      public Object run() {
+                        return Thread.currentThread().getContextClassLoader();
+                      }
+                });
+
+            ResourceBundle bundle = null;
+            try {
+                bundle = ResourceBundle.getBundle(baseName, locale, loader);
+            } catch (MissingResourceException mre) {
+                try {
+                    bundle = ResourceBundle.getBundle(baseName, locale);
+                } catch (MissingResourceException mre1) {
+                    throw new IllegalArgumentException("Bundle not found!");
+                }
+            }
+
+            String warning = null;
+            try {
+                warning = bundle.getString(keyword);
+            } catch (ClassCastException cce) {
+                throw new IllegalArgumentException("Resource is not a String!");
+            } catch (MissingResourceException mre) {
+                throw new IllegalArgumentException("Resource is missing!");
+            }
+
+            listener.warningOccurred(this, warning);
+        }
+!!!1676802.java!!!	reset() : void
+        setInput(null, false, false);
+        setLocale(null);
+        removeAllIIOReadUpdateListeners();
+        removeAllIIOReadProgressListeners();
+        removeAllIIOReadWarningListeners();
+        clearAbortRequest();
+!!!1677058.java!!!	getSourceRegion(inout param : ImageReadParam, in srcWidth : int, in srcHeight : int) : Rectangle
+        Rectangle sourceRegion = new Rectangle(0, 0, srcWidth, srcHeight);
+        if (param != null) {
+            Rectangle region = param.getSourceRegion();
+            if (region != null) {
+                sourceRegion = sourceRegion.intersection(region);
+            }
+
+            int subsampleXOffset = param.getSubsamplingXOffset();
+            int subsampleYOffset = param.getSubsamplingYOffset();
+            sourceRegion.x += subsampleXOffset;
+            sourceRegion.y += subsampleYOffset;
+            sourceRegion.width -= subsampleXOffset;
+            sourceRegion.height -= subsampleYOffset;
+        }
+
+        return sourceRegion;
+!!!1677186.java!!!	computeRegions(inout param : ImageReadParam, in srcWidth : int, in srcHeight : int, inout image : BufferedImage, inout srcRegion : Rectangle, inout destRegion : Rectangle) : void
+        if (srcRegion == null) {
+            throw new IllegalArgumentException("srcRegion == null!");
+        }
+        if (destRegion == null) {
+            throw new IllegalArgumentException("destRegion == null!");
+        }
+
+        // Start with the entire source image
+        srcRegion.setBounds(0, 0, srcWidth, srcHeight);
+
+        // Destination also starts with source image, as that is the
+        // maximum extent if there is no subsampling
+        destRegion.setBounds(0, 0, srcWidth, srcHeight);
+
+        // Clip that to the param region, if there is one
+        int periodX = 1;
+        int periodY = 1;
+        int gridX = 0;
+        int gridY = 0;
+        if (param != null) {
+            Rectangle paramSrcRegion = param.getSourceRegion();
+            if (paramSrcRegion != null) {
+                srcRegion.setBounds(srcRegion.intersection(paramSrcRegion));
+            }
+            periodX = param.getSourceXSubsampling();
+            periodY = param.getSourceYSubsampling();
+            gridX = param.getSubsamplingXOffset();
+            gridY = param.getSubsamplingYOffset();
+            srcRegion.translate(gridX, gridY);
+            srcRegion.width -= gridX;
+            srcRegion.height -= gridY;
+            destRegion.setLocation(param.getDestinationOffset());
+        }
+
+        // Now clip any negative destination offsets, i.e. clip
+        // to the top and left of the destination image
+        if (destRegion.x < 0) {
+            int delta = -destRegion.x*periodX;
+            srcRegion.x += delta;
+            srcRegion.width -= delta;
+            destRegion.x = 0;
+        }
+        if (destRegion.y < 0) {
+            int delta = -destRegion.y*periodY;
+            srcRegion.y += delta;
+            srcRegion.height -= delta;
+            destRegion.y = 0;
+        }
+
+        // Now clip the destination Region to the subsampled width and height
+        int subsampledWidth = (srcRegion.width + periodX - 1)/periodX;
+        int subsampledHeight = (srcRegion.height + periodY - 1)/periodY;
+        destRegion.width = subsampledWidth;
+        destRegion.height = subsampledHeight;
+
+        // Now clip that to right and bottom of the destination image,
+        // if there is one, taking subsampling into account
+        if (image != null) {
+            Rectangle destImageRect = new Rectangle(0, 0,
+                                                    image.getWidth(),
+                                                    image.getHeight());
+            destRegion.setBounds(destRegion.intersection(destImageRect));
+            if (destRegion.isEmpty()) {
+                throw new IllegalArgumentException
+                    ("Empty destination region!");
+            }
+
+            int deltaX = destRegion.x + subsampledWidth - image.getWidth();
+            if (deltaX > 0) {
+                srcRegion.width -= deltaX*periodX;
+            }
+            int deltaY =  destRegion.y + subsampledHeight - image.getHeight();
+            if (deltaY > 0) {
+                srcRegion.height -= deltaY*periodY;
+            }
+        }
+        if (srcRegion.isEmpty() || destRegion.isEmpty()) {
+            throw new IllegalArgumentException("Empty region!");
+        }
+!!!1677314.java!!!	checkReadParamBandSettings(inout param : ImageReadParam, in numSrcBands : int, in numDstBands : int) : void
+        // A null param is equivalent to srcBands == dstBands == null.
+        int[] srcBands = null;
+        int[] dstBands = null;
+        if (param != null) {
+            srcBands = param.getSourceBands();
+            dstBands = param.getDestinationBands();
+        }
+
+        int paramSrcBandLength =
+            (srcBands == null) ? numSrcBands : srcBands.length;
+        int paramDstBandLength =
+            (dstBands == null) ? numDstBands : dstBands.length;
+
+        if (paramSrcBandLength != paramDstBandLength) {
+            throw new IllegalArgumentException("ImageReadParam num source & dest bands differ!");
+        }
+
+        if (srcBands != null) {
+            for (int i = 0; i < srcBands.length; i++) {
+                if (srcBands[i] >= numSrcBands) {
+                    throw new IllegalArgumentException("ImageReadParam source bands contains a value >= the number of source bands!");
+                }
+            }
+        }
+
+        if (dstBands != null) {
+            for (int i = 0; i < dstBands.length; i++) {
+                if (dstBands[i] >= numDstBands) {
+                    throw new IllegalArgumentException("ImageReadParam dest bands contains a value >= the number of dest bands!");
+                }
+            }
+        }
+!!!1677442.java!!!	getDestination(inout param : ImageReadParam, inout imageTypes : Iterator, in width : int, in height : int) : BufferedImage
+        if (imageTypes == null || !imageTypes.hasNext()) {
+            throw new IllegalArgumentException("imageTypes null or empty!");
+        }
+        if ((long)width*height > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException
+                ("width*height > Integer.MAX_VALUE!");
+        }
+
+        BufferedImage dest = null;
+        ImageTypeSpecifier imageType = null;
+
+        // If param is non-null, use it
+        if (param != null) {
+            // Try to get the image itself
+            dest = param.getDestination();
+            if (dest != null) {
+                return dest;
+            }
+
+            // No image, get the image type
+            imageType = param.getDestinationType();
+        }
+
+        // No info from param, use fallback image type
+        if (imageType == null) {
+            Object o = imageTypes.next();
+            if (!(o instanceof ImageTypeSpecifier)) {
+                throw new IllegalArgumentException
+                    ("Non-ImageTypeSpecifier retrieved from imageTypes!");
+            }
+            imageType = (ImageTypeSpecifier)o;
+        } else {
+            boolean foundIt = false;
+            while (imageTypes.hasNext()) {
+                ImageTypeSpecifier type =
+                    (ImageTypeSpecifier)imageTypes.next();
+                if (type.equals(imageType)) {
+                    foundIt = true;
+                    break;
+                }
+            }
+
+            if (!foundIt) {
+                throw new IIOException
+                    ("Destination type from ImageReadParam does not match!");
+            }
+        }
+
+        Rectangle srcRegion = new Rectangle(0,0,0,0);
+        Rectangle destRegion = new Rectangle(0,0,0,0);
+        computeRegions(param,
+                       width,
+                       height,
+                       null,
+                       srcRegion,
+                       destRegion);
+
+        int destWidth = destRegion.x + destRegion.width;
+        int destHeight = destRegion.y + destRegion.height;
+        // Create a new image based on the type specifier
+        return imageType.createBufferedImage(destWidth, destHeight);

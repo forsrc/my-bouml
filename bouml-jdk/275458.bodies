@@ -1,0 +1,448 @@
+class SelectorImpl
+!!!1449602.java!!!	SelectorImpl(inout orb : ORB)
+        this.orb = orb;
+        selector = null;
+        selectorStarted = false;
+        timeout = 60000;
+        deferredRegistrations = new ArrayList();
+        interestOpsList = new ArrayList();
+        listenerThreads = new HashMap();
+        readerThreads = java.util.Collections.synchronizedMap(new HashMap());
+        closed = false;
+        wrapper = ORBUtilSystemException.get(orb,CORBALogDomains.RPC_TRANSPORT);
+!!!1449730.java!!!	setTimeout(in timeout : long) : void
+        this.timeout = timeout;
+!!!1449858.java!!!	getTimeout() : long
+        return timeout;
+!!!1449986.java!!!	registerInterestOps(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".registerInterestOps:-> " + eventHandler);
+        }
+
+        SelectionKey selectionKey = eventHandler.getSelectionKey();
+        if (selectionKey.isValid()) {
+            int ehOps = eventHandler.getInterestOps();
+            SelectionKeyAndOp keyAndOp = new SelectionKeyAndOp(selectionKey, ehOps);
+            synchronized(interestOpsList) {
+                interestOpsList.add(keyAndOp);
+            }
+            // tell Selector Thread there's an update to a SelectorKey's Ops
+            try {
+                if (selector != null) {
+                    // wakeup Selector thread to process close request
+                    selector.wakeup();
+                }
+            } catch (Throwable t) {
+                if (orb.transportDebugFlag) {
+                    dprint(".registerInterestOps: selector.wakeup: ", t);
+                }
+            }
+        }
+        else {
+            wrapper.selectionKeyInvalid(eventHandler.toString());
+            if (orb.transportDebugFlag) {
+                dprint(".registerInterestOps: EventHandler SelectionKey not valid " + eventHandler);
+            }
+        }
+
+        if (orb.transportDebugFlag) {
+            dprint(".registerInterestOps:<- ");
+        }
+!!!1450114.java!!!	registerForEvent(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".registerForEvent: " + eventHandler);
+        }
+
+        if (isClosed()) {
+            if (orb.transportDebugFlag) {
+                dprint(".registerForEvent: closed: " + eventHandler);
+            }
+            return;
+        }
+
+        if (eventHandler.shouldUseSelectThreadToWait()) {
+            synchronized (deferredRegistrations) {
+                deferredRegistrations.add(eventHandler);
+            }
+            if (! selectorStarted) {
+                startSelector();
+            }
+            selector.wakeup();
+            return;
+        }
+
+        switch (eventHandler.getInterestOps()) {
+        case SelectionKey.OP_ACCEPT :
+            createListenerThread(eventHandler);
+            break;
+        case SelectionKey.OP_READ :
+            createReaderThread(eventHandler);
+            break;
+        default:
+            if (orb.transportDebugFlag) {
+                dprint(".registerForEvent: default: " + eventHandler);
+            }
+            throw new RuntimeException(
+                "SelectorImpl.registerForEvent: unknown interest ops");
+        }
+!!!1450242.java!!!	unregisterForEvent(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".unregisterForEvent: " + eventHandler);
+        }
+
+        if (isClosed()) {
+            if (orb.transportDebugFlag) {
+                dprint(".unregisterForEvent: closed: " + eventHandler);
+            }
+            return;
+        }
+
+        if (eventHandler.shouldUseSelectThreadToWait()) {
+            SelectionKey selectionKey ;
+            synchronized(deferredRegistrations) {
+                selectionKey = eventHandler.getSelectionKey();
+            }
+            if (selectionKey != null) {
+                selectionKey.cancel();
+            }
+            if (selector != null) {
+                selector.wakeup();
+            }
+            return;
+        }
+
+        switch (eventHandler.getInterestOps()) {
+        case SelectionKey.OP_ACCEPT :
+            destroyListenerThread(eventHandler);
+            break;
+        case SelectionKey.OP_READ :
+            destroyReaderThread(eventHandler);
+            break;
+        default:
+            if (orb.transportDebugFlag) {
+                dprint(".unregisterForEvent: default: " + eventHandler);
+            }
+            throw new RuntimeException(
+                "SelectorImpl.uregisterForEvent: unknown interest ops");
+        }
+!!!1450370.java!!!	close() : void
+        if (orb.transportDebugFlag) {
+            dprint(".close");
+        }
+
+        if (isClosed()) {
+            if (orb.transportDebugFlag) {
+                dprint(".close: already closed");
+            }
+            return;
+        }
+
+        setClosed(true);
+
+        Iterator i;
+
+        // Kill listeners.
+
+        i = listenerThreads.values().iterator();
+        while (i.hasNext()) {
+            ListenerThread listenerThread = (ListenerThread) i.next();
+            listenerThread.close();
+        }
+
+        // Kill readers.
+
+        i = readerThreads.values().iterator();
+        while (i.hasNext()) {
+            ReaderThread readerThread = (ReaderThread) i.next();
+            readerThread.close();
+        }
+
+       clearDeferredRegistrations();
+
+        // Selector
+
+        try {
+            if (selector != null) {
+                // wakeup Selector thread to process close request
+                selector.wakeup();
+            }
+        } catch (Throwable t) {
+            if (orb.transportDebugFlag) {
+                dprint(".close: selector.wakeup: ", t);
+            }
+        }
+!!!1450498.java!!!	run() : void
+        setName("SelectorThread");
+        while (!closed) {
+            try {
+                int n = 0;
+                if (timeout == 0 && orb.transportDebugFlag) {
+                    dprint(".run: Beginning of selection cycle");
+                }
+                handleDeferredRegistrations();
+                enableInterestOps();
+                try {
+                    n = selector.select(timeout);
+                } catch (IOException  e) {
+                    if (orb.transportDebugFlag) {
+                        dprint(".run: selector.select: ", e);
+                    }
+                } catch (ClosedSelectorException csEx) {
+                    if (orb.transportDebugFlag) {
+                        dprint(".run: selector.select: ", csEx);
+                    }
+                    break;
+                }
+                if (closed) {
+                    break;
+                }
+                /*
+                  if (timeout == 0 && orb.transportDebugFlag) {
+                  dprint(".run: selector.select() returned: " + n);
+                  }
+                  if (n == 0) {
+                  continue;
+                  }
+                */
+                Iterator iterator = selector.selectedKeys().iterator();
+                if (orb.transportDebugFlag) {
+                    if (iterator.hasNext()) {
+                        dprint(".run: n = " + n);
+                    }
+                }
+                while (iterator.hasNext()) {
+                    SelectionKey selectionKey = (SelectionKey) iterator.next();
+                    iterator.remove();
+                    EventHandler eventHandler = (EventHandler)
+                        selectionKey.attachment();
+                    try {
+                        eventHandler.handleEvent();
+                    } catch (Throwable t) {
+                        if (orb.transportDebugFlag) {
+                            dprint(".run: eventHandler.handleEvent", t);
+                        }
+                    }
+                }
+                if (timeout == 0 && orb.transportDebugFlag) {
+                    dprint(".run: End of selection cycle");
+                }
+            } catch (Throwable t) {
+                // IMPORTANT: ignore all errors so the select thread keeps running.
+                // Otherwise a guaranteed hang.
+                if (orb.transportDebugFlag) {
+                    dprint(".run: ignoring", t);
+                }
+            }
+        }
+        try {
+            if (selector != null) {
+                if (orb.transportDebugFlag) {
+                    dprint(".run: selector.close ");
+                }
+                selector.close();
+            }
+        } catch (Throwable t) {
+            if (orb.transportDebugFlag) {
+                dprint(".run: selector.close: ", t);
+            }
+        }
+!!!1450626.java!!!	clearDeferredRegistrations() : void
+        synchronized (deferredRegistrations) {
+            int deferredListSize = deferredRegistrations.size();
+            if (orb.transportDebugFlag) {
+                dprint(".clearDeferredRegistrations:deferred list size == " + deferredListSize);
+            }
+            for (int i = 0; i < deferredListSize; i++) {
+                EventHandler eventHandler =
+                    (EventHandler)deferredRegistrations.get(i);
+                if (orb.transportDebugFlag) {
+                    dprint(".clearDeferredRegistrations: " + eventHandler);
+                }
+                SelectableChannel channel = eventHandler.getChannel();
+                SelectionKey selectionKey = null;
+
+                try {
+                    if (orb.transportDebugFlag) {
+                        dprint(".clearDeferredRegistrations:close channel == "
+                                + channel);
+                        dprint(".clearDeferredRegistrations:close channel class == "
+                                + channel.getClass().getName());
+                    }
+                    channel.close();
+                    selectionKey = eventHandler.getSelectionKey();
+                    if (selectionKey != null) {
+                        selectionKey.cancel();
+                        selectionKey.attach(null);
+                    }
+                } catch (IOException ioEx) {
+                    if (orb.transportDebugFlag) {
+                        dprint(".clearDeferredRegistrations: ", ioEx);
+                    }
+                }
+            }
+            deferredRegistrations.clear();
+        }
+!!!1450754.java!!!	isClosed() : boolean
+        return closed;
+!!!1450882.java!!!	setClosed(inout closed : boolean) : void
+        this.closed = closed;
+!!!1451010.java!!!	startSelector() : void
+        try {
+            selector = Selector.open();
+        } catch (IOException e) {
+            if (orb.transportDebugFlag) {
+                dprint(".startSelector: Selector.open: IOException: ", e);
+            }
+            // REVISIT - better handling/reporting
+            RuntimeException rte =
+                new RuntimeException(".startSelector: Selector.open exception");
+            rte.initCause(e);
+            throw rte;
+        }
+        setDaemon(true);
+        start();
+        selectorStarted = true;
+        if (orb.transportDebugFlag) {
+            dprint(".startSelector: selector.start completed.");
+        }
+!!!1451138.java!!!	handleDeferredRegistrations() : void
+        synchronized (deferredRegistrations) {
+            int deferredListSize = deferredRegistrations.size();
+            for (int i = 0; i < deferredListSize; i++) {
+                EventHandler eventHandler =
+                    (EventHandler)deferredRegistrations.get(i);
+                if (orb.transportDebugFlag) {
+                    dprint(".handleDeferredRegistrations: " + eventHandler);
+                }
+                SelectableChannel channel = eventHandler.getChannel();
+                SelectionKey selectionKey = null;
+                try {
+                    selectionKey =
+                        channel.register(selector,
+                                         eventHandler.getInterestOps(),
+                                         (Object)eventHandler);
+                } catch (ClosedChannelException e) {
+                    if (orb.transportDebugFlag) {
+                        dprint(".handleDeferredRegistrations: ", e);
+                    }
+                }
+                eventHandler.setSelectionKey(selectionKey);
+            }
+            deferredRegistrations.clear();
+        }
+!!!1451266.java!!!	enableInterestOps() : void
+        synchronized (interestOpsList) {
+            int listSize = interestOpsList.size();
+            if (listSize > 0) {
+                if (orb.transportDebugFlag) {
+                    dprint(".enableInterestOps:->");
+                }
+                SelectionKey selectionKey = null;
+                SelectionKeyAndOp keyAndOp = null;
+                int keyOp, selectionKeyOps = 0;
+                for (int i = 0; i < listSize; i++) {
+                    keyAndOp = (SelectionKeyAndOp)interestOpsList.get(i);
+                    selectionKey = keyAndOp.selectionKey;
+
+                    // Need to check if the SelectionKey is valid because a
+                    // connection's SelectionKey could be put on the list to
+                    // have its OP enabled and before it's enabled be reclaimed.
+                    // Otherwise, the enabling of the OP will throw an exception
+                    // here and exit this method an potentially not enable all
+                    // registered ops.
+                    //
+                    // So, we ignore SelectionKeys that are invalid. They will get
+                    // cleaned up on the next Selector.select() call.
+
+                    if (selectionKey.isValid()) {
+                        if (orb.transportDebugFlag) {
+                            dprint(".enableInterestOps: " + keyAndOp);
+                        }
+                        keyOp = keyAndOp.keyOp;
+                        selectionKeyOps = selectionKey.interestOps();
+                        selectionKey.interestOps(selectionKeyOps | keyOp);
+                    }
+                }
+                interestOpsList.clear();
+                if (orb.transportDebugFlag) {
+                    dprint(".enableInterestOps:<-");
+                }
+            }
+        }
+!!!1451394.java!!!	createListenerThread(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".createListenerThread: " + eventHandler);
+        }
+        Acceptor acceptor = eventHandler.getAcceptor();
+        ListenerThread listenerThread =
+            new ListenerThreadImpl(orb, acceptor, this);
+        listenerThreads.put(eventHandler, listenerThread);
+        Throwable throwable = null;
+        try {
+            orb.getThreadPoolManager().getThreadPool(0)
+                .getWorkQueue(0).addWork((Work)listenerThread);
+        } catch (NoSuchThreadPoolException e) {
+            throwable = e;
+        } catch (NoSuchWorkQueueException e) {
+            throwable = e;
+        }
+        if (throwable != null) {
+            RuntimeException rte = new RuntimeException(throwable.toString());
+            rte.initCause(throwable);
+            throw rte;
+        }
+!!!1451522.java!!!	destroyListenerThread(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".destroyListenerThread: " + eventHandler);
+        }
+        ListenerThread listenerThread = (ListenerThread)
+            listenerThreads.get(eventHandler);
+        if (listenerThread == null) {
+            if (orb.transportDebugFlag) {
+                dprint(".destroyListenerThread: cannot find ListenerThread - ignoring.");
+            }
+            return;
+        }
+        listenerThreads.remove(eventHandler);
+        listenerThread.close();
+!!!1451650.java!!!	createReaderThread(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".createReaderThread: " + eventHandler);
+        }
+        Connection connection = eventHandler.getConnection();
+        ReaderThread readerThread =
+            new ReaderThreadImpl(orb, connection, this);
+        readerThreads.put(eventHandler, readerThread);
+        Throwable throwable = null;
+        try {
+            orb.getThreadPoolManager().getThreadPool(0)
+                .getWorkQueue(0).addWork((Work)readerThread);
+        } catch (NoSuchThreadPoolException e) {
+            throwable = e;
+        } catch (NoSuchWorkQueueException e) {
+            throwable = e;
+        }
+        if (throwable != null) {
+            RuntimeException rte = new RuntimeException(throwable.toString());
+            rte.initCause(throwable);
+            throw rte;
+        }
+!!!1451778.java!!!	destroyReaderThread(inout eventHandler : EventHandler) : void
+        if (orb.transportDebugFlag) {
+            dprint(".destroyReaderThread: " + eventHandler);
+        }
+        ReaderThread readerThread = (ReaderThread)
+            readerThreads.get(eventHandler);
+        if (readerThread == null) {
+            if (orb.transportDebugFlag) {
+                dprint(".destroyReaderThread: cannot find ReaderThread - ignoring.");
+            }
+            return;
+        }
+        readerThreads.remove(eventHandler);
+        readerThread.close();
+!!!1451906.java!!!	dprint(inout msg : String) : void
+        ORBUtility.dprint("SelectorImpl", msg);
+!!!1452034.java!!!	dprint(inout msg : String, inout t : Throwable) : void
+        dprint(msg);
+        t.printStackTrace(System.out);

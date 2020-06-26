@@ -1,0 +1,73 @@
+class ActivationID
+!!!7892866.java!!!	ActivationID(inout activator : Activator)
+        this.activator = activator;
+!!!7892994.java!!!	activate(inout force : boolean) : Remote
+        try {
+            MarshalledObject<? extends Remote> mobj =
+                activator.activate(this, force);
+            return AccessController.doPrivileged(
+                new PrivilegedExceptionAction<Remote>() {
+                    public Remote run() throws IOException, ClassNotFoundException {
+                        return mobj.get();
+                    }
+                }, NOPERMS_ACC);
+        } catch (PrivilegedActionException pae) {
+            Exception ex = pae.getException();
+            if (ex instanceof RemoteException) {
+                throw (RemoteException) ex;
+            } else {
+                throw new UnmarshalException("activation failed", ex);
+            }
+        }
+
+!!!7893122.java!!!	hashCode() : int
+        return uid.hashCode();
+!!!7893250.java!!!	equals(inout obj : Object) : boolean
+        if (obj instanceof ActivationID) {
+            ActivationID id = (ActivationID) obj;
+            return (uid.equals(id.uid) && activator.equals(id.activator));
+        } else {
+            return false;
+        }
+!!!7893378.java!!!	writeObject(inout out : ObjectOutputStream) : void
+        out.writeObject(uid);
+
+        RemoteRef ref;
+        if (activator instanceof RemoteObject) {
+            ref = ((RemoteObject) activator).getRef();
+        } else if (Proxy.isProxyClass(activator.getClass())) {
+            InvocationHandler handler = Proxy.getInvocationHandler(activator);
+            if (!(handler instanceof RemoteObjectInvocationHandler)) {
+                throw new InvalidObjectException(
+                    "unexpected invocation handler");
+            }
+            ref = ((RemoteObjectInvocationHandler) handler).getRef();
+
+        } else {
+            throw new InvalidObjectException("unexpected activator type");
+        }
+        out.writeUTF(ref.getRefClass(out));
+        ref.writeExternal(out);
+!!!7893506.java!!!	readObject(inout in : ObjectInputStream) : void
+        uid = (UID)in.readObject();
+
+        try {
+            Class<? extends RemoteRef> refClass =
+                Class.forName(RemoteRef.packagePrefix + "." + in.readUTF())
+                .asSubclass(RemoteRef.class);
+            RemoteRef ref = refClass.newInstance();
+            ref.readExternal(in);
+            activator = (Activator)
+                Proxy.newProxyInstance(null,
+                                       new Class<?>[] { Activator.class },
+                                       new RemoteObjectInvocationHandler(ref));
+
+        } catch (InstantiationException e) {
+            throw (IOException)
+                new InvalidObjectException(
+                    "Unable to create remote reference").initCause(e);
+        } catch (IllegalAccessException e) {
+            throw (IOException)
+                new InvalidObjectException(
+                    "Unable to create remote reference").initCause(e);
+        }

@@ -1,0 +1,189 @@
+class SecuritySupport
+!!!5121282.java!!!	getInstance() : SecuritySupport
+        return securitySupport;
+!!!5121410.java!!!	getContextClassLoader() : ClassLoader
+        return (ClassLoader)
+        AccessController.doPrivileged(new PrivilegedAction() {
+            public Object run() {
+                ClassLoader cl = null;
+                try {
+                    cl = Thread.currentThread().getContextClassLoader();
+                } catch (SecurityException ex) { }
+                return cl;
+            }
+        });
+!!!5121538.java!!!	getSystemClassLoader() : ClassLoader
+        return (ClassLoader)
+        AccessController.doPrivileged(new PrivilegedAction() {
+            public Object run() {
+                ClassLoader cl = null;
+                try {
+                    cl = ClassLoader.getSystemClassLoader();
+                } catch (SecurityException ex) {}
+                return cl;
+            }
+        });
+!!!5121666.java!!!	getParentClassLoader(in cl : ClassLoader) : ClassLoader
+        return (ClassLoader)
+        AccessController.doPrivileged(new PrivilegedAction() {
+            public Object run() {
+                ClassLoader parent = null;
+                try {
+                    parent = cl.getParent();
+                } catch (SecurityException ex) {}
+
+                // eliminate loops in case of the boot
+                // ClassLoader returning itself as a parent
+                return (parent == cl) ? null : parent;
+            }
+        });
+!!!5121794.java!!!	getSystemProperty(in propName : String) : String
+        return (String)
+        AccessController.doPrivileged(new PrivilegedAction() {
+            public Object run() {
+                return System.getProperty(propName);
+            }
+        });
+!!!5121922.java!!!	getFileInputStream(in file : File) : FileInputStream
+        try {
+            return (FileInputStream)
+            AccessController.doPrivileged(new PrivilegedExceptionAction() {
+                public Object run() throws FileNotFoundException {
+                    return new FileInputStream(file);
+                }
+            });
+        } catch (PrivilegedActionException e) {
+            throw (FileNotFoundException)e.getException();
+        }
+!!!5122050.java!!!	getResourceAsStream(in name : String) : InputStream
+        if (System.getSecurityManager()!=null) {
+            return getResourceAsStream(null, name);
+        } else {
+            return getResourceAsStream(ObjectFactory.findClassLoader(), name);
+        }
+!!!5122178.java!!!	getResourceAsStream(in cl : ClassLoader, in name : String) : InputStream
+        return (InputStream)
+        AccessController.doPrivileged(new PrivilegedAction() {
+            public Object run() {
+                InputStream ris;
+                if (cl == null) {
+                    ris = Object.class.getResourceAsStream("/"+name);
+                } else {
+                    ris = cl.getResourceAsStream(name);
+                }
+                return ris;
+            }
+        });
+!!!5122306.java!!!	getResourceBundle(inout bundle : String) : ResourceBundle
+        return getResourceBundle(bundle, Locale.getDefault());
+!!!5122434.java!!!	getResourceBundle(in bundle : String, in locale : Locale) : ResourceBundle
+        return AccessController.doPrivileged(new PrivilegedAction<ResourceBundle>() {
+            public ResourceBundle run() {
+                try {
+                    return PropertyResourceBundle.getBundle(bundle, locale);
+                } catch (MissingResourceException e) {
+                    try {
+                        return PropertyResourceBundle.getBundle(bundle, new Locale("en", "US"));
+                    } catch (MissingResourceException e2) {
+                        throw new MissingResourceException(
+                                "Could not load any resource bundle by " + bundle, bundle, "");
+                    }
+                }
+            }
+        });
+!!!5122562.java!!!	getFileExists(in f : File) : boolean
+        return ((Boolean)
+                AccessController.doPrivileged(new PrivilegedAction() {
+                    public Object run() {
+                        return f.exists() ? Boolean.TRUE : Boolean.FALSE;
+                    }
+                })).booleanValue();
+!!!5122690.java!!!	getLastModified(in f : File) : long
+        return ((Long)
+                AccessController.doPrivileged(new PrivilegedAction() {
+                    public Object run() {
+                        return new Long(f.lastModified());
+                    }
+                })).longValue();
+!!!5122818.java!!!	sanitizePath(inout uri : String) : String
+        if (uri == null) {
+            return "";
+        }
+        int i = uri.lastIndexOf("/");
+        if (i > 0) {
+            return uri.substring(i+1, uri.length());
+        }
+        return uri;
+!!!5122946.java!!!	checkAccess(inout systemId : String, inout allowedProtocols : String, inout accessAny : String) : String
+        if (systemId == null || (allowedProtocols != null &&
+                allowedProtocols.equalsIgnoreCase(accessAny))) {
+            return null;
+        }
+
+        String protocol;
+        if (systemId.indexOf(":")==-1) {
+            protocol = "file";
+        } else {
+            URL url = new URL(systemId);
+            protocol = url.getProtocol();
+            if (protocol.equalsIgnoreCase("jar")) {
+                String path = url.getPath();
+                protocol = path.substring(0, path.indexOf(":"));
+            }
+        }
+
+        if (isProtocolAllowed(protocol, allowedProtocols)) {
+            //access allowed
+            return null;
+        } else {
+            return protocol;
+        }
+!!!5123074.java!!!	isProtocolAllowed(inout protocol : String, inout allowedProtocols : String) : boolean
+         if (allowedProtocols == null) {
+             return false;
+         }
+         String temp[] = allowedProtocols.split(",");
+         for (String t : temp) {
+             t = t.trim();
+             if (t.equalsIgnoreCase(protocol)) {
+                 return true;
+             }
+         }
+         return false;
+!!!5123202.java!!!	getJAXPSystemProperty(inout sysPropertyId : String) : String
+        String accessExternal = getSystemProperty(sysPropertyId);
+        if (accessExternal == null) {
+            accessExternal = readJAXPProperty(sysPropertyId);
+        }
+        return accessExternal;
+!!!5123330.java!!!	readJAXPProperty(inout propertyId : String) : String
+        String value = null;
+        InputStream is = null;
+        try {
+            if (firstTime) {
+                synchronized (cacheProps) {
+                    if (firstTime) {
+                        String configFile = getSystemProperty("java.home") + File.separator +
+                            "lib" + File.separator + "jaxp.properties";
+                        File f = new File(configFile);
+                        if (getFileExists(f)) {
+                            is = getFileInputStream(f);
+                            cacheProps.load(is);
+                        }
+                        firstTime = false;
+                    }
+                }
+            }
+            value = cacheProps.getProperty(propertyId);
+
+        }
+        catch (Exception ex) {}
+        finally {
+            if (is != null) {
+                try {
+                    is.close();
+                } catch (IOException ex) {}
+            }
+        }
+
+        return value;

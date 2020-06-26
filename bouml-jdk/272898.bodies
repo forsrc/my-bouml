@@ -1,0 +1,180 @@
+class INSURLOperationImpl
+!!!1428610.java!!!	INSURLOperationImpl(inout orb : ORB, inout bootstrapResolver : Resolver)
+        this.orb = orb ;
+        wrapper = ORBUtilSystemException.get( orb,
+            CORBALogDomains.ORB_RESOLVER ) ;
+        omgWrapper = OMGSystemException.get( orb,
+            CORBALogDomains.ORB_RESOLVER ) ;
+        this.bootstrapResolver = bootstrapResolver ;
+!!!1428738.java!!!	getIORFromString(inout str : String) : Object
+        // Length must be even for str to be valid
+        if ( (str.length() & 1) == 1 )
+            throw wrapper.badStringifiedIorLen() ;
+
+        byte[] buf = new byte[(str.length() - ORBConstants.STRINGIFY_PREFIX.length()) / NIBBLES_PER_BYTE];
+        for (int i=ORBConstants.STRINGIFY_PREFIX.length(), j=0; i < str.length(); i +=NIBBLES_PER_BYTE, j++) {
+             buf[j] = (byte)((ORBUtility.hexOf(str.charAt(i)) << UN_SHIFT) & 0xF0);
+             buf[j] |= (byte)(ORBUtility.hexOf(str.charAt(i+1)) & 0x0F);
+        }
+        EncapsInputStream s = EncapsInputStreamFactory.newEncapsInputStream(orb, buf, buf.length,
+                orb.getORBData().getGIOPVersion());
+        s.consumeEndian();
+        return s.read_Object() ;
+!!!1428866.java!!!	operate(inout arg : Object) : Object
+        if (arg instanceof String) {
+            String str = (String)arg ;
+
+            if (str.startsWith( ORBConstants.STRINGIFY_PREFIX ))
+                // XXX handle this as just another URL scheme
+                return getIORFromString( str ) ;
+            else {
+                INSURL insURL = insURLHandler.parseURL( str ) ;
+                if (insURL == null)
+                    throw omgWrapper.soBadSchemeName() ;
+                return resolveINSURL( insURL ) ;
+            }
+        }
+
+        throw wrapper.stringExpected() ;
+!!!1428994.java!!!	resolveINSURL(inout theURLObject : INSURL) : Object
+        // XXX resolve should be a method on INSURL
+        if( theURLObject.isCorbanameURL() ) {
+            return resolveCorbaname( (CorbanameURL)theURLObject );
+        } else {
+            return resolveCorbaloc( (CorbalocURL)theURLObject );
+        }
+!!!1429122.java!!!	resolveCorbaloc(inout theCorbaLocObject : CorbalocURL) : Object
+        org.omg.CORBA.Object result = null;
+        // If RIR flag is true use the Bootstrap protocol
+        if( theCorbaLocObject.getRIRFlag( ) )  {
+            result = bootstrapResolver.resolve(theCorbaLocObject.getKeyString());
+        } else {
+            result = getIORUsingCorbaloc( theCorbaLocObject );
+        }
+
+        return result;
+!!!1429250.java!!!	resolveCorbaname(inout theCorbaName : CorbanameURL) : Object
+        org.omg.CORBA.Object result = null;
+
+        try {
+            NamingContextExt theNamingContext = null;
+
+            if( theCorbaName.getRIRFlag( ) ) {
+                // Case 1 of corbaname: rir#
+                theNamingContext = getDefaultRootNamingContext( );
+            } else {
+                // Case 2 of corbaname: ::hostname#
+                org.omg.CORBA.Object corbalocResult =
+                    getIORUsingCorbaloc( theCorbaName );
+                if( corbalocResult == null ) {
+                    return null;
+                }
+
+                theNamingContext =
+                    NamingContextExtHelper.narrow( corbalocResult );
+            }
+
+            String StringifiedName = theCorbaName.getStringifiedName( );
+
+            if( StringifiedName == null ) {
+                // This means return the Root Naming context
+                return theNamingContext;
+            } else {
+                return theNamingContext.resolve_str( StringifiedName );
+            }
+        } catch( Exception e ) {
+            clearRootNamingContextCache( );
+            return null;
+        }
+!!!1429378.java!!!	getIORUsingCorbaloc(inout corbalocObject : INSURL) : Object
+        Map     profileMap = new HashMap();
+        List    profileList1_0 = new ArrayList();
+
+        // corbalocObject cannot be null, because it's validated during
+        // parsing. So no null check is required.
+        java.util.List theEndpointInfo = corbalocObject.getEndpointInfo();
+        String theKeyString = corbalocObject.getKeyString();
+        // If there is no KeyString then it's invalid
+        if( theKeyString == null ) {
+            return null;
+        }
+
+        ObjectKey key = orb.getObjectKeyFactory().create(
+            theKeyString.getBytes() );
+        IORTemplate iortemp = IORFactories.makeIORTemplate( key.getTemplate() );
+        java.util.Iterator iterator = theEndpointInfo.iterator( );
+        while( iterator.hasNext( ) ) {
+            IIOPEndpointInfo element =
+                (IIOPEndpointInfo) iterator.next( );
+            IIOPAddress addr = IIOPFactories.makeIIOPAddress( orb, element.getHost(),
+                element.getPort() );
+            GIOPVersion giopVersion = GIOPVersion.getInstance( (byte)element.getMajor(),
+                                             (byte)element.getMinor());
+            IIOPProfileTemplate profileTemplate = null;
+            if (giopVersion.equals(GIOPVersion.V1_0)) {
+                profileTemplate = IIOPFactories.makeIIOPProfileTemplate(
+                    orb, giopVersion, addr);
+                profileList1_0.add(profileTemplate);
+            } else {
+                if (profileMap.get(giopVersion) == null) {
+                    profileTemplate = IIOPFactories.makeIIOPProfileTemplate(
+                        orb, giopVersion, addr);
+                    profileMap.put(giopVersion, profileTemplate);
+                } else {
+                    profileTemplate = (IIOPProfileTemplate)profileMap.get(giopVersion);
+                    AlternateIIOPAddressComponent iiopAddressComponent =
+                                IIOPFactories.makeAlternateIIOPAddressComponent(addr);
+                    profileTemplate.add(iiopAddressComponent);
+                }
+            }
+        }
+
+        GIOPVersion giopVersion = orb.getORBData().getGIOPVersion();
+        IIOPProfileTemplate pTemplate = (IIOPProfileTemplate)profileMap.get(giopVersion);
+        if (pTemplate != null) {
+            iortemp.add(pTemplate); // Add profile for GIOP version used by this ORB
+            profileMap.remove(giopVersion); // Now remove this value from the map
+        }
+
+        // Create a comparator that can sort in decending order (1.2, 1.1, ...)
+        Comparator comp = new Comparator() {
+            public int compare(Object o1, Object o2) {
+                GIOPVersion gv1 = (GIOPVersion)o1;
+                GIOPVersion gv2 = (GIOPVersion)o2;
+                return (gv1.lessThan(gv2) ? 1 : (gv1.equals(gv2) ? 0 : -1));
+            };
+        };
+
+        // Now sort using the above comparator
+        List list = new ArrayList(profileMap.keySet());
+        Collections.sort(list, comp);
+
+        // Add the profiles in the sorted order
+        Iterator iter = list.iterator();
+        while (iter.hasNext()) {
+            IIOPProfileTemplate pt = (IIOPProfileTemplate)profileMap.get(iter.next());
+            iortemp.add(pt);
+        }
+
+        // Finally add the 1.0 profiles
+        iortemp.addAll(profileList1_0);
+
+        IOR ior = iortemp.makeIOR( orb, "", key.getId() ) ;
+        return ORBUtility.makeObjectReference( ior ) ;
+!!!1429506.java!!!	getDefaultRootNamingContext() : NamingContextExt
+        synchronized( rootContextCacheLock ) {
+            if( rootNamingContextExt == null ) {
+                try {
+                    rootNamingContextExt =
+                        NamingContextExtHelper.narrow(
+                        orb.getLocalResolver().resolve( "NameService" ) );
+                } catch( Exception e ) {
+                    rootNamingContextExt = null;
+                }
+            }
+        }
+        return rootNamingContextExt;
+!!!1429634.java!!!	clearRootNamingContextCache() : void
+        synchronized( rootContextCacheLock ) {
+            rootNamingContextExt = null;
+        }

@@ -1,0 +1,421 @@
+class SynthTreeUI
+!!!11578242.java!!!	createUI(inout x : JComponent) : ComponentUI
+        return new SynthTreeUI();
+!!!11578370.java!!!	getExpandedIcon() : Icon
+        return expandedIconWrapper;
+!!!11578498.java!!!	installDefaults() : void
+        updateStyle(tree);
+!!!11578626.java!!!	updateStyle(inout tree : JTree) : void
+        SynthContext context = getContext(tree, ENABLED);
+        SynthStyle oldStyle = style;
+
+        style = SynthLookAndFeel.updateStyle(context, this);
+        if (style != oldStyle) {
+            Object value;
+
+            setExpandedIcon(style.getIcon(context, "Tree.expandedIcon"));
+            setCollapsedIcon(style.getIcon(context, "Tree.collapsedIcon"));
+
+            setLeftChildIndent(style.getInt(context, "Tree.leftChildIndent",
+                                            0));
+            setRightChildIndent(style.getInt(context, "Tree.rightChildIndent",
+                                             0));
+
+            drawHorizontalLines = style.getBoolean(
+                          context, "Tree.drawHorizontalLines",true);
+            drawVerticalLines = style.getBoolean(
+                        context, "Tree.drawVerticalLines", true);
+            linesStyle = style.get(context, "Tree.linesStyle");
+
+                value = style.get(context, "Tree.rowHeight");
+                if (value != null) {
+                    LookAndFeel.installProperty(tree, "rowHeight", value);
+                }
+
+                value = style.get(context, "Tree.scrollsOnExpand");
+                LookAndFeel.installProperty(tree, "scrollsOnExpand",
+                                                    value != null? value : Boolean.TRUE);
+
+            padding = style.getInt(context, "Tree.padding", 0);
+
+            largeModel = (tree.isLargeModel() && tree.getRowHeight() > 0);
+
+            useTreeColors = style.getBoolean(context,
+                                  "Tree.rendererUseTreeColors", true);
+
+            Boolean showsRootHandles = style.getBoolean(
+                    context, "Tree.showsRootHandles", Boolean.TRUE);
+            LookAndFeel.installProperty(
+                    tree, JTree.SHOWS_ROOT_HANDLES_PROPERTY, showsRootHandles);
+
+            if (oldStyle != null) {
+                uninstallKeyboardActions();
+                installKeyboardActions();
+            }
+        }
+        context.dispose();
+
+        context = getContext(tree, Region.TREE_CELL, ENABLED);
+        cellStyle = SynthLookAndFeel.updateStyle(context, this);
+        context.dispose();
+!!!11578754.java!!!	installListeners() : void
+        super.installListeners();
+        tree.addPropertyChangeListener(this);
+!!!11578882.java!!!	getContext(inout c : JComponent) : SynthContext
+        return getContext(c, SynthLookAndFeel.getComponentState(c));
+!!!11579010.java!!!	getContext(inout c : JComponent, in state : int) : SynthContext
+        return SynthContext.getContext(c, style, state);
+!!!11579138.java!!!	getContext(inout c : JComponent, inout region : Region) : SynthContext
+        return getContext(c, region, getComponentState(c, region));
+!!!11579266.java!!!	getContext(inout c : JComponent, inout region : Region, in state : int) : SynthContext
+        return SynthContext.getContext(c, region, cellStyle, state);
+!!!11579394.java!!!	getComponentState(inout c : JComponent, inout region : Region) : int
+        // Always treat the cell as selected, will be adjusted appropriately
+        // when painted.
+        return ENABLED | SELECTED;
+!!!11579522.java!!!	createDefaultCellEditor() : TreeCellEditor
+        TreeCellRenderer renderer = tree.getCellRenderer();
+        DefaultTreeCellEditor editor;
+
+        if(renderer != null && (renderer instanceof DefaultTreeCellRenderer)) {
+            editor = new SynthTreeCellEditor(tree, (DefaultTreeCellRenderer)
+                                             renderer);
+        }
+        else {
+            editor = new SynthTreeCellEditor(tree, null);
+        }
+        return editor;
+!!!11579650.java!!!	createDefaultCellRenderer() : TreeCellRenderer
+        return new SynthTreeCellRenderer();
+!!!11579778.java!!!	uninstallDefaults() : void
+        SynthContext context = getContext(tree, ENABLED);
+
+        style.uninstallDefaults(context);
+        context.dispose();
+        style = null;
+
+        context = getContext(tree, Region.TREE_CELL, ENABLED);
+        cellStyle.uninstallDefaults(context);
+        context.dispose();
+        cellStyle = null;
+
+
+        if (tree.getTransferHandler() instanceof UIResource) {
+            tree.setTransferHandler(null);
+        }
+!!!11579906.java!!!	uninstallListeners() : void
+        super.uninstallListeners();
+        tree.removePropertyChangeListener(this);
+!!!11580034.java!!!	update(inout g : Graphics, inout c : JComponent) : void
+        SynthContext context = getContext(c);
+
+        SynthLookAndFeel.update(context, g);
+        context.getPainter().paintTreeBackground(context,
+                          g, 0, 0, c.getWidth(), c.getHeight());
+        paint(context, g);
+        context.dispose();
+!!!11580162.java!!!	paintBorder(inout context : SynthContext, inout g : Graphics, in x : int, in y : int, in w : int, in h : int) : void
+        context.getPainter().paintTreeBorder(context, g, x, y, w, h);
+!!!11580290.java!!!	paint(inout g : Graphics, inout c : JComponent) : void
+        SynthContext context = getContext(c);
+
+        paint(context, g);
+        context.dispose();
+!!!11580418.java!!!	paint(inout context : SynthContext, inout g : Graphics) : void
+        paintContext = context;
+
+        updateLeadSelectionRow();
+
+        Rectangle paintBounds = g.getClipBounds();
+        Insets insets = tree.getInsets();
+        TreePath initialPath = getClosestPathForLocation(tree, 0,
+                                                         paintBounds.y);
+        Enumeration paintingEnumerator = treeState.getVisiblePathsFrom
+                                              (initialPath);
+        int row = treeState.getRowForPath(initialPath);
+        int endY = paintBounds.y + paintBounds.height;
+        TreeModel treeModel = tree.getModel();
+        SynthContext cellContext = getContext(tree, Region.TREE_CELL);
+
+        drawingCache.clear();
+
+        setHashColor(context.getStyle().getColor(context,
+                                                ColorType.FOREGROUND));
+
+        if (paintingEnumerator != null) {
+            // First pass, draw the rows
+
+            boolean done = false;
+            boolean isExpanded;
+            boolean hasBeenExpanded;
+            boolean isLeaf;
+            Rectangle rowBounds = new Rectangle(0, 0, tree.getWidth(),0);
+            Rectangle bounds;
+            TreePath path;
+            TreeCellRenderer renderer = tree.getCellRenderer();
+            DefaultTreeCellRenderer dtcr = (renderer instanceof
+                       DefaultTreeCellRenderer) ? (DefaultTreeCellRenderer)
+                       renderer : null;
+
+            configureRenderer(cellContext);
+            while (!done && paintingEnumerator.hasMoreElements()) {
+                path = (TreePath)paintingEnumerator.nextElement();
+                bounds = getPathBounds(tree, path);
+                if ((path != null) && (bounds != null)) {
+                    isLeaf = treeModel.isLeaf(path.getLastPathComponent());
+                    if (isLeaf) {
+                        isExpanded = hasBeenExpanded = false;
+                    }
+                    else {
+                        isExpanded = treeState.getExpandedState(path);
+                        hasBeenExpanded = tree.hasBeenExpanded(path);
+                    }
+                    rowBounds.y = bounds.y;
+                    rowBounds.height = bounds.height;
+                    paintRow(renderer, dtcr, context, cellContext, g,
+                             paintBounds, insets, bounds, rowBounds, path,
+                             row, isExpanded, hasBeenExpanded, isLeaf);
+                    if ((bounds.y + bounds.height) >= endY) {
+                        done = true;
+                    }
+                }
+                else {
+                    done = true;
+                }
+                row++;
+            }
+
+            // Draw the connecting lines and controls.
+            // Find each parent and have them draw a line to their last child
+            boolean rootVisible = tree.isRootVisible();
+            TreePath parentPath = initialPath;
+            parentPath = parentPath.getParentPath();
+            while (parentPath != null) {
+                paintVerticalPartOfLeg(g, paintBounds, insets, parentPath);
+                drawingCache.put(parentPath, Boolean.TRUE);
+                parentPath = parentPath.getParentPath();
+            }
+            done = false;
+            paintingEnumerator = treeState.getVisiblePathsFrom(initialPath);
+            while (!done && paintingEnumerator.hasMoreElements()) {
+                path = (TreePath)paintingEnumerator.nextElement();
+                bounds = getPathBounds(tree, path);
+                if ((path != null) && (bounds != null)) {
+                    isLeaf = treeModel.isLeaf(path.getLastPathComponent());
+                    if (isLeaf) {
+                        isExpanded = hasBeenExpanded = false;
+                    }
+                    else {
+                        isExpanded = treeState.getExpandedState(path);
+                        hasBeenExpanded = tree.hasBeenExpanded(path);
+                    }
+                    // See if the vertical line to the parent has been drawn.
+                    parentPath = path.getParentPath();
+                    if (parentPath != null) {
+                        if (drawingCache.get(parentPath) == null) {
+                            paintVerticalPartOfLeg(g, paintBounds, insets,
+                                                   parentPath);
+                            drawingCache.put(parentPath, Boolean.TRUE);
+                        }
+                        paintHorizontalPartOfLeg(g,
+                                                 paintBounds, insets, bounds,
+                                                 path, row, isExpanded,
+                                                 hasBeenExpanded, isLeaf);
+                    }
+                    else if (rootVisible && row == 0) {
+                        paintHorizontalPartOfLeg(g,
+                                                 paintBounds, insets, bounds,
+                                                 path, row, isExpanded,
+                                                 hasBeenExpanded, isLeaf);
+                    }
+                    if (shouldPaintExpandControl(path, row, isExpanded,
+                                                 hasBeenExpanded, isLeaf)) {
+                        paintExpandControl(g, paintBounds,
+                                           insets, bounds, path, row,
+                                           isExpanded, hasBeenExpanded,isLeaf);
+                    }
+                    if ((bounds.y + bounds.height) >= endY) {
+                        done = true;
+                    }
+                }
+                else {
+                    done = true;
+                }
+                row++;
+            }
+        }
+        cellContext.dispose();
+
+        paintDropLine(g);
+
+        // Empty out the renderer pane, allowing renderers to be gc'ed.
+        rendererPane.removeAll();
+
+        paintContext = null;
+!!!11580546.java!!!	configureRenderer(inout context : SynthContext) : void
+        TreeCellRenderer renderer = tree.getCellRenderer();
+
+        if (renderer instanceof DefaultTreeCellRenderer) {
+            DefaultTreeCellRenderer r = (DefaultTreeCellRenderer)renderer;
+            SynthStyle style = context.getStyle();
+
+            context.setComponentState(ENABLED | SELECTED);
+            Color color = r.getTextSelectionColor();
+            if (color == null || (color instanceof UIResource)) {
+                r.setTextSelectionColor(style.getColor(
+                                     context, ColorType.TEXT_FOREGROUND));
+            }
+            color = r.getBackgroundSelectionColor();
+            if (color == null || (color instanceof UIResource)) {
+                r.setBackgroundSelectionColor(style.getColor(
+                                        context, ColorType.TEXT_BACKGROUND));
+            }
+
+            context.setComponentState(ENABLED);
+            color = r.getTextNonSelectionColor();
+            if (color == null || color instanceof UIResource) {
+                r.setTextNonSelectionColor(style.getColorForState(
+                                        context, ColorType.TEXT_FOREGROUND));
+            }
+            color = r.getBackgroundNonSelectionColor();
+            if (color == null || color instanceof UIResource) {
+                r.setBackgroundNonSelectionColor(style.getColorForState(
+                                  context, ColorType.TEXT_BACKGROUND));
+            }
+        }
+!!!11580674.java!!!	paintHorizontalPartOfLeg(inout g : Graphics, inout clipBounds : Rectangle, inout insets : Insets, inout bounds : Rectangle, inout path : TreePath, in row : int, inout isExpanded : boolean, inout hasBeenExpanded : boolean, inout isLeaf : boolean) : void
+        if (drawHorizontalLines) {
+            super.paintHorizontalPartOfLeg(g, clipBounds, insets, bounds,
+                                           path, row, isExpanded,
+                                           hasBeenExpanded, isLeaf);
+        }
+!!!11580802.java!!!	paintHorizontalLine(inout g : Graphics, inout c : JComponent, in y : int, in left : int, in right : int) : void
+        paintContext.getStyle().getGraphicsUtils(paintContext).drawLine(
+            paintContext, "Tree.horizontalLine", g, left, y, right, y, linesStyle);
+!!!11580930.java!!!	paintVerticalPartOfLeg(inout g : Graphics, inout clipBounds : Rectangle, inout insets : Insets, inout path : TreePath) : void
+        if (drawVerticalLines) {
+            super.paintVerticalPartOfLeg(g, clipBounds, insets, path);
+        }
+!!!11581058.java!!!	paintVerticalLine(inout g : Graphics, inout c : JComponent, in x : int, in top : int, in bottom : int) : void
+        paintContext.getStyle().getGraphicsUtils(paintContext).drawLine(
+            paintContext, "Tree.verticalLine", g, x, top, x, bottom, linesStyle);
+!!!11581186.java!!!	paintRow(inout renderer : TreeCellRenderer, inout dtcr : DefaultTreeCellRenderer, inout treeContext : SynthContext, inout cellContext : SynthContext, inout g : Graphics, inout clipBounds : Rectangle, inout insets : Insets, inout bounds : Rectangle, inout rowBounds : Rectangle, inout path : TreePath, in row : int, inout isExpanded : boolean, inout hasBeenExpanded : boolean, inout isLeaf : boolean) : void
+        // Don't paint the renderer if editing this row.
+        boolean selected = tree.isRowSelected(row);
+
+        JTree.DropLocation dropLocation = tree.getDropLocation();
+        boolean isDrop = dropLocation != null
+                         && dropLocation.getChildIndex() == -1
+                         && path == dropLocation.getPath();
+
+        int state = ENABLED;
+        if (selected || isDrop) {
+            state |= SELECTED;
+        }
+
+        if (tree.isFocusOwner() && row == getLeadSelectionRow()) {
+            state |= FOCUSED;
+        }
+
+        cellContext.setComponentState(state);
+
+        if (dtcr != null && (dtcr.getBorderSelectionColor() instanceof
+                             UIResource)) {
+            dtcr.setBorderSelectionColor(style.getColor(
+                                             cellContext, ColorType.FOCUS));
+        }
+        SynthLookAndFeel.updateSubregion(cellContext, g, rowBounds);
+        cellContext.getPainter().paintTreeCellBackground(cellContext, g,
+                    rowBounds.x, rowBounds.y, rowBounds.width,
+                    rowBounds.height);
+        cellContext.getPainter().paintTreeCellBorder(cellContext, g,
+                    rowBounds.x, rowBounds.y, rowBounds.width,
+                    rowBounds.height);
+        if (editingComponent != null && editingRow == row) {
+            return;
+        }
+
+        int leadIndex;
+
+        if (tree.hasFocus()) {
+            leadIndex = getLeadSelectionRow();
+        }
+        else {
+            leadIndex = -1;
+        }
+
+        Component component = renderer.getTreeCellRendererComponent(
+                         tree, path.getLastPathComponent(),
+                         selected, isExpanded, isLeaf, row,
+                         (leadIndex == row));
+
+        rendererPane.paintComponent(g, component, tree, bounds.x, bounds.y,
+                                    bounds.width, bounds.height, true);
+!!!11581314.java!!!	findCenteredX(in x : int, in iconWidth : int) : int
+        return tree.getComponentOrientation().isLeftToRight()
+               ? x - (int)Math.ceil(iconWidth / 2.0)
+               : x - (int)Math.floor(iconWidth / 2.0);
+!!!11581442.java!!!	paintExpandControl(inout g : Graphics, inout clipBounds : Rectangle, inout insets : Insets, inout bounds : Rectangle, inout path : TreePath, in row : int, inout isExpanded : boolean, inout hasBeenExpanded : boolean, inout isLeaf : boolean) : void
+        //modify the paintContext's state to match the state for the row
+        //this is a hack in that it requires knowledge of the subsequent
+        //method calls. The point is, the context used in drawCentered
+        //should reflect the state of the row, not of the tree.
+        boolean isSelected = tree.getSelectionModel().isPathSelected(path);
+        int state = paintContext.getComponentState();
+        if (isSelected) {
+            paintContext.setComponentState(state | SynthConstants.SELECTED);
+        }
+        super.paintExpandControl(g, clipBounds, insets, bounds, path, row,
+                isExpanded, hasBeenExpanded, isLeaf);
+        paintContext.setComponentState(state);
+!!!11581570.java!!!	drawCentered(inout c : Component, inout graphics : Graphics, inout icon : Icon, in x : int, in y : int) : void
+        int w = SynthIcon.getIconWidth(icon, paintContext);
+        int h = SynthIcon.getIconHeight(icon, paintContext);
+
+        SynthIcon.paintIcon(icon, paintContext, graphics,
+                            findCenteredX(x, w),
+                            y - h/2, w, h);
+!!!11581698.java!!!	propertyChange(inout event : PropertyChangeEvent) : void
+        if (SynthLookAndFeel.shouldUpdateStyle(event)) {
+            updateStyle((JTree)event.getSource());
+        }
+
+        if ("dropLocation" == event.getPropertyName()) {
+            JTree.DropLocation oldValue = (JTree.DropLocation)event.getOldValue();
+            repaintDropLocation(oldValue);
+            repaintDropLocation(tree.getDropLocation());
+        }
+!!!11581826.java!!!	paintDropLine(inout g : Graphics) : void
+        JTree.DropLocation loc = tree.getDropLocation();
+        if (!isDropLine(loc)) {
+            return;
+        }
+
+        Color c = (Color)style.get(paintContext, "Tree.dropLineColor");
+        if (c != null) {
+            g.setColor(c);
+            Rectangle rect = getDropLineRect(loc);
+            g.fillRect(rect.x, rect.y, rect.width, rect.height);
+        }
+!!!11581954.java!!!	repaintDropLocation(inout loc : JTree::DropLocation) : void
+        if (loc == null) {
+            return;
+        }
+
+        Rectangle r;
+
+        if (isDropLine(loc)) {
+            r = getDropLineRect(loc);
+        } else {
+            r = tree.getPathBounds(loc.getPath());
+            if (r != null) {
+                r.x = 0;
+                r.width = tree.getWidth();
+            }
+        }
+
+        if (r != null) {
+            tree.repaint(r);
+        }
+!!!11582082.java!!!	getRowX(in row : int, in depth : int) : int
+        return super.getRowX(row, depth) + padding;

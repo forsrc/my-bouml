@@ -1,0 +1,99 @@
+class XSAllCM
+!!!4748290.java!!!	XSAllCM(inout hasOptionalContent : boolean, in size : int)
+        fHasOptionalContent = hasOptionalContent;
+        fAllElements = new XSElementDecl[size];
+        fIsOptionalElement = new boolean[size];
+!!!4748418.java!!!	addElement(inout element : XSElementDecl, inout isOptional : boolean) : void
+        fAllElements[fNumElements] = element;
+        fIsOptionalElement[fNumElements] = isOptional;
+        fNumElements++;
+!!!4748546.java!!!	startContentModel() : int
+
+        int[] state = new int[fNumElements + 1];
+
+        for (int i = 0; i <= fNumElements; i++) {
+            state[i] = STATE_START;
+        }
+        return state;
+!!!4748674.java!!!	findMatchingDecl(inout elementName : QName, inout subGroupHandler : SubstitutionGroupHandler) : Object
+        Object matchingDecl = null;
+        for (int i = 0; i < fNumElements; i++) {
+            matchingDecl = subGroupHandler.getMatchingElemDecl(elementName, fAllElements[i]);
+            if (matchingDecl != null)
+                break;
+        }
+        return matchingDecl;
+!!!4748802.java!!!	oneTransition(inout elementName : QName, inout currentState : int [[]], inout subGroupHandler : SubstitutionGroupHandler) : Object
+
+        // error state
+        if (currentState[0] < 0) {
+            currentState[0] = XSCMValidator.SUBSEQUENT_ERROR;
+            return findMatchingDecl(elementName, subGroupHandler);
+        }
+
+        // seen child
+        currentState[0] = STATE_CHILD;
+
+        Object matchingDecl = null;
+
+        for (int i = 0; i < fNumElements; i++) {
+            // we only try to look for a matching decl if we have not seen
+            // this element yet.
+            if (currentState[i+1] != STATE_START)
+                continue;
+            matchingDecl = subGroupHandler.getMatchingElemDecl(elementName, fAllElements[i]);
+            if (matchingDecl != null) {
+                // found the decl, mark this element as "seen".
+                currentState[i+1] = STATE_VALID;
+                return matchingDecl;
+            }
+        }
+
+        // couldn't find the decl, change to error state.
+        currentState[0] = XSCMValidator.FIRST_ERROR;
+        return findMatchingDecl(elementName, subGroupHandler);
+!!!4748930.java!!!	endContentModel(inout currentState : int [[]]) : boolean
+
+        int state = currentState[0];
+
+        if (state == XSCMValidator.FIRST_ERROR || state == XSCMValidator.SUBSEQUENT_ERROR) {
+            return false;
+        }
+
+        // If <all> has minOccurs of zero and there are
+        // no children to validate, it is trivially valid
+        if (fHasOptionalContent && state == STATE_START) {
+            return true;
+        }
+
+        for (int i = 0; i < fNumElements; i++) {
+            // if one element is required, but not present, then error
+            if (!fIsOptionalElement[i] && currentState[i+1] == STATE_START)
+                return false;
+        }
+
+        return true;
+!!!4749058.java!!!	checkUniqueParticleAttribution(inout subGroupHandler : SubstitutionGroupHandler) : boolean
+        // check whether there is conflict between any two leaves
+        for (int i = 0; i < fNumElements; i++) {
+            for (int j = i+1; j < fNumElements; j++) {
+                if (XSConstraints.overlapUPA(fAllElements[i], fAllElements[j], subGroupHandler)) {
+                    // REVISIT: do we want to report all errors? or just one?
+                    throw new XMLSchemaException("cos-nonambig", new Object[]{fAllElements[i].toString(),
+                                                                              fAllElements[j].toString()});
+                }
+            }
+        }
+
+        return false;
+!!!4749186.java!!!	whatCanGoHere(inout state : int [[]]) : Vector
+        Vector ret = new Vector();
+        for (int i = 0; i < fNumElements; i++) {
+            // we only try to look for a matching decl if we have not seen
+            // this element yet.
+            if (state[i+1] == STATE_START)
+                ret.addElement(fAllElements[i]);
+        }
+        return ret;
+!!!4749314.java!!!	checkMinMaxBounds() : ArrayList
+        return null;

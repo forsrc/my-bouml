@@ -1,0 +1,603 @@
+class VariableHeightLayoutCache
+!!!11902722.java!!!	VariableHeightLayoutCache()
+        super();
+        tempStacks = new Stack<Stack<TreePath>>();
+        visibleNodes = new Vector<Object>();
+        boundsBuffer = new Rectangle();
+        treePathMapping = new Hashtable<TreePath, TreeStateNode>();
+!!!11902850.java!!!	setModel(inout newModel : TreeModel) : void
+        super.setModel(newModel);
+        rebuild(false);
+!!!11902978.java!!!	setRootVisible(inout rootVisible : boolean) : void
+        if(isRootVisible() != rootVisible && root != null) {
+            if(rootVisible) {
+                root.updatePreferredSize(0);
+                visibleNodes.insertElementAt(root, 0);
+            }
+            else if(visibleNodes.size() > 0) {
+                visibleNodes.removeElementAt(0);
+                if(treeSelectionModel != null)
+                    treeSelectionModel.removeSelectionPath
+                        (root.getTreePath());
+            }
+            if(treeSelectionModel != null)
+                treeSelectionModel.resetRowSelection();
+            if(getRowCount() > 0)
+                getNode(0).setYOrigin(0);
+            updateYLocationsFrom(0);
+            visibleNodesChanged();
+        }
+        super.setRootVisible(rootVisible);
+!!!11903106.java!!!	setRowHeight(in rowHeight : int) : void
+        if(rowHeight != getRowHeight()) {
+            super.setRowHeight(rowHeight);
+            invalidateSizes();
+            this.visibleNodesChanged();
+        }
+!!!11903234.java!!!	setNodeDimensions(inout nd : AbstractLayoutCache::NodeDimensions) : void
+        super.setNodeDimensions(nd);
+        invalidateSizes();
+        visibleNodesChanged();
+!!!11903362.java!!!	setExpandedState(inout path : TreePath, inout isExpanded : boolean) : void
+        if(path != null) {
+            if(isExpanded)
+                ensurePathIsExpanded(path, true);
+            else {
+                TreeStateNode        node = getNodeForPath(path, false, true);
+
+                if(node != null) {
+                    node.makeVisible();
+                    node.collapse();
+                }
+            }
+        }
+!!!11903490.java!!!	getExpandedState(inout path : TreePath) : boolean
+        TreeStateNode       node = getNodeForPath(path, true, false);
+
+        return (node != null) ? (node.isVisible() && node.isExpanded()) :
+                                 false;
+!!!11903618.java!!!	getBounds(inout path : TreePath, inout placeIn : Rectangle) : Rectangle
+        TreeStateNode       node = getNodeForPath(path, true, false);
+
+        if(node != null) {
+            if(updateNodeSizes)
+                updateNodeSizes(false);
+            return node.getNodeBounds(placeIn);
+        }
+        return null;
+!!!11903746.java!!!	getPathForRow(in row : int) : TreePath
+        if(row >= 0 && row < getRowCount()) {
+            return getNode(row).getTreePath();
+        }
+        return null;
+!!!11903874.java!!!	getRowForPath(inout path : TreePath) : int
+        if(path == null)
+            return -1;
+
+        TreeStateNode    visNode = getNodeForPath(path, true, false);
+
+        if(visNode != null)
+            return visNode.getRow();
+        return -1;
+!!!11904002.java!!!	getRowCount() : int
+        return visibleNodes.size();
+!!!11904130.java!!!	invalidatePathBounds(inout path : TreePath) : void
+        TreeStateNode       node = getNodeForPath(path, true, false);
+
+        if(node != null) {
+            node.markSizeInvalid();
+            if(node.isVisible())
+                updateYLocationsFrom(node.getRow());
+        }
+!!!11904258.java!!!	getPreferredHeight() : int
+        // Get the height
+        int           rowCount = getRowCount();
+
+        if(rowCount > 0) {
+            TreeStateNode  node = getNode(rowCount - 1);
+
+            return node.getYOrigin() + node.getPreferredHeight();
+        }
+        return 0;
+!!!11904386.java!!!	getPreferredWidth(inout bounds : Rectangle) : int
+        if(updateNodeSizes)
+            updateNodeSizes(false);
+
+        return getMaxNodeWidth();
+!!!11904514.java!!!	getPathClosestTo(in x : int, in y : int) : TreePath
+        if(getRowCount() == 0)
+            return null;
+
+        if(updateNodeSizes)
+            updateNodeSizes(false);
+
+        int                row = getRowContainingYLocation(y);
+
+        return getNode(row).getTreePath();
+!!!11904642.java!!!	getVisiblePathsFrom(inout path : TreePath) : Enumeration
+        TreeStateNode       node = getNodeForPath(path, true, false);
+
+        if(node != null) {
+            return new VisibleTreeStateNodeEnumeration(node);
+        }
+        return null;
+!!!11904770.java!!!	getVisibleChildCount(inout path : TreePath) : int
+        TreeStateNode         node = getNodeForPath(path, true, false);
+
+        return (node != null) ? node.getVisibleChildCount() : 0;
+!!!11904898.java!!!	invalidateSizes() : void
+        if(root != null)
+            root.deepMarkSizeInvalid();
+        if(!isFixedRowHeight() && visibleNodes.size() > 0) {
+            updateNodeSizes(true);
+        }
+!!!11905026.java!!!	isExpanded(inout path : TreePath) : boolean
+        if(path != null) {
+            TreeStateNode     lastNode = getNodeForPath(path, true, false);
+
+            return (lastNode != null && lastNode.isExpanded());
+        }
+        return false;
+!!!11905154.java!!!	treeNodesChanged(inout e : TreeModelEvent) : void
+        if(e != null) {
+            int               changedIndexs[];
+            TreeStateNode     changedNode;
+
+            changedIndexs = e.getChildIndices();
+            changedNode = getNodeForPath(SwingUtilities2.getTreePath(e, getModel()), false, false);
+            if(changedNode != null) {
+                Object            changedValue = changedNode.getValue();
+
+                /* Update the size of the changed node, as well as all the
+                   child indexs that are passed in. */
+                changedNode.updatePreferredSize();
+                if(changedNode.hasBeenExpanded() && changedIndexs != null) {
+                    int                counter;
+                    TreeStateNode      changedChildNode;
+
+                    for(counter = 0; counter < changedIndexs.length;
+                        counter++) {
+                        changedChildNode = (TreeStateNode)changedNode
+                                    .getChildAt(changedIndexs[counter]);
+                        /* Reset the user object. */
+                        changedChildNode.setUserObject
+                                    (treeModel.getChild(changedValue,
+                                                     changedIndexs[counter]));
+                        changedChildNode.updatePreferredSize();
+                    }
+                }
+                else if (changedNode == root) {
+                    // Null indicies for root indicates it changed.
+                    changedNode.updatePreferredSize();
+                }
+                if(!isFixedRowHeight()) {
+                    int          aRow = changedNode.getRow();
+
+                    if(aRow != -1)
+                        this.updateYLocationsFrom(aRow);
+                }
+                this.visibleNodesChanged();
+            }
+        }
+!!!11905282.java!!!	treeNodesInserted(inout e : TreeModelEvent) : void
+        if(e != null) {
+            int               changedIndexs[];
+            TreeStateNode     changedParentNode;
+
+            changedIndexs = e.getChildIndices();
+            changedParentNode = getNodeForPath(SwingUtilities2.getTreePath(e, getModel()), false, false);
+            /* Only need to update the children if the node has been
+               expanded once. */
+            // PENDING(scott): make sure childIndexs is sorted!
+            if(changedParentNode != null && changedIndexs != null &&
+               changedIndexs.length > 0) {
+                if(changedParentNode.hasBeenExpanded()) {
+                    boolean            makeVisible;
+                    int                counter;
+                    Object             changedParent;
+                    TreeStateNode      newNode;
+                    int                oldChildCount = changedParentNode.
+                                          getChildCount();
+
+                    changedParent = changedParentNode.getValue();
+                    makeVisible = ((changedParentNode == root &&
+                                    !rootVisible) ||
+                                   (changedParentNode.getRow() != -1 &&
+                                    changedParentNode.isExpanded()));
+                    for(counter = 0;counter < changedIndexs.length;counter++)
+                    {
+                        newNode = this.createNodeAt(changedParentNode,
+                                                    changedIndexs[counter]);
+                    }
+                    if(oldChildCount == 0) {
+                        // Update the size of the parent.
+                        changedParentNode.updatePreferredSize();
+                    }
+                    if(treeSelectionModel != null)
+                        treeSelectionModel.resetRowSelection();
+                    /* Update the y origins from the index of the parent
+                       to the end of the visible rows. */
+                    if(!isFixedRowHeight() && (makeVisible ||
+                                               (oldChildCount == 0 &&
+                                        changedParentNode.isVisible()))) {
+                        if(changedParentNode == root)
+                            this.updateYLocationsFrom(0);
+                        else
+                            this.updateYLocationsFrom(changedParentNode.
+                                                      getRow());
+                        this.visibleNodesChanged();
+                    }
+                    else if(makeVisible)
+                        this.visibleNodesChanged();
+                }
+                else if(treeModel.getChildCount(changedParentNode.getValue())
+                        - changedIndexs.length == 0) {
+                    changedParentNode.updatePreferredSize();
+                    if(!isFixedRowHeight() && changedParentNode.isVisible())
+                        updateYLocationsFrom(changedParentNode.getRow());
+                }
+            }
+        }
+!!!11905410.java!!!	treeNodesRemoved(inout e : TreeModelEvent) : void
+        if(e != null) {
+            int               changedIndexs[];
+            TreeStateNode     changedParentNode;
+
+            changedIndexs = e.getChildIndices();
+            changedParentNode = getNodeForPath(SwingUtilities2.getTreePath(e, getModel()), false, false);
+            // PENDING(scott): make sure that changedIndexs are sorted in
+            // ascending order.
+            if(changedParentNode != null && changedIndexs != null &&
+               changedIndexs.length > 0) {
+                if(changedParentNode.hasBeenExpanded()) {
+                    boolean            makeInvisible;
+                    int                counter;
+                    int                removedRow;
+                    TreeStateNode      removedNode;
+
+                    makeInvisible = ((changedParentNode == root &&
+                                      !rootVisible) ||
+                                     (changedParentNode.getRow() != -1 &&
+                                      changedParentNode.isExpanded()));
+                    for(counter = changedIndexs.length - 1;counter >= 0;
+                        counter--) {
+                        removedNode = (TreeStateNode)changedParentNode.
+                                getChildAt(changedIndexs[counter]);
+                        if(removedNode.isExpanded()) {
+                            removedNode.collapse(false);
+                        }
+
+                        /* Let the selection model now. */
+                        if(makeInvisible) {
+                            removedRow = removedNode.getRow();
+                            if(removedRow != -1) {
+                                visibleNodes.removeElementAt(removedRow);
+                            }
+                        }
+                        changedParentNode.remove(changedIndexs[counter]);
+                    }
+                    if(changedParentNode.getChildCount() == 0) {
+                        // Update the size of the parent.
+                        changedParentNode.updatePreferredSize();
+                        if (changedParentNode.isExpanded() &&
+                                   changedParentNode.isLeaf()) {
+                            // Node has become a leaf, collapse it.
+                            changedParentNode.collapse(false);
+                        }
+                    }
+                    if(treeSelectionModel != null)
+                        treeSelectionModel.resetRowSelection();
+                    /* Update the y origins from the index of the parent
+                       to the end of the visible rows. */
+                    if(!isFixedRowHeight() && (makeInvisible ||
+                               (changedParentNode.getChildCount() == 0 &&
+                                changedParentNode.isVisible()))) {
+                        if(changedParentNode == root) {
+                            /* It is possible for first row to have been
+                               removed if the root isn't visible, in which
+                               case ylocations will be off! */
+                            if(getRowCount() > 0)
+                                getNode(0).setYOrigin(0);
+                            updateYLocationsFrom(0);
+                        }
+                        else
+                            updateYLocationsFrom(changedParentNode.getRow());
+                        this.visibleNodesChanged();
+                    }
+                    else if(makeInvisible)
+                        this.visibleNodesChanged();
+                }
+                else if(treeModel.getChildCount(changedParentNode.getValue())
+                        == 0) {
+                    changedParentNode.updatePreferredSize();
+                    if(!isFixedRowHeight() && changedParentNode.isVisible())
+                        this.updateYLocationsFrom(changedParentNode.getRow());
+                }
+            }
+        }
+!!!11905538.java!!!	treeStructureChanged(inout e : TreeModelEvent) : void
+        if(e != null)
+        {
+            TreePath          changedPath = SwingUtilities2.getTreePath(e, getModel());
+            TreeStateNode     changedNode;
+
+            changedNode = getNodeForPath(changedPath, false, false);
+
+            // Check if root has changed, either to a null root, or
+            // to an entirely new root.
+            if(changedNode == root ||
+               (changedNode == null &&
+                ((changedPath == null && treeModel != null &&
+                  treeModel.getRoot() == null) ||
+                 (changedPath != null && changedPath.getPathCount() == 1)))) {
+                rebuild(true);
+            }
+            else if(changedNode != null) {
+                int                              nodeIndex, oldRow;
+                TreeStateNode                    newNode, parent;
+                boolean                          wasExpanded, wasVisible;
+                int                              newIndex;
+
+                wasExpanded = changedNode.isExpanded();
+                wasVisible = (changedNode.getRow() != -1);
+                /* Remove the current node and recreate a new one. */
+                parent = (TreeStateNode)changedNode.getParent();
+                nodeIndex = parent.getIndex(changedNode);
+                if(wasVisible && wasExpanded) {
+                    changedNode.collapse(false);
+                }
+                if(wasVisible)
+                    visibleNodes.removeElement(changedNode);
+                changedNode.removeFromParent();
+                createNodeAt(parent, nodeIndex);
+                newNode = (TreeStateNode)parent.getChildAt(nodeIndex);
+                if(wasVisible && wasExpanded)
+                    newNode.expand(false);
+                newIndex = newNode.getRow();
+                if(!isFixedRowHeight() && wasVisible) {
+                    if(newIndex == 0)
+                        updateYLocationsFrom(newIndex);
+                    else
+                        updateYLocationsFrom(newIndex - 1);
+                    this.visibleNodesChanged();
+                }
+                else if(wasVisible)
+                    this.visibleNodesChanged();
+            }
+        }
+!!!11905794.java!!!	addMapping(inout node : VariableHeightLayoutCache::TreeStateNode) : void
+        treePathMapping.put(node.getTreePath(), node);
+!!!11905922.java!!!	removeMapping(inout node : VariableHeightLayoutCache::TreeStateNode) : void
+        treePathMapping.remove(node.getTreePath());
+!!!11906050.java!!!	getMapping(inout path : TreePath) : VariableHeightLayoutCache::TreeStateNode
+        return treePathMapping.get(path);
+!!!11906178.java!!!	getBounds(in row : int, inout placeIn : Rectangle) : Rectangle
+        if(updateNodeSizes)
+            updateNodeSizes(false);
+
+        if(row >= 0 && row < getRowCount()) {
+            return getNode(row).getNodeBounds(placeIn);
+        }
+        return null;
+!!!11906306.java!!!	rebuild(inout clearSelection : boolean) : void
+        Object rootObject;
+
+        treePathMapping.clear();
+        if(treeModel != null && (rootObject = treeModel.getRoot()) != null) {
+            root = createNodeForValue(rootObject);
+            root.path = new TreePath(rootObject);
+            addMapping(root);
+            root.updatePreferredSize(0);
+            visibleNodes.removeAllElements();
+            if (isRootVisible())
+                visibleNodes.addElement(root);
+            if(!root.isExpanded())
+                root.expand();
+            else {
+                Enumeration cursor = root.children();
+                while(cursor.hasMoreElements()) {
+                    visibleNodes.addElement(cursor.nextElement());
+                }
+                if(!isFixedRowHeight())
+                    updateYLocationsFrom(0);
+            }
+        }
+        else {
+            visibleNodes.removeAllElements();
+            root = null;
+        }
+        if(clearSelection && treeSelectionModel != null) {
+            treeSelectionModel.clearSelection();
+        }
+        this.visibleNodesChanged();
+!!!11906434.java!!!	createNodeAt(inout parent : VariableHeightLayoutCache::TreeStateNode, in childIndex : int) : VariableHeightLayoutCache::TreeStateNode
+        boolean                isParentRoot;
+        Object                 newValue;
+        TreeStateNode          newChildNode;
+
+        newValue = treeModel.getChild(parent.getValue(), childIndex);
+        newChildNode = createNodeForValue(newValue);
+        parent.insert(newChildNode, childIndex);
+        newChildNode.updatePreferredSize(-1);
+        isParentRoot = (parent == root);
+        if(newChildNode != null && parent.isExpanded() &&
+           (parent.getRow() != -1 || isParentRoot)) {
+            int                 newRow;
+
+            /* Find the new row to insert this newly visible node at. */
+            if(childIndex == 0) {
+                if(isParentRoot && !isRootVisible())
+                    newRow = 0;
+                else
+                    newRow = parent.getRow() + 1;
+            }
+            else if(childIndex == parent.getChildCount())
+                newRow = parent.getLastVisibleNode().getRow() + 1;
+            else {
+                TreeStateNode          previousNode;
+
+                previousNode = (TreeStateNode)parent.
+                    getChildAt(childIndex - 1);
+                newRow = previousNode.getLastVisibleNode().getRow() + 1;
+            }
+            visibleNodes.insertElementAt(newChildNode, newRow);
+        }
+        return newChildNode;
+!!!11906562.java!!!	getNodeForPath(inout path : TreePath, inout onlyIfVisible : boolean, inout shouldCreate : boolean) : VariableHeightLayoutCache::TreeStateNode
+        if(path != null) {
+            TreeStateNode      node;
+
+            node = getMapping(path);
+            if(node != null) {
+                if(onlyIfVisible && !node.isVisible())
+                    return null;
+                return node;
+            }
+
+            // Check all the parent paths, until a match is found.
+            Stack<TreePath> paths;
+
+            if(tempStacks.size() == 0) {
+                paths = new Stack<TreePath>();
+            }
+            else {
+                paths = tempStacks.pop();
+            }
+
+            try {
+                paths.push(path);
+                path = path.getParentPath();
+                node = null;
+                while(path != null) {
+                    node = getMapping(path);
+                    if(node != null) {
+                        // Found a match, create entries for all paths in
+                        // paths.
+                        while(node != null && paths.size() > 0) {
+                            path = paths.pop();
+                            node.getLoadedChildren(shouldCreate);
+
+                            int            childIndex = treeModel.
+                                      getIndexOfChild(node.getUserObject(),
+                                                  path.getLastPathComponent());
+
+                            if(childIndex == -1 ||
+                               childIndex >= node.getChildCount() ||
+                               (onlyIfVisible && !node.isVisible())) {
+                                node = null;
+                            }
+                            else
+                                node = (TreeStateNode)node.getChildAt
+                                               (childIndex);
+                        }
+                        return node;
+                    }
+                    paths.push(path);
+                    path = path.getParentPath();
+                }
+            }
+            finally {
+                paths.removeAllElements();
+                tempStacks.push(paths);
+            }
+            // If we get here it means they share a different root!
+            // We could throw an exception...
+        }
+        return null;
+!!!11906690.java!!!	updateYLocationsFrom(in location : int) : void
+        if(location >= 0 && location < getRowCount()) {
+            int                    counter, maxCounter, newYOrigin;
+            TreeStateNode          aNode;
+
+            aNode = getNode(location);
+            newYOrigin = aNode.getYOrigin() + aNode.getPreferredHeight();
+            for(counter = location + 1, maxCounter = visibleNodes.size();
+                counter < maxCounter;counter++) {
+                aNode = (TreeStateNode)visibleNodes.
+                    elementAt(counter);
+                aNode.setYOrigin(newYOrigin);
+                newYOrigin += aNode.getPreferredHeight();
+            }
+        }
+!!!11906818.java!!!	updateNodeSizes(inout updateAll : boolean) : void
+        int                      aY, counter, maxCounter;
+        TreeStateNode            node;
+
+        updateNodeSizes = false;
+        for(aY = counter = 0, maxCounter = visibleNodes.size();
+            counter < maxCounter; counter++) {
+            node = (TreeStateNode)visibleNodes.elementAt(counter);
+            node.setYOrigin(aY);
+            if(updateAll || !node.hasValidSize())
+                node.updatePreferredSize(counter);
+            aY += node.getPreferredHeight();
+        }
+!!!11906946.java!!!	getRowContainingYLocation(in location : int) : int
+        if(isFixedRowHeight()) {
+            if(getRowCount() == 0)
+                return -1;
+            return Math.max(0, Math.min(getRowCount() - 1,
+                                        location / getRowHeight()));
+        }
+
+        int                    max, maxY, mid, min, minY;
+        TreeStateNode          node;
+
+        if((max = getRowCount()) <= 0)
+            return -1;
+        mid = min = 0;
+        while(min < max) {
+            mid = (max - min) / 2 + min;
+            node = (TreeStateNode)visibleNodes.elementAt(mid);
+            minY = node.getYOrigin();
+            maxY = minY + node.getPreferredHeight();
+            if(location < minY) {
+                max = mid - 1;
+            }
+            else if(location >= maxY) {
+                min = mid + 1;
+            }
+            else
+                break;
+        }
+        if(min == max) {
+            mid = min;
+            if(mid >= getRowCount())
+                mid = getRowCount() - 1;
+        }
+        return mid;
+!!!11907074.java!!!	ensurePathIsExpanded(inout aPath : TreePath, inout expandLast : boolean) : void
+        if(aPath != null) {
+            // Make sure the last entry isn't a leaf.
+            if(treeModel.isLeaf(aPath.getLastPathComponent())) {
+                aPath = aPath.getParentPath();
+                expandLast = true;
+            }
+            if(aPath != null) {
+                TreeStateNode     lastNode = getNodeForPath(aPath, false,
+                                                            true);
+
+                if(lastNode != null) {
+                    lastNode.makeVisible();
+                    if(expandLast)
+                        lastNode.expand();
+                }
+            }
+        }
+!!!11907202.java!!!	getNode(in row : int) : VariableHeightLayoutCache::TreeStateNode
+        return (TreeStateNode)visibleNodes.elementAt(row);
+!!!11907330.java!!!	getMaxNodeWidth() : int
+        int                     maxWidth = 0;
+        int                     nodeWidth;
+        int                     counter;
+        TreeStateNode           node;
+
+        for(counter = getRowCount() - 1;counter >= 0;counter--) {
+            node = this.getNode(counter);
+            nodeWidth = node.getPreferredWidth() + node.getXOrigin();
+            if(nodeWidth > maxWidth)
+                maxWidth = nodeWidth;
+        }
+        return maxWidth;
+!!!11907458.java!!!	createNodeForValue(inout value : Object) : VariableHeightLayoutCache::TreeStateNode
+        return new TreeStateNode(value);

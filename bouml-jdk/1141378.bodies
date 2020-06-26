@@ -1,0 +1,90 @@
+class MemoryHandler
+!!!9407490.java!!!	configure() : void
+        LogManager manager = LogManager.getLogManager();
+        String cname = getClass().getName();
+
+        pushLevel = manager.getLevelProperty(cname +".push", Level.SEVERE);
+        size = manager.getIntProperty(cname + ".size", DEFAULT_SIZE);
+        if (size <= 0) {
+            size = DEFAULT_SIZE;
+        }
+        setLevel(manager.getLevelProperty(cname +".level", Level.ALL));
+        setFilter(manager.getFilterProperty(cname +".filter", null));
+        setFormatter(manager.getFormatterProperty(cname +".formatter", new SimpleFormatter()));
+!!!9407618.java!!!	MemoryHandler()
+        sealed = false;
+        configure();
+        sealed = true;
+
+        LogManager manager = LogManager.getLogManager();
+        String handlerName = getClass().getName();
+        String targetName = manager.getProperty(handlerName+".target");
+        if (targetName == null) {
+            throw new RuntimeException("The handler " + handlerName
+                    + " does not specify a target");
+        }
+        Class<?> clz;
+        try {
+            clz = ClassLoader.getSystemClassLoader().loadClass(targetName);
+            target = (Handler) clz.newInstance();
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException e) {
+            throw new RuntimeException("MemoryHandler can't load handler target \"" + targetName + "\"" , e);
+        }
+        init();
+!!!9407746.java!!!	init() : void
+        buffer = new LogRecord[size];
+        start = 0;
+        count = 0;
+!!!9407874.java!!!	MemoryHandler(inout target : Handler, in size : int, inout pushLevel : Level)
+        if (target == null || pushLevel == null) {
+            throw new NullPointerException();
+        }
+        if (size <= 0) {
+            throw new IllegalArgumentException();
+        }
+        sealed = false;
+        configure();
+        sealed = true;
+        this.target = target;
+        this.pushLevel = pushLevel;
+        this.size = size;
+        init();
+!!!9408002.java!!!	publish(inout record : LogRecord) : void
+        if (!isLoggable(record)) {
+            return;
+        }
+        int ix = (start+count)%buffer.length;
+        buffer[ix] = record;
+        if (count < buffer.length) {
+            count++;
+        } else {
+            start++;
+            start %= buffer.length;
+        }
+        if (record.getLevel().intValue() >= pushLevel.intValue()) {
+            push();
+        }
+!!!9408130.java!!!	push() : void
+        for (int i = 0; i < count; i++) {
+            int ix = (start+i)%buffer.length;
+            LogRecord record = buffer[ix];
+            target.publish(record);
+        }
+        // Empty the buffer.
+        start = 0;
+        count = 0;
+!!!9408258.java!!!	flush() : void
+        target.flush();
+!!!9408386.java!!!	close() : void
+        target.close();
+        setLevel(Level.OFF);
+!!!9408514.java!!!	setPushLevel(inout newLevel : Level) : void
+        if (newLevel == null) {
+            throw new NullPointerException();
+        }
+        checkPermission();
+        pushLevel = newLevel;
+!!!9408642.java!!!	getPushLevel() : Level
+        return pushLevel;
+!!!9408770.java!!!	isLoggable(inout record : LogRecord) : boolean
+        return super.isLoggable(record);

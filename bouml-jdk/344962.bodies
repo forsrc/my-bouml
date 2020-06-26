@@ -1,0 +1,160 @@
+class FlipBufferStrategy
+!!!1903106.java!!!	FlipBufferStrategy(in numBuffers : int, inout caps : BufferCapabilities)
+            if (!(Component.this instanceof Window) &&
+                !(Component.this instanceof Canvas))
+            {
+                throw new ClassCastException(
+                    "Component must be a Canvas or Window");
+            }
+            this.numBuffers = numBuffers;
+            this.caps = caps;
+            createBuffers(numBuffers, caps);
+!!!1903234.java!!!	createBuffers(in numBuffers : int, inout caps : BufferCapabilities) : void
+            if (numBuffers < 2) {
+                throw new IllegalArgumentException(
+                    "Number of buffers cannot be less than two");
+            } else if (peer == null) {
+                throw new IllegalStateException(
+                    "Component must have a valid peer");
+            } else if (caps == null || !caps.isPageFlipping()) {
+                throw new IllegalArgumentException(
+                    "Page flipping capabilities must be specified");
+            }
+
+            // save the current bounds
+            width = getWidth();
+            height = getHeight();
+
+            if (drawBuffer != null) {
+                // dispose the existing backbuffers
+                drawBuffer = null;
+                drawVBuffer = null;
+                destroyBuffers();
+                // ... then recreate the backbuffers
+            }
+
+            if (caps instanceof ExtendedBufferCapabilities) {
+                ExtendedBufferCapabilities ebc =
+                    (ExtendedBufferCapabilities)caps;
+                if (ebc.getVSync() == VSYNC_ON) {
+                    // if this buffer strategy is not allowed to be v-synced,
+                    // change the caps that we pass to the peer but keep on
+                    // trying to create v-synced buffers;
+                    // do not throw IAE here in case it is disallowed, see
+                    // ExtendedBufferCapabilities for more info
+                    if (!VSyncedBSManager.vsyncAllowed(this)) {
+                        caps = ebc.derive(VSYNC_DEFAULT);
+                    }
+                }
+            }
+
+            peer.createBuffers(numBuffers, caps);
+            updateInternalBuffers();
+!!!1903362.java!!!	updateInternalBuffers() : void
+            // get the images associated with the draw buffer
+            drawBuffer = getBackBuffer();
+            if (drawBuffer instanceof VolatileImage) {
+                drawVBuffer = (VolatileImage)drawBuffer;
+            } else {
+                drawVBuffer = null;
+            }
+!!!1903490.java!!!	getBackBuffer() : Image
+            if (peer != null) {
+                return peer.getBackBuffer();
+            } else {
+                throw new IllegalStateException(
+                    "Component must have a valid peer");
+            }
+!!!1903618.java!!!	flip(inout flipAction : BufferCapabilities::FlipContents) : void
+            if (peer != null) {
+                Image backBuffer = getBackBuffer();
+                if (backBuffer != null) {
+                    peer.flip(0, 0,
+                              backBuffer.getWidth(null),
+                              backBuffer.getHeight(null), flipAction);
+                }
+            } else {
+                throw new IllegalStateException(
+                    "Component must have a valid peer");
+            }
+!!!1903746.java!!!	flipSubRegion(in x1 : int, in y1 : int, in x2 : int, in y2 : int, inout flipAction : BufferCapabilities::FlipContents) : void
+            if (peer != null) {
+                peer.flip(x1, y1, x2, y2, flipAction);
+            } else {
+                throw new IllegalStateException(
+                    "Component must have a valid peer");
+            }
+!!!1903874.java!!!	destroyBuffers() : void
+            VSyncedBSManager.releaseVsync(this);
+            if (peer != null) {
+                peer.destroyBuffers();
+            } else {
+                throw new IllegalStateException(
+                    "Component must have a valid peer");
+            }
+!!!1904002.java!!!	getCapabilities() : BufferCapabilities
+            if (caps instanceof ProxyCapabilities) {
+                return ((ProxyCapabilities)caps).orig;
+            } else {
+                return caps;
+            }
+!!!1904130.java!!!	getDrawGraphics() : Graphics
+            revalidate();
+            return drawBuffer.getGraphics();
+!!!1904258.java!!!	revalidate() : void
+            revalidate(true);
+!!!1904386.java!!!	revalidate(inout checkSize : boolean) : void
+            validatedContents = false;
+
+            if (checkSize && (getWidth() != width || getHeight() != height)) {
+                // component has been resized; recreate the backbuffers
+                try {
+                    createBuffers(numBuffers, caps);
+                } catch (AWTException e) {
+                    // shouldn't be possible
+                }
+                validatedContents = true;
+            }
+
+            // get the buffers from the peer every time since they
+            // might have been replaced in response to a display change event
+            updateInternalBuffers();
+
+            // now validate the backbuffer
+            if (drawVBuffer != null) {
+                GraphicsConfiguration gc =
+                        getGraphicsConfiguration_NoClientCode();
+                int returnCode = drawVBuffer.validate(gc);
+                if (returnCode == VolatileImage.IMAGE_INCOMPATIBLE) {
+                    try {
+                        createBuffers(numBuffers, caps);
+                    } catch (AWTException e) {
+                        // shouldn't be possible
+                    }
+                    if (drawVBuffer != null) {
+                        // backbuffers were recreated, so validate again
+                        drawVBuffer.validate(gc);
+                    }
+                    validatedContents = true;
+                } else if (returnCode == VolatileImage.IMAGE_RESTORED) {
+                    validatedContents = true;
+                }
+            }
+!!!1904514.java!!!	contentsLost() : boolean
+            if (drawVBuffer == null) {
+                return false;
+            }
+            return drawVBuffer.contentsLost();
+!!!1904642.java!!!	contentsRestored() : boolean
+            return validatedContents;
+!!!1904770.java!!!	show() : void
+            flip(caps.getFlipContents());
+!!!1904898.java!!!	showSubRegion(in x1 : int, in y1 : int, in x2 : int, in y2 : int) : void
+            flipSubRegion(x1, y1, x2, y2, caps.getFlipContents());
+!!!1905026.java!!!	dispose() : void
+            if (Component.this.bufferStrategy == this) {
+                Component.this.bufferStrategy = null;
+                if (peer != null) {
+                    destroyBuffers();
+                }
+            }

@@ -1,0 +1,420 @@
+class XMLSignatureInputDebugger
+!!!5457282.java!!!	XMLSignatureInputDebugger(inout xmlSignatureInput : XMLSignatureInput)
+        if (!xmlSignatureInput.isNodeSet()) {
+            this.xpathNodeSet = null;
+        } else {
+            this.xpathNodeSet = xmlSignatureInput.getInputNodeSet();
+        }
+!!!5457410.java!!!	XMLSignatureInputDebugger(inout xmlSignatureInput : XMLSignatureInput, inout inclusiveNamespace : Set)
+        this(xmlSignatureInput);
+        this.inclusiveNamespaces = inclusiveNamespace;
+!!!5457538.java!!!	getHTMLRepresentation() : String
+        if ((this.xpathNodeSet == null) || (this.xpathNodeSet.size() == 0)) {
+            return HTMLPrefix + "<blink>no node set, sorry</blink>" + HTMLSuffix;
+        }
+
+        // get only a single node as anchor to fetch the owner document
+        Node n = this.xpathNodeSet.iterator().next();
+
+        this.doc = XMLUtils.getOwnerDocument(n);
+
+        try {
+            this.writer = new StringWriter();
+
+            this.canonicalizeXPathNodeSet(this.doc);
+            this.writer.close();
+
+            return this.writer.toString();
+        } catch (IOException ex) {
+            throw new XMLSignatureException("empty", ex);
+        } finally {
+            this.xpathNodeSet = null;
+            this.doc = null;
+            this.writer = null;
+        }
+!!!5457666.java!!!	canonicalizeXPathNodeSet(inout currentNode : Node) : void
+
+        int currentNodeType = currentNode.getNodeType();
+        switch (currentNodeType) {
+
+
+        case Node.ENTITY_NODE:
+        case Node.NOTATION_NODE:
+        case Node.DOCUMENT_FRAGMENT_NODE:
+        case Node.ATTRIBUTE_NODE:
+            throw new XMLSignatureException("empty");
+        case Node.DOCUMENT_NODE:
+            this.writer.write(HTMLPrefix);
+
+            for (Node currentChild = currentNode.getFirstChild();
+                currentChild != null; currentChild = currentChild.getNextSibling()) {
+                this.canonicalizeXPathNodeSet(currentChild);
+            }
+
+            this.writer.write(HTMLSuffix);
+            break;
+
+        case Node.COMMENT_NODE:
+            if (this.xpathNodeSet.contains(currentNode)) {
+                this.writer.write(HTMLIncludePrefix);
+            } else {
+                this.writer.write(HTMLExcludePrefix);
+            }
+
+            int position = getPositionRelativeToDocumentElement(currentNode);
+
+            if (position == NODE_AFTER_DOCUMENT_ELEMENT) {
+                this.writer.write("\n");
+            }
+
+            this.outputCommentToWriter((Comment) currentNode);
+
+            if (position == NODE_BEFORE_DOCUMENT_ELEMENT) {
+                this.writer.write("\n");
+            }
+
+            this.writer.write(HTMLIncludeOrExcludeSuffix);
+            break;
+
+        case Node.PROCESSING_INSTRUCTION_NODE:
+            if (this.xpathNodeSet.contains(currentNode)) {
+                this.writer.write(HTMLIncludePrefix);
+            } else {
+                this.writer.write(HTMLExcludePrefix);
+            }
+
+            position = getPositionRelativeToDocumentElement(currentNode);
+
+            if (position == NODE_AFTER_DOCUMENT_ELEMENT) {
+                this.writer.write("\n");
+            }
+
+            this.outputPItoWriter((ProcessingInstruction) currentNode);
+
+            if (position == NODE_BEFORE_DOCUMENT_ELEMENT) {
+                this.writer.write("\n");
+            }
+
+            this.writer.write(HTMLIncludeOrExcludeSuffix);
+            break;
+
+        case Node.TEXT_NODE:
+        case Node.CDATA_SECTION_NODE:
+            if (this.xpathNodeSet.contains(currentNode)) {
+                this.writer.write(HTMLIncludePrefix);
+            } else {
+                this.writer.write(HTMLExcludePrefix);
+            }
+
+            outputTextToWriter(currentNode.getNodeValue());
+
+            for (Node nextSibling = currentNode.getNextSibling();
+                (nextSibling != null)
+                && ((nextSibling.getNodeType() == Node.TEXT_NODE)
+                    || (nextSibling.getNodeType() == Node.CDATA_SECTION_NODE));
+                nextSibling = nextSibling.getNextSibling()) {
+                /*
+                 * The XPath data model allows to select only the first of a
+                 * sequence of mixed text and CDATA nodes. But we must output
+                 * them all, so we must search:
+                 *
+                 * @see http://nagoya.apache.org/bugzilla/show_bug.cgi?id=6329
+                 */
+                this.outputTextToWriter(nextSibling.getNodeValue());
+            }
+
+            this.writer.write(HTMLIncludeOrExcludeSuffix);
+            break;
+
+        case Node.ELEMENT_NODE:
+            Element currentElement = (Element) currentNode;
+
+            if (this.xpathNodeSet.contains(currentNode)) {
+                this.writer.write(HTMLIncludePrefix);
+            } else {
+                this.writer.write(HTMLExcludePrefix);
+            }
+
+            this.writer.write("&lt;");
+            this.writer.write(currentElement.getTagName());
+
+            this.writer.write(HTMLIncludeOrExcludeSuffix);
+
+            // we output all Attrs which are available
+            NamedNodeMap attrs = currentElement.getAttributes();
+            int attrsLength = attrs.getLength();
+            Attr attrs2[] = new Attr[attrsLength];
+
+            for (int i = 0; i < attrsLength; i++) {
+                attrs2[i] = (Attr)attrs.item(i);
+            }
+
+            Arrays.sort(attrs2, ATTR_COMPARE);
+            Object attrs3[] = attrs2;
+
+            for (int i = 0; i < attrsLength; i++) {
+                Attr a = (Attr) attrs3[i];
+                boolean included = this.xpathNodeSet.contains(a);
+                boolean inclusive = this.inclusiveNamespaces.contains(a.getName());
+
+                if (included) {
+                    if (inclusive) {
+                        // included and inclusive
+                        this.writer.write(HTMLIncludedInclusiveNamespacePrefix);
+                    } else {
+                        // included and not inclusive
+                        this.writer.write(HTMLIncludePrefix);
+                    }
+                } else {
+                    if (inclusive) {
+                        // excluded and inclusive
+                        this.writer.write(HTMLExcludedInclusiveNamespacePrefix);
+                    } else {
+                        // excluded and not inclusive
+                        this.writer.write(HTMLExcludePrefix);
+                    }
+                }
+
+                this.outputAttrToWriter(a.getNodeName(), a.getNodeValue());
+                this.writer.write(HTMLIncludeOrExcludeSuffix);
+            }
+
+            if (this.xpathNodeSet.contains(currentNode)) {
+                this.writer.write(HTMLIncludePrefix);
+            } else {
+                this.writer.write(HTMLExcludePrefix);
+            }
+
+            this.writer.write("&gt;");
+
+            this.writer.write(HTMLIncludeOrExcludeSuffix);
+
+            // traversal
+            for (Node currentChild = currentNode.getFirstChild();
+                currentChild != null;
+                currentChild = currentChild.getNextSibling()) {
+                this.canonicalizeXPathNodeSet(currentChild);
+            }
+
+            if (this.xpathNodeSet.contains(currentNode)) {
+                this.writer.write(HTMLIncludePrefix);
+            } else {
+                this.writer.write(HTMLExcludePrefix);
+            }
+
+            this.writer.write("&lt;/");
+            this.writer.write(currentElement.getTagName());
+            this.writer.write("&gt;");
+
+            this.writer.write(HTMLIncludeOrExcludeSuffix);
+            break;
+
+        case Node.DOCUMENT_TYPE_NODE:
+        default:
+            break;
+        }
+!!!5457794.java!!!	getPositionRelativeToDocumentElement(inout currentNode : Node) : int
+        if (currentNode == null) {
+            return NODE_NOT_BEFORE_OR_AFTER_DOCUMENT_ELEMENT;
+        }
+
+        Document doc = currentNode.getOwnerDocument();
+
+        if (currentNode.getParentNode() != doc) {
+            return NODE_NOT_BEFORE_OR_AFTER_DOCUMENT_ELEMENT;
+        }
+
+        Element documentElement = doc.getDocumentElement();
+
+        if (documentElement == null) {
+            return NODE_NOT_BEFORE_OR_AFTER_DOCUMENT_ELEMENT;
+        }
+
+        if (documentElement == currentNode) {
+            return NODE_NOT_BEFORE_OR_AFTER_DOCUMENT_ELEMENT;
+        }
+
+        for (Node x = currentNode; x != null; x = x.getNextSibling()) {
+            if (x == documentElement) {
+                return NODE_BEFORE_DOCUMENT_ELEMENT;
+            }
+        }
+
+        return NODE_AFTER_DOCUMENT_ELEMENT;
+!!!5457922.java!!!	outputAttrToWriter(inout name : String, inout value : String) : void
+        this.writer.write(" ");
+        this.writer.write(name);
+        this.writer.write("=\"");
+
+        int length = value.length();
+
+        for (int i = 0; i < length; i++) {
+            char c = value.charAt(i);
+
+            switch (c) {
+
+            case '&':
+                this.writer.write("&amp;amp;");
+                break;
+
+            case '<':
+                this.writer.write("&amp;lt;");
+                break;
+
+            case '"':
+                this.writer.write("&amp;quot;");
+                break;
+
+            case 0x09: // '\t'
+                this.writer.write("&amp;#x9;");
+                break;
+
+            case 0x0A: // '\n'
+                this.writer.write("&amp;#xA;");
+                break;
+
+            case 0x0D: // '\r'
+                this.writer.write("&amp;#xD;");
+                break;
+
+            default:
+                this.writer.write(c);
+                break;
+            }
+        }
+
+        this.writer.write("\"");
+!!!5458050.java!!!	outputPItoWriter(inout currentPI : ProcessingInstruction) : void
+
+        if (currentPI == null) {
+            return;
+        }
+
+        this.writer.write("&lt;?");
+
+        String target = currentPI.getTarget();
+        int length = target.length();
+
+        for (int i = 0; i < length; i++) {
+            char c = target.charAt(i);
+
+            switch (c) {
+
+            case 0x0D:
+                this.writer.write("&amp;#xD;");
+                break;
+
+            case ' ':
+                this.writer.write("&middot;");
+                break;
+
+            case '\n':
+                this.writer.write("&para;\n");
+                break;
+
+            default:
+                this.writer.write(c);
+                break;
+            }
+        }
+
+        String data = currentPI.getData();
+
+        length = data.length();
+
+        if (length > 0) {
+            this.writer.write(" ");
+
+            for (int i = 0; i < length; i++) {
+                char c = data.charAt(i);
+
+                switch (c) {
+
+                case 0x0D:
+                    this.writer.write("&amp;#xD;");
+                    break;
+
+                default:
+                    this.writer.write(c);
+                    break;
+                }
+            }
+        }
+
+        this.writer.write("?&gt;");
+!!!5458178.java!!!	outputCommentToWriter(inout currentComment : Comment) : void
+
+        if (currentComment == null) {
+            return;
+        }
+
+        this.writer.write("&lt;!--");
+
+        String data = currentComment.getData();
+        int length = data.length();
+
+        for (int i = 0; i < length; i++) {
+            char c = data.charAt(i);
+
+            switch (c) {
+
+            case 0x0D:
+                this.writer.write("&amp;#xD;");
+                break;
+
+            case ' ':
+                this.writer.write("&middot;");
+                break;
+
+            case '\n':
+                this.writer.write("&para;\n");
+                break;
+
+            default:
+                this.writer.write(c);
+                break;
+            }
+        }
+
+        this.writer.write("--&gt;");
+!!!5458306.java!!!	outputTextToWriter(inout text : String) : void
+        if (text == null) {
+            return;
+        }
+
+        int length = text.length();
+
+        for (int i = 0; i < length; i++) {
+            char c = text.charAt(i);
+
+            switch (c) {
+
+            case '&':
+                this.writer.write("&amp;amp;");
+                break;
+
+            case '<':
+                this.writer.write("&amp;lt;");
+                break;
+
+            case '>':
+                this.writer.write("&amp;gt;");
+                break;
+
+            case 0xD:
+                this.writer.write("&amp;#xD;");
+                break;
+
+            case ' ':
+                this.writer.write("&middot;");
+                break;
+
+            case '\n':
+                this.writer.write("&para;\n");
+                break;
+
+            default:
+                this.writer.write(c);
+                break;
+            }
+        }
